@@ -1,6 +1,9 @@
-"""Re-export shim: aggregates sql_store_db, sql_store_crud, and sql_store_cache."""
+"""store — public API for the SQLite project/study/chat store.
 
-from sql_store_crud import (  # noqa: F401
+Import from here:  from store import get_project, list_projects, ...
+"""
+
+from .crud import (  # noqa: F401
     list_projects,
     create_project,
     get_project,
@@ -21,7 +24,7 @@ from sql_store_crud import (  # noqa: F401
     delete_global_chat,
 )
 
-from sql_store_cache import (  # noqa: F401
+from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,
     PINNED_STUDIES_PER_CHAT_CAP,

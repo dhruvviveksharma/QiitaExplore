@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from sql_store_db import _conn, _as_dict, _now
-from sql_store_crud import _project_exists, _load_project_studies
+from .db import _conn, _as_dict, _now
+from .crud import _project_exists, _load_project_studies
 
 SCOPE_PROJECT = "project"
 SCOPE_GLOBAL  = "global"

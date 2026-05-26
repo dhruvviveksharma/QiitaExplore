@@ -19,7 +19,7 @@ def fresh_db(tmp_path, monkeypatch):
             del sys.modules[mod_name]
 
     # Re-import to get fresh schema
-    import sql_store_db
+    import store.db as sql_store_db
     # Verify schema created
     with sql_store_db._conn() as conn:
         conn.execute("SELECT 1 FROM projects LIMIT 1")
@@ -30,14 +30,14 @@ def fresh_db(tmp_path, monkeypatch):
 @pytest.fixture
 def db_conn(fresh_db):
     """Direct database connection for raw queries."""
-    import sql_store_db
+    import store.db as sql_store_db
     return sql_store_db._conn()
 
 
 @pytest.fixture
 def crud():
     """Import CRUD module after fresh_db fixture sets up isolated DB."""
-    import sql_store_crud
+    import store.crud as sql_store_crud
     return sql_store_crud
 
 

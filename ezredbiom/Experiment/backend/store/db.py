@@ -6,7 +6,8 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-_DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+# Go up one level (store/ → backend/) so the data dir stays at backend/data/
+_DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(_DEFAULT_DATA_DIR, exist_ok=True)
 DB_PATH = os.getenv("QIITA_EXPERIMENT_DB_PATH", os.path.join(_DEFAULT_DATA_DIR, "projects.db"))
 

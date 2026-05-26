@@ -204,4 +204,64 @@ Pins today are only created via `/report <study_id>`; there is no `POST` pin end
 
 ---
 
-*Generated: 2026-05-19*
+---
+
+## TKT-007: Remove Dead Legacy Directories (notebooks, qiita_pet, qiita_ware, scripts)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+Four top-level directories contain legacy Qiita code that is entirely unreferenced by the live
+`ezredbiom/` app. Combined they are ~42 MB of dead weight.
+
+| Directory | Why dead |
+|-----------|---------|
+| `notebooks/` | 2023 analysis notebooks — ad-hoc data exploration, no live callers |
+| `qiita_pet/` | Old Tornado web UI (~13 MB) — fully replaced by the React/Flask frontend |
+| `qiita_ware/` | Legacy EBI submission / plugin system — zero imports in ezredbiom |
+| `scripts/` | Old Qiita CLI scripts — not invoked by the Flask app |
+
+`src/` (empty stub) was already removed (2026-05-26).
+
+### Plan
+- [ ] Confirm none of these paths are referenced by CI, Makefile, or deployment scripts
+- [ ] `git rm -r notebooks/ qiita_pet/ qiita_ware/ scripts/`
+- [ ] Update root `README.md` if it mentions any of these directories
+
+### Files Changed
+- `notebooks/` — delete
+- `qiita_pet/` — delete
+- `qiita_ware/` — delete
+- `scripts/` — delete
+
+---
+
+## TKT-008: Refactor Away from qiita_db.TRN / qiita_core (then delete both packages)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+The live app depends on exactly two files outside `ezredbiom/`:
+- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
+- `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
+
+Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
+
+### Plan
+- [ ] Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
+- [ ] Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
+  (see commit `ed3fc3d8` for an existing template)
+- [ ] Remove `qiita_db` and `qiita_core` imports from those files
+- [ ] Verify tests pass and no `ImportError` at startup
+- [ ] `git rm -r qiita_db/ qiita_core/`
+
+### Files Changed
+- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
+- `qiita_db/` — delete after refactor
+- `qiita_core/` — delete after refactor
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-05-26*

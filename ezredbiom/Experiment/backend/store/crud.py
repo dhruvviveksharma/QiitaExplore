@@ -1,9 +1,9 @@
-"""Project, study, and chat CRUD built on top of the sql_store_db core."""
+"""Project, study, and chat CRUD built on top of the store.db core."""
 
 import json
 import uuid
 
-from sql_store_db import _conn, _as_dict, _now
+from .db import _conn, _as_dict, _now
 
 
 def _project_exists(conn, project_id, user_id):
@@ -277,7 +277,7 @@ def list_chats(project_id: str, user_id: str, limit: int = 200):
 
 
 def get_chat(project_id: str, user_id: str, chat_id: str):
-    from sql_store_cache import SCOPE_PROJECT, _load_pinned_studies
+    from store.cache import SCOPE_PROJECT, _load_pinned_studies
     resolved_user = (user_id or "").strip() or "default"
     with _conn() as conn:
         row = conn.execute(
@@ -429,7 +429,7 @@ def _load_global_messages(conn, chat_id):
 
 
 def get_global_chat(user_id: str, chat_id: str):
-    from sql_store_cache import SCOPE_GLOBAL, _load_pinned_studies
+    from store.cache import SCOPE_GLOBAL, _load_pinned_studies
     resolved_user = (user_id or "").strip() or "default"
     with _conn() as conn:
         row = conn.execute(
