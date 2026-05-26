@@ -18,3 +18,5 @@ Load via `commands.sh` which calls: `qiita db load-study`, `qiita db load-sample
 
 ## important points
 Whenever we are interacting with the chatbot, I must see status of what function/ tool is being used. I need this information as the user so I know something is working in the background.
+
+When we are testing, I wish to use port 5002 to tunnel into my local website and on barnacle. When I merge into master, I want the default ports to change to 5001 again.

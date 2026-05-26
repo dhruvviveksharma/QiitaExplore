@@ -22,7 +22,6 @@ from sql_store import (  # noqa: F401
     list_chats,
     list_global_chats,
     list_pinned_studies,
-    list_project_studies,
     list_projects,
     pin_study_to_chat,
     remove_study_from_project,

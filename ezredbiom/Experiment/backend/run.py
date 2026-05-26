@@ -31,5 +31,5 @@ import routes.chat_routes         # noqa: F401, E402
 import routes.global_chat_routes  # noqa: F401, E402
 
 if __name__ == '__main__':
-    print("QIITA SEARCH API -- http://localhost:5001 (DEBUG MODE)")
-    app.run(debug=False, host='0.0.0.0', port=5001, use_reloader=False)
+    print("QIITA SEARCH API -- http://localhost:5002 (DEBUG MODE)")
+    app.run(debug=False, host='0.0.0.0', port=5002, use_reloader=False)

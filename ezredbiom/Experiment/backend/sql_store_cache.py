@@ -89,14 +89,6 @@ def update_project_study_data(
     return True
 
 
-def list_project_studies(project_id: str, user_id: str):
-    resolved_user = (user_id or "").strip() or "default"
-    with _conn() as conn:
-        if not _project_exists(conn, project_id, resolved_user):
-            return []
-        return _load_project_studies(conn, project_id)
-
-
 def get_study_detail_cache(study_id: int):
     """Return cached study detail if it exists and is less than TTL hours old, else None."""
     with _conn() as conn:

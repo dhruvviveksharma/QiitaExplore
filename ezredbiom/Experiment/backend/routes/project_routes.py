@@ -1,5 +1,4 @@
 import json
-from concurrent.futures import ThreadPoolExecutor
 
 from flask import jsonify, request
 
@@ -12,10 +11,7 @@ from store import (
     get_study_detail_cache,
     list_projects,
     remove_study_from_project,
-    update_project,
     update_project_study_data,
-    upsert_project_context_summary,
-    upsert_project_study_summary,
     upsert_study_detail_cache,
 )
 from helpers.qiita_fetch import (
@@ -24,10 +20,6 @@ from helpers.qiita_fetch import (
     _get_or_fetch_full_samples,
     _qiita_fetch,
     is_study_public,
-)
-from helpers.llm_helpers import (
-    _generate_project_summary,
-    _generate_study_summary,
 )
 
 
@@ -104,17 +96,6 @@ def api_get_project(project_id):
     return jsonify(proj)
 
 
-@app.route('/api/projects/<project_id>', methods=['PATCH'])
-def api_update_project(project_id):
-    data    = request.get_json() or {}
-    user_id = (data.get('user_id') or 'default').strip() or 'default'
-    name    = data.get('name')
-    proj    = update_project(project_id, user_id, name=name)
-    if not proj:
-        return jsonify({'error': 'Project not found'}), 404
-    return jsonify(proj)
-
-
 @app.route('/api/projects/<project_id>', methods=['DELETE'])
 def api_delete_project(project_id):
     user_id = (
@@ -179,38 +160,6 @@ def api_remove_study(project_id, study_id):
     if proj is None:
         return jsonify({'error': 'Project not found'}), 404
     return jsonify(proj)
-
-
-@app.route('/api/projects/<project_id>/summaries/rebuild', methods=['POST'])
-def api_rebuild_project_summaries(project_id):
-    data    = request.get_json(silent=True) or {}
-    user_id = (data.get('user_id') or request.args.get('user_id') or 'default').strip() or 'default'
-    proj    = get_project(project_id, user_id)
-    if not proj:
-        return jsonify({'error': 'Project not found'}), 404
-
-    studies = proj.get('studies') or []
-
-    def _rebuild_one(study):
-        summary = _generate_study_summary(study)
-        upsert_project_study_summary(project_id, user_id, study.get('study_id'), summary)
-        return True
-
-    with ThreadPoolExecutor() as pool:
-        rebuilt = sum(pool.map(_rebuild_one, studies))
-
-    project_summary = _generate_project_summary(studies)
-    upsert_project_context_summary(
-        project_id,
-        user_id,
-        project_summary,
-        source_updated_at=proj.get('updated_at'),
-    )
-    return jsonify({
-        'ok':                     True,
-        'project_id':             project_id,
-        'study_summaries_rebuilt': rebuilt,
-    })
 
 
 @app.route('/api/projects/<project_id>/preload', methods=['POST'])

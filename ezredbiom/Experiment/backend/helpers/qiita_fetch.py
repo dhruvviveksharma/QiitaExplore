@@ -11,9 +11,7 @@ from qiita_db.sql_connection import TRN
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
 from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
-    SCOPE_PROJECT,
     get_study_detail_cache,
-    pin_study_to_chat,
     upsert_study_detail_cache,
 )
 from helpers.llm_helpers import _truncate
@@ -379,19 +377,6 @@ def _detect_mentioned_study_ids(user_content: str, proj) -> list:
         if sid in project_study_ids:
             found.add(sid)
     return sorted(found)
-
-
-def _auto_pin_project_studies(chat_id: str, project: dict):
-    """Pin up to PINNED_STUDIES_PER_CHAT_CAP project studies (newest first) onto a project chat."""
-    studies = (project or {}).get("studies") or []
-    for s in studies[:PINNED_STUDIES_PER_CHAT_CAP]:
-        sid = s.get("study_id")
-        if sid is None:
-            continue
-        try:
-            pin_study_to_chat(chat_id, SCOPE_PROJECT, int(sid))
-        except Exception:
-            logger.exception("auto-pin failed for study %s on chat %s", sid, chat_id)
 
 
 def _fetch_study_header(study_id: int):

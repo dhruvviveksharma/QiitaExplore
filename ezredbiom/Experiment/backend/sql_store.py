@@ -29,7 +29,6 @@ from sql_store_cache import (  # noqa: F401
     get_project_context_summary,
     upsert_project_context_summary,
     update_project_study_data,
-    list_project_studies,
     get_study_detail_cache,
     upsert_study_detail_cache,
     pin_study_to_chat,

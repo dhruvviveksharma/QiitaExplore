@@ -183,60 +183,6 @@ def _format_discovery_study_list(studies, header_line: str, max_chars: int):
     return out + "\n"
 
 
-def _study_seed_text(study: dict):
-    sid           = study.get("study_id")
-    title         = _truncate(study.get("study_title") or "Untitled study", 160)
-    abstract      = _truncate(study.get("study_abstract") or "", 700)
-    pi_name       = _truncate(study.get("pi_name") or "", 120)
-    pi_affiliation= _truncate(study.get("pi_affiliation") or "", 180)
-    return (
-        f"Study ID: {sid}\n"
-        f"Title: {title}\n"
-        f"Abstract: {abstract or 'Not available'}\n"
-        f"PI: {pi_name or 'Not available'}\n"
-        f"Affiliation: {pi_affiliation or 'Not available'}"
-    )
-
-
-def _summarize_text(prompt: str, fallback: str):
-    try:
-        r = client.chat.completions.create(
-            model=DEFAULT_MODEL,
-            messages=[
-                {"role": "system", "content": "Summarize provided study metadata for retrieval context. Be factual and concise. Do not invent details."},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return (r.choices[0].message.content or "").strip() or fallback
-    except Exception:
-        return fallback
-
-
-def _generate_study_summary(study: dict):
-    fallback = (
-        f"ID {study.get('study_id')}: {_truncate(study.get('study_title') or 'Untitled study', 140)}. "
-        f"Abstract: {_truncate(study.get('study_abstract') or 'Not available', 260)}"
-    )
-    prompt = (
-        "Create a concise factual summary in 4-6 bullets (max 120 words total). "
-        "Include what this study is about, major topic, and any known PI/affiliation fields. "
-        "If fields are missing, say unavailable.\n\n"
-        f"{_study_seed_text(study)}"
-    )
-    return _summarize_text(prompt, fallback)
-
-
-def _generate_project_summary(studies: list):
-    seeds    = [_study_seed_text(s) for s in studies[:30]]
-    fallback = "Project includes multiple Qiita studies. Use detailed study entries when available."
-    prompt   = (
-        "Summarize this project study collection for chat grounding. "
-        "Return at most 10 concise bullets with themes, study IDs covered, and known metadata availability.\n\n"
-        + "\n\n".join(seeds)
-    )
-    return _summarize_text(prompt, fallback)
-
-
 def _build_project_study_context(project: dict, user_id: str = "default"):
     if not project:
         return None
@@ -314,50 +260,6 @@ def _build_project_study_context(project: dict, user_id: str = "default"):
         + (project_summary or "No cached summary available.")
     )
     return fallback[:PROJECT_CONTEXT_MAX_CHARS]
-
-
-def _build_selected_studies_context(selected_studies):
-    selected_studies = selected_studies or []
-    if not selected_studies:
-        return None
-    lines = []
-    for s in selected_studies[:20]:
-        sid            = s.get("study_id")
-        title          = (s.get("study_title") or "").strip()
-        abstract       = (s.get("study_abstract") or "").strip()
-        pi_name        = (s.get("pi_name") or "").strip()
-        pi_email       = (s.get("pi_email") or "").strip()
-        pi_affiliation = (s.get("pi_affiliation") or "").strip()
-        lab_person     = (s.get("lab_person_name") or "").strip()
-        extra_lines    = []
-        for key, value in s.items():
-            if key in {"study_id", "study_title", "study_abstract", "pi_name", "pi_email",
-                       "pi_affiliation", "lab_person_name", "added_at"}:
-                continue
-            val = _truncate(value, 180)
-            if not val:
-                continue
-            extra_lines.append(f"  {key}: {val}")
-        if not sid:
-            continue
-        title    = _truncate(title, 120)
-        abstract = _truncate(abstract, 400)
-        lines.append(
-            f"- ID {sid}: {title}\n"
-            f"  Abstract: {abstract or 'Not available'}\n"
-            f"  PI: {pi_name or 'Not available'}\n"
-            f"  PI Email: {pi_email or 'Not available'}\n"
-            f"  PI Affiliation: {pi_affiliation or 'Not available'}\n"
-            f"  Lab Contact: {lab_person or 'Not available'}"
-            + (f"\n{''.join(extra_lines)}" if extra_lines else "")
-        )
-    if not lines:
-        return None
-    return (
-        "You have access to the following user-selected Qiita studies from global search. "
-        "When referencing specific studies, ONLY use these IDs and titles:\n"
-        + "\n".join(lines)
-    )
 
 
 def _build_api_messages(messages, study_context_text: str, system_prompt: str = None):

@@ -139,4 +139,69 @@ This appears to be a conversation history/context window issue, potentially rela
 
 ---
 
-*Generated: 2026-05-15*
+## TKT-006: Pin Studies in Chat Bar + Enter to Start Global Chat
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+Users on the **Browse Studies** home view cannot use the bottom chat bar meaningfully today: the composer is muted, Enter does nothing, and pinned studies only appear after opening a global chat via the sidebar. This ticket adds two related flows:
+
+1. **Pin studies in the chat bar (browse + composer)**
+   - Show studies the user has added as context (`ctxStudies`) and/or explicitly pinned in the **composer area** on the home page (not only in the separate `ctx-bar` above the grid).
+   - Allow pinning from browse (study cards, context chips, or composer chips) so selections are visible in the chat bar before a chat exists.
+   - On first message, carry those studies into the new global chat (as `selected_studies` and/or persisted pins).
+
+2. **Enter → new global chat**
+   - From browse, when the composer has a non-empty message, **Enter** (without Shift) creates a new global chat and sends the message — same outcome as sidebar "+ New Global Chat" + typing + send, in one step.
+   - Reuse existing lazy-create logic in `sendMessage` (`app_state.js` ~366–376) rather than inventing a parallel path.
+
+### Current Behavior
+| Concept | State | Visible on browse | Persists |
+|---------|--------|-------------------|----------|
+| **Context chips** (`ctxStudies`) | React session state | Yes — `ctx-bar` above grid | No |
+| **Pinned studies** | `chatCache[chatId].pinnedStudies` + DB | No — only in active chat composer | Yes (per chat) |
+
+Pins today are only created via `/report <study_id>`; there is no `POST` pin endpoint (only `DELETE` unpin). The browse composer is disabled (`disabled={!isChat}`) and Enter is gated on `isChat`.
+
+### UX Notes
+- **Context vs pin:** `+ Context` toggles ephemeral `ctxStudies`; DB pins only happen via `/report`. Decide whether browse-bar chips stay as context until send (then optionally persist as pins) or add an explicit pin action separate from context.
+- **Composer on browse:** Either enable the textarea when `view.type === 'browse'` or add `sendFromBrowse()` that switches to `global-chat` then calls `sendMessage`.
+- **Placeholder:** Change from "Open a chat to start messaging" to something like "Ask about studies… (Enter to start chat)" on browse.
+- **Cap:** Respect `PINNED_STUDIES_PER_CHAT_CAP` (10) when persisting pins.
+
+### Affected Files
+- `ezredbiom/Experiment/frontend/js/app_render.js` — composer pins row on browse, Enter handler, placeholder
+- `ezredbiom/Experiment/frontend/js/app_state.js` — `canSend` / `isChat` rules, `pinStudy()`, browse→global-chat branch
+- `ezredbiom/Experiment/frontend/style.css` — composer pin chips on muted/browse state (if needed)
+- `ezredbiom/Experiment/backend/routes/global_chat_routes.py` — `POST /api/global-chats/<chat_id>/pinned/<study_id>` (mirror existing DELETE)
+- `ezredbiom/Experiment/backend/sql_store_cache.py` — reuse `pin_study_to_chat`
+
+### Plan
+
+**Pin studies in chat bar**
+- [ ] Render composer pin/context chips on `browse` view (reuse `ctxStudies` and/or draft pin list)
+- [ ] Add pin action on study cards or context chips (not only `/report`)
+- [ ] Add `POST .../pinned/<study_id>` for global chats; add `pinStudy(chatId, studyId)` in frontend (mirror `unpinStudy`)
+- [ ] Show study titles in pin chips (not only "Study {id}")
+- [ ] On first message from browse, pass `ctxStudies` as `selected_studies` and persist pins if applicable
+
+**Enter → new global chat**
+- [ ] Extend `onKeyDown`: if `view.type === 'browse' && Enter && input.trim()`, run send flow
+- [ ] Relax `canSend` / `disabled` for browse (or dedicated handler): `setView({ type: 'global-chat', chatId: null })` then existing `sendMessage` lazy-create
+- [ ] Update composer placeholder for browse
+- [ ] Manual test: Enter from browse with/without context chips; Shift+Enter still inserts newline
+
+**Related**
+- [ ] Consider fixing TKT-004 (pin after SSE done) if batch-pin on send is added
+
+### Files Changed
+- `ezredbiom/Experiment/frontend/js/app_render.js`
+- `ezredbiom/Experiment/frontend/js/app_state.js`
+- `ezredbiom/Experiment/frontend/style.css`
+- `ezredbiom/Experiment/backend/routes/global_chat_routes.py`
+- `ezredbiom/Experiment/backend/sql_store_cache.py` (reuse only; no schema change)
+
+---
+
+*Generated: 2026-05-19*

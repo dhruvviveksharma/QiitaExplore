@@ -1,7 +1,7 @@
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 const API     = document.querySelector('meta[name="api-base"]')?.content
-              || 'http://localhost:5001/api';
+              || 'http://localhost:5002/api';
 const USER_ID = 'default';
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────────────

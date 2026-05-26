@@ -15,8 +15,8 @@ mkdir -p "$(dirname "$QIITA_EXPERIMENT_DB_PATH")"
 echo "Frontend uses Babel standalone (runtime transpilation) — no compile step needed."
 
 cd "$SCRIPT_DIR/backend"
-echo "Starting gunicorn on port 5001 (4 workers, 2 threads each)..."
-exec gunicorn -w 4 --threads 2 -b 0.0.0.0:5001 \
+echo "Starting gunicorn on port 5002 (4 workers, 2 threads each)..."
+exec gunicorn -w 4 --threads 2 -b 0.0.0.0:5002 \
   --timeout 120 --graceful-timeout 30 \
   --worker-class gthread \
   --log-level info \

@@ -122,11 +122,6 @@ def search():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({'status': 'ok'})
-
-
 def _probe_model(model_name):
     start = time.time()
     try:
