@@ -1,14 +1,23 @@
-# Web stack (Qiita-safe)
+# Web stack
 flask>=2.2,<2.3
 flask-cors>=3.0,<4.0
 python-dotenv>=1.0.0
 
-# OpenAI (new API, old Python OK)
+# LLM client
 openai>=1.0,<2.0
 
-# NoSQL cart store
+# SQLite migration helper (reads legacy TinyDB JSON format)
 tinydb>=4.8,<5.0
 
-# Data stack (Python 3.9 ceiling)
+# Data stack
 pandas>=1.5,<2.0
 numpy<2.0
+
+# Qiita DB layer (qiita_db/sql_connection.py → TRN)
+psycopg2-binary
+redis
+biom-format
+qiita-files @ https://github.com/qiita-spots/qiita-files/archive/master.zip
+
+# Production WSGI server
+gunicorn>=21.0,<22.0

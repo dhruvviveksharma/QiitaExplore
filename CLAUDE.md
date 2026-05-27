@@ -1,3 +1,5 @@
+# CLAUDE.md
+
 # Memory
 
 ## Me
@@ -16,9 +18,109 @@ Each study directory needs:
 
 Load via `commands.sh` which calls: `qiita db load-study`, `qiita db load-sample-template`, `qiita db load-prep-template`, `qiita db load-artifact`
 
-## important points
-Whenever we are interacting with the chatbot, I must see status of what function/ tool is being used. I need this information as the user so I know something is working in the background.
+## Important Points
+Whenever we are interacting with the chatbot, I must see status of what function/tool is being used. I need this information as the user so I know something is working in the background.
 
-When we are testing, I wish to use port 5002 to tunnel into my local website and on barnacle. When I merge into master, I want the default ports to change to 5001 again.
+---
 
-No code file under ezredbiom should be over 500 lines of code. Any future changes you wish to make, you can add it to "~/qiita-web/TICKETS/tickets.md"
+# Architecture
+
+| Layer      | Tech                                     | Location |
+|------------|------------------------------------------|----------|
+| Backend    | Flask, port 5001 (5002 in dev)           | `ezredbiom/backend/run.py` |
+| Frontend   | React (Babel standalone, no build step)  | `ezredbiom/frontend/app.js` |
+| Local DB   | SQLite                                   | `ezredbiom/backend/store/db.py` |
+| Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
+| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `run.py` |
+
+---
+
+# Established Patterns
+
+- **No-refresh sidebar**: After add/remove/create/delete, update local React state from the response body — never re-fetch. Use `setOpenProject`, patch `openProject.chats`, etc.
+- **Lazy detail fetching**: Study detail (preps, artifacts) only fetched on modal open or study add — never on page load. Uses `study_detail_cache` (6h TTL).
+- **LLM context**: Built via `_study_detail_block()` in `run.py` — includes `data_types`, `num_samples`, `num_preps`, and up to 5 prep lines from `preps_json`.
+
+---
+
+# Dev Workflow
+
+- **Testing branch**: Use port 5002 (local + barnacle tunnel)
+- **Master branch**: Port must be 5001 — change before merging
+- **Verify UI changes**: Start server, open browser, test golden path before marking done
+- **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
+
+---
+
+# Hard Constraints
+
+- No file in `ezredbiom/` may exceed 500 lines. If approaching limit, split and ticket it.
+- Unplanned work → `TICKETS/tickets.md`, not speculative code.
+
+---
+
+# Behavioral Guidelines
+
+Behavioral guidelines to reduce common LLM coding mistakes.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

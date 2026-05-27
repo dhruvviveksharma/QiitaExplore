@@ -1,0 +1,29 @@
+# Production requirements for the ezredbiom container.
+# Pinned to the same versions as the dev environment to avoid surprises.
+
+# ── Web stack ────────────────────────────────────────────────────────────────
+Flask==2.2.5
+Flask-Cors==3.0.10
+python-dotenv>=1.0.0
+
+# ── LLM client ──────────────────────────────────────────────────────────────
+openai>=1.0,<2.0
+
+# ── Legacy / kept for backend imports ───────────────────────────────────────
+# tinydb is referenced by sql_store migration code paths.
+tinydb>=4.8,<5.0
+
+# ── Data stack (Python 3.9) ─────────────────────────────────────────────────
+pandas==1.5.3
+numpy==1.26.4
+
+# ── Qiita DB layer ──────────────────────────────────────────────────────────
+# qiita_db/sql_connection.py and qiita_core/ are vendored in-repo (trimmed).
+# Only direct deps needed here.
+psycopg2-binary
+redis
+biom-format
+qiita-files @ https://github.com/qiita-spots/qiita-files/archive/master.zip
+
+# ── Production WSGI server ──────────────────────────────────────────────────
+gunicorn>=21.0,<22.0
