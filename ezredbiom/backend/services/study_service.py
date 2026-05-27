@@ -1,14 +1,16 @@
 # backend/services/study_service.py
 from qiita_db.sql_connection import TRN
+from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD, GLOBAL_SEARCH_SQL_LIMIT_NARROW
 
 
 def search_studies_from_plan(plan: dict):
     """Execute a search plan dict produced by llm_plan_query against Qiita."""
     keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:6]
     match_mode = "AND" if (plan.get("match_mode") or "AND").upper() == "AND" else "OR"
+    limit = GLOBAL_SEARCH_SQL_LIMIT_NARROW if match_mode == "AND" else GLOBAL_SEARCH_SQL_LIMIT_BROAD
 
     if not keywords:
-        return search_studies_with_sql("1=1", [], 50)
+        return search_studies_with_sql("1=1", [], GLOBAL_SEARCH_SQL_LIMIT_BROAD)
 
     clauses, params = [], []
     for kw in keywords:
@@ -16,7 +18,7 @@ def search_studies_from_plan(plan: dict):
         params.extend([f"%{kw}%", f"%{kw}%"])
 
     where = f" {match_mode} ".join(clauses)
-    studies = search_studies_with_sql(where, params, 50)
+    studies = search_studies_with_sql(where, params, limit)
 
     kw_lower = [k.lower() for k in keywords]
 

@@ -329,7 +329,10 @@ _QUERY_PLAN_SYSTEM = (
     '  "keywords": list of 1-6 search terms to match against study title and abstract'
     " (accumulate context from ALL turns — carry forward filters from prior messages)\n"
     '  "match_mode": "AND" if all terms must match, "OR" if any term suffices\n'
-    '  "description": short human-readable label for the search (e.g. "wild mouse shotgun studies")\n\n'
+    '  "description": short human-readable label for the search (e.g. "wild mouse shotgun studies")\n'
+    '  "skip_search": true if this turn is asking to filter, sort, or analyze studies ALREADY listed'
+    " in the conversation history — skip the database search and answer from prior context instead."
+    " Set false for any new discovery or exploration request.\n\n"
     "Output valid JSON only. No explanation, no markdown fences."
 )
 

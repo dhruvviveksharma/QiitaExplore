@@ -116,24 +116,30 @@ def api_global_chat_message_stream(chat_id):
                     "match_mode": plan.get("match_mode", "AND"),
                 })
                 yield ': keepalive\n\n'
-                yield _sse("step_start", {"name": "search_db", "label": "Searching Qiita database…"})
-                try:
-                    studies = search_studies_from_plan(plan)
-                except Exception:
-                    studies = []
+                skip_search = bool(plan.get("skip_search"))
                 n_sel = len(selected_studies) if selected_studies else 0
-                detail = f"{len(studies)} studies found"
-                if n_sel:
-                    detail += f" · merged with {n_sel} context {'studies' if n_sel != 1 else 'study'}"
-                yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": detail})
-                yield ': keepalive\n\n'
-                yield _sse("step_start", {"name": "build_context", "label": "Building context…"})
-                if selected_studies:
-                    study_ctx = merge_global_chat_context(selected_studies, studies, user_content)
-                    yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{n_sel} selected + {len(studies)} from search"})
+                if skip_search:
+                    studies = []
+                    study_ctx = None
+                    yield _sse("step_done", {"name": "search_db", "label": "Filtering from conversation context", "detail": "no new search"})
                 else:
-                    study_ctx = _build_global_search_context(studies, user_content)
-                    yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{len(studies)} studies"})
+                    yield _sse("step_start", {"name": "search_db", "label": "Searching Qiita database…"})
+                    try:
+                        studies = search_studies_from_plan(plan)
+                    except Exception:
+                        studies = []
+                    detail = f"{len(studies)} studies found"
+                    if n_sel:
+                        detail += f" · merged with {n_sel} context {'studies' if n_sel != 1 else 'study'}"
+                    yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": detail})
+                    yield ': keepalive\n\n'
+                    yield _sse("step_start", {"name": "build_context", "label": "Building context…"})
+                    if selected_studies:
+                        study_ctx = merge_global_chat_context(selected_studies, studies, user_content)
+                        yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{n_sel} selected + {len(studies)} from search"})
+                    else:
+                        study_ctx = _build_global_search_context(studies, user_content)
+                        yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{len(studies)} studies"})
                 yield ': keepalive\n\n'
                 pinned_studies = chat.get("pinned_studies") or []
                 pinned_ctx     = None
