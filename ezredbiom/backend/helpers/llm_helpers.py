@@ -340,6 +340,7 @@ def llm_plan_query(messages: list) -> dict:
         r = client.chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[{"role": "system", "content": _QUERY_PLAN_SYSTEM}] + _normalize_messages(messages),
+            timeout=45.0,
         )
         raw = (r.choices[0].message.content or "").strip()
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
