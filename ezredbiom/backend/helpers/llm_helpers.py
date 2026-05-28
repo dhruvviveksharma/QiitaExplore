@@ -325,18 +325,31 @@ def merge_global_chat_context(selected_studies, db_studies, user_query: str) -> 
 
 _QUERY_PLAN_SYSTEM = (
     "You are a database query planner for a microbiome study repository.\n"
-    "Given the conversation history, output ONLY a JSON object (no markdown, no prose) with:\n"
-    '  "keywords": list of 1-6 search terms to match against study title and abstract'
-    " (accumulate context from ALL turns — carry forward filters from prior messages)\n"
-    '  "match_mode": "AND" if all terms must match, "OR" if any term suffices\n'
-    '  "description": short human-readable label for the search (e.g. "wild mouse shotgun studies")\n'
-    '  "skip_search": true if this turn is asking to filter, sort, or analyze studies ALREADY listed'
-    " in the conversation history — skip the database search and answer from prior context instead."
-    " Set false for any new discovery or exploration request.\n\n"
-    "IMPORTANT — keyword normalisation: if a search term appears misspelled, abbreviated, or"
-    " non-standard in biology, use your knowledge of biological terminology to silently expand it"
-    " into 2–4 synonymous terms that are more likely to appear in scientific paper titles and"
-    " abstracts. Do NOT include the original malformed or abbreviated term as a keyword.\n\n"
+    "Given the conversation history, output ONLY a JSON object with:\n"
+    '  "keywords": list of 20–50 search terms (see expansion rules below)\n'
+    '  "description": short human-readable label (e.g. "American Gut Project studies")\n'
+    '  "skip_search": true only if the turn asks to filter/sort/analyze studies ALREADY listed'
+    " in the conversation — set false for any new discovery request\n\n"
+    "KEYWORD EXPANSION RULES — generate every plausible variant:\n"
+    "1. ORIGINAL: include the term exactly as the user typed it (unless it is a clear typo)\n"
+    "2. SUB-PHRASES: for multi-word inputs, include every subset combination.\n"
+    "   Example — 'American Gut Project': include 'American Gut Project', 'American Gut',\n"
+    "   'Gut Project', 'American Project', 'American', 'Gut', 'Project'\n"
+    "3. ABBREVIATION EXPANSION: if the input is an acronym, expand it in full AND include\n"
+    "   every sub-phrase of the expansion. Also keep the acronym itself.\n"
+    "   Example — 'AGP': include 'AGP', 'American Gut Project', 'American Gut', 'Gut Project',\n"
+    "   'American', 'Gut', 'Project'\n"
+    "4. FULL-NAME TO ABBREVIATION: if the input is a full phrase with a well-known acronym,\n"
+    "   include the acronym too. Example — 'Inflammatory Bowel Disease': also include 'IBD'\n"
+    "5. SYNONYMS: include scientific synonyms, common alternative spellings, related terms,\n"
+    "   and Latin/formal names that might appear in study titles or abstracts.\n"
+    "   Example — 'wild mice': include 'wild mice', 'wild mouse', 'feral mice', 'feral mouse',\n"
+    "   'wild-type', 'wildtype', 'WT mouse', 'WT mice', 'wild-caught', 'free-living mice'\n"
+    "6. PLURAL/SINGULAR: include both forms when applicable\n"
+    "7. HYPHEN VARIANTS: include both hyphenated and unhyphenated forms\n"
+    "   Example — include both 'wild-type' and 'wildtype'\n\n"
+    "All keywords are OR'd against study title, abstract, and alias — more terms = wider net.\n"
+    "Aim for 30–50 terms. Do not truncate or cap the list early.\n\n"
     "Output valid JSON only. No explanation, no markdown fences."
 )
 

@@ -6,7 +6,7 @@ from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD
 def build_where_from_plan(plan: dict) -> tuple:
     """Return (where_clause, params) for broad parameterized search from LLM plan.
     Always uses OR between keywords; searches title, abstract, and alias."""
-    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:8]
+    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 2][:50]
     if not keywords:
         return "1=1", []
     clauses, params = [], []
