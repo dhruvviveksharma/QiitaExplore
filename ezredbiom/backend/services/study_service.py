@@ -1,50 +1,22 @@
 # backend/services/study_service.py
 from qiita_db.sql_connection import TRN
-from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD, GLOBAL_SEARCH_SQL_LIMIT_NARROW
+from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD
 
 
-def build_where_from_plan(plan: dict) -> str:
-    """Return a human-readable WHERE clause string for display (not for execution)."""
-    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:6]
+def build_where_from_plan(plan: dict) -> tuple:
+    """Return (where_clause, params) for broad parameterized search from LLM plan.
+    Always uses OR between keywords; searches title, abstract, and alias."""
+    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:8]
     if not keywords:
-        return "1=1"
-    match_mode = "AND" if (plan.get("match_mode") or "AND").upper() == "AND" else "OR"
-    clauses = [
-        f"(s.study_title ILIKE '%{kw}%' OR s.study_abstract ILIKE '%{kw}%')"
-        for kw in keywords
-    ]
-    return f" {match_mode} ".join(clauses)
-
-
-def search_studies_from_plan(plan: dict):
-    """Execute a search plan dict produced by llm_plan_query against Qiita."""
-    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:6]
-    match_mode = "AND" if (plan.get("match_mode") or "AND").upper() == "AND" else "OR"
-    limit = GLOBAL_SEARCH_SQL_LIMIT_NARROW if match_mode == "AND" else GLOBAL_SEARCH_SQL_LIMIT_BROAD
-
-    if not keywords:
-        return search_studies_with_sql("1=1", [], GLOBAL_SEARCH_SQL_LIMIT_BROAD)
-
+        return "1=1", []
     clauses, params = [], []
     for kw in keywords:
-        clauses.append("(s.study_title ILIKE %s OR s.study_abstract ILIKE %s)")
-        params.extend([f"%{kw}%", f"%{kw}%"])
-
-    where = f" {match_mode} ".join(clauses)
-    studies = search_studies_with_sql(where, params, limit)
-
-    kw_lower = [k.lower() for k in keywords]
-
-    def _relevance(s):
-        title    = (s.get("study_title")    or "").lower()
-        abstract = (s.get("study_abstract") or "").lower()
-        score = sum((2 if kw in title else 0) + (1 if kw in abstract else 0) for kw in kw_lower)
-        return -score
-
-    return sorted(studies, key=_relevance)
+        clauses.append("(s.study_title ILIKE %s OR s.study_abstract ILIKE %s OR s.study_alias ILIKE %s)")
+        params.extend([f"%{kw}%", f"%{kw}%", f"%{kw}%"])
+    return " OR ".join(clauses), params
 
 
-def search_studies_with_sql(custom_sql_where="", params=None, limit=50):
+def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0):
     """
     Search studies using custom SQL WHERE clause
 
@@ -69,6 +41,11 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50):
     except (TypeError, ValueError):
         lim = 50
     lim = max(1, min(150, lim))
+    try:
+        off = int(offset)
+    except (TypeError, ValueError):
+        off = 0
+    off = max(0, off)
 
     with TRN:
         sql = f"""
@@ -100,6 +77,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50):
           AND ({custom_sql_where if custom_sql_where else '1=1'})
         ORDER BY s.study_id
         LIMIT {lim}
+        OFFSET {off}
         """
 
         TRN.add(sql, params)
