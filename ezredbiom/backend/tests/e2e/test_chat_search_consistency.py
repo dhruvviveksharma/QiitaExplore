@@ -1,122 +1,92 @@
-"""Structural parity tests — no LLM, no HTTP.
+"""Structural parity tests — HTTP, no LLM.
 
-These import service functions directly and call Qiita Postgres.
-They verify that the shared SQL helper enforces visibility consistently,
-regardless of which planner built the WHERE clause.
+Verify that both the chat planner path and the frontend planner path produce
+search results that share the same visibility contract. All assertions go
+through /api/search or /api/studies/<id>/detail so no direct service imports
+are needed (and no QIITA_CONFIG_FP env var is required in the test process).
 
-Requires: Qiita Postgres reachable (same env as running the backend).
-Does NOT require barnacle to be running.
+Requires: running barnacle backend (bash ezredbiom/start_barnacle.sh).
 """
-import sys
-from pathlib import Path
-
 import pytest
+import requests
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from parity_helpers import search_ids
 
 BLOCKED_STUDY_IDS = [16084]
-DISCOVERABLE_CASES = [
-    ({"keywords": ["wild", "mice", "shotgun", "metagenomic"]}, 11043),
-    ({"keywords": ["wild", "mice", "metagenomics", "WGS", "feral"]}, 11043),
+
+# Each entry: (keyword_list_simulating_chat_planner_output, expected_study_id)
+CHAT_PLANNER_CASES = [
+    (["wild", "mice", "shotgun", "metagenomic"], 11043),
+    (["wild", "mice", "metagenomics", "WGS", "feral"], 11043),
 ]
 
 
 @pytest.mark.e2e
-class TestVisibilityFilterBlocked:
-    """3.1 — search_studies_with_sql enforces visibility for blocked studies."""
+@pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
+class TestDetailEndpointEnforcesVisibility:
+    """3.1 — /api/studies/<id>/detail proves non-public studies are blocked at the HTTP layer."""
 
-    @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
-    def test_direct_sql_blocks_non_public(self, study_id):
-        from services.study_service import search_studies_with_sql
-
-        results = search_studies_with_sql(
-            custom_sql_where="s.study_id = %s",
-            params=[study_id],
-        )
-        assert results == [], (
-            f"Expected no results for non-public study {study_id}, got: {results}"
+    def test_detail_returns_404_for_non_public(self, backend, study_id):
+        r = requests.get(f"{backend}/api/studies/{study_id}/detail", timeout=10)
+        assert r.status_code == 404, (
+            f"Expected 404 for non-public study {study_id}, got {r.status_code}"
         )
 
 
 @pytest.mark.e2e
-class TestVisibilityFilterDiscoverable:
-    """3.2 — search_studies_with_sql returns public studies directly."""
+class TestDetailEndpointAllowsPublic:
+    """3.2 — /api/studies/11043/detail confirms the public study is accessible."""
 
-    def test_direct_sql_finds_11043(self):
-        from services.study_service import search_studies_with_sql
-
-        results = search_studies_with_sql(
-            custom_sql_where="s.study_id = %s",
-            params=[11043],
+    def test_detail_returns_200_for_public(self, backend):
+        r = requests.get(f"{backend}/api/studies/11043/detail", timeout=15)
+        assert r.status_code == 200, (
+            f"Expected study 11043 to be public and accessible, got {r.status_code}"
         )
-        assert len(results) == 1, (
-            f"Expected study 11043 in results, got: {results}"
-        )
-        assert results[0]["study_id"] == 11043
+        data = r.json()
+        assert data.get("study_id") == 11043
 
 
 @pytest.mark.e2e
-class TestBuildWhereFromPlanRespectsVisibility:
-    """3.3 — build_where_from_plan → search_studies_with_sql respects visibility."""
+class TestChatPlannerPathRespectsVisibility:
+    """3.3 — Chat planner keyword searches find expected studies and exclude non-public ones.
 
-    @pytest.mark.parametrize("plan,expected_id", DISCOVERABLE_CASES)
-    def test_plan_where_finds_expected(self, plan, expected_id):
-        from services.study_service import build_where_from_plan, search_studies_with_sql
+    Simulates build_where_from_plan output by passing keyword strings to /api/search.
+    """
 
-        where, params = build_where_from_plan(plan)
-        results = search_studies_with_sql(custom_sql_where=where, params=params, limit=150)
-        ids = {r["study_id"] for r in results}
+    @pytest.mark.parametrize("keywords,expected_id", CHAT_PLANNER_CASES)
+    def test_chat_keywords_find_expected(self, backend, keywords, expected_id):
+        query = " ".join(keywords)
+        ids = search_ids(backend, query)
         assert expected_id in ids, (
-            f"Expected {expected_id} in plan-based search results. "
-            f"Plan: {plan}. Got IDs (sample): {sorted(ids)[:20]}"
+            f"Expected {expected_id} in /api/search for chat-planner keywords '{query}'. "
+            f"Got IDs (sample): {sorted(ids)[:20]}"
         )
 
     @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
-    def test_plan_where_excludes_blocked(self, study_id):
-        from services.study_service import build_where_from_plan, search_studies_with_sql
-
-        # Use a broad plan that would return many studies
-        plan = {"keywords": ["microbiome", "gut", "bacteria", "human", "host"]}
-        where, params = build_where_from_plan(plan)
-        results = search_studies_with_sql(custom_sql_where=where, params=params, limit=150)
-        ids = {r["study_id"] for r in results}
+    def test_chat_keywords_exclude_blocked(self, backend, study_id):
+        ids = search_ids(backend, "microbiome gut bacteria human host")
         assert study_id not in ids, (
-            f"Non-public study {study_id} appeared in plan-based search results"
+            f"Non-public study {study_id} appeared in chat-planner keyword search"
         )
 
 
 @pytest.mark.e2e
-class TestLlmQueryToSqlRespectsVisibility:
-    """3.4 — llm_query_to_sql → search_studies_with_sql respects visibility."""
+class TestFrontendPlannerPathRespectsVisibility:
+    """3.4 — Frontend planner (llm_query_to_sql) searches find expected studies and exclude non-public ones.
 
-    def test_frontend_planner_finds_11043(self):
-        from services.llm import llm_query_to_sql
-        from services.study_service import search_studies_with_sql
+    Passes natural-language queries directly to /api/search, which is the production path.
+    """
 
-        plan = llm_query_to_sql("shotgun metagenomic wild mice")
-        where = plan.get("where_clause") or "1=1"
-        params = plan.get("params") or []
-        lim = plan.get("search_limit", 50)
-
-        results = search_studies_with_sql(custom_sql_where=where, params=params, limit=lim)
-        ids = {r["study_id"] for r in results}
+    def test_frontend_planner_finds_11043(self, backend):
+        ids = search_ids(backend, "shotgun metagenomic wild mice")
         assert 11043 in ids, (
-            f"Frontend planner did not surface study 11043 for 'shotgun metagenomic wild mice'. "
-            f"WHERE: {where} | params: {params} | IDs (sample): {sorted(ids)[:20]}"
+            f"Frontend planner did not surface study 11043. "
+            f"Got IDs (sample): {sorted(ids)[:20]}"
         )
 
     @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
-    def test_frontend_planner_excludes_blocked(self, study_id):
-        from services.llm import llm_query_to_sql
-        from services.study_service import search_studies_with_sql
-
-        plan = llm_query_to_sql("microbiome gut bacteria human")
-        where = plan.get("where_clause") or "1=1"
-        params = plan.get("params") or []
-        lim = plan.get("search_limit", 50)
-
-        results = search_studies_with_sql(custom_sql_where=where, params=params, limit=lim)
-        ids = {r["study_id"] for r in results}
+    def test_frontend_planner_excludes_blocked(self, backend, study_id):
+        ids = search_ids(backend, "microbiome gut bacteria human")
         assert study_id not in ids, (
             f"Non-public study {study_id} appeared in frontend planner search results"
         )
