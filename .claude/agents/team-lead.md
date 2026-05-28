@@ -28,18 +28,27 @@ Inject this block verbatim at the top of every agent call.
         ↓
     [PLANNER] → produces: structured task spec
         ↓
+    [USER ✓] ← surface plan, wait for explicit approval
+        ↓
     [SWE] → produces: code diff + change summary   ←─────────────────────────────┐
+        ↓                                                                          │
+    [USER ✓] ← surface diff + summary, wait for explicit approval                 │
         ↓                                                                          │
     [REVIEWER] → produces: findings                                                │
         ├─ if BLOCKING findings → append findings below spec, route back to SWE ──┘
         ├─ if SPEC DEFECT signal → route back to PLANNER (re-spec, attach defect)
         ├─ if UNCLEAR findings → route to user for clarification
         └─ if no BLOCKING findings → continue
+        ↓
+    [USER ✓] ← surface findings, wait for explicit approval
+        ↓
     [TESTER] → produces: test results               ←─────────────────────────────┐
         ├─ if FAIL → append failing tests below spec, route back to SWE ──────────┘
         ├─ if UNCOVERED BEHAVIORS flagged → route to PLANNER for spec amendment
         ├─ if TEST DISPUTE flagged → escalate to user
         └─ if all PASS → task COMPLETE
+        ↓
+    [USER ✓] ← surface results, wait for explicit approval before marking COMPLETE
 
 ## Task Batching
 If the Planner returns multiple tasks, pipeline them one at a time. Complete the full SWE → REVIEW → TEST cycle for task 1 before starting task 2. Never batch multiple tasks into a single SWE call.

@@ -329,7 +329,10 @@ _QUERY_PLAN_SYSTEM = (
     '  "keywords": list of 20–50 search terms (see expansion rules below)\n'
     '  "description": short human-readable label (e.g. "American Gut Project studies")\n'
     '  "skip_search": true only if the turn asks to filter/sort/analyze studies ALREADY listed'
-    " in the conversation — set false for any new discovery request\n\n"
+    " in the conversation — set false for any new discovery request\n"
+    '  "page": 0-based page number for pagination. Default 0. Increment by 1 each time the user'
+    " explicitly asks for more results from the SAME search (e.g. 'show me more', 'next batch',"
+    " 'none of these are right, try more'). Reset to 0 for any new/different search topic.\n\n"
     "KEYWORD EXPANSION RULES — generate every plausible variant:\n"
     "1. ORIGINAL: include the term exactly as the user typed it (unless it is a clear typo)\n"
     "2. SUB-PHRASES: for multi-word inputs, include every subset combination.\n"
@@ -368,9 +371,10 @@ def llm_plan_query(messages: list) -> dict:
         plan.setdefault("keywords", [])
         plan.setdefault("match_mode", "AND")
         plan.setdefault("description", "studies")
+        plan.setdefault("page", 0)
         return plan
     except Exception:
-        return {"keywords": [], "match_mode": "AND", "description": "studies"}
+        return {"keywords": [], "match_mode": "AND", "description": "studies", "page": 0}
 
 
 def llm_chat(messages, study_context_text: str, system_prompt: str = None, model: str = None):
