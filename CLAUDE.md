@@ -27,11 +27,13 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 | Layer      | Tech                                     | Location |
 |------------|------------------------------------------|----------|
-| Backend    | Flask, port 5001 (5002 in dev)           | `ezredbiom/backend/run.py` |
-| Frontend   | React (Babel standalone, no build step)  | `ezredbiom/frontend/app.js` |
-| Local DB   | SQLite                                   | `ezredbiom/backend/store/db.py` |
+| Backend    | Gunicorn (`start_barnacle.sh`), port 5002 | `ezredbiom/start_barnacle.sh` → `ezredbiom/backend/run.py` (`run:app`) |
+| Frontend   | React (Babel standalone, no build step)  | `ezredbiom/frontend/js/` |
+| Local DB   | SQLite                                   | `ezredbiom/backend/store/` |
 | Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
-| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `run.py` |
+| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `ezredbiom/backend/helpers/llm_helpers.py` |
+
+**Backend runtime:** We do not run `python run.py` or Flask’s dev server. Start and test the API only with `bash ezredbiom/start_barnacle.sh` (Gunicorn, 4 workers, 2 threads, `gthread`).
 
 ---
 
@@ -39,15 +41,14 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 - **No-refresh sidebar**: After add/remove/create/delete, update local React state from the response body — never re-fetch. Use `setOpenProject`, patch `openProject.chats`, etc.
 - **Lazy detail fetching**: Study detail (preps, artifacts) only fetched on modal open or study add — never on page load. Uses `study_detail_cache` (6h TTL).
-- **LLM context**: Built via `_study_detail_block()` in `run.py` — includes `data_types`, `num_samples`, `num_preps`, and up to 5 prep lines from `preps_json`.
+- **LLM context**: Built via helpers in `ezredbiom/backend/helpers/` (e.g. `_study_detail_block()` in `qiita_fetch.py`) — includes `data_types`, `num_samples`, `num_preps`, and prep metadata where applicable.
 
 ---
 
 # Dev Workflow
 
-- **Testing branch**: Use port 5002 (local + barnacle tunnel)
-- **Master branch**: Port must be 5001 — change before merging
-- **Verify UI changes**: Start server, open browser, test golden path before marking done
+- **Start backend**: `bash ezredbiom/start_barnacle.sh` only (Gunicorn on port 5002; frontend `api-base` must match)
+- **Verify UI changes**: Run barnacle, open browser, test golden path before marking done
 - **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
 
 ---
