@@ -4,7 +4,7 @@ from flask import Response, jsonify, request, stream_with_context
 
 from run import app
 from config import GLOBAL_CHAT_SYSTEM_PROMPT
-from services.study_service import search_studies_with_sql, search_studies_from_plan
+from services.study_service import search_studies_with_sql, search_studies_from_plan, build_where_from_plan
 from store import (
     SCOPE_GLOBAL,
     append_global_chat_messages,
@@ -109,11 +109,13 @@ def api_global_chat_message_stream(chat_id):
             else:
                 yield _sse("step_start", {"name": "translate_query", "label": "Planning query…"})
                 plan = llm_plan_query(full_msgs)
+                sql_where = build_where_from_plan(plan)
                 yield _sse("step_done", {"name": "translate_query", "label": "Query planned", "detail": plan["description"]})
                 yield _sse("query_plan", {
                     "description": plan["description"],
                     "keywords": plan.get("keywords", []),
                     "match_mode": plan.get("match_mode", "AND"),
+                    "sql_where": sql_where,
                 })
                 yield ': keepalive\n\n'
                 skip_search = bool(plan.get("skip_search"))

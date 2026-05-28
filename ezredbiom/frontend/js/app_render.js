@@ -375,6 +375,12 @@ function renderApp(s) {
                               <span className="qp-mode">{m.queryPlan.match_mode}</span>
                             </div>
                           )}
+                          {m.queryPlan?.sql_where && (
+                            <details className="msg-sql-details">
+                              <summary className="msg-sql-summary">Show SQL</summary>
+                              <div className="sql-block">WHERE {m.queryPlan.sql_where}</div>
+                            </details>
+                          )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
                             <div className="msg-bubble"><div className="typing-dots"><span/><span/><span/></div></div>
                           ) : (!m.isStreaming || m.content) ? (

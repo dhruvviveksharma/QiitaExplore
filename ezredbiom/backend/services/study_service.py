@@ -3,6 +3,19 @@ from qiita_db.sql_connection import TRN
 from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD, GLOBAL_SEARCH_SQL_LIMIT_NARROW
 
 
+def build_where_from_plan(plan: dict) -> str:
+    """Return a human-readable WHERE clause string for display (not for execution)."""
+    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:6]
+    if not keywords:
+        return "1=1"
+    match_mode = "AND" if (plan.get("match_mode") or "AND").upper() == "AND" else "OR"
+    clauses = [
+        f"(s.study_title ILIKE '%{kw}%' OR s.study_abstract ILIKE '%{kw}%')"
+        for kw in keywords
+    ]
+    return f" {match_mode} ".join(clauses)
+
+
 def search_studies_from_plan(plan: dict):
     """Execute a search plan dict produced by llm_plan_query against Qiita."""
     keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 3][:6]
