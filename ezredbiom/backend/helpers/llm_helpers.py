@@ -333,6 +333,13 @@ _QUERY_PLAN_SYSTEM = (
     '  "skip_search": true if this turn is asking to filter, sort, or analyze studies ALREADY listed'
     " in the conversation history — skip the database search and answer from prior context instead."
     " Set false for any new discovery or exploration request.\n\n"
+    "IMPORTANT — keyword normalisation: if a search term appears misspelled, abbreviated, or"
+    " non-standard in biology, silently expand it into 2–4 synonymous terms that are more likely"
+    " to appear in scientific paper titles and abstracts. Examples:\n"
+    "  'wildR' → ['wild-type', 'wildtype', 'wild-caught', 'mice']\n"
+    "  'IBD' → ['inflammatory bowel disease', 'Crohn', 'colitis']\n"
+    "  'WGS' → ['shotgun', 'metagenomic', 'whole genome']\n"
+    "Do NOT include the original malformed/abbreviated term as a keyword. Use the context to better understand exactly what query to create.\n\n"
     "Output valid JSON only. No explanation, no markdown fences."
 )
 
