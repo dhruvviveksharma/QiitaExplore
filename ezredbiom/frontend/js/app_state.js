@@ -19,7 +19,9 @@ function useAppState() {
   const [newProjName,  setNewProjName]  = useState('');
   const [input,   setInput]   = useState('');
   const [sending, setSending] = useState(false);
-  const [compErr, setCompErr] = useState('');
+  const [compErr,        setCompErr]        = useState('');
+  const [slashIndex,     setSlashIndex]     = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
   const _VALID_MODELS = new Set(['qwen3','qwen3-small','gpt-oss','gemma','gemma-small','kimi','glm-5','minimax-m2']);
   const [selectedModel, setSelectedModelState] = useState(() => {
     try {
@@ -51,6 +53,8 @@ function useAppState() {
     taRef.current.style.height = '0';
     taRef.current.style.height = Math.min(200, taRef.current.scrollHeight) + 'px';
   }, [input]);
+
+  useEffect(() => { setSlashIndex(0); setSlashDismissed(false); }, [input]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -253,18 +257,60 @@ function useAppState() {
     } catch (_) {}
   };
 
+  const removeCtxStudyFromChat = (chatId, studyId) => {
+    setChatCache(prev => {
+      const c = prev[chatId];
+      if (!c) return prev;
+      return { ...prev, [chatId]: { ...c, ctxStudies: (c.ctxStudies || []).filter(s => s.study_id !== studyId) } };
+    });
+  };
+
+  const completeSlash = (item) => {
+    setInput(item.insert);
+    setTimeout(() => taRef.current?.focus(), 0);
+  };
+
   // ─── send ─────────────────────────────────────────────────────────────────────
   const sendMessage = async () => {
     const msg = input.trim();
     if (!msg || sending) return;
+    setSending(true); setCompErr(''); setInput('');
 
-    if (/^\/systems\s*$/i.test(msg)) {
-      setSending(true); setCompErr(''); setInput('');
-      try {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const reportMatch   = /^\/report\s+(\d+)\s*$/i.exec(msg);
+    const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
+    const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report` : msg;
+
+    try {
+      // ── Normalize browse → new global chat ──────────────────────────────────
+      let workView   = view;
+      let studiesCtx = null; // null means read from cache; set when coming from browse
+
+      if (view.type === 'browse') {
+        const snapCtx = [...ctxStudies];
+        const res = await apiPost('/global-chats', { user_id: USER_ID });
+        if (!res.ok) throw new Error('Failed to create chat');
+        const chat = await res.json();
+        setChatCache(prev => ({
+          ...prev,
+          [chat.chat_id]: { messages: [], title: displayMsg.slice(0, 60), ctxStudies: snapCtx },
+        }));
+        setGlobalChats(prev => [chat, ...prev]);
+        workView   = { type: 'global-chat', chatId: chat.chat_id };
+        setView(workView);
+        setCtxStudies([]);
+        studiesCtx = snapCtx;
+      }
+
+      // ── /systems ────────────────────────────────────────────────────────────
+      if (/^\/systems\s*$/i.test(msg)) {
         let chatId;
-        if (view.type === 'project-chat') {
-          const { projId } = view;
-          chatId = view.chatId;
+        if (workView.type === 'project-chat') {
+          const { projId } = workView;
+          chatId = workView.chatId;
           if (!chatId) {
             const res = await apiPost(`/projects/${projId}/chats`, { user_id: USER_ID });
             if (!res.ok) throw new Error('Failed to create chat');
@@ -273,8 +319,8 @@ function useAppState() {
             setChatCache(prev => ({ ...prev, [chatId]: { messages: [], title: '/systems', pinnedStudies: [], totalStudiesInProject: chat.total_studies_in_project } }));
             setView(v => ({ ...v, chatId }));
           }
-        } else if (view.type === 'global-chat') {
-          chatId = view.chatId;
+        } else if (workView.type === 'global-chat') {
+          chatId = workView.chatId;
           if (!chatId) {
             const res = await apiPost('/global-chats', { user_id: USER_ID });
             if (!res.ok) throw new Error('Failed to create chat');
@@ -284,35 +330,20 @@ function useAppState() {
             setGlobalChats(prev => [chat, ...prev]);
             setView(v => ({ ...v, chatId }));
           }
-        } else {
-          return;
         }
+        if (!chatId) return;
         optimisticAppend(chatId, '/systems — Model status');
         patchLast(chatId, m => ({ ...m, pendingStep: { name: 'probe', label: 'Probing all models…' } }));
         const res = await fetch(`${API}/systems`);
         if (!res.ok) throw new Error('Systems check failed');
         const models = await res.json();
         patchLast(chatId, m => ({ ...m, ui: { kind: 'systems_status', models }, pendingStep: null, isStreaming: false }));
-      } catch (e) {
-        if (e.name !== 'AbortError') setCompErr(e.message || 'Failed to check systems');
-      } finally {
-        setSending(false);
+        return;
       }
-      return;
-    }
 
-    const reportMatch  = /^\/report\s+(\d+)\s*$/i.exec(msg);
-    const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
-    const displayMsg   = reportStudyId != null ? `/report ${reportStudyId} - Full study report` : msg;
-    setSending(true); setCompErr(''); setInput('');
-
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
-    try {
-      if (view.type === 'project-chat') {
-        let { projId, chatId } = view;
+      // ── /report + regular messages ──────────────────────────────────────────
+      if (workView.type === 'project-chat') {
+        let { projId, chatId } = workView;
         if (!chatId) {
           const res = await apiPost(`/projects/${projId}/chats`, { user_id: USER_ID });
           if (!res.ok) throw new Error('Failed to create chat');
@@ -348,23 +379,20 @@ function useAppState() {
           onUi:        (payload)  => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
           onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
           onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
-            ...m,
-            pendingStep: null,
-            steps: [...(m.steps || []), { name, label, detail }],
+            ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
-          onDone:  () => {
+          onDone: () => {
             const title = displayMsg.slice(0, 60);
             applyStreamDone(chatId, title, reportStudyId);
             setOpenProject(prev => prev ? {
-              ...prev,
-              chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
+              ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
             } : prev);
           },
           onError: ({ error }) => setCompErr(error || 'Error'),
         }, ctrl.signal);
 
-      } else if (view.type === 'global-chat') {
-        let { chatId } = view;
+      } else if (workView.type === 'global-chat') {
+        let { chatId } = workView;
         if (!chatId) {
           const res = await apiPost('/global-chats', { user_id: USER_ID });
           if (!res.ok) throw new Error('Failed to create chat');
@@ -375,13 +403,14 @@ function useAppState() {
           setView(v => ({ ...v, chatId }));
         }
         optimisticAppend(chatId, displayMsg);
+        const ctxToSend = studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || []);
         const res = await fetch(`${API}/global-chats/${chatId}/message/stream`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             user_id: USER_ID,
             message: msg,
             model: selectedModel,
-            selected_studies: ctxStudies,
+            selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
           }),
           signal: ctrl.signal,
@@ -395,12 +424,10 @@ function useAppState() {
           onUi:        (payload)  => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
           onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
           onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
-            ...m,
-            pendingStep: null,
-            steps: [...(m.steps || []), { name, label, detail }],
+            ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
           onQueryPlan: (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
-          onDone:  () => {
+          onDone: () => {
             const title = displayMsg.slice(0, 60);
             applyStreamDone(chatId, title, reportStudyId);
             setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
@@ -457,7 +484,12 @@ function useAppState() {
   const ctxStudyIds    = useMemo(() => ctxStudies.map(s => s.study_id), [ctxStudies]);
   const displayStudies = searched ? results : firstStudies;
   const isChat         = view.type === 'project-chat' || view.type === 'global-chat';
-  const canSend        = isChat && input.trim().length > 0 && !sending;
+  const canSend        = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending;
+  const slashMatches   = useMemo(() => {
+    if (!/^\/\S*$/.test(input)) return [];
+    const q = input.toLowerCase();
+    return SLASH_COMMANDS.filter(c => c.cmd.startsWith(q));
+  }, [input]);
 
   const topTitle = useMemo(() => {
     if (view.type === 'project-chat') {
@@ -473,12 +505,14 @@ function useAppState() {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
     setCtxStudies, setInput, setSelectedModel,
+    setSlashIndex, setSlashDismissed,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
     ctxStudies, showNewProj, newProjName,
     input, sending, compErr, selectedModel,
+    slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     // refs
@@ -488,8 +522,9 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    removeCtxStudyFromChat, completeSlash,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
-    activeMsgs, lastContent,
+    activeMsgs, lastContent, slashMatches,
   };
 }

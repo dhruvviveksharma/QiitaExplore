@@ -264,4 +264,57 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
 
 ---
 
+## TKT-010: DuckDB, MIINT
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+The live app depends on exactly two files outside `ezredbiom/`:
+- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
+- `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
+
+Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
+
+### Plan
+- [ ] Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
+- [ ] Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
+  (see commit `ed3fc3d8` for an existing template)
+- [ ] Remove `qiita_db` and `qiita_core` imports from those files
+- [ ] Verify tests pass and no `ImportError` at startup
+- [ ] `git rm -r qiita_db/ qiita_core/`
+
+### Files Changed
+- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
+- `qiita_db/` — delete after refactor
+- `qiita_core/` — delete after refactor
+
+---
+
+## TKT-009: BIOM include
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+The live app depends on exactly two files outside `ezredbiom/`:
+- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
+- `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
+
+Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
+
+### Plan
+- [ ] Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
+- [ ] Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
+  (see commit `ed3fc3d8` for an existing template)
+- [ ] Remove `qiita_db` and `qiita_core` imports from those files
+- [ ] Verify tests pass and no `ImportError` at startup
+- [ ] `git rm -r qiita_db/ qiita_core/`
+
+### Files Changed
+- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
+- `qiita_db/` — delete after refactor
+- `qiita_core/` — delete after refactor
+
+---
 *Generated: 2026-05-19 | Updated: 2026-05-26*

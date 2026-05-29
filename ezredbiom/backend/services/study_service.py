@@ -5,14 +5,18 @@ from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD
 
 def build_where_from_plan(plan: dict) -> tuple:
     """Return (where_clause, params) for broad parameterized search from LLM plan.
-    Always uses OR between keywords; searches title, abstract, and alias."""
+    Always uses OR between keywords; searches title, abstract, alias, PI name,
+    PI affiliation, and lab contact name."""
     keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 2][:50]
     if not keywords:
         return "1=1", []
     clauses, params = [], []
     for kw in keywords:
-        clauses.append("(s.study_title ILIKE %s OR s.study_abstract ILIKE %s OR s.study_alias ILIKE %s)")
-        params.extend([f"%{kw}%", f"%{kw}%", f"%{kw}%"])
+        clauses.append(
+            "(s.study_title ILIKE %s OR s.study_abstract ILIKE %s OR s.study_alias ILIKE %s"
+            " OR sp_pi.name ILIKE %s OR sp_pi.affiliation ILIKE %s OR sp_lab.name ILIKE %s)"
+        )
+        params.extend([f"%{kw}%"] * 6)
     return " OR ".join(clauses), params
 
 

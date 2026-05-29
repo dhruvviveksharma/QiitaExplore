@@ -3,19 +3,22 @@ function renderApp(s) {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
     setCtxStudies, setInput, setSelectedModel,
+    setSlashIndex, setSlashDismissed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
     ctxStudies, showNewProj, newProjName,
     input, sending, compErr, selectedModel,
+    slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     taRef, bottomRef,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    removeCtxStudyFromChat, completeSlash,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
-    activeMsgs,
+    activeMsgs, slashMatches,
   } = s;
 
   return (
@@ -207,18 +210,6 @@ function renderApp(s) {
                 ))}
               </div>
 
-              {!openProjId && ctxStudies.length > 0 && (
-                <div className="ctx-bar">
-                  <span className="ctx-label">Global chat context</span>
-                  <span className="ctx-hint">Searches Qiita on every message; chips add these studies as extra context. Remove all chips for search-only.</span>
-                  {ctxStudies.map(s => (
-                    <button key={s.study_id} className="ctx-chip"
-                      onClick={() => setCtxStudies(prev => prev.filter(x => x.study_id !== s.study_id))}>
-                      {(s.study_title||'Untitled').slice(0,32)} ×
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {sqlQuery && (
                 <>
@@ -258,7 +249,7 @@ function renderApp(s) {
                                 <button className={`btn-card-ctx ${inCtx ? 'on' : ''}`}
                                   onClick={() => setCtxStudies(prev =>
                                     inCtx ? prev.filter(s => s.study_id !== study.study_id) : [...prev, study])}>
-                                  {inCtx ? '✓ Context' : '+ Context'}
+                                  {inCtx ? '✓ Pinned' : '+ Pin'}
                                 </button>
                               )}
                             </div>
@@ -300,13 +291,13 @@ function renderApp(s) {
                   ))}
                 </div>
               )}
-              {view.type === 'global-chat' && ctxStudies.length > 0 && (
+              {view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0 && (
                 <div className="sources-bar">
                   <span className="sources-label">Context</span>
                   <span className="sources-hint">Merged with DB search on send</span>
-                  {ctxStudies.map(s => (
+                  {(chatCache[view.chatId]?.ctxStudies || []).map(s => (
                     <button key={s.study_id} className="src-chip removable"
-                      onClick={() => setCtxStudies(prev => prev.filter(x => x.study_id !== s.study_id))}>
+                      onClick={() => removeCtxStudyFromChat(view.chatId, s.study_id)}>
                       {(s.study_title||'Untitled').slice(0,40)} ×
                     </button>
                   ))}
@@ -432,16 +423,31 @@ function renderApp(s) {
               })()}
             </div>
           )}
-          <div className={`composer ${!isChat ? 'muted' : ''}`}>
+          {view.type === 'browse' && (
+            <PinnedBar studies={ctxStudies} onRemove={id => setCtxStudies(prev => prev.filter(s => s.study_id !== id))} />
+          )}
+          {slashMatches.length > 0 && !slashDismissed && (
+            <SlashCommandMenu matches={slashMatches} activeIndex={slashIndex} onPick={completeSlash} />
+          )}
+          <div className={`composer ${!(isChat || view.type === 'browse') ? 'muted' : ''}`}>
             <textarea
               ref={taRef}
               className="composer-ta"
               rows={1}
-              placeholder={isChat ? 'Message…' : 'Open a chat to start messaging'}
+              placeholder={(isChat || view.type === 'browse') ? 'Message…' : 'Open a chat to start messaging'}
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && isChat) { e.preventDefault(); sendMessage(); } }}
-              disabled={!isChat || sending}
+              onKeyDown={e => {
+                const menuOpen = slashMatches.length > 0 && !slashDismissed;
+                if (menuOpen) {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, slashMatches.length - 1)); return; }
+                  if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
+                  if (e.key === 'Tab')       { e.preventDefault(); completeSlash(slashMatches[slashIndex]); return; }
+                  if (e.key === 'Escape')    { e.preventDefault(); setSlashDismissed(true); return; }
+                }
+                if (e.key === 'Enter' && !e.shiftKey && (isChat || view.type === 'browse')) { e.preventDefault(); sendMessage(); }
+              }}
+              disabled={!(isChat || view.type === 'browse') || sending}
             />
             <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
           </div>

@@ -4,7 +4,7 @@ Extend DISCOVERY_CASES as you validate more (query, expected_study_id) pairs.
 """
 import pytest
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids
+from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
 
 # ---- Extend this list as you validate more (query, expected_id) pairs ----
 DISCOVERY_CASES = [
@@ -32,17 +32,25 @@ class TestChatFindsExpected:
     """2.2 — Chat surfaces the expected study for the given query."""
 
     def test_chat_finds_study(self, backend, global_chat, query, expected_id):
-        result = stream_chat(backend, global_chat["id"], query)
-        # Pass if the study ID appears in the assistant text OR in the chat's search step.
-        in_text = expected_id in result["study_ids_mentioned"]
+        result = stream_chat(backend, global_chat["chat_id"], query)
+
+        # Deterministic check: expected study must be in the chat's search step.
         in_search = False
         if result["query_plan"]:
             chat_ids = chat_search_ids(backend, result["query_plan"])
             in_search = expected_id in chat_ids
-        assert in_text or in_search, (
-            f"Study {expected_id} not found via chat for query '{query}'.\n"
-            f"Mentioned in text: {result['study_ids_mentioned']}\n"
+        assert in_search or expected_id in result["study_ids_mentioned"], (
+            f"Study {expected_id} not in chat's search results for '{query}'.\n"
             f"Query plan: {result['query_plan']}"
+        )
+
+        # LLM judge: assistant must recommend or mention a relevant study.
+        assert llm_judge(
+            query, result["assistant_text"],
+            "mention or recommend a specific study related to the query",
+        ), (
+            f"Judge says assistant did not meaningfully address '{query}'.\n"
+            f"Text: {result['assistant_text'][:500]}"
         )
 
 
@@ -55,7 +63,7 @@ class TestBothPathsIntersectOnExpected:
     def test_both_paths_return_study(self, backend, global_chat, query, expected_id):
         frontend_ids = search_ids(backend, query)
 
-        result = stream_chat(backend, global_chat["id"], query)
+        result = stream_chat(backend, global_chat["chat_id"], query)
         chat_ids = set()
         if result["query_plan"]:
             chat_ids = chat_search_ids(backend, result["query_plan"])
@@ -93,7 +101,7 @@ class TestChatKeywordsAreRicher:
         raw_params = frontend_plan.get("params") or []
         frontend_kws = {p.strip("%").lower() for p in raw_params}
 
-        result = stream_chat(backend, global_chat["id"], query)
+        result = stream_chat(backend, global_chat["chat_id"], query)
         chat_kws = {k.lower().strip() for k in (result.get("query_plan") or {}).get("keywords", [])}
 
         missing = frontend_kws - chat_kws

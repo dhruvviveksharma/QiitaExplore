@@ -50,7 +50,7 @@ def global_chat(backend):
     yield chat
     try:
         requests.delete(
-            f"{backend}/api/global-chats/{chat['id']}",
+            f"{backend}/api/global-chats/{chat['chat_id']}",
             params={"user_id": "parity_test"},
             timeout=5,
         )

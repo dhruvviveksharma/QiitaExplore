@@ -393,3 +393,42 @@ function SamplesReportBubble({ ui, messageKey }) {
     </div>
   );
 }
+
+// ─── SLASH_COMMANDS registry ──────────────────────────────────────────────────
+const SLASH_COMMANDS = [
+  { cmd: '/systems', insert: '/systems',  usage: '/systems',    desc: 'Check status & latency of all available LLM models.' },
+  { cmd: '/report',  insert: '/report ',  usage: '/report 104', desc: 'Load full sample-level metadata for a Qiita study.' },
+];
+
+// ─── SlashCommandMenu ─────────────────────────────────────────────────────────
+function SlashCommandMenu({ matches, activeIndex, onPick }) {
+  if (!matches || matches.length === 0) return null;
+  return (
+    <div className="slash-menu">
+      {matches.map((item, i) => (
+        <div key={item.cmd} className={`slash-menu-row${i === activeIndex ? ' active' : ''}`}
+          onMouseDown={e => { e.preventDefault(); onPick(item); }}>
+          <span className="slash-menu-cmd">{item.cmd}</span>
+          <span className="slash-menu-usage">{item.usage}</span>
+          <span className="slash-menu-desc">{item.desc}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── PinnedBar ────────────────────────────────────────────────────────────────
+function PinnedBar({ studies, onRemove }) {
+  if (!studies || studies.length === 0) return null;
+  return (
+    <div className="composer-pins">
+      <span className="composer-pins-label">Pinned:</span>
+      {studies.map(s => (
+        <span key={s.study_id} className="composer-pin-chip">
+          {(s.study_title || 'Untitled').slice(0, 32)}
+          <button className="composer-pin-x" title="Unpin" onClick={() => onRemove(s.study_id)}>×</button>
+        </span>
+      ))}
+    </div>
+  );
+}

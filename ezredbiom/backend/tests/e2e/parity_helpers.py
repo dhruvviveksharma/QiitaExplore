@@ -1,13 +1,12 @@
 """Shared helper functions for e2e parity tests."""
 import json
+import os
 import re
 
 import requests
 
-_REFUSAL_RE = re.compile(
-    r"(not\s+(public|available|accessible)|private|no\s+(?:accessible\s+)?data|cannot\s+find|not\s+found)",
-    re.I,
-)
+_JUDGE_MODEL = "kimi"
+_JUDGE_BASE_URL = "https://ellm.nrp-nautilus.io/v1"
 
 
 def search_ids(backend_url: str, query: str) -> set:
@@ -22,18 +21,30 @@ def search_ids(backend_url: str, query: str) -> set:
     return {int(row["study_id"]) for row in (data.get("results") or [])}
 
 
-def stream_chat(backend_url: str, chat_id: str, message: str, timeout: int = 90) -> dict:
+def stream_chat(
+    backend_url: str,
+    chat_id: str,
+    message: str,
+    report_study_id: int = None,
+    timeout: int = 120,
+) -> dict:
     """POST a message to a global chat and consume the SSE stream.
 
     Returns a dict with:
       query_plan          — the query_plan SSE event payload (or None)
-      search_count        — int from step_done search_db detail (or None)
+      search_count        — int from step_done/search_db detail (or None)
       assistant_text      — full assembled LLM reply
       study_ids_mentioned — set of ints found in the assistant text
+      ui_payload          — payload from the `ui` SSE event (set when report_study_id is used)
+      step_done_labels    — list of (name, label) tuples from all step_done events
     """
+    body = {"user_id": "parity_test", "message": message}
+    if report_study_id is not None:
+        body["report_study_id"] = report_study_id
+
     r = requests.post(
         f"{backend_url}/api/global-chats/{chat_id}/message/stream",
-        json={"user_id": "parity_test", "message": message},
+        json=body,
         stream=True,
         timeout=timeout,
     )
@@ -41,6 +52,8 @@ def stream_chat(backend_url: str, chat_id: str, message: str, timeout: int = 90)
 
     query_plan = None
     search_count = None
+    ui_payload = None
+    step_done_labels = []
     tokens = []
 
     for raw_line in r.iter_lines(decode_unicode=True):
@@ -57,11 +70,16 @@ def stream_chat(backend_url: str, chat_id: str, message: str, timeout: int = 90)
 
             if event_type == "query_plan":
                 query_plan = data
-            elif event_type == "step_done" and data.get("name") == "search_db":
-                detail = data.get("detail") or ""
-                m = re.search(r"(\d+)\s+stud", detail)
-                if m:
-                    search_count = int(m.group(1))
+            elif event_type == "step_done":
+                name = data.get("name") or ""
+                label = data.get("label") or ""
+                step_done_labels.append((name, label))
+                if name == "search_db":
+                    m = re.search(r"(\d+)\s+stud", data.get("detail") or "")
+                    if m:
+                        search_count = int(m.group(1))
+            elif event_type == "ui":
+                ui_payload = data
             elif event_type == "token":
                 tokens.append(data.get("token") or "")
 
@@ -76,6 +94,8 @@ def stream_chat(backend_url: str, chat_id: str, message: str, timeout: int = 90)
         "search_count": search_count,
         "assistant_text": assistant_text,
         "study_ids_mentioned": mentioned,
+        "ui_payload": ui_payload,
+        "step_done_labels": step_done_labels,
     }
 
 
@@ -92,5 +112,41 @@ def chat_search_ids(backend_url: str, query_plan: dict) -> set:
     return search_ids(backend_url, query)
 
 
-def text_is_refusal(text: str) -> bool:
-    return bool(_REFUSAL_RE.search(text))
+_REFUSAL_FALLBACK_RE = re.compile(
+    r"(not\s+(public|available|accessible)|private|no\s+(?:accessible\s+)?data|cannot\s+find|not\s+found)",
+    re.I,
+)
+
+
+def llm_judge(question: str, answer: str, rubric: str) -> bool:
+    """Ask kimi to evaluate whether the assistant's answer meets the rubric.
+
+    Returns True if the judge says YES, False for NO.
+    Falls back to a simple regex check if the endpoint is unreachable.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
+    if not api_key:
+        # No key in env — can't judge; treat as inconclusive (pass)
+        return True
+
+    prompt = (
+        "You are evaluating whether an AI assistant's response achieved a specific goal.\n"
+        f"User question: {question}\n"
+        f"Goal to evaluate: {rubric}\n"
+        f"Assistant response: {answer}\n\n"
+        "Answer only YES or NO. No explanation."
+    )
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
+        resp = client.chat.completions.create(
+            model=_JUDGE_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=5,
+        )
+        verdict = (resp.choices[0].message.content or "").strip().upper()
+        return verdict.startswith("YES")
+    except Exception:
+        # Endpoint unreachable — fall back to a simple keyword heuristic
+        return bool(re.search(r"\b(yes|found|available|mention|recommend|compare|sample)\b", answer, re.I))

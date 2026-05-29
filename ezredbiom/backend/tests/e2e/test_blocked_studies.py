@@ -6,7 +6,7 @@ Tests 1.1–1.3 are parametrized over the list; 1.4–1.5 test chat specifically
 import pytest
 import requests
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids, text_is_refusal
+from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
 
 # ---- Extend this list as you validate more non-public studies ----
 BLOCKED_STUDY_IDS = [16084]
@@ -75,26 +75,30 @@ class TestChatDoesNotSurfaceBlocked:
     """1.4 — Chat does not return data for non-public studies when asked directly."""
 
     def test_chat_ask_about_blocked_study(self, backend, global_chat, study_id):
-        result = stream_chat(
-            backend,
-            global_chat["id"],
-            f"Tell me about study {study_id}. What samples does it have?",
-        )
-        # The chat's search step must not contain the blocked study.
+        question = f"Tell me about study {study_id}. What samples does it have?"
+        result = stream_chat(backend, global_chat["chat_id"], question)
+
+        # Deterministic check: the chat's SQL search step must not return the blocked study.
         if result["query_plan"]:
             chat_ids = chat_search_ids(backend, result["query_plan"])
             assert study_id not in chat_ids, (
                 f"Study {study_id} appeared in chat's own search step results"
             )
-        # The assistant must not present data about the study — either omit the ID
-        # or explicitly refuse/state it's unavailable.
+
+        # LLM judge: assistant must acknowledge the study is unavailable.
         text = result["assistant_text"]
-        id_in_text = str(study_id) in text
-        if id_in_text:
-            assert text_is_refusal(text), (
-                f"Study {study_id} appears in assistant text without a refusal phrase.\n"
-                f"Text snippet: {text[:500]}"
-            )
+        assert llm_judge(
+            question, text,
+            f"indicate that study {study_id} is unavailable, private, or not found",
+        ), (
+            f"Judge says assistant did NOT refuse study {study_id}.\nText: {text[:500]}"
+        )
+        assert not llm_judge(
+            question, text,
+            f"provide specific metadata, sample counts, or data about study {study_id}",
+        ), (
+            f"Judge says assistant DID provide data for non-public study {study_id}.\nText: {text[:500]}"
+        )
 
 
 @pytest.mark.e2e
@@ -106,7 +110,7 @@ class TestChatSearchResultsExcludeBlocked:
     def test_chat_broad_query_excludes_blocked(self, backend, global_chat, study_id):
         result = stream_chat(
             backend,
-            global_chat["id"],
+            global_chat["chat_id"],
             "List studies available in the database",
         )
         if result["query_plan"]:
