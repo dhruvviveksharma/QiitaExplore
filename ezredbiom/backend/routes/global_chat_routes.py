@@ -136,7 +136,11 @@ def api_global_chat_message_stream(chat_id):
 
                 if skip_search:
                     yield _sse("step_done", {"name": "search_db", "label": "Filtering from conversation context", "detail": "no new search"})
-                    combined_ctx = pinned_ctx
+                    if selected_studies:
+                        sel_ctx = merge_global_chat_context(selected_studies, [], user_content)
+                        combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
+                    else:
+                        combined_ctx = pinned_ctx
                     yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
                     for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, model=model):
                         assistant_parts.append(token)
