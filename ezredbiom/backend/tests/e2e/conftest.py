@@ -1,7 +1,7 @@
 """Fixtures for e2e parity tests.
 
 Requires a running barnacle backend: bash ezredbiom/start_barnacle.sh
-Set BARNACLE_URL env var to override the default http://localhost:5002.
+Set BARNACLE_URL env var to override the default http://localhost:5001.
 
 Helper functions (search_ids, stream_chat, etc.) live in helpers.py.
 """
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Add this directory so test files can do `from parity_helpers import ...`
 sys.path.insert(0, str(Path(__file__).parent))
 
-BASE = os.environ.get("BARNACLE_URL", "http://localhost:5002")
+BASE = os.environ.get("BARNACLE_URL", "http://localhost:5001")
 
 
 # Override the autouse fresh_db fixture from the parent conftest — e2e tests

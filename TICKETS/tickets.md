@@ -7,24 +7,40 @@
 ## TKT-001: Debug Port Not Reverted Before Merge
 
 **Severity:** Critical
-**Status:** Open
+**Status:** Resolved
 
 ### Description
-Port changed from 5001 to 5002 for debug mode in two files. TODO comments indicate this should be reverted before merging to master. This will cause API failures if merged without reverting.
+Several files were set to port 5002 for debug/testing. Master and barnacle production use port 5001 (Gunicorn bind, nginx upstream, frontend `api-base`). Mismatch breaks API calls and nginx proxying.
 
 ### Affected Files
-- `ezredbiom/Experiment/backend/run.py:33`
-- `ezredbiom/Experiment/frontend/index.html:6`
+- `ezredbiom/start_barnacle.sh` — Gunicorn bind port
+- `ezredbiom/backend/run.py` — `app.run()` port (direct run only)
+- `ezredbiom/frontend/js/utils.js` — API fallback when `meta api-base` missing
+- `ezredbiom/backend/run_tests.sh` — default `BARNACLE_URL`
+- `ezredbiom/backend/tests/e2e/conftest.py` — default `BARNACLE_URL`
+
+### Already correct (no change)
+- `ezredbiom/frontend/index.html` — `api-base` = `http://localhost:5001/api`
+- `ezredbiom/nginx.conf` — upstream `127.0.0.1:5001`
 
 ### Plan
-- [ ] Change `run.py` port back to `5001` in `app.run()`
-- [ ] Change `index.html` API base URL back to `http://localhost:5001`
-- [ ] Remove TODO comments referencing the port revert
-- [ ] Test frontend/backend connectivity after changes
+- [x] `start_barnacle.sh` → 5001
+- [x] `run.py` → 5001
+- [x] `utils.js` fallback → 5001
+- [x] Confirm `index.html` stays 5001
+- [x] Confirm `nginx.conf` stays 5001
+- [x] Update test defaults to 5001
+- [x] Update INSTALL.md + CLAUDE.md port references
+- [ ] Smoke test: `curl http://localhost:5001/api/health` with barnacle running
 
 ### Files Changed
-- `ezredbiom/Experiment/backend/run.py`
-- `ezredbiom/Experiment/frontend/index.html`
+- `ezredbiom/start_barnacle.sh`
+- `ezredbiom/backend/run.py`
+- `ezredbiom/frontend/js/utils.js`
+- `ezredbiom/backend/run_tests.sh`
+- `ezredbiom/backend/tests/e2e/conftest.py`
+- `INSTALL.md`
+- `CLAUDE.md`
 
 ---
 
@@ -204,40 +220,7 @@ Pins today are only created via `/report <study_id>`; there is no `POST` pin end
 
 ---
 
----
-
-## TKT-007: Remove Dead Legacy Directories (notebooks, qiita_pet, qiita_ware, scripts)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-Four top-level directories contain legacy Qiita code that is entirely unreferenced by the live
-`ezredbiom/` app. Combined they are ~42 MB of dead weight.
-
-| Directory | Why dead |
-|-----------|---------|
-| `notebooks/` | 2023 analysis notebooks — ad-hoc data exploration, no live callers |
-| `qiita_pet/` | Old Tornado web UI (~13 MB) — fully replaced by the React/Flask frontend |
-| `qiita_ware/` | Legacy EBI submission / plugin system — zero imports in ezredbiom |
-| `scripts/` | Old Qiita CLI scripts — not invoked by the Flask app |
-
-`src/` (empty stub) was already removed (2026-05-26).
-
-### Plan
-- [ ] Confirm none of these paths are referenced by CI, Makefile, or deployment scripts
-- [ ] `git rm -r notebooks/ qiita_pet/ qiita_ware/ scripts/`
-- [ ] Update root `README.md` if it mentions any of these directories
-
-### Files Changed
-- `notebooks/` — delete
-- `qiita_pet/` — delete
-- `qiita_ware/` — delete
-- `scripts/` — delete
-
----
-
-## TKT-008: Refactor Away from qiita_db.TRN / qiita_core (then delete both packages)
+## TKT-007: Refactor Away from qiita_db.TRN / qiita_core (then delete both packages)
 
 **Severity:** Low
 **Status:** Open
@@ -264,7 +247,7 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
 
 ---
 
-## TKT-010: DuckDB, MIINT
+## TKT-009: DuckDB, MIINT
 
 **Severity:** Low
 **Status:** Open
@@ -291,7 +274,7 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
 
 ---
 
-## TKT-009: BIOM include
+## TKT-010: BIOM include
 
 **Severity:** Low
 **Status:** Open

@@ -27,7 +27,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 | Layer      | Tech                                     | Location |
 |------------|------------------------------------------|----------|
-| Backend    | Gunicorn (`start_barnacle.sh`), port 5002 | `ezredbiom/start_barnacle.sh` → `ezredbiom/backend/run.py` (`run:app`) |
+| Backend    | Gunicorn (`start_barnacle.sh`), port 5001 | `ezredbiom/start_barnacle.sh` → `ezredbiom/backend/run.py` (`run:app`) |
 | Frontend   | React (Babel standalone, no build step)  | `ezredbiom/frontend/js/` |
 | Local DB   | SQLite                                   | `ezredbiom/backend/store/` |
 | Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
@@ -47,7 +47,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 # Dev Workflow
 
-- **Start backend**: `bash ezredbiom/start_barnacle.sh` only (Gunicorn on port 5002; frontend `api-base` must match)
+- **Start backend**: `bash ezredbiom/start_barnacle.sh` only (Gunicorn on port 5001; frontend `api-base` must match)
 - **Verify UI changes**: Run barnacle, open browser, test golden path before marking done
 - **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
 
@@ -75,6 +75,7 @@ Before implementing:
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
+- When doing dev work, use port 5002 and add a #TODO comment. This needs to be changed back to 5001 before committing to master.
 
 ## 2. Simplicity First
 

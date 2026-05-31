@@ -53,14 +53,14 @@ export QIITA_EXPERIMENT_DB_PATH="/path/to/projects.db"
 
 ```bash
 python ezredbiom/backend/run.py
-# Starts Flask on http://localhost:5002
+# Starts Flask on http://localhost:5001
 ```
 
 ## Running (production / barnacle)
 
 ```bash
 bash ezredbiom/start_barnacle.sh
-# Starts gunicorn on port 5002, 4 workers, 2 threads each
+# Starts gunicorn on port 5001, 4 workers, 2 threads each
 ```
 
 For nginx proxying, update the `root` path in `ezredbiom/nginx.conf` to your absolute path to `ezredbiom/frontend/`.
@@ -69,5 +69,5 @@ For nginx proxying, update the `root` path in `ezredbiom/nginx.conf` to your abs
 
 | Context | Port |
 |---------|------|
-| Dev / barnacle testing | 5002 |
-| Production (master branch) | 5001 |
+| master / production / barnacle | 5001 |
+| Dev/testing branches (optional) | 5002 |

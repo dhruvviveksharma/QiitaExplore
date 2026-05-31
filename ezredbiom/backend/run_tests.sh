@@ -8,11 +8,11 @@
 #   bash run_tests.sh --unit    # unit tests only (no backend required)
 #
 # Environment:
-#   BARNACLE_URL  — override backend URL (default: http://localhost:5002)
+#   BARNACLE_URL  — override backend URL (default: http://localhost:5001)
 
 set -euo pipefail
 
-BARNACLE_URL="${BARNACLE_URL:-http://localhost:5002}"
+BARNACLE_URL="${BARNACLE_URL:-http://localhost:5001}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
