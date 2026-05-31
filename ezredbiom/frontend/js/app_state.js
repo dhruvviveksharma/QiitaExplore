@@ -232,12 +232,14 @@ function useAppState() {
       };
     });
 
-  const applyStreamDone = (chatId, title, reportStudyId) => {
+  const applyStreamDone = (chatId, title, reportStudyId, pinnedList) => {
     patchLast(chatId, m => ({ ...m, isStreaming: false, pendingStep: null }));
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const pins = cur.pinnedStudies || [];
-      const nextPins = (reportStudyId != null && !pins.includes(reportStudyId)) ? [...pins, reportStudyId] : pins;
+      const nextPins = pinnedList != null ? pinnedList
+                     : (reportStudyId != null && !pins.includes(reportStudyId)) ? [...pins, reportStudyId]
+                     : pins;
       return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
     });
   };
@@ -282,7 +284,11 @@ function useAppState() {
 
     const reportMatch   = /^\/report\s+(\d+)\s*$/i.exec(msg);
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
-    const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report` : msg;
+    const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
+    const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
+    const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
+                        : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
+                        : msg;
 
     try {
       // ── Normalize browse → new global chat ──────────────────────────────────
@@ -368,6 +374,7 @@ function useAppState() {
             message: msg,
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
+            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
           }), signal: ctrl.signal,
         });
         if (!res.ok || !res.body) {
@@ -381,9 +388,9 @@ function useAppState() {
           onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
             ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
-          onDone: () => {
+          onDone: (payload) => {
             const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId);
+            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
             setOpenProject(prev => prev ? {
               ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
             } : prev);
@@ -412,6 +419,7 @@ function useAppState() {
             model: selectedModel,
             selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
+            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
           }),
           signal: ctrl.signal,
         });
@@ -427,9 +435,9 @@ function useAppState() {
             ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
           onQueryPlan: (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
-          onDone: () => {
+          onDone: (payload) => {
             const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId);
+            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
             setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
           },
           onError: ({ error }) => setCompErr(error || 'Error'),

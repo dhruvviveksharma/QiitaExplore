@@ -4,7 +4,7 @@ flask-cors>=3.0,<4.0
 python-dotenv>=1.0.0
 
 # LLM client
-openai>=1.0,<2.0
+openai>=1.40,<3.0
 
 # SQLite migration helper (reads legacy TinyDB JSON format)
 tinydb>=4.8,<5.0

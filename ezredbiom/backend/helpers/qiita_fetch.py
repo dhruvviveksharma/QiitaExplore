@@ -13,6 +13,8 @@ from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
     get_study_detail_cache,
     upsert_study_detail_cache,
+    pin_study_to_chat,
+    list_pinned_studies,
 )
 from helpers.llm_helpers import _truncate
 
@@ -332,6 +334,29 @@ def _build_pinned_reports_context(study_ids):
         cut  = text.rfind("\n", 0, PINNED_REPORT_CONTEXT_MAX_CHARS - 40)
         text = text[: max(cut, PINNED_REPORT_CONTEXT_MAX_CHARS - 40)] + "\n...(pinned context truncated)"
     return text
+
+
+def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):
+    """Validate study IDs against Qiita, pin the valid ones, and return a summary.
+
+    Returns (pinned_now, invalid, rejected, all_pinned) where:
+      pinned_now  — IDs newly pinned this call
+      invalid     — IDs not found / private in Qiita
+      rejected    — IDs skipped because the 10-pin cap was reached
+      all_pinned  — full list of pinned IDs for this chat after the operation
+    """
+    seen = set()
+    deduped = [sid for sid in study_ids if not (sid in seen or seen.add(sid))]
+    pinned_now, invalid, rejected = [], [], []
+    for sid in deduped:
+        header = _fetch_study_header_cached(sid)
+        if header is None or ((header.get("num_samples") or 0) == 0 and (header.get("num_preps") or 0) == 0):
+            invalid.append(sid)
+        else:
+            ok = pin_study_to_chat(chat_id, scope, sid)
+            (pinned_now if ok else rejected).append(sid)
+    all_pinned = list_pinned_studies(chat_id, scope)
+    return pinned_now, invalid, rejected, all_pinned
 
 
 def _build_samples_report_payload(study_id: int, sample_limit: int = REPORT_SAMPLE_LIMIT):

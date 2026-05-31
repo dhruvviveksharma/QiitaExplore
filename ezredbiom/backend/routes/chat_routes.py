@@ -3,6 +3,7 @@ import logging
 from flask import Response, jsonify, request, stream_with_context
 
 from run import app
+from config import context_budget_chars
 from store import (
     SCOPE_PROJECT,
     append_chat_messages,
@@ -27,6 +28,7 @@ from helpers.qiita_fetch import (
     _build_pinned_reports_context,
     _build_samples_report_payload,
     _detect_mentioned_study_ids,
+    _pin_studies_validated,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ def api_create_chat(project_id):
     model         = data.get('model')
     chat          = create_chat(project_id, user_id, first_message or data.get('title'))
     if first_message:
-        study_ctx         = _build_project_study_context(proj, user_id=user_id)
+        study_ctx         = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
         assistant_content = llm_chat([{"role": "user", "content": first_message}], study_context_text=study_ctx, model=model)
         append_chat_messages(project_id, user_id, chat["chat_id"], first_message, assistant_content)
     chat = get_chat(project_id, user_id, chat["chat_id"])
@@ -80,11 +82,17 @@ def api_chat_message_stream(project_id, chat_id):
     user_content    = (data.get('message') or data.get('content') or '').strip()
     model           = data.get('model')
     report_study_id = data.get("report_study_id")
+    pin_study_ids   = data.get("pin_study_ids")
     if report_study_id is not None:
         try:
             report_study_id = int(report_study_id)
         except (TypeError, ValueError):
             return jsonify({'error': 'report_study_id must be an integer'}), 400
+    if pin_study_ids is not None:
+        try:
+            pin_study_ids = [int(x) for x in pin_study_ids]
+        except (TypeError, ValueError):
+            return jsonify({'error': 'pin_study_ids must be a list of integers'}), 400
     if not user_content:
         return jsonify({'error': 'message required'}), 400
 
@@ -102,6 +110,44 @@ def api_chat_message_stream(project_id, chat_id):
         assistant_parts = []
         ui_payload      = None
         try:
+            if pin_study_ids is not None:
+                yield _sse("step_start", {"name": "pin_studies", "label": f"Pinning {len(pin_study_ids)} {'study' if len(pin_study_ids) == 1 else 'studies'}…"})
+                pinned_now, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, SCOPE_PROJECT, pin_study_ids)
+                detail_parts = []
+                if pinned_now:
+                    detail_parts.append(f"{len(pinned_now)} pinned")
+                if invalid:
+                    detail_parts.append(f"{len(invalid)} not found")
+                if rejected:
+                    detail_parts.append(f"{len(rejected)} over cap")
+                yield _sse("step_done", {"name": "pin_studies", "label": "Studies pinned", "detail": " · ".join(detail_parts) or "none added"})
+                deep_ctx = None
+                if all_pinned:
+                    yield _sse("step_start", {"name": "deep_context", "label": "Loading pinned study data…"})
+                    deep_ctx = _build_pinned_reports_context(all_pinned)
+                    yield _sse("step_done", {"name": "deep_context", "label": "Pinned reports ready", "detail": f"{len(all_pinned)} studies"})
+                    yield ': keepalive\n\n'
+                ack_lines = []
+                if pinned_now:
+                    ack_lines.append(f"Newly pinned: {', '.join(str(s) for s in pinned_now)}.")
+                if invalid:
+                    ack_lines.append(f"Not found / private (skipped): {', '.join(str(s) for s in invalid)}.")
+                if rejected:
+                    ack_lines.append(f"Could not pin (10-study cap reached): {', '.join(str(s) for s in rejected)}.")
+                ack_instruction = (
+                    " ".join(ack_lines) +
+                    " Using the STUDY CONTEXT provided, give a one-sentence summary of each newly-pinned study "
+                    "(data type, sample count, topic). Be concise."
+                )
+                llm_msgs = full_msgs[:-1] + [{"role": "user", "content": ack_instruction}]
+                yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
+                for token in llm_chat_stream(llm_msgs, study_context_text=deep_ctx, model=model):
+                    assistant_parts.append(token)
+                    yield _sse("token", {"token": token})
+                assistant_content = "".join(assistant_parts).strip()
+                append_chat_messages(project_id, user_id, chat_id, user_content, assistant_content)
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
+                return
             if report_study_id is not None:
                 yield _sse("step_start", {"name": "load_samples", "label": f"Loading sample data for study {report_study_id}…"})
                 try:
@@ -117,7 +163,7 @@ def api_chat_message_stream(project_id, chat_id):
             else:
                 num_proj_studies = len((proj or {}).get("studies") or [])
                 yield _sse("step_start", {"name": "build_context", "label": "Loading study context…"})
-                study_ctx = _build_project_study_context(proj, user_id=user_id)
+                study_ctx = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
                 yield _sse("step_done", {"name": "build_context", "label": "Study context ready", "detail": f"{num_proj_studies} studies"})
                 yield ': keepalive\n\n'
                 # Merge dynamically detected study IDs with any explicitly pinned ones

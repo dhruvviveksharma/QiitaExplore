@@ -396,8 +396,9 @@ function SamplesReportBubble({ ui, messageKey }) {
 
 // ─── SLASH_COMMANDS registry ──────────────────────────────────────────────────
 const SLASH_COMMANDS = [
-  { cmd: '/systems', insert: '/systems',  usage: '/systems',    desc: 'Check status & latency of all available LLM models.' },
-  { cmd: '/report',  insert: '/report ',  usage: '/report 104', desc: 'Load full sample-level metadata for a Qiita study.' },
+  { cmd: '/systems', insert: '/systems',  usage: '/systems',      desc: 'Check status & latency of all available LLM models.' },
+  { cmd: '/report',  insert: '/report ',  usage: '/report 104',   desc: 'Load full sample-level metadata for a Qiita study.' },
+  { cmd: '/pin',     insert: '/pin ',     usage: '/pin 77 101',   desc: 'Pin one or more studies into this chat context.' },
 ];
 
 // ─── SlashCommandMenu ─────────────────────────────────────────────────────────
