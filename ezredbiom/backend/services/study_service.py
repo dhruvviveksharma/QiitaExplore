@@ -20,7 +20,28 @@ def build_where_from_plan(plan: dict) -> tuple:
     return " OR ".join(clauses), params
 
 
-def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0):
+def build_relevance_score(keywords) -> tuple:
+    """Return (sql_expr, params) scoring each study by keyword matches.
+
+    Title matches weigh most (3), alias next (2), abstract least (1). The
+    expression sums per-keyword hits so studies matching more terms rank higher.
+    """
+    kws = [k.strip() for k in (keywords or []) if len(k.strip()) >= 2][:50]
+    if not kws:
+        return "0", []
+    terms, params = [], []
+    for kw in kws:
+        terms.append(
+            "(CASE WHEN s.study_title ILIKE %s THEN 3 ELSE 0 END"
+            " + CASE WHEN s.study_alias ILIKE %s THEN 2 ELSE 0 END"
+            " + CASE WHEN s.study_abstract ILIKE %s THEN 1 ELSE 0 END)"
+        )
+        params.extend([f"%{kw}%"] * 3)
+    return " + ".join(terms), params
+
+
+def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
+                            relevance_keywords=None):
     """
     Search studies using custom SQL WHERE clause
 
@@ -32,6 +53,10 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         Parameters for the SQL query
     limit : int
         Max rows (clamped 1–150)
+    relevance_keywords : list, optional
+        If provided, results are ordered by a keyword-relevance score (most
+        relevant first) instead of by study_id. Used by the agentic search tool
+        so the top hits are the best matches, not the lowest IDs.
 
     Returns
     -------
@@ -51,6 +76,19 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         off = 0
     off = max(0, off)
 
+    # Relevance scoring (optional). Score params appear in the SELECT, so they
+    # must be bound BEFORE the WHERE params (psycopg2 binds %s left-to-right).
+    if relevance_keywords:
+        score_expr, score_params = build_relevance_score(relevance_keywords)
+        score_select = f", ({score_expr}) AS relevance"
+        order_clause = "ORDER BY relevance DESC, num_samples DESC NULLS LAST, s.study_id"
+    else:
+        score_select = ""
+        score_params = []
+        order_clause = "ORDER BY s.study_id"
+
+    full_params = score_params + list(params)
+
     with TRN:
         sql = f"""
         SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
@@ -68,7 +106,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
                 WHERE spt2.study_id = s.study_id) AS data_types,
                (SELECT COUNT(DISTINCT spt3.prep_template_id)
                 FROM qiita.study_prep_template spt3
-                WHERE spt3.study_id = s.study_id) AS num_preps
+                WHERE spt3.study_id = s.study_id) AS num_preps{score_select}
         FROM qiita.study s
         LEFT JOIN qiita.study_person sp_pi
             ON s.principal_investigator_id = sp_pi.study_person_id
@@ -79,12 +117,12 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         LEFT JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
         WHERE v.visibility = 'public'
           AND ({custom_sql_where if custom_sql_where else '1=1'})
-        ORDER BY s.study_id
+        {order_clause}
         LIMIT {lim}
         OFFSET {off}
         """
 
-        TRN.add(sql, params)
+        TRN.add(sql, full_params)
         results = TRN.execute_fetchindex()
 
     if not results:

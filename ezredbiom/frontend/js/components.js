@@ -394,6 +394,81 @@ function SamplesReportBubble({ ui, messageKey }) {
   );
 }
 
+// ─── ToolResultWidget ─────────────────────────────────────────────────────────
+function ToolResultWidget({ payload, msgKey }) {
+  if (!payload) return null;
+  if (payload.kind === 'samples_report')
+    return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
+  const studies = payload.result_studies || [];
+  if (payload.tool === 'search_studies' && studies.length) return (
+    <table className="prep-table tool-result-table">
+      <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th></tr></thead>
+      <tbody>{studies.map(s => (
+        <tr key={s.study_id}>
+          <td>{s.study_id}</td>
+          <td title={s.study_title}>{(s.study_title || '').slice(0, 55)}</td>
+          <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
+          <td>{s.num_samples ?? '—'}</td>
+          <td>{s.data_types || '—'}</td>
+        </tr>
+      ))}</tbody>
+    </table>
+  );
+  return payload.result_summary
+    ? <p className="tool-call-text-result">{payload.result_summary}</p>
+    : null;
+}
+
+// ─── ToolCallCard ─────────────────────────────────────────────────────────────
+function ToolCallCard({ seg, msgKey }) {
+  const [open, setOpen] = useState(false);
+  const done   = seg.done;
+  const label  = done ? (seg.result?.label || seg.label) : seg.label;
+  const detail = done ? seg.result?.detail : '';
+  return (
+    <div className="tool-call-card">
+      <button className="tool-call-header" onClick={() => setOpen(o => !o)}>
+        {done ? <span className="step-dot" /> : <div className="step-spinner" />}
+        <span className="tool-call-label">{label}</span>
+        {detail && <span className="step-detail"> · {detail}</span>}
+        <span className="tool-call-toggle">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="tool-call-body">
+          {seg.args?.keywords?.length > 0 &&
+            <p className="tool-call-args">Keywords: {seg.args.keywords.join(', ')}</p>}
+          {seg.args?.study_id != null &&
+            <p className="tool-call-args">Study ID: {seg.args.study_id}</p>}
+          {seg.args?.study_ids?.length > 0 &&
+            <p className="tool-call-args">Studies: {seg.args.study_ids.join(', ')}</p>}
+          {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`} />}
+          {done && !seg.result?.ui_payload && seg.result?.label && (
+            <p className="tool-call-text-result">{seg.result.label}</p>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AgentMessageBubble ───────────────────────────────────────────────────────
+function AgentMessageBubble({ segments, isStreaming, msgKey }) {
+  return (
+    <div className="agent-msg">
+      {(segments || []).map((seg, i) =>
+        seg.type === 'text' && seg.content ? (
+          <div key={i} className={`msg-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
+        ) : seg.type === 'tool' ? (
+          <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`} />
+        ) : null
+      )}
+      {isStreaming && !(segments || []).length && (
+        <div className="msg-bubble"><div className="typing-dots"><span /><span /><span /></div></div>
+      )}
+    </div>
+  );
+}
+
 // ─── SLASH_COMMANDS registry ──────────────────────────────────────────────────
 const SLASH_COMMANDS = [
   { cmd: '/systems', insert: '/systems',  usage: '/systems',      desc: 'Check status & latency of all available LLM models.' },

@@ -18,8 +18,11 @@ TOOL_SCHEMAS = [
             "name": "search_studies",
             "description": (
                 "Search the Qiita public microbiome database for studies matching keywords. "
-                "Include ALL relevant terms from the full conversation so refinements accumulate. "
-                "Returns a ranked list of matching studies with title, PI, sample count, and abstract."
+                "Results are ranked by relevance (best matches first). "
+                "Include ALL relevant terms from the full conversation so refinements accumulate "
+                "(e.g. if the user asked for 'mouse gut' then 'shotgun', search "
+                "['mouse','gut','shotgun','metagenomic']). Returns the top matching studies "
+                "with title, PI, sample count, data types, and abstract."
             ),
             "parameters": {
                 "type": "object",
@@ -31,7 +34,7 @@ TOOL_SCHEMAS = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max studies to return (1–50, default 30).",
+                        "description": "Max studies to return (1–20, default 8 — show the user the best handful).",
                     },
                 },
                 "required": ["keywords"],
@@ -135,20 +138,42 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str) -> ToolResu
 
 def _tool_search_studies(args: dict) -> ToolResult:
     keywords = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
-    limit    = max(1, min(50, int(args.get("limit") or 30)))
+    limit    = max(1, min(20, int(args.get("limit") or 8)))
     if not keywords:
-        return ToolResult(text="No keywords provided — cannot search.", label="Search studies", detail="no keywords")
+        return ToolResult(
+            text="No keywords provided — cannot search.",
+            label="Search studies", detail="no keywords",
+            ui_payload={"kind": "tool_call", "tool": "search_studies", "args": {"keywords": []}, "result_summary": "no keywords"},
+        )
     where, params = build_where_from_plan({"keywords": keywords})
-    studies = search_studies_with_sql(where, params, limit=limit)
+    # Rank by keyword relevance so the top `limit` rows are the best matches,
+    # not the lowest study IDs.
+    studies = search_studies_with_sql(where, params, limit=limit, relevance_keywords=keywords)
     if not studies:
         text = "No matching public studies found for those keywords."
     else:
-        header = f"search_studies returned {len(studies)} studies:"
+        header = f"search_studies returned the top {len(studies)} studies by relevance:"
         text   = _format_discovery_study_list(studies, header, 8_000)
     return ToolResult(
         text=text,
         label="Searched Qiita database",
-        detail=f"{len(studies)} studies found",
+        detail=f"top {len(studies)} of matches",
+        ui_payload={
+            "kind": "tool_call",
+            "tool": "search_studies",
+            "args": {"keywords": keywords, "limit": limit},
+            "result_summary": f"{len(studies)} studies returned" if studies else "no matches",
+            "result_studies": [
+                {
+                    "study_id":    s.get("study_id"),
+                    "study_title": s.get("study_title"),
+                    "pi_name":     s.get("pi_name"),
+                    "num_samples": s.get("num_samples"),
+                    "data_types":  s.get("data_types"),
+                }
+                for s in studies
+            ],
+        },
     )
 
 
@@ -201,6 +226,12 @@ def _tool_pin_study(args: dict, *, scope: str, chat_id: str) -> ToolResult:
         text=f"pin_study result: {summary}. All pinned: {all_pinned}",
         label="Studies pinned",
         detail=f"{len(pinned_now)} pinned · {len(all_pinned)} total",
+        ui_payload={
+            "kind": "tool_call",
+            "tool": "pin_study",
+            "args": {"study_ids": study_ids},
+            "result_summary": summary,
+        },
     )
 
 

@@ -226,14 +226,22 @@ function useAppState() {
           messages: [
             ...c.messages,
             { role: 'user',      content: userMsg },
-            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null },
+            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null, segments: null },
           ],
         },
       };
     });
 
   const applyStreamDone = (chatId, title, reportStudyId, pinnedList) => {
-    patchLast(chatId, m => ({ ...m, isStreaming: false, pendingStep: null }));
+    patchLast(chatId, m => {
+      const next = { ...m, isStreaming: false, pendingStep: null };
+      if (m.segments !== null) {
+        const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
+        next.segments = frozen;
+        next.ui = { kind: 'agent_segments', segments: frozen };
+      }
+      return next;
+    });
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const pins = cur.pinnedStudies || [];
@@ -243,6 +251,41 @@ function useAppState() {
       return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
     });
   };
+
+  // ─── agent/segments helpers ──────────────────────────────────────────────────
+  const onAgentStart = (chatId) => () =>
+    patchLast(chatId, m => ({ ...m, segments: [] }));
+
+  const onSegmentToolCall = (chatId) => ({ name, label, args }) =>
+    patchLast(chatId, m => {
+      const segs = [...(m.segments || [])];
+      if (segs.length && segs[segs.length - 1].type === 'text')
+        segs[segs.length - 1] = { ...segs[segs.length - 1], done: true };
+      segs.push({ type: 'tool', name, label, args, done: false, result: null });
+      return { ...m, segments: segs };
+    });
+
+  const onSegmentToolResult = (chatId) => ({ name, label, detail, ui_payload }) =>
+    patchLast(chatId, m => {
+      const segs = (m.segments || []).map(s =>
+        s.type === 'tool' && s.name === name && !s.done
+          ? { ...s, done: true, result: { label, detail, ui_payload } }
+          : s
+      );
+      return { ...m, segments: segs };
+    });
+
+  const onTokenAgent = (chatId) => ({ token }) =>
+    patchLast(chatId, m => {
+      if (m.segments === null) return { ...m, content: (m.content || '') + (token || '') };
+      const segs = [...(m.segments || [])];
+      const last = segs[segs.length - 1];
+      if (last && last.type === 'text' && !last.done)
+        segs[segs.length - 1] = { ...last, content: (last.content || '') + token };
+      else
+        segs.push({ type: 'text', content: token, done: false });
+      return { ...m, segments: segs };
+    });
 
   const unpinStudy = async (chatId, studyId) => {
     setChatCache(prev => {
@@ -428,13 +471,16 @@ function useAppState() {
           throw new Error(err.error || 'Stream failed');
         }
         await parseSSE(res, {
-          onToken:     ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
-          onUi:        (payload)  => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
-          onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
-          onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
+          onToken:             onTokenAgent(chatId),
+          onUi:                (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
+          onStepStart:         ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
+          onStepDone:          ({ name, label, detail }) => patchLast(chatId, m => ({
             ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
-          onQueryPlan: (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
+          onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
+          onAgentStart:        onAgentStart(chatId),
+          onSegmentToolCall:   onSegmentToolCall(chatId),
+          onSegmentToolResult: onSegmentToolResult(chatId),
           onDone: (payload) => {
             const title = displayMsg.slice(0, 60);
             applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);

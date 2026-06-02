@@ -169,7 +169,9 @@ def api_global_chat_message_stream(chat_id):
                     # Agentic path: the model decides what to search and when
                     sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
                     combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
-                    yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
+                    # Accumulate segments for persistence
+                    segments_list = []
+                    current_text  = []
                     for event in stream_agent(
                         full_msgs,
                         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
@@ -178,16 +180,33 @@ def api_global_chat_message_stream(chat_id):
                         scope=SCOPE_GLOBAL,
                         chat_id=chat_id,
                     ):
-                        if event["type"] == "token":
+                        etype = event["type"]
+                        if etype == "agent_start":
+                            yield _sse("agent_start", {})
+                        elif etype == "token":
+                            current_text.append(event["token"])
                             assistant_parts.append(event["token"])
                             yield _sse("token", {"token": event["token"]})
-                        elif event["type"] == "step_start":
-                            yield _sse("step_start", {"name": event["name"], "label": event["label"]})
-                        elif event["type"] == "step_done":
-                            yield _sse("step_done", {"name": event["name"], "label": event["label"], "detail": event.get("detail", "")})
-                        elif event["type"] == "ui":
-                            ui_payload = event["payload"]
-                            yield _sse("ui", ui_payload)
+                        elif etype == "segment_tool_call":
+                            if current_text:
+                                segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
+                                current_text = []
+                            segments_list.append({"type": "tool", "name": event["name"],
+                                                   "label": event["label"], "args": event["args"],
+                                                   "done": False, "result": None})
+                            yield _sse("segment_tool_call", {"name": event["name"], "label": event["label"], "args": event["args"]})
+                        elif etype == "segment_tool_result":
+                            for seg in segments_list:
+                                if seg.get("type") == "tool" and seg.get("name") == event["name"] and not seg.get("done"):
+                                    seg["done"] = True
+                                    seg["result"] = {"label": event["label"], "detail": event["detail"], "ui_payload": event.get("ui_payload")}
+                                    break
+                            yield _sse("segment_tool_result", {"name": event["name"], "label": event["label"],
+                                                                "detail": event.get("detail", ""), "ui_payload": event.get("ui_payload")})
+                    if current_text:
+                        segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
+                    if segments_list:
+                        ui_payload = {"kind": "agent_segments", "segments": segments_list}
                 else:
                     # Legacy path: llm_plan_query → keyword search → llm_chat_stream
                     yield _sse("step_start", {"name": "translate_query", "label": "Planning query…"})
@@ -250,12 +269,17 @@ def api_global_chat_message_stream(chat_id):
                             yield _sse("token", {"token": token})
             assistant_content = "".join(assistant_parts).strip()
             append_global_chat_messages(user_id, chat_id, user_content, assistant_content, assistant_ui_payload=ui_payload)
-            if report_study_id is not None and ui_payload is not None:
+            if report_study_id is not None and ui_payload is not None and ui_payload.get("kind") != "agent_segments":
                 try:
                     pin_study_to_chat(chat_id, SCOPE_GLOBAL, report_study_id)
                 except Exception:
                     logger.exception("failed to pin study %s to global chat %s", report_study_id, chat_id)
-            yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_study_id": report_study_id if ui_payload else None})
+            # For agent turns, send the full current pinned list so the frontend can sync
+            if ui_payload and ui_payload.get("kind") == "agent_segments":
+                final_pinned = list_pinned_studies(chat_id, SCOPE_GLOBAL)
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": final_pinned})
+            else:
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_study_id": report_study_id if ui_payload else None})
         except Exception as e:
             logger.exception("stream error in global chat %s", chat_id)
             yield _sse("error", {"error": friendly_llm_error(e, model)})

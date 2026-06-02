@@ -329,7 +329,12 @@ function renderApp(s) {
                 ) : (
                   activeMsgs.map((m, i) => (
                     <div key={i} className={`msg-row ${m.role}${m.ui?.kind === 'samples_report' ? ' article' : ''}`}>
-                      {m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
+                      {m.role === 'assistant' && (m.segments !== null || m.ui?.kind === 'agent_segments') ? (
+                        <AgentMessageBubble
+                          segments={m.segments ?? m.ui?.segments ?? []}
+                          isStreaming={!!m.isStreaming}
+                          msgKey={`${view.chatId}-${i}`} />
+                      ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
                         <SystemsStatusBubble ui={m.ui} />

@@ -22,16 +22,18 @@ def stream_agent(
     max_iters: int = 4,
 ) -> Generator[dict, None, None]:
     """
-    Streaming agentic loop. Yields typed dicts that callers translate to SSE:
-      {"type": "token",      "token": str}
-      {"type": "step_start", "name": str, "label": str}
-      {"type": "step_done",  "name": str, "label": str, "detail": str}
-      {"type": "ui",         "payload": dict}
+    Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
+      {"type": "agent_start"}                                      — once at top
+      {"type": "token",             "token": str}                  — LLM text
+      {"type": "segment_tool_call", "name": str, "label": str, "args": dict}
+      {"type": "segment_tool_result","name": str, "label": str,
+                                     "detail": str, "ui_payload": dict|None}
     Raises on unrecoverable errors; callers should catch and emit an SSE error.
     """
     resolved = _resolve_model(model)
-    # Start with the full conversation history + study context in the system prompt
     api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+
+    yield {"type": "agent_start"}
 
     for iteration in range(max_iters):
         stream = client.chat.completions.create(
@@ -42,9 +44,8 @@ def stream_agent(
             timeout=300.0,
         )
 
-        # Accumulate a full turn from the stream
-        content_parts: list[str] = []
-        tool_call_map: dict[int, dict] = {}  # index -> {id, name, arguments}
+        content_parts = []
+        tool_call_map = {}   # index -> {id, name, arguments}
         finish_reason = None
 
         for chunk in stream:
@@ -54,12 +55,10 @@ def stream_agent(
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
 
-            # Stream content tokens
             if delta.content:
                 content_parts.append(delta.content)
                 yield {"type": "token", "token": delta.content}
 
-            # Accumulate tool call fragments (may arrive across many chunks)
             for tc in (delta.tool_calls or []):
                 idx = tc.index
                 if idx not in tool_call_map:
@@ -76,26 +75,19 @@ def stream_agent(
         assistant_content = "".join(content_parts)
 
         if finish_reason != "tool_calls" or not tool_call_map:
-            # Model is done — normal text response
             break
 
-        # Build the assistant turn with tool_calls for the API history
         ordered_calls = [tool_call_map[i] for i in sorted(tool_call_map)]
-        tool_calls_for_api = [
-            {
-                "id":       tc["id"],
-                "type":     "function",
-                "function": {"name": tc["name"], "arguments": tc["arguments"]},
-            }
-            for tc in ordered_calls
-        ]
         api_msgs.append({
-            "role":       "assistant",
-            "content":    assistant_content or None,
-            "tool_calls": tool_calls_for_api,
+            "role":    "assistant",
+            "content": assistant_content or None,
+            "tool_calls": [
+                {"id": tc["id"], "type": "function",
+                 "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+                for tc in ordered_calls
+            ],
         })
 
-        # Execute each tool call, emit step events, build tool result messages
         for tc in ordered_calls:
             name = tc["name"]
             try:
@@ -104,23 +96,26 @@ def stream_agent(
                 args = {}
 
             step_name = f"tool_{name}_{tc['id'][:6]}"
-            yield {"type": "step_start", "name": step_name, "label": _tool_label(name, args)}
+            yield {"type": "segment_tool_call", "name": step_name,
+                   "label": _tool_label(name, args), "args": args}
 
             try:
                 result = execute_tool(name, args, scope=scope, chat_id=chat_id)
             except Exception as exc:
                 logger.exception("tool %s raised", name)
-                result_text = f"Tool {name} failed: {exc}"
-                yield {"type": "step_done", "name": step_name, "label": f"{name} failed", "detail": str(exc)[:80]}
-                api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+                yield {"type": "segment_tool_result", "name": step_name,
+                       "label": f"{name} failed", "detail": str(exc)[:80],
+                       "ui_payload": None}
+                api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
+                                  "content": f"Tool {name} failed: {exc}"})
                 continue
 
-            yield {"type": "step_done", "name": step_name, "label": result.label, "detail": result.detail}
-            if result.ui_payload:
-                yield {"type": "ui", "payload": result.ui_payload}
-            api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result.text})
+            yield {"type": "segment_tool_result", "name": step_name,
+                   "label": result.label, "detail": result.detail,
+                   "ui_payload": result.ui_payload}
+            api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
+                              "content": result.text})
 
-    # Ensure iteration exhaustion is not silently swallowed
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
         logger.warning("agent hit max_iters=%d without stopping", max_iters)
 
