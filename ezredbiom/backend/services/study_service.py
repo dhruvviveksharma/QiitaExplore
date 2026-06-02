@@ -2,12 +2,110 @@
 from qiita_db.sql_connection import TRN
 from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD
 
+# ── Morphological variants ────────────────────────────────────────────────────
+_IRREGULAR_VARIANTS = {
+    "mouse": "mice",     "mice": "mouse",
+    "louse": "lice",     "lice": "louse",
+    "bacterium": "bacteria", "bacteria": "bacterium",
+    "fungus": "fungi",   "fungi": "fungus",
+    "alga": "algae",     "algae": "alga",
+    "virus": "viruses",  "viruses": "virus",
+}
+
+
+def expand_keyword_variants(keywords):
+    """Add plural/singular variants (including mouse↔mice). Caps at 50."""
+    seen, expanded = set(), []
+    for kw in (keywords or []):
+        kw = kw.strip()
+        if not kw or kw in seen:
+            continue
+        seen.add(kw)
+        expanded.append(kw)
+        kl = kw.lower()
+        if kl in _IRREGULAR_VARIANTS:
+            alt = _IRREGULAR_VARIANTS[kl]
+            if alt not in seen:
+                seen.add(alt)
+                expanded.append(alt)
+        elif not kl.endswith("s") and len(kl) > 2:
+            plural = kw + "s"
+            if plural not in seen:
+                seen.add(plural)
+                expanded.append(plural)
+    return expanded[:50]
+
+
+# ── Data-type synonym map (based on the 12 real Qiita data_type values) ───────
+DATA_TYPE_SYNONYMS = {
+    "Metagenomic": [
+        "shotgun", "wgs", "whole genome shotgun", "whole metagenome",
+        "metagenome", "metagenomic", "metagenomics", "functional profiling",
+        "shotgun sequencing", "shotgun metagenomics",
+    ],
+    "16S": [
+        "16s", "amplicon", "rrna", "16s rrna", "16s rdna",
+        "target gene", "v3v4", "v4 region", "16s sequencing",
+    ],
+    "18S": ["18s", "18s rrna", "eukaryotic amplicon"],
+    "ITS": ["its", "its1", "its2", "fungal amplicon"],
+    "Metatranscriptomic": [
+        "metatranscriptom", "rna-seq", "rnaseq", "transcriptom", "mrna",
+    ],
+    "Metabolomic": ["metabolom", "metabolite", "nmr", "lc-ms", "gc-ms"],
+    "Proteomic": ["proteom", "mass spectrometry"],
+    "Multiomic": ["multiomic", "multi-omic", "multiomics"],
+    "Genome Isolate": ["genome isolate", "isolate genome"],
+    "Full Length Operon": ["full length operon", "full-length 16s"],
+}
+# Inverted index for O(1) synonym lookup
+_SYNONYM_INDEX = {
+    s.lower(): dt
+    for dt, syns in DATA_TYPE_SYNONYMS.items()
+    for s in syns
+}
+
+
+def detect_data_types(keywords):
+    """Return canonical Qiita data-type names whose synonyms appear in keywords."""
+    found, seen = [], set()
+    for kw in (keywords or []):
+        for token in [kw.strip().lower()] + kw.strip().lower().split():
+            dt = _SYNONYM_INDEX.get(token)
+            if dt and dt not in seen:
+                seen.add(dt)
+                found.append(dt)
+    return found
+
+
+def build_data_type_filter(data_types, investigation_types=None):
+    """Return (sql_snippet, params) for a data-type EXISTS filter, or (None, [])."""
+    data_types = [d for d in (data_types or []) if d]
+    if not data_types:
+        return None, []
+    placeholders = ",".join(["%s"] * len(data_types))
+    params = list(data_types)
+    inv_clause = ""
+    if investigation_types:
+        inv_ph = ",".join(["%s"] * len(investigation_types))
+        inv_clause = f" AND pt.investigation_type IN ({inv_ph})"
+        params.extend(investigation_types)
+    sql = (
+        f"EXISTS (SELECT 1 FROM qiita.study_prep_template spt"
+        f" JOIN qiita.prep_template pt ON spt.prep_template_id = pt.prep_template_id"
+        f" JOIN qiita.data_type dt ON pt.data_type_id = dt.data_type_id"
+        f" WHERE spt.study_id = s.study_id"
+        f" AND dt.data_type IN ({placeholders}){inv_clause})"
+    )
+    return sql, params
+
 
 def build_where_from_plan(plan: dict) -> tuple:
     """Return (where_clause, params) for broad parameterized search from LLM plan.
-    Always uses OR between keywords; searches title, abstract, alias, PI name,
-    PI affiliation, and lab contact name."""
-    keywords = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 2][:50]
+    Keywords are morphologically expanded (mouse→mice) before building clauses.
+    Searches title, abstract, alias, PI name, PI affiliation, lab contact (all OR'd)."""
+    raw = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 2]
+    keywords = expand_keyword_variants(raw)
     if not keywords:
         return "1=1", []
     clauses, params = [], []
@@ -23,10 +121,12 @@ def build_where_from_plan(plan: dict) -> tuple:
 def build_relevance_score(keywords) -> tuple:
     """Return (sql_expr, params) scoring each study by keyword matches.
 
-    Title matches weigh most (3), alias next (2), abstract least (1). The
-    expression sums per-keyword hits so studies matching more terms rank higher.
+    Keywords are morphologically expanded first.
+    Title matches weigh most (3), alias next (2), abstract least (1).
     """
-    kws = [k.strip() for k in (keywords or []) if len(k.strip()) >= 2][:50]
+    kws = expand_keyword_variants(
+        [k.strip() for k in (keywords or []) if len(k.strip()) >= 2]
+    )
     if not kws:
         return "0", []
     terms, params = [], []
@@ -41,27 +141,13 @@ def build_relevance_score(keywords) -> tuple:
 
 
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
-                            relevance_keywords=None):
-    """
-    Search studies using custom SQL WHERE clause
+                            relevance_keywords=None,
+                            data_types=None, investigation_types=None):
+    """Search public studies with an optional topic WHERE clause, relevance ranking,
+    and a data-type AND filter.
 
-    Parameters
-    ----------
-    custom_sql_where : str
-        Custom WHERE clause (without the WHERE keyword)
-    params : list
-        Parameters for the SQL query
-    limit : int
-        Max rows (clamped 1–150)
-    relevance_keywords : list, optional
-        If provided, results are ordered by a keyword-relevance score (most
-        relevant first) instead of by study_id. Used by the agentic search tool
-        so the top hits are the best matches, not the lowest IDs.
-
-    Returns
-    -------
-    list
-        List of dictionaries with study information
+    Param binding order (psycopg2 left-to-right):
+        score_params → data_type_filter_params → topic (WHERE) params
     """
     if params is None:
         params = []
@@ -76,8 +162,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         off = 0
     off = max(0, off)
 
-    # Relevance scoring (optional). Score params appear in the SELECT, so they
-    # must be bound BEFORE the WHERE params (psycopg2 binds %s left-to-right).
+    # Relevance scoring: score params bind first (appear in SELECT)
     if relevance_keywords:
         score_expr, score_params = build_relevance_score(relevance_keywords)
         score_select = f", ({score_expr}) AS relevance"
@@ -87,7 +172,14 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         score_params = []
         order_clause = "ORDER BY s.study_id"
 
-    full_params = score_params + list(params)
+    # Data-type filter: AND-ed onto the topic WHERE (binds after score params)
+    dt_sql, dt_params = build_data_type_filter(data_types, investigation_types)
+    if dt_sql:
+        topic_where = f"({custom_sql_where if custom_sql_where else '1=1'}) AND {dt_sql}"
+    else:
+        topic_where = custom_sql_where if custom_sql_where else "1=1"
+
+    full_params = score_params + dt_params + list(params)
 
     with TRN:
         sql = f"""
@@ -116,7 +208,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         LEFT JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
         LEFT JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
         WHERE v.visibility = 'public'
-          AND ({custom_sql_where if custom_sql_where else '1=1'})
+          AND ({topic_where})
         {order_clause}
         LIMIT {lim}
         OFFSET {off}

@@ -3,8 +3,12 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from services.study_service import build_where_from_plan, search_studies_with_sql
+from services.study_service import (
+    build_where_from_plan, search_studies_with_sql,
+    detect_data_types, expand_keyword_variants,
+)
 from helpers.llm_helpers import _format_discovery_study_list
+from helpers.sample_search import search_studies_by_sample_meta
 from helpers.qiita_fetch import (
     _build_samples_report_payload,
     _build_full_samples_block,
@@ -18,11 +22,13 @@ TOOL_SCHEMAS = [
             "name": "search_studies",
             "description": (
                 "Search the Qiita public microbiome database for studies matching keywords. "
-                "Results are ranked by relevance (best matches first). "
+                "Results are ranked by relevance and include host-metadata matches. "
                 "Include ALL relevant terms from the full conversation so refinements accumulate "
                 "(e.g. if the user asked for 'mouse gut' then 'shotgun', search "
-                "['mouse','gut','shotgun','metagenomic']). Returns the top matching studies "
-                "with title, PI, sample count, data types, and abstract."
+                "['mouse','mice','gut','shotgun','metagenomic']). Include BOTH singular and "
+                "plural forms and known synonyms/strains (e.g. mouse, mice, murine, Mus musculus, C57BL/6). "
+                "When the user constrains by sequencing type (shotgun/WGS/16S/etc.), set data_types — "
+                "do NOT rely on keywords alone for data-type filtering."
             ),
             "parameters": {
                 "type": "object",
@@ -30,11 +36,31 @@ TOOL_SCHEMAS = [
                     "keywords": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of search terms (synonyms, acronyms, plural forms). More is better.",
+                        "description": "Topic search terms including plurals, synonyms, strains. More is better.",
+                    },
+                    "data_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Filter to studies with these Qiita data types (AND filter — narrows results). "
+                            "Valid values: '16S', '18S', 'ITS', 'Metagenomic', 'Metatranscriptomic', "
+                            "'Metabolomic', 'Proteomic', 'Multiomic', 'Genome Isolate', 'Full Length Operon'. "
+                            "Use 'Metagenomic' for shotgun/WGS/metagenome (broad, ~605 studies). "
+                            "Omit to search all data types."
+                        ),
+                    },
+                    "investigation_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional finer filter within a data_type (e.g. 'WGS', 'shotgun_metagenomics'). "
+                            "Only set when the user is THIS specific — 'WGS' filters from ~605 to ~521 studies; "
+                            "'shotgun_metagenomics' narrows to only 18. Default: omit."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max studies to return (1–20, default 8 — show the user the best handful).",
+                        "description": "Max studies to return (1–20, default 8).",
                     },
                 },
                 "required": ["keywords"],
@@ -137,32 +163,78 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str) -> ToolResu
 
 
 def _tool_search_studies(args: dict) -> ToolResult:
-    keywords = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
-    limit    = max(1, min(20, int(args.get("limit") or 8)))
-    if not keywords:
+    raw_kws         = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
+    limit           = max(1, min(20, int(args.get("limit") or 8)))
+    explicit_types  = [t.strip() for t in (args.get("data_types") or []) if t]
+    explicit_inv    = [t.strip() for t in (args.get("investigation_types") or []) if t]
+
+    if not raw_kws:
         return ToolResult(
             text="No keywords provided — cannot search.",
             label="Search studies", detail="no keywords",
-            ui_payload={"kind": "tool_call", "tool": "search_studies", "args": {"keywords": []}, "result_summary": "no keywords"},
+            ui_payload={"kind": "tool_call", "tool": "search_studies",
+                        "args": {"keywords": []}, "result_summary": "no keywords"},
         )
-    where, params = build_where_from_plan({"keywords": keywords})
-    # Rank by keyword relevance so the top `limit` rows are the best matches,
-    # not the lowest study IDs.
-    studies = search_studies_with_sql(where, params, limit=limit, relevance_keywords=keywords)
-    if not studies:
+
+    # Phase 2: expand morphological variants (mouse → also mice)
+    kws = expand_keyword_variants(raw_kws)
+
+    # Phase 1: merge explicit + auto-detected data types from keywords
+    auto_types     = detect_data_types(raw_kws)
+    effective_types = list(dict.fromkeys(explicit_types + auto_types)) or None
+    effective_inv  = explicit_inv or None
+
+    # Text search (topic OR + data-type AND)
+    where, params = build_where_from_plan({"keywords": kws})
+    text_studies = search_studies_with_sql(
+        where, params,
+        limit=limit * 2,             # over-fetch to leave room for sample hits
+        relevance_keywords=kws,
+        data_types=effective_types,
+        investigation_types=effective_inv,
+    )
+    text_ids = {s["study_id"] for s in text_studies}
+
+    # Phase 3: sample-metadata search (always-on, bounded)
+    sample_studies = search_studies_by_sample_meta(
+        raw_kws,                     # use original (unexpanded) for field matching
+        data_types=effective_types,
+        exclude_ids=text_ids,
+        max_candidates=40,
+    )
+
+    # Merge: text hits first (win dedup); sample hits fill gaps; re-rank; trim
+    seen, merged = {}, []
+    for s in text_studies + sample_studies:
+        sid = s["study_id"]
+        if sid not in seen:
+            seen[sid] = s
+            merged.append(s)
+
+    # Re-rank merged list by same keyword relevance heuristic
+    def _score(s):
+        title    = (s.get("study_title") or "").lower()
+        abstract = (s.get("study_abstract") or "").lower()
+        return sum(3 if k.lower() in title else (1 if k.lower() in abstract else 0)
+                   for k in kws)
+    merged.sort(key=_score, reverse=True)
+    merged = merged[:limit]
+
+    if not merged:
         text = "No matching public studies found for those keywords."
     else:
-        header = f"search_studies returned the top {len(studies)} studies by relevance:"
-        text   = _format_discovery_study_list(studies, header, 8_000)
+        header = f"search_studies returned the top {len(merged)} studies:"
+        text   = _format_discovery_study_list(merged, header, 8_000)
+
     return ToolResult(
         text=text,
         label="Searched Qiita database",
-        detail=f"top {len(studies)} of matches",
+        detail=f"top {len(merged)} results" + (f" (incl. {len(sample_studies)} from sample metadata)" if sample_studies else ""),
         ui_payload={
-            "kind": "tool_call",
-            "tool": "search_studies",
-            "args": {"keywords": keywords, "limit": limit},
-            "result_summary": f"{len(studies)} studies returned" if studies else "no matches",
+            "kind":           "tool_call",
+            "tool":           "search_studies",
+            "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
+            "result_summary": f"{len(merged)} studies" if merged else "no matches",
             "result_studies": [
                 {
                     "study_id":    s.get("study_id"),
@@ -170,8 +242,9 @@ def _tool_search_studies(args: dict) -> ToolResult:
                     "pi_name":     s.get("pi_name"),
                     "num_samples": s.get("num_samples"),
                     "data_types":  s.get("data_types"),
+                    "via":         s.get("via", "text"),
                 }
-                for s in studies
+                for s in merged
             ],
         },
     )
