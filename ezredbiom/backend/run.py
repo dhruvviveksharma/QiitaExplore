@@ -1,6 +1,13 @@
 # backend/run.py
 import sys
 import os
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger().setLevel(logging.INFO)
 
 # Ensure the backend directory is always first in sys.path so that local
 # modules (config, store, helpers/, routes/) are found even if the qiita

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Generator, Optional
 
 from config import client
@@ -36,6 +37,7 @@ def stream_agent(
     yield {"type": "agent_start"}
 
     for iteration in range(max_iters):
+        t_llm = time.perf_counter()
         stream = client.chat.completions.create(
             model=resolved,
             messages=api_msgs,
@@ -47,10 +49,13 @@ def stream_agent(
         content_parts = []
         tool_call_map = {}   # index -> {id, name, arguments}
         finish_reason = None
+        ttft = None
 
         for chunk in stream:
             if not chunk.choices:
                 continue
+            if ttft is None:
+                ttft = time.perf_counter() - t_llm
             choice = chunk.choices[0]
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
@@ -71,6 +76,9 @@ def stream_agent(
                         tool_call_map[idx]["name"] += fn.name
                     if fn.arguments:
                         tool_call_map[idx]["arguments"] += fn.arguments
+
+        logger.info("[timing] llm_round iter=%d ttft=%.3fs total=%.3fs",
+                    iteration, ttft or -1, time.perf_counter() - t_llm)
 
         assistant_content = "".join(content_parts)
 
@@ -99,19 +107,25 @@ def stream_agent(
             yield {"type": "segment_tool_call", "name": step_name,
                    "label": _tool_label(name, args), "args": args}
 
+            t0 = time.perf_counter()
             try:
                 result = execute_tool(name, args, scope=scope, chat_id=chat_id)
             except Exception as exc:
-                logger.exception("tool %s raised", name)
+                dt = time.perf_counter() - t0
+                logger.exception("tool %s raised after %.3fs", name, dt)
                 yield {"type": "segment_tool_result", "name": step_name,
-                       "label": f"{name} failed", "detail": str(exc)[:80],
+                       "label": f"{name} failed",
+                       "detail": f"{str(exc)[:60]} · {dt:.1f}s",
                        "ui_payload": None}
                 api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
                                   "content": f"Tool {name} failed: {exc}"})
                 continue
 
+            dt = time.perf_counter() - t0
+            logger.info("[timing] tool=%s elapsed=%.3fs", name, dt)
+            detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
             yield {"type": "segment_tool_result", "name": step_name,
-                   "label": result.label, "detail": result.detail,
+                   "label": result.label, "detail": detail,
                    "ui_payload": result.ui_payload}
             api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
                               "content": result.text})
