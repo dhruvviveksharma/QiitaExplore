@@ -26,6 +26,7 @@ def stream_chat(
     chat_id: str,
     message: str,
     report_study_id: int = None,
+    pin_study_ids: list = None,
     timeout: int = 120,
 ) -> dict:
     """POST a message to a global chat and consume the SSE stream.
@@ -37,10 +38,14 @@ def stream_chat(
       study_ids_mentioned — set of ints found in the assistant text
       ui_payload          — payload from the `ui` SSE event (set when report_study_id is used)
       step_done_labels    — list of (name, label) tuples from all step_done events
+      pinned_studies      — list from the done event's pinned_studies field (or [])
+      step_done_details   — dict of {name: detail} from all step_done events
     """
     body = {"user_id": "parity_test", "message": message}
     if report_study_id is not None:
         body["report_study_id"] = report_study_id
+    if pin_study_ids is not None:
+        body["pin_study_ids"] = pin_study_ids
 
     r = requests.post(
         f"{backend_url}/api/global-chats/{chat_id}/message/stream",
@@ -54,6 +59,8 @@ def stream_chat(
     search_count = None
     ui_payload = None
     step_done_labels = []
+    step_done_details = {}
+    pinned_studies = []
     tokens = []
 
     for raw_line in r.iter_lines(decode_unicode=True):
@@ -73,15 +80,19 @@ def stream_chat(
             elif event_type == "step_done":
                 name = data.get("name") or ""
                 label = data.get("label") or ""
+                detail = data.get("detail") or ""
                 step_done_labels.append((name, label))
+                step_done_details[name] = detail
                 if name == "search_db":
-                    m = re.search(r"(\d+)\s+stud", data.get("detail") or "")
+                    m = re.search(r"(\d+)\s+stud", detail)
                     if m:
                         search_count = int(m.group(1))
             elif event_type == "ui":
                 ui_payload = data
             elif event_type == "token":
                 tokens.append(data.get("token") or "")
+            elif event_type == "done":
+                pinned_studies = data.get("pinned_studies") or []
 
     assistant_text = "".join(tokens).strip()
     mentioned = set(
@@ -96,6 +107,8 @@ def stream_chat(
         "study_ids_mentioned": mentioned,
         "ui_payload": ui_payload,
         "step_done_labels": step_done_labels,
+        "step_done_details": step_done_details,
+        "pinned_studies": pinned_studies,
     }
 
 
