@@ -195,13 +195,17 @@ def _tool_search_studies(args: dict) -> ToolResult:
     )
     text_ids = {s["study_id"] for s in text_studies}
 
-    # Phase 3: sample-metadata search (always-on, bounded)
-    sample_studies = search_studies_by_sample_meta(
-        raw_kws,                     # use original (unexpanded) for field matching
-        data_types=effective_types,
-        exclude_ids=text_ids,
-        max_candidates=40,
-    )
+    # Phase 3: sample-metadata search — only when text search is sparse
+    # Skip when text already fills the result page (avoids 30s+ probe fan-out)
+    if len(text_studies) < limit:
+        sample_studies = search_studies_by_sample_meta(
+            raw_kws,                     # use original (unexpanded) for field matching
+            data_types=effective_types,
+            exclude_ids=text_ids,
+            max_candidates=40,
+        )
+    else:
+        sample_studies = []
 
     # Merge: text hits first (win dedup); sample hits fill gaps; re-rank; trim
     seen, merged = {}, []
