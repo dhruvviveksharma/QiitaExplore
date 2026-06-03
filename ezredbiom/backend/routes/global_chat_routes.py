@@ -73,6 +73,7 @@ def api_global_chat_message_stream(chat_id):
     user_id          = (data.get('user_id') or 'default').strip() or 'default'
     user_content     = (data.get('message') or data.get('content') or '').strip()
     model            = data.get('model')
+    deep_search      = bool(data.get("deep_search"))
     report_study_id  = data.get("report_study_id")
     pin_study_ids    = data.get("pin_study_ids")
     selected_studies = data.get("selected_studies") or []
@@ -179,6 +180,7 @@ def api_global_chat_message_stream(chat_id):
                         study_context_text=combined_ctx,
                         scope=SCOPE_GLOBAL,
                         chat_id=chat_id,
+                        deep_search=deep_search,
                     ):
                         etype = event["type"]
                         if etype == "agent_start":

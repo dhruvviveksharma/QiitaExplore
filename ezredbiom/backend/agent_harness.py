@@ -68,12 +68,13 @@ def _traced_execute_tool(name, args, **kw):
 agent_mod.execute_tool = _traced_execute_tool
 
 
-def run_prompt(prompt, model, history):
+def run_prompt(prompt, model, history, deep_search=False):
     """Run one turn through the real agent loop. Returns the assistant text."""
     _TRACE.clear()
     messages = list(history) + [{"role": "user", "content": prompt}]
+    mode = "DEEP" if deep_search else "normal"
     print(bold(f"\nYOU: {prompt}"))
-    print(dim(f"(model={model}  scope={SCOPE_GLOBAL})"))
+    print(dim(f"(model={model}  scope={SCOPE_GLOBAL}  mode={mode})"))
 
     assistant_parts = []
     t_total = time.perf_counter()
@@ -86,6 +87,7 @@ def run_prompt(prompt, model, history):
         study_context_text=None,
         scope=SCOPE_GLOBAL,
         chat_id=CHAT_ID,
+        deep_search=deep_search,
     ):
         etype = event["type"]
         if etype == "token":
@@ -120,8 +122,9 @@ def run_tool(name, args):
     _traced_execute_tool(name, args, scope=SCOPE_GLOBAL, chat_id=CHAT_ID)
 
 
-def repl(model):
-    print(bold("Agent harness — interactive. Type a prompt; 'quit' to exit.\n"
+def repl(model, deep_search=False):
+    mode = "DEEP" if deep_search else "normal"
+    print(bold(f"Agent harness — interactive ({mode} mode). Type a prompt; 'quit' to exit.\n"
                "Conversation history is kept so you can test multi-turn (e.g. search then filter)."))
     history = []
     while True:
@@ -134,7 +137,7 @@ def repl(model):
             break
         if not prompt:
             continue
-        answer = run_prompt(prompt, model, history)
+        answer = run_prompt(prompt, model, history, deep_search=deep_search)
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": answer})
 
@@ -145,14 +148,15 @@ def main():
     ap.add_argument("--model", default="qwen3", help="model id (default qwen3; tool-capable)")
     ap.add_argument("--tool", help="call one tool directly (no LLM)")
     ap.add_argument("--args", default="{}", help="JSON args for --tool")
+    ap.add_argument("--deep", action="store_true", help="enable deep search (sample metadata scan across ~500 studies)")
     a = ap.parse_args()
 
     if a.tool:
         run_tool(a.tool, json.loads(a.args))
     elif a.prompt:
-        run_prompt(a.prompt, a.model, [])
+        run_prompt(a.prompt, a.model, [], deep_search=a.deep)
     else:
-        repl(a.model)
+        repl(a.model, deep_search=a.deep)
 
 
 if __name__ == "__main__":

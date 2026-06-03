@@ -1,13 +1,16 @@
-"""Bounded per-study sample-metadata search for host/organism signal.
+"""Sample-metadata search for host/organism signal.
 
-Called on every search_studies tool invocation alongside the text search.
-Candidate set is always bounded (data-type filtered studies OR top-N by
-sample count) so this never scans the full 50TB database.
+Default search: candidate set is bounded (≤40 studies, data-type filtered).
+Deep search: up to max_candidates (e.g. 500) using a per-thread psycopg2
+connection pool — bypasses the shared TRN singleton, which is not thread-safe.
 """
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
+from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
 from helpers.qiita_fetch import _fetch_study_header
@@ -20,19 +23,11 @@ _HOST_FIELDS = [
     "host_scientific_name", "host_common_name",
     "env_feature", "taxon_id", "host_taxid",
 ]
-_MAX_KEYWORDS_PER_PROBE = 10   # keep per-study EXISTS query small
-_PROBE_TIMEOUT = 8.0            # seconds per TRN transaction
+_MAX_KEYWORDS_PER_PROBE = 10
 
 
 def _get_candidate_ids(data_types, exclude_ids, max_candidates):
-    """Return up to max_candidates public study IDs to probe, minus exclude_ids.
-
-    Scope priority:
-    1. If data_types active → studies matching the data-type filter, ordered
-       by num_samples DESC.
-    2. Else → top max_candidates public studies by num_samples DESC.
-    This ensures the sample-probe set is always bounded.
-    """
+    """Return up to max_candidates public study IDs to probe, minus exclude_ids."""
     dt_sql, dt_params = build_data_type_filter(data_types)
     where = f"AND {dt_sql}" if dt_sql else ""
     try:
@@ -66,12 +61,13 @@ def _get_candidate_ids(data_types, exclude_ids, max_candidates):
     return result
 
 
-def _probe_study(study_id, topic_keywords):
-    """Return True if any host field in sample_{study_id} matches a topic keyword.
+def _probe_study_raw(pool, study_id, kws):
+    """Return True if any host field in sample_{study_id} matches a keyword.
 
-    Uses a single EXISTS query with JSONB field extraction — no full table scan.
+    Uses a dedicated psycopg2 connection from the pool — safe to call from
+    multiple threads simultaneously (unlike the shared TRN singleton).
     """
-    kws = [k.strip() for k in topic_keywords if k.strip()][:_MAX_KEYWORDS_PER_PROBE]
+    kws = [k.strip() for k in kws if k.strip()][:_MAX_KEYWORDS_PER_PROBE]
     if not kws:
         return False
     sid = int(study_id)
@@ -80,31 +76,37 @@ def _probe_study(study_id, topic_keywords):
         for kw in kws:
             conditions.append(f"sm.sample_values->>'{field}' ILIKE %s")
             params.append(f"%{kw}%")
+    sql = f"""
+        SELECT EXISTS (
+            SELECT 1 FROM qiita.study_sample ss
+            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
+            WHERE ss.study_id = %s
+              AND ss.sample_id <> 'qiita_sample_column_names'
+              AND ({" OR ".join(conditions)})
+        )
+    """
+    conn = pool.getconn()
     try:
-        with TRN:
-            TRN.add(f"""
-                SELECT EXISTS (
-                    SELECT 1 FROM qiita.study_sample ss
-                    JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
-                    WHERE ss.study_id = %s
-                      AND ss.sample_id <> 'qiita_sample_column_names'
-                      AND ({" OR ".join(conditions)})
-                )
-            """, params)
-            rows = TRN.execute_fetchindex()
-            return bool(rows and rows[0][0])
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            return bool(row and row[0])
     except Exception:
+        logger.exception("probe study=%s failed", sid)
         return False
+    finally:
+        pool.putconn(conn)
 
 
 def search_studies_by_sample_meta(topic_keywords, data_types=None,
-                                   exclude_ids=None, max_candidates=40):
-    """Search for studies whose *sample* metadata matches topic keywords.
+                                   exclude_ids=None, max_candidates=500,
+                                   pool_size=16):
+    """Search for studies whose sample metadata matches topic keywords.
 
-    Probes at most max_candidates studies in parallel (pool ≤ 8). Candidates
-    are the data-type-filtered public studies (or top-N by sample count if no
-    data_types filter). Returns matched studies in standard dict shape with an
-    extra 'via': 'sample_metadata' tag.
+    Uses a per-call ThreadedConnectionPool so parallel probes run on independent
+    psycopg2 connections (the shared TRN singleton is not thread-safe).
+    Returns matched studies in standard dict shape with 'via': 'sample_metadata'.
     """
     kws = [k.strip() for k in (topic_keywords or []) if k.strip()]
     if not kws:
@@ -114,22 +116,37 @@ def search_studies_by_sample_meta(topic_keywords, data_types=None,
     if not candidate_ids:
         return []
 
+    workers = min(len(candidate_ids), pool_size)
+    timeout = max(30, len(candidate_ids) * 0.4)  # ~0.4s budget per study
+
+    pool = ThreadedConnectionPool(
+        1, workers,
+        user=qiita_config.user,
+        password=qiita_config.password,
+        database=qiita_config.database,
+        host=qiita_config.host,
+        port=qiita_config.port,
+    )
     matched_ids = []
-    pool_size = min(len(candidate_ids), 8)
-    with ThreadPoolExecutor(max_workers=pool_size) as pool:
-        futures = {pool.submit(_probe_study, sid, kws): sid for sid in candidate_ids}
-        for fut in as_completed(futures, timeout=30):
-            sid = futures[fut]
-            try:
-                if fut.result():
-                    matched_ids.append(sid)
-            except Exception:
-                pass
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_probe_study_raw, pool, sid, kws): sid
+                for sid in candidate_ids
+            }
+            for fut in as_completed(futures, timeout=timeout):
+                sid = futures[fut]
+                try:
+                    if fut.result():
+                        matched_ids.append(sid)
+                except Exception:
+                    pass
+    finally:
+        pool.closeall()
 
     if not matched_ids:
         return []
 
-    # Hydrate to standard dict shape using the cached header query
     studies = []
     for sid in matched_ids:
         header = _fetch_study_header(sid)

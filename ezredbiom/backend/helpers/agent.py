@@ -21,6 +21,7 @@ def stream_agent(
     scope: str,
     chat_id: str,
     max_iters: int = 4,
+    deep_search: bool = False,
 ) -> Generator[dict, None, None]:
     """
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
@@ -109,7 +110,7 @@ def stream_agent(
 
             t0 = time.perf_counter()
             try:
-                result = execute_tool(name, args, scope=scope, chat_id=chat_id)
+                result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
             except Exception as exc:
                 dt = time.perf_counter() - t0
                 logger.exception("tool %s raised after %.3fs", name, dt)

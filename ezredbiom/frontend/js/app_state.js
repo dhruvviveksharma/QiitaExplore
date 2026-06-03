@@ -329,6 +329,9 @@ function useAppState() {
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
     const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
     const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
+    const deepMatch     = /^\/deepsearch\s+(.+)/is.exec(msg);
+    const deepSearch    = !!deepMatch;
+    const sendMsg       = deepMatch ? deepMatch[1].trim() : msg;
     const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
@@ -458,11 +461,12 @@ function useAppState() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             user_id: USER_ID,
-            message: msg,
+            message: sendMsg,
             model: selectedModel,
             selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(deepSearch              && { deep_search: true }),
           }),
           signal: ctrl.signal,
         });

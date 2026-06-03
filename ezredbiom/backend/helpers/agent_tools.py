@@ -145,10 +145,11 @@ class ToolResult:
     ui_payload: Optional[dict] = None  # If set, emitted as a `ui` SSE event
 
 
-def execute_tool(name: str, args: dict, *, scope: str, chat_id: str) -> ToolResult:
+def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
+                 deep_search: bool = False) -> ToolResult:
     """Dispatch a tool call by name and return a ToolResult."""
     if name == "search_studies":
-        return _tool_search_studies(args)
+        return _tool_search_studies(args, deep_search=deep_search)
     if name == "get_study_report":
         return _tool_get_study_report(args, scope=scope, chat_id=chat_id)
     if name == "pin_study":
@@ -162,7 +163,7 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str) -> ToolResu
     )
 
 
-def _tool_search_studies(args: dict) -> ToolResult:
+def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult:
     raw_kws         = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
     limit           = max(1, min(20, int(args.get("limit") or 8)))
     explicit_types  = [t.strip() for t in (args.get("data_types") or []) if t]
@@ -195,14 +196,14 @@ def _tool_search_studies(args: dict) -> ToolResult:
     )
     text_ids = {s["study_id"] for s in text_studies}
 
-    # Phase 3: sample-metadata search — only when text search is sparse
-    # Skip when text already fills the result page (avoids 30s+ probe fan-out)
-    if len(text_studies) < limit:
+    # Phase 3: sample-metadata search — only in /deepsearch mode
+    if deep_search:
         sample_studies = search_studies_by_sample_meta(
-            raw_kws,                     # use original (unexpanded) for field matching
+            raw_kws,
             data_types=effective_types,
             exclude_ids=text_ids,
-            max_candidates=40,
+            max_candidates=500,
+            pool_size=16,
         )
     else:
         sample_studies = []
@@ -230,10 +231,12 @@ def _tool_search_studies(args: dict) -> ToolResult:
         header = f"search_studies returned the top {len(merged)} studies:"
         text   = _format_discovery_study_list(merged, header, 8_000)
 
+    label = "Deep-searched Qiita database" if deep_search else "Searched Qiita database"
+    detail_suffix = f" (incl. {len(sample_studies)} from sample metadata of ≤500 studies)" if sample_studies else (" (sample scan: 0 matches)" if deep_search else "")
     return ToolResult(
         text=text,
-        label="Searched Qiita database",
-        detail=f"top {len(merged)} results" + (f" (incl. {len(sample_studies)} from sample metadata)" if sample_studies else ""),
+        label=label,
+        detail=f"top {len(merged)} results{detail_suffix}",
         ui_payload={
             "kind":           "tool_call",
             "tool":           "search_studies",
