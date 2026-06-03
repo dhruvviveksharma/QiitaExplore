@@ -23,12 +23,14 @@ TOOL_SCHEMAS = [
             "description": (
                 "Search the Qiita public microbiome database for studies matching keywords. "
                 "Results are ranked by relevance and include host-metadata matches. "
+                "Issue EXACTLY ONE call with ALL keywords — never multiple parallel calls with "
+                "different filters (that yields redundant 0-result searches). "
                 "Include ALL relevant terms from the full conversation so refinements accumulate "
                 "(e.g. if the user asked for 'mouse gut' then 'shotgun', search "
                 "['mouse','mice','gut','shotgun','metagenomic']). Include BOTH singular and "
                 "plural forms and known synonyms/strains (e.g. mouse, mice, murine, Mus musculus, C57BL/6). "
-                "When the user constrains by sequencing type (shotgun/WGS/16S/etc.), set data_types — "
-                "do NOT rely on keywords alone for data-type filtering."
+                "Only set data_types/investigation_types when the user EXPLICITLY names a sequencing "
+                "type; for a plain topic query, OMIT them (they AND-filter and usually return 0)."
             ),
             "parameters": {
                 "type": "object",
