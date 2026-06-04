@@ -1,6 +1,10 @@
 # backend/services/study_service.py
+import logging
+
 from qiita_db.sql_connection import TRN
 from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD
+
+logger = logging.getLogger(__name__)
 
 # ── Morphological variants ────────────────────────────────────────────────────
 _IRREGULAR_VARIANTS = {
@@ -14,7 +18,7 @@ _IRREGULAR_VARIANTS = {
 
 
 def expand_keyword_variants(keywords):
-    """Add plural/singular variants (including mouse↔mice). Caps at 50."""
+    """Add plural/singular variants (including mouse↔mice). Caps at 80."""
     seen, expanded = set(), []
     for kw in (keywords or []):
         kw = kw.strip()
@@ -33,7 +37,7 @@ def expand_keyword_variants(keywords):
             if plural not in seen:
                 seen.add(plural)
                 expanded.append(plural)
-    return expanded[:50]
+    return expanded[:80]
 
 
 # ── Data-type synonym map (based on the 12 real Qiita data_type values) ───────
@@ -181,6 +185,14 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
 
     full_params = score_params + dt_params + list(params)
 
+    logger.info(
+        "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "
+        "keyword_clauses=%d score_params=%d total_params=%d",
+        lim, off, data_types, investigation_types,
+        len(params) // 6 if params else 0,
+        len(score_params), len(full_params),
+    )
+
     with TRN:
         sql = f"""
         SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
@@ -214,8 +226,15 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         OFFSET {off}
         """
 
+        if logger.isEnabledFor(logging.DEBUG):
+            # Show first 500 chars of SQL and params count (not full params — too verbose)
+            logger.debug("[sql] query_snippet=%r param_count=%d", sql[:500], len(full_params))
+
         TRN.add(sql, full_params)
         results = TRN.execute_fetchindex()
+
+    row_count = len(results) if results else 0
+    logger.info("[sql] rows_returned=%d", row_count)
 
     if not results:
         return []

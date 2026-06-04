@@ -62,22 +62,28 @@ def stream_chat(
     step_done_details = {}
     pinned_studies = []
     tokens = []
+    result_study_ids = set()
 
+    current_event = None
     for raw_line in r.iter_lines(decode_unicode=True):
-        if not raw_line or raw_line.startswith(":"):
+        if not raw_line:
+            current_event = None
+            continue
+        if raw_line.startswith(":"):
+            continue
+        if raw_line.startswith("event:"):
+            current_event = raw_line[6:].strip()
             continue
         if raw_line.startswith("data:"):
             payload_str = raw_line[5:].strip()
             try:
-                event_data = json.loads(payload_str)
+                data = json.loads(payload_str)
             except json.JSONDecodeError:
                 continue
-            event_type = event_data.get("type")
-            data = event_data.get("data") or {}
 
-            if event_type == "query_plan":
+            if current_event == "query_plan":
                 query_plan = data
-            elif event_type == "step_done":
+            elif current_event == "step_done":
                 name = data.get("name") or ""
                 label = data.get("label") or ""
                 detail = data.get("detail") or ""
@@ -87,11 +93,17 @@ def stream_chat(
                     m = re.search(r"(\d+)\s+stud", detail)
                     if m:
                         search_count = int(m.group(1))
-            elif event_type == "ui":
+            elif current_event == "ui":
                 ui_payload = data
-            elif event_type == "token":
+            elif current_event == "token":
                 tokens.append(data.get("token") or "")
-            elif event_type == "done":
+            elif current_event == "segment_tool_result":
+                # agentic path: collect study IDs returned by the search tool
+                for s in (data.get("ui_payload") or {}).get("result_studies") or []:
+                    sid = s.get("study_id")
+                    if sid is not None:
+                        result_study_ids.add(int(sid))
+            elif current_event == "done":
                 pinned_studies = data.get("pinned_studies") or []
 
     assistant_text = "".join(tokens).strip()
@@ -105,6 +117,7 @@ def stream_chat(
         "search_count": search_count,
         "assistant_text": assistant_text,
         "study_ids_mentioned": mentioned,
+        "result_study_ids": result_study_ids,
         "ui_payload": ui_payload,
         "step_done_labels": step_done_labels,
         "step_done_details": step_done_details,

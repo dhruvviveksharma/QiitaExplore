@@ -5,6 +5,7 @@ Deep search: up to max_candidates (e.g. 500) using a per-thread psycopg2
 connection pool — bypasses the shared TRN singleton, which is not thread-safe.
 """
 
+import concurrent.futures
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -14,6 +15,7 @@ from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
 from helpers.qiita_fetch import _fetch_study_header
+from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
 logger = logging.getLogger(__name__)
 
@@ -126,22 +128,33 @@ def search_studies_by_sample_meta(topic_keywords, data_types=None,
         database=qiita_config.database,
         host=qiita_config.host,
         port=qiita_config.port,
+        options=f"-c statement_timeout={SAMPLE_SEARCH_PROBE_TIMEOUT_MS}",
     )
     matched_ids = []
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {
+        executor.submit(_probe_study_raw, pool, sid, kws): sid
+        for sid in candidate_ids
+    }
     try:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(_probe_study_raw, pool, sid, kws): sid
-                for sid in candidate_ids
-            }
-            for fut in as_completed(futures, timeout=timeout):
-                sid = futures[fut]
-                try:
-                    if fut.result():
-                        matched_ids.append(sid)
-                except Exception:
-                    pass
+        for fut in as_completed(futures, timeout=timeout):
+            sid = futures[fut]
+            try:
+                if fut.result():
+                    matched_ids.append(sid)
+            except Exception:
+                pass
+    except (TimeoutError, concurrent.futures.TimeoutError):
+        n_done = sum(1 for f in futures if f.done())
+        logger.warning(
+            "[sample_search] timed out after %.0fs; %d/%d studies scanned, %d matched — returning partial",
+            timeout, n_done, len(candidate_ids), len(matched_ids),
+        )
+        for f in futures:
+            f.cancel()
     finally:
+        # shutdown(wait=False) returns immediately; background threads finish on their own
+        executor.shutdown(wait=False)
         pool.closeall()
 
     if not matched_ids:

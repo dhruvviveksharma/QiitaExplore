@@ -27,6 +27,7 @@ def stream_agent(
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
       {"type": "agent_start"}                                      — once at top
       {"type": "token",             "token": str}                  — LLM text
+      {"type": "reasoning",         "token": str}                  — reasoning model thinking
       {"type": "segment_tool_call", "name": str, "label": str, "args": dict}
       {"type": "segment_tool_result","name": str, "label": str,
                                      "detail": str, "ui_payload": dict|None}
@@ -35,22 +36,35 @@ def stream_agent(
     resolved = _resolve_model(model)
     api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
 
+    logger.info("[agent_start] model=%s resolved=%s deep=%s msg_count=%d",
+                model, resolved, deep_search, len(api_msgs))
+
     yield {"type": "agent_start"}
 
+    search_already_done = False  # allow model only ONE search_studies call
+
     for iteration in range(max_iters):
+        # After a search completes, drop search_studies from the schema so the
+        # model is forced to synthesise results rather than re-searching.
+        if search_already_done:
+            active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]
+        else:
+            active_tools = TOOL_SCHEMAS
+
         t_llm = time.perf_counter()
         stream = client.chat.completions.create(
             model=resolved,
             messages=api_msgs,
-            tools=TOOL_SCHEMAS,
+            tools=active_tools,
             stream=True,
             timeout=300.0,
         )
 
-        content_parts = []
-        tool_call_map = {}   # index -> {id, name, arguments}
-        finish_reason = None
-        ttft = None
+        content_parts   = []
+        reasoning_parts = []
+        tool_call_map   = {}   # index -> {id, name, arguments}
+        finish_reason   = None
+        ttft            = None
 
         for chunk in stream:
             if not chunk.choices:
@@ -60,6 +74,12 @@ def stream_agent(
             choice = chunk.choices[0]
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
+
+            # Reasoning-model output (e.g. minimax-m2, o1-style models on vLLM)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                yield {"type": "reasoning", "token": reasoning}
 
             if delta.content:
                 content_parts.append(delta.content)
@@ -78,10 +98,33 @@ def stream_agent(
                     if fn.arguments:
                         tool_call_map[idx]["arguments"] += fn.arguments
 
-        logger.info("[timing] llm_round iter=%d ttft=%.3fs total=%.3fs",
-                    iteration, ttft or -1, time.perf_counter() - t_llm)
+            # Debug: log only non-empty chunks so the file stays readable
+            if logger.isEnabledFor(logging.DEBUG):
+                has_c = bool(delta.content)
+                has_r = bool(reasoning)
+                has_t = bool(delta.tool_calls)
+                fr    = choice.finish_reason
+                if has_c or has_r or has_t or fr:
+                    logger.debug(
+                        "[chunk iter=%d] content=%d reasoning=%d tools=%d finish=%s",
+                        iteration,
+                        len(delta.content or "") if has_c else 0,
+                        len(reasoning or "") if has_r else 0,
+                        len(delta.tool_calls or []) if has_t else 0,
+                        fr or "-",
+                    )
 
-        assistant_content = "".join(content_parts)
+        elapsed = time.perf_counter() - t_llm
+        assistant_content   = "".join(content_parts)
+        assistant_reasoning = "".join(reasoning_parts)
+
+        logger.info(
+            "[round %d] ttft=%.3fs total=%.3fs content=%d chars reasoning=%d chars "
+            "finish=%s tool_calls=%d",
+            iteration, ttft or -1, elapsed,
+            len(assistant_content), len(assistant_reasoning),
+            finish_reason, len(tool_call_map),
+        )
 
         if finish_reason != "tool_calls" or not tool_call_map:
             break
@@ -123,7 +166,9 @@ def stream_agent(
                 continue
 
             dt = time.perf_counter() - t0
-            logger.info("[timing] tool=%s elapsed=%.3fs", name, dt)
+            if name == "search_studies":
+                search_already_done = True
+            logger.info("[timing] tool=%s elapsed=%.3fs result_chars=%d", name, dt, len(result.text or ""))
             detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
             yield {"type": "segment_tool_result", "name": step_name,
                    "label": result.label, "detail": detail,
@@ -138,7 +183,8 @@ def stream_agent(
 def _tool_label(name: str, args: dict) -> str:
     """Human-readable step label for a tool call while it runs."""
     if name == "search_studies":
-        kws = (args.get("keywords") or [])[:3]
+        kws = (args.get("organism") or args.get("keywords") or
+               args.get("qualifier") or args.get("body_site") or [])[:3]
         return f"Searching: {', '.join(kws)}…" if kws else "Searching Qiita…"
     if name == "get_study_report":
         return f"Loading report for study {args.get('study_id', '?')}…"

@@ -46,6 +46,9 @@ def context_budget_chars(model: str) -> int:
 PROJECT_SUMMARY_GEN_LIMIT       = int(os.getenv("PROJECT_SUMMARY_GEN_LIMIT", "5"))
 GLOBAL_SEARCH_SQL_LIMIT_BROAD   = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_BROAD", "120"))
 GLOBAL_SEARCH_SQL_LIMIT_NARROW  = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_NARROW", "50"))
+SAMPLE_SEARCH_DEFAULT_CANDIDATES = int(os.getenv("SAMPLE_SEARCH_DEFAULT_CANDIDATES", "40"))
+SAMPLE_SEARCH_DEEP_CANDIDATES    = int(os.getenv("SAMPLE_SEARCH_DEEP_CANDIDATES",    "500"))
+SAMPLE_SEARCH_PROBE_TIMEOUT_MS   = int(os.getenv("SAMPLE_SEARCH_PROBE_TIMEOUT_MS",   "8000"))
 REPORT_SAMPLE_LIMIT             = 200
 PINNED_REPORT_CONTEXT_MAX_CHARS = int(os.getenv("PINNED_REPORT_CONTEXT_MAX_CHARS", "40000"))
 PINNED_REPORT_MIN_PER_STUDY     = int(os.getenv("PINNED_REPORT_MIN_PER_STUDY", "2000"))
@@ -80,13 +83,27 @@ Your primary goal is to help researchers find studies from the entire Qiita data
 
 ## Tools available to you
 You have the following tools. Call them as needed — do not wait for the user to invoke them explicitly.
-- **search_studies**: Search Qiita for public studies matching keywords. Call this whenever the user asks to find, discover, or filter studies.
-  - Issue EXACTLY ONE search_studies call per user request, with ALL keywords in that single call. NEVER fire multiple searches with different filter combinations in one turn — that produces redundant 0-result calls.
-  - Include ALL relevant keywords from the full conversation so refinements accumulate.
-  - ALWAYS include both singular and plural forms AND known synonyms: e.g. "mouse","mice","murine","Mus musculus","C57BL/6" for mouse studies; "human","humans","Homo sapiens" for human.
-  - Do NOT set data_types or investigation_types unless the user EXPLICITLY names a sequencing type. For a plain topic query (e.g. "wild mice"), OMIT both — adding them AND-filters and usually returns 0 results.
-  - Only WHEN the user names a sequencing type: "filter to shotgun" → data_types=["Metagenomic"]; "filter to 16S amplicon" → data_types=["16S"]. Use keywords alone for the topic.
-  - Set investigation_types only when the user is explicitly that granular (e.g. "specifically WGS, not amplicon shotgun") — it narrows hard (shotgun_metagenomics = ~18 studies).
+- **search_studies**: Search Qiita for public studies. Call this whenever the user asks to find, discover, or filter studies.
+  - Issue EXACTLY ONE call per user request. NEVER fire multiple calls in one turn.
+  - The tool has **typed dimension slots** — fill every slot you can identify from the query with ALL synonyms for that concept. The backend pools all slots into one ranked search, so filling generously never over-narrows.
+  - **`organism`**: all names for the host/focal organism — common names, Latin binomials, strains, related genera, plural + singular.
+    e.g. mouse → ["mouse","mice","murine","Mus musculus","house mouse","field mouse","wood mouse","C57BL/6","BALB/c","Apodemus","Peromyscus","rodent","rodents"]
+  - **`qualifier`**: condition/status/context modifiers — wild, captive, diseased, treated, life stage, diet, etc.
+    e.g. wild → ["wild","wild animal","wild animals","wild-caught","feral","feral mice","free-living","wildlife","non-captive","wild mice","wild mouse","wild rodent"]
+  - **`body_site`**: anatomical location or environmental niche + synonyms.
+    e.g. gut → ["gut","intestine","colon","GI tract","cecum","feces","stool","fecal","host-associated"]
+    e.g. soil → ["soil","rhizosphere","sediment","terrestrial","earth"]
+  - **`condition_or_intervention`**: disease, treatment, or experimental manipulation + abbreviations.
+    e.g. FMT → ["FMT","fecal microbiota transplant","fecal transplant","stool transplant","microbiome transfer"]
+  - **`project_or_pi`**: named cohort, project name, PI surname, institution. Only populate if explicitly named.
+  - **`keywords`**: catch-all for terms that don't fit any slot above.
+  - Include ALL relevant terms from the full conversation so refinements accumulate.
+  - Do NOT set data_types or investigation_types unless the user EXPLICITLY names a sequencing type.
+  - Mapping for common terms (use ONLY data_types, NEVER investigation_types for these):
+      "shotgun" / "metagenomics" / "WGS" → data_types=["Metagenomic"]
+      "16S" / "amplicon" / "rRNA" → data_types=["16S"]
+      "ITS" / "fungal" → data_types=["ITS"]
+  - NEVER set investigation_types for the above. investigation_types="shotgun_metagenomics" narrows to ~18 studies and almost always returns 0.
 - **get_study_report**: Load full sample-level metadata for a specific study ID. Call this when the user asks about a specific study or wants to see its samples.
 - **pin_study**: Attach one or more studies to this chat for deep context. Call this when the user says they want to keep a study or focus on specific IDs.
 - **compute_diversity**: Compute alpha/beta diversity metrics. (Currently unavailable — BIOM ingestion is pending.)

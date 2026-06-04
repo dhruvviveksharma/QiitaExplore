@@ -6,18 +6,22 @@ for any prompt:
   - how long each tool + each LLM round takes
   - the FULL text each tool returns to the LLM (the thing that decides quality)
   - the final assistant answer
+  - reasoning-model thinking (minimax-m2, etc.) shown dimmed
 
 Usage (run via run_agent_harness.sh so the Qiita/DB env is set):
-  bash ../run_agent_harness.sh                          # interactive REPL (multi-turn)
-  bash ../run_agent_harness.sh "studies on wild mice"   # one-shot prompt
-  bash ../run_agent_harness.sh --model qwen3 "..."       # pick a model
-  bash ../run_agent_harness.sh --tool search_studies \
-       --args '{"keywords":["wild mice"],"data_types":["Metagenomic"]}'   # tool only, no LLM
+  bash ../run_agent_harness.sh                             # interactive REPL (multi-turn)
+  bash ../run_agent_harness.sh "studies on wild mice"      # one-shot prompt
+  bash ../run_agent_harness.sh --model minimax-m2 "..."    # pick a model
+  /deepsearch <prompt>                                     # enable deep search in REPL or one-shot
+  bash ../run_agent_harness.sh --tool search_studies \\
+       --args '{"keywords":["wild mice"]}'                 # tool only, no LLM
 """
 
 import argparse
 import json
+import logging
 import os
+import re
 import sys
 import time
 
@@ -25,23 +29,44 @@ _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-import helpers.agent as agent_mod            # noqa: E402
-from helpers.agent import stream_agent       # noqa: E402
-from helpers.agent_tools import execute_tool  # noqa: E402
-from config import GLOBAL_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL  # noqa: E402
-from store.cache import SCOPE_GLOBAL          # noqa: E402
+
+# ── Python-level tee: stdout → terminal (with colors) + log file (ANSI stripped) ──
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+class _LogTee:
+    """Mirror all stdout to a log file with ANSI codes stripped."""
+    def __init__(self, path, real_stdout):
+        self._file    = open(path, "w", buffering=1, encoding="utf-8")
+        self._out     = real_stdout
+        self.encoding = real_stdout.encoding
+        self.errors   = getattr(real_stdout, "errors", "replace")
+
+    def write(self, s):
+        self._out.write(s)
+        self._file.write(_ANSI_RE.sub("", s))
+
+    def flush(self):
+        self._out.flush()
+        self._file.flush()
+
+    def isatty(self):
+        return self._out.isatty()
+
+    def fileno(self):
+        return self._out.fileno()
+
+
+# ── colors — check dynamically so they work after sys.stdout is replaced ──────
+def _c(code, s): return f"\033[{code}m{s}\033[0m" if sys.stdout.isatty() else s
+def dim(s):   return _c("2", s)
+def bold(s):  return _c("1", s)
+def cyan(s):  return _c("36", s)
+def green(s): return _c("32", s)
+def yellow(s):return _c("33", s)
+def magenta(s):return _c("35", s)
 
 TEXT_PREVIEW = int(os.getenv("HARNESS_TEXT_PREVIEW", "2000"))  # chars of tool text to show
 CHAT_ID = "harness-test-chat"
-
-# ── colors (no-op if not a tty) ──────────────────────────────────────────────
-_C = sys.stdout.isatty()
-def _c(code, s): return f"\033[{code}m{s}\033[0m" if _C else s
-def dim(s):  return _c("2", s)
-def bold(s): return _c("1", s)
-def cyan(s): return _c("36", s)
-def green(s):return _c("32", s)
-def yellow(s):return _c("33", s)
 
 _TRACE = []  # per-prompt list of {name, args, dt, label, detail, text_len}
 
@@ -64,10 +89,6 @@ def _traced_execute_tool(name, args, **kw):
     return result
 
 
-# Patch the name bound INSIDE helpers.agent (stream_agent calls it directly)
-agent_mod.execute_tool = _traced_execute_tool
-
-
 def run_prompt(prompt, model, history, deep_search=False):
     """Run one turn through the real agent loop. Returns the assistant text."""
     _TRACE.clear()
@@ -78,7 +99,8 @@ def run_prompt(prompt, model, history, deep_search=False):
 
     assistant_parts = []
     t_total = time.perf_counter()
-    printed_assistant_header = False
+    printed_assistant_header  = False
+    printed_reasoning_header  = False
 
     for event in stream_agent(
         messages,
@@ -88,18 +110,35 @@ def run_prompt(prompt, model, history, deep_search=False):
         scope=SCOPE_GLOBAL,
         chat_id=CHAT_ID,
         deep_search=deep_search,
+        max_iters=8,
     ):
         etype = event["type"]
-        if etype == "token":
+
+        if etype == "reasoning":
+            if not printed_reasoning_header:
+                print(dim("\n[thinking] "), end="")
+                printed_reasoning_header = True
+            sys.stdout.write(dim(event["token"]))
+            sys.stdout.flush()
+
+        elif etype == "token":
+            if printed_reasoning_header:
+                # Blank line after reasoning block before the real answer
+                print()
+                printed_reasoning_header = False
             if not printed_assistant_header:
                 print(green("\nASSISTANT: "), end="")
                 printed_assistant_header = True
             assistant_parts.append(event["token"])
             sys.stdout.write(event["token"])
             sys.stdout.flush()
+
         elif etype == "segment_tool_call":
+            if printed_reasoning_header:
+                print()
+                printed_reasoning_header = False
             print(yellow(f"\n  → LLM requested: {event['label']}"))
-        # segment_tool_result is already covered by the _traced_execute_tool print
+        # segment_tool_result is already covered by _traced_execute_tool print
 
     total = time.perf_counter() - t_total
     print(bold(f"\n\n── summary ───────────────────────────────────────"))
@@ -125,7 +164,7 @@ def run_tool(name, args):
 def repl(model, deep_search=False):
     mode = "DEEP" if deep_search else "normal"
     print(bold(f"Agent harness — interactive ({mode} mode). Type a prompt; 'quit' to exit.\n"
-               "Conversation history is kept so you can test multi-turn (e.g. search then filter)."))
+               "Prefix prompt with /deepsearch to enable deep search for that turn."))
     history = []
     while True:
         try:
@@ -137,24 +176,67 @@ def repl(model, deep_search=False):
             break
         if not prompt:
             continue
-        answer = run_prompt(prompt, model, history, deep_search=deep_search)
-        history.append({"role": "user", "content": prompt})
+        turn_deep = deep_search
+        if prompt.startswith("/deepsearch "):
+            prompt    = prompt[len("/deepsearch "):].strip()
+            turn_deep = True
+        answer = run_prompt(prompt, model, history, deep_search=turn_deep)
+        history.append({"role": "user",      "content": prompt})
         history.append({"role": "assistant", "content": answer})
 
 
 def main():
+    # ── set up log tee FIRST so all subsequent output (incl. logging) goes to file ──
+    log_fp = os.getenv("HARNESS_LOG_FP")
+    if not log_fp:
+        logs_dir = os.path.join(_BACKEND_DIR, "..", "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        ts     = time.strftime("%Y%m%d_%H%M%S")
+        log_fp = os.path.join(logs_dir, f"harness_{ts}.log")
+    sys.stdout = _LogTee(log_fp, sys.__stdout__)
+    print(f"[log → {log_fp}]")
+
+    # ── configure logging to go through the tee ────────────────────────────────
+    level = logging.DEBUG if os.getenv("AGENT_DEBUG") else logging.INFO
+    logging.basicConfig(
+        level=level,
+        stream=sys.stdout,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    # Suppress very noisy third-party loggers that don't help with app debugging
+    for _noisy in ("httpcore", "httpx", "openai._base_client", "urllib3",
+                   "h5py", "matplotlib", "PIL"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+    # ── lazy-import agent modules after logging/path setup ─────────────────────
+    global stream_agent, execute_tool, GLOBAL_CHAT_SYSTEM_PROMPT, SCOPE_GLOBAL, agent_mod
+    import helpers.agent as agent_mod
+    from helpers.agent import stream_agent
+    from helpers.agent_tools import execute_tool
+    from config import GLOBAL_CHAT_SYSTEM_PROMPT
+    from store.cache import SCOPE_GLOBAL
+
+    # Patch execute_tool inside agent module so stream_agent uses the traced version
+    agent_mod.execute_tool = _traced_execute_tool
+
     ap = argparse.ArgumentParser(description="Test the agentic chatbot from the CLI.")
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for interactive REPL")
     ap.add_argument("--model", default="qwen3", help="model id (default qwen3; tool-capable)")
-    ap.add_argument("--tool", help="call one tool directly (no LLM)")
-    ap.add_argument("--args", default="{}", help="JSON args for --tool")
-    ap.add_argument("--deep", action="store_true", help="enable deep search (sample metadata scan across ~500 studies)")
+    ap.add_argument("--tool",  help="call one tool directly (no LLM)")
+    ap.add_argument("--args",  default="{}", help="JSON args for --tool")
+    ap.add_argument("--deep",  action="store_true",
+                    help="enable deep search (sample metadata scan across ~500 studies)")
     a = ap.parse_args()
 
     if a.tool:
         run_tool(a.tool, json.loads(a.args))
     elif a.prompt:
-        run_prompt(a.prompt, a.model, [], deep_search=a.deep)
+        prompt    = a.prompt
+        turn_deep = a.deep
+        if prompt.startswith("/deepsearch "):
+            prompt    = prompt[len("/deepsearch "):].strip()
+            turn_deep = True
+        run_prompt(prompt, a.model, [], deep_search=turn_deep)
     else:
         repl(a.model, deep_search=a.deep)
 
