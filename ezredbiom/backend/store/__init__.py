@@ -24,6 +24,20 @@ from .crud import (  # noqa: F401
     delete_global_chat,
 )
 
+from .merge_crud import (  # noqa: F401
+    create_workspace,
+    list_workspaces,
+    get_workspace,
+    delete_workspace,
+    add_study_to_workspace,
+    remove_study_from_workspace,
+    update_workspace_study,
+    create_merge_job,
+    get_merge_job,
+    list_merge_jobs,
+    update_merge_job_status,
+)
+
 from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,

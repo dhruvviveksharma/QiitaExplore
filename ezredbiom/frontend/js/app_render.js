@@ -4,10 +4,11 @@ function renderApp(s) {
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
+    setMergeWorkspaceId, setShowMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
-    ctxStudies, showNewProj, newProjName,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
@@ -180,6 +181,11 @@ function renderApp(s) {
             <span className="topbar-badge">{openProject.studies.length} sources</span>
           )}
           <span className="topbar-spacer" />
+          <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
+            title="Merge Workspace"
+            onClick={() => setShowMergePanel(p => !p)}>
+            ⊕ Merge
+          </button>
           <button className="theme-toggle"
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
@@ -258,6 +264,13 @@ function renderApp(s) {
                                   {inCtx ? '✓ Pinned' : '+ Pin'}
                                 </button>
                               )}
+                              <button className="btn-card-merge"
+                                onClick={() => {
+                                  setShowMergePanel(true);
+                                  window._mergeAddStudy && window._mergeAddStudy(study);
+                                }}>
+                                + Merge
+                              </button>
                             </div>
                           </div>
                           <div className="study-card-title">{study.study_title || 'Untitled study'}</div>
@@ -556,6 +569,13 @@ function renderApp(s) {
             )}
           </div>
         </div>
+      )}
+      {showMergePanel && (
+        <MergeWorkspacePanel
+          workspaceId={mergeWorkspaceId}
+          setWorkspaceId={setMergeWorkspaceId}
+          onClose={() => setShowMergePanel(false)}
+        />
       )}
     </div>
   );
