@@ -3,7 +3,7 @@
 import json
 
 
-def autopick_artifact(artifacts: list, data_type: str) -> dict | None:
+def autopick_artifact(artifacts: list, data_type: str):
     """Return the best BIOM artifact for merging given a study's artifact list.
 
     Heuristic (per Jonathan K.):

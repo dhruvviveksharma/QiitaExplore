@@ -42,7 +42,7 @@ def _get_artifacts(study_id: int) -> list:
     return artifacts
 
 
-def _get_sample_ids(study_id: int) -> list | None:
+def _get_sample_ids(study_id: int):
     """Return sample IDs from full_samples_json cache if available."""
     cached = get_study_detail_cache(study_id)
     if cached and cached.get("full_samples_json"):

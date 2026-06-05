@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from typing import Optional
 
 from .db import _conn, _as_dict, _now
 
@@ -30,7 +31,7 @@ def list_workspaces(user_id: str) -> list:
     return [_as_dict(r) for r in rows]
 
 
-def get_workspace(workspace_id: str, user_id: str) -> dict | None:
+def get_workspace(workspace_id: str, user_id: str) -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute(
             "SELECT * FROM merge_workspaces WHERE workspace_id=? AND user_id=?",
@@ -57,7 +58,7 @@ def delete_workspace(workspace_id: str, user_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def add_study_to_workspace(workspace_id: str, study: dict) -> dict | None:
+def add_study_to_workspace(workspace_id: str, study: dict) -> Optional[dict]:
     """Returns None if workspace already has _MAX_STUDIES studies."""
     now = _now()
     with _conn() as conn:
@@ -145,7 +146,7 @@ def create_merge_job(workspace_id: str, user_id: str, workspace_snap: list) -> d
             "status": "pending", "created_at": now, "updated_at": now}
 
 
-def get_merge_job(job_id: str) -> dict | None:
+def get_merge_job(job_id: str) -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute("SELECT * FROM merge_jobs WHERE job_id=?", (job_id,)).fetchone()
     return _as_dict(row)
