@@ -4,11 +4,11 @@ function renderApp(s) {
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel,
+    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
-    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
@@ -266,8 +266,8 @@ function renderApp(s) {
                               )}
                               <button className="btn-card-merge"
                                 onClick={() => {
+                                  setPendingMergeStudy(study);
                                   setShowMergePanel(true);
-                                  window._mergeAddStudy && window._mergeAddStudy(study);
                                 }}>
                                 + Merge
                               </button>
@@ -574,6 +574,8 @@ function renderApp(s) {
         <MergeWorkspacePanel
           workspaceId={mergeWorkspaceId}
           setWorkspaceId={setMergeWorkspaceId}
+          pendingStudy={pendingMergeStudy}
+          clearPendingStudy={() => setPendingMergeStudy(null)}
           onClose={() => setShowMergePanel(false)}
         />
       )}

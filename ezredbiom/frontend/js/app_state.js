@@ -19,6 +19,7 @@ function useAppState() {
   const [newProjName,  setNewProjName]  = useState('');
   const [mergeWorkspaceId, setMergeWorkspaceId] = useState(null);
   const [showMergePanel,   setShowMergePanel]   = useState(false);
+  const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
   const [input,   setInput]   = useState('');
   const [sending, setSending] = useState(false);
   const [compErr,        setCompErr]        = useState('');
@@ -573,12 +574,12 @@ function useAppState() {
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel,
+    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
-    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,

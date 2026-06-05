@@ -1,6 +1,6 @@
 // Merge Workspace panel — browse studies, pick BIOMs, validate, merge
 
-function MergeWorkspacePanel({ workspaceId, setWorkspaceId, onClose }) {
+function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearPendingStudy, onClose }) {
   const [workspace,   setWorkspace]   = useState(null);
   const [validation,  setValidation]  = useState(null);
   const [validating,  setValidating]  = useState(false);
@@ -9,11 +9,13 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, onClose }) {
   const [merging,     setMerging]     = useState(false);
   const [error,       setError]       = useState('');
 
-  // Expose addStudy globally so browse-grid "+ Merge" buttons can call it
+  // Consume any study queued before the panel was mounted
   useEffect(() => {
-    window._mergeAddStudy = (study) => handleAddStudy(study);
-    return () => { delete window._mergeAddStudy; };
-  });
+    if (pendingStudy) {
+      handleAddStudy(pendingStudy);
+      clearPendingStudy();
+    }
+  }, [pendingStudy]);
 
   // Load workspace whenever the ID changes
   useEffect(() => {
