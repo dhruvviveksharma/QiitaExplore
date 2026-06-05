@@ -413,6 +413,10 @@ input, textarea { font-family: var(--sans); }
   color: #f9f8f6;
   border-bottom-right-radius: 3px;
 }
+.app.dark .msg-row.user .msg-bubble {
+  background: #383530;
+  color: var(--text);
+}
 
 /* Assistant messages: centered, bubble-free article style */
 .msg-row.assistant .msg-bubble {
@@ -479,6 +483,11 @@ input, textarea { font-family: var(--sans); }
   text-align: left;
 }
 .tool-call-header:hover { background: var(--surface-3, #eef0f4); }
+.app.dark .tool-call-card {
+  background: #2a2825;
+  border-left-color: rgba(201, 100, 66, 0.35);
+}
+.app.dark .tool-call-header:hover { background: #333028; }
 .tool-call-label { flex: 1; color: var(--text-2); }
 .tool-call-toggle { color: var(--text-3); margin-left: auto; }
 .tool-call-body {
