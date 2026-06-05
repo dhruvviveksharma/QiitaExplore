@@ -17,10 +17,13 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
     }
   }, [pendingStudy]);
 
-  // Load workspace whenever the ID changes
+  // Load pre-existing workspace on mount only.
+  // Do NOT depend on workspaceId: ensureWorkspace() sets both workspaceId and
+  // workspace state directly, so re-running loadWorkspace after creation would
+  // race against the addStudy POST and overwrite the workspace with an empty list.
   useEffect(() => {
     if (workspaceId) loadWorkspace(workspaceId);
-  }, [workspaceId]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-run validation whenever study list changes
   useEffect(() => {
@@ -51,21 +54,25 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
   async function handleAddStudy(study) {
     setError('');
-    const wsId = await ensureWorkspace();
-    if (!wsId) return;
-    const res = await apiPost(`/merge-workspaces/${wsId}/studies`, {
-      study_id: study.study_id,
-      study_title: study.study_title,
-      data_types: study.data_types,
-      num_samples: study.num_samples,
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setError(d.error || 'Failed to add study');
-      return;
+    try {
+      const wsId = await ensureWorkspace();
+      if (!wsId) return;
+      const res = await apiPost(`/merge-workspaces/${wsId}/studies`, {
+        study_id: study.study_id,
+        study_title: study.study_title,
+        data_types: study.data_types,
+        num_samples: study.num_samples,
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || 'Failed to add study');
+        return;
+      }
+      const data = await res.json();
+      setWorkspace(prev => ({ ...prev, studies: data.studies }));
+    } catch (e) {
+      setError('Network error: ' + e.message);
     }
-    const data = await res.json();
-    setWorkspace(prev => ({ ...prev, studies: data.studies }));
   }
 
   async function handleRemoveStudy(studyId) {
