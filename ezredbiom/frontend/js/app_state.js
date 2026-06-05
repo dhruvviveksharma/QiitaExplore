@@ -33,6 +33,13 @@ function useAppState() {
     setSelectedModelState(value);
     try { localStorage.setItem('llm:model', value); } catch (_) {}
   };
+  const [theme, setThemeState] = useState(() => {
+    try { return localStorage.getItem('ui:theme') || 'light'; } catch (_) { return 'light'; }
+  });
+  const setTheme = (t) => {
+    setThemeState(t);
+    try { localStorage.setItem('ui:theme', t); } catch (_) {}
+  };
   const [modalStudy,         setModalStudy]         = useState(null);
   const [modalDetail,        setModalDetail]        = useState(null);
   const [modalDetailLoading, setModalDetailLoading] = useState(false);
@@ -562,14 +569,14 @@ function useAppState() {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
-    setCtxStudies, setInput, setSelectedModel,
+    setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
     ctxStudies, showNewProj, newProjName,
-    input, sending, compErr, selectedModel,
+    input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,

@@ -2,13 +2,13 @@ function renderApp(s) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
     setQuery, setResults, setSearched, setSqlQuery, setShowSql,
-    setCtxStudies, setInput, setSelectedModel,
+    setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql,
     ctxStudies, showNewProj, newProjName,
-    input, sending, compErr, selectedModel,
+    input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
@@ -22,7 +22,7 @@ function renderApp(s) {
   } = s;
 
   return (
-    <div className="app">
+    <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
 
       {/* ══════════════════ SIDEBAR ══════════════════ */}
       <aside className="sidebar">
@@ -179,6 +179,12 @@ function renderApp(s) {
           {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
             <span className="topbar-badge">{openProject.studies.length} sources</span>
           )}
+          <span className="topbar-spacer" />
+          <button className="theme-toggle"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? '☀' : '☽'}
+          </button>
         </div>
 
         <div className="content">

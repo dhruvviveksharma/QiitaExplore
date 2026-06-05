@@ -27,8 +27,22 @@
   --t: 140ms ease;
 }
 
+.app.dark {
+  --bg:          #1c1b19;
+  --surface:     #252420;
+  --sidebar-bg:  #201f1c;
+  --border:      #38352f;
+  --border-soft: #2e2c28;
+  --text:        #ede9e2;
+  --text-2:      #9b9488;
+  --text-3:      #6b6560;
+  --accent-soft: #3a1e14;
+  background: #1c1b19;
+  color: #ede9e2;
+}
+
 html, body, #root { height: 100%; overflow: hidden; }
-body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13.5px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13.5px; line-height: 1.5; -webkit-font-smoothing: antialiased; transition: background var(--t), color var(--t); }
 button { font-family: var(--sans); cursor: pointer; border: none; background: none; color: inherit; }
 input, textarea { font-family: var(--sans); }
 
@@ -297,6 +311,16 @@ input, textarea { font-family: var(--sans); }
   background: var(--accent-soft); color: var(--accent);
   border-radius: 999px; padding: 2px 8px;
 }
+.topbar-spacer { flex: 1; }
+.theme-toggle {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  color: var(--text-2);
+  transition: color var(--t), background var(--t);
+}
+.theme-toggle:hover { background: var(--sidebar-bg); color: var(--text); }
 
 /* Content scroll area */
 .content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -337,7 +361,8 @@ input, textarea { font-family: var(--sans); }
 .src-chip.removable::after { content: ' ×'; color: var(--text-3); }
 
 .chat-messages {
-  margin: 0;
+  max-width: 800px;
+  margin: 0 auto;
   padding: 28px 24px 20px;
   display: flex;
   flex-direction: column;
@@ -616,8 +641,8 @@ input, textarea { font-family: var(--sans); }
   flex-shrink: 0;
 }
 .composer {
-  max-width: 900px;
-  margin: 0;
+  max-width: 800px;
+  margin: 0 auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
@@ -658,11 +683,11 @@ input, textarea { font-family: var(--sans); }
 }
 .composer-send:hover:not(:disabled) { background: var(--accent-h); }
 .composer-send:disabled { opacity: .35; cursor: not-allowed; }
-.composer-error { max-width: 900px; margin: 5px 0 0; font-size: 12px; color: var(--accent); }
+.composer-error { max-width: 800px; margin: 5px auto 0; font-size: 12px; color: var(--accent); }
 
 .composer-model {
-  max-width: 900px;
-  margin: 6px 0 0;
+  max-width: 800px;
+  margin: 6px auto 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
