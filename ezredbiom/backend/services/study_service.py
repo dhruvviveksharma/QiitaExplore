@@ -146,7 +146,8 @@ def build_relevance_score(keywords) -> tuple:
 
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
                             relevance_keywords=None,
-                            data_types=None, investigation_types=None):
+                            data_types=None, investigation_types=None,
+                            return_sql=False):
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
 
@@ -237,6 +238,8 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     logger.info("[sql] rows_returned=%d", row_count)
 
     if not results:
+        if return_sql:
+            return [], sql.strip() + f"\n\n-- params ({len(full_params)}): {full_params!r}"
         return []
 
     studies = []
@@ -256,4 +259,6 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
             'num_preps': row[11],
         })
 
+    if return_sql:
+        return studies, sql.strip() + f"\n\n-- params ({len(full_params)}): {full_params!r}"
     return studies

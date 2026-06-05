@@ -400,22 +400,31 @@ function ToolResultWidget({ payload, msgKey }) {
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
   const studies = payload.result_studies || [];
+  const sqlBlock = payload.sql_query ? (
+    <details className="tool-sql-block">
+      <summary className="tool-sql-summary">SQL query</summary>
+      <pre className="tool-sql-pre">{payload.sql_query}</pre>
+    </details>
+  ) : null;
   if (payload.tool === 'search_studies' && studies.length) return (
-    <table className="prep-table tool-result-table">
-      <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th></tr></thead>
-      <tbody>{studies.map(s => (
-        <tr key={s.study_id}>
-          <td>{s.study_id}</td>
-          <td title={s.study_title}>{(s.study_title || '').slice(0, 55)}</td>
-          <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
-          <td>{s.num_samples ?? '—'}</td>
-          <td>{s.data_types || '—'}</td>
-        </tr>
-      ))}</tbody>
-    </table>
+    <React.Fragment>
+      {sqlBlock}
+      <table className="prep-table tool-result-table">
+        <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th></tr></thead>
+        <tbody>{studies.map(s => (
+          <tr key={s.study_id}>
+            <td>{s.study_id}</td>
+            <td title={s.study_title}>{(s.study_title || '').slice(0, 55)}</td>
+            <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
+            <td>{s.num_samples ?? '—'}</td>
+            <td>{s.data_types || '—'}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </React.Fragment>
   );
   return payload.result_summary
-    ? <p className="tool-call-text-result">{payload.result_summary}</p>
+    ? <React.Fragment>{sqlBlock}<p className="tool-call-text-result">{payload.result_summary}</p></React.Fragment>
     : null;
 }
 

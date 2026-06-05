@@ -283,12 +283,13 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
 
     # Text search (topic OR + data-type AND)
     where, params = build_where_from_plan({"keywords": kws})
-    text_studies = search_studies_with_sql(
+    text_studies, sql_str = search_studies_with_sql(
         where, params,
         limit=limit * 2,             # over-fetch to leave room for sample hits
         relevance_keywords=kws,
         data_types=effective_types,
         investigation_types=effective_inv,
+        return_sql=True,
     )
     text_ids = {s["study_id"] for s in text_studies}
     logger.info("[search_studies] text_hits=%d", len(text_studies))
@@ -347,6 +348,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             "kind":           "tool_call",
             "tool":           "search_studies",
             "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
+            "sql_query":      sql_str,
             "result_summary": f"{len(merged)} studies" if merged else "no matches",
             "result_studies": [
                 {
