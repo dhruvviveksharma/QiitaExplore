@@ -27,6 +27,7 @@ def stream_chat(
     message: str,
     report_study_id: int = None,
     pin_study_ids: list = None,
+    deep_search: bool = False,
     timeout: int = 120,
 ) -> dict:
     """POST a message to a global chat and consume the SSE stream.
@@ -46,6 +47,8 @@ def stream_chat(
         body["report_study_id"] = report_study_id
     if pin_study_ids is not None:
         body["pin_study_ids"] = pin_study_ids
+    if deep_search:
+        body["deep_search"] = True
 
     r = requests.post(
         f"{backend_url}/api/global-chats/{chat_id}/message/stream",
