@@ -46,9 +46,11 @@ def _write_merged_sample_metadata(jobdir: Path, workspace_snap: list) -> bool:
     for entry in workspace_snap:
         try:
             rows = _fetch_full_sample_metadata(entry["study_id"], limit=9_999_999)
+            sample_ids_filter = set(entry.get("sample_ids") or [])
             for r in rows:
-                all_keys.update(r["fields"].keys())
-            all_rows.extend(rows)
+                if not sample_ids_filter or r["sample_id"] in sample_ids_filter:
+                    all_keys.update(r["fields"].keys())
+                    all_rows.append(r)
         except Exception as e:
             logger.warning("Could not fetch sample metadata for study %s: %s", entry["study_id"], e)
 

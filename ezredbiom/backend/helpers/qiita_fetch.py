@@ -512,16 +512,21 @@ def _fetch_study_detail_from_qiita(study_id: int):
             return f"{_QIITA_BASE}/{path}"
         return path
 
-    artifacts = [
-        {
-            "prep_template_id": r[0],
-            "prep_name":        r[1],
-            "artifact_id":      r[2],
-            "artifact_type":    r[3],
-            "data_type":        r[4],
-            "full_path":        _abs(r[5]),
-            "generated_timestamp": str(r[6]) if r[6] else None,
-        }
-        for r in artifact_rows
-    ]
+    # One entry per artifact_id; prefer the .biom file path
+    artifact_by_id: dict = {}
+    for r in artifact_rows:
+        aid = r[2]
+        path = _abs(r[5])
+        existing = artifact_by_id.get(aid)
+        if existing is None or path.lower().endswith(".biom"):
+            artifact_by_id[aid] = {
+                "prep_template_id": r[0],
+                "prep_name":        r[1],
+                "artifact_id":      aid,
+                "artifact_type":    r[3],
+                "data_type":        r[4],
+                "full_path":        path,
+                "generated_timestamp": str(r[6]) if r[6] else None,
+            }
+    artifacts = list(artifact_by_id.values())
     return preps, artifacts

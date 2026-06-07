@@ -20,6 +20,7 @@ Writes to <jobdir>/:
 Exit 0 on success, 1 on failure.
 """
 
+import csv
 import datetime
 import json
 import sys
@@ -67,6 +68,16 @@ def main():
     merged_path = jobdir / "merged.biom"
     with biom_open(str(merged_path), "w") as f:
         merged.to_hdf5(f, "remote_merge")
+
+    meta_path = jobdir / "sample_metadata.tsv"
+    if meta_path.exists():
+        merged_ids = set(merged.ids(axis="sample"))
+        with open(meta_path, newline="") as fh:
+            all_rows = list(csv.reader(fh, delimiter="\t"))
+        header = all_rows[:1]
+        filtered = [r for r in all_rows[1:] if r and r[0] in merged_ids]
+        with open(meta_path, "w", newline="") as fh:
+            csv.writer(fh, delimiter="\t", lineterminator="\n").writerows(header + filtered)
 
     prov = {
         "job_id": manifest["job_id"],
