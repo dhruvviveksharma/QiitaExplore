@@ -176,16 +176,29 @@ function renderApp(s) {
       <div className="main">
 
         <div className="topbar">
-          <span className="topbar-title">{topTitle}</span>
-          {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
-            <span className="topbar-badge">{openProject.studies.length} sources</span>
+          {(view.type === 'browse' || view.type === 'merges') ? (
+            <>
+              <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
+                onClick={() => setView({ type: 'browse' })}>Browse Studies</button>
+              <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
+                onClick={() => setView({ type: 'merges' })}>Merges</button>
+            </>
+          ) : (
+            <>
+              <span className="topbar-title">{topTitle}</span>
+              {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
+                <span className="topbar-badge">{openProject.studies.length} sources</span>
+              )}
+            </>
           )}
           <span className="topbar-spacer" />
-          <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
-            title="Merge Workspace"
-            onClick={() => setShowMergePanel(p => !p)}>
-            ⊕ Merge
-          </button>
+          {view.type !== 'merges' && (
+            <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
+              title="Merge Workspace"
+              onClick={() => setShowMergePanel(p => !p)}>
+              ⊕ Merge
+            </button>
+          )}
           <button className="theme-toggle"
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
@@ -195,19 +208,29 @@ function renderApp(s) {
 
         <div className="content">
 
-          {/* ── TABS ── */}
-          {(view.type === 'browse' || view.type === 'merges') && (
-            <div className="main-tabs">
-              <button className={`main-tab${view.type === 'browse' ? ' active' : ''}`}
-                onClick={() => setView({ type: 'browse' })}>Browse Studies</button>
-              <button className={`main-tab${view.type === 'merges' ? ' active' : ''}`}
-                onClick={() => setView({ type: 'merges' })}>Merges</button>
-            </div>
-          )}
-
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
-            <MergesTab onOpenWorkspace={(wsId) => { setMergeWorkspaceId(wsId); setShowMergePanel(true); }} />
+            <div className="merges-layout">
+              <div className="merges-list-col">
+                <MergesTab
+                  onOpenWorkspace={(wsId) => setMergeWorkspaceId(wsId)}
+                  activeWorkspaceId={mergeWorkspaceId}
+                />
+              </div>
+              <div className="merges-detail-col">
+                {mergeWorkspaceId
+                  ? <MergeWorkspacePanel
+                      workspaceId={mergeWorkspaceId}
+                      setWorkspaceId={setMergeWorkspaceId}
+                      pendingStudy={pendingMergeStudy}
+                      clearPendingStudy={() => setPendingMergeStudy(null)}
+                      onClose={() => setMergeWorkspaceId(null)}
+                      embedded
+                    />
+                  : <div className="merges-detail-empty">Open a workspace to view it here</div>
+                }
+              </div>
+            </div>
           )}
 
           {/* ── BROWSE ── */}
@@ -448,7 +471,7 @@ function renderApp(s) {
         </div>
 
         {/* Composer */}
-        <div className="composer-wrap">
+        {view.type !== 'merges' && <div className="composer-wrap">
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
             <div className="composer-pins">
               <span className="composer-pins-label">Pinned:</span>
@@ -517,7 +540,7 @@ function renderApp(s) {
             </select>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}
-        </div>
+        </div>}
       </div>
 
       {/* ══════════════════ MODAL ══════════════════════ */}

@@ -306,6 +306,13 @@ input, textarea { font-family: var(--sans); }
   flex-shrink: 0;
 }
 .topbar-title { font-size: 14px; font-weight: 500; color: var(--text); }
+.topbar-nav {
+  padding: 4px 12px; font-size: 13px; font-weight: 500;
+  background: none; border: none; border-radius: 6px;
+  color: var(--text-2); cursor: pointer;
+}
+.topbar-nav:hover { color: var(--text); background: var(--accent-2); }
+.topbar-nav.active { color: var(--accent); background: var(--accent-2); }
 .topbar-badge {
   font-size: 11px; font-weight: 500;
   background: var(--accent-soft); color: var(--accent);
@@ -323,7 +330,7 @@ input, textarea { font-family: var(--sans); }
 .theme-toggle:hover { background: var(--sidebar-bg); color: var(--text); }
 
 /* Content scroll area */
-.content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; display: flex; flex-direction: column; }
 
 /* ── Chat ────────────────────────────────────────────────────── */
 .sources-bar {
@@ -867,6 +874,24 @@ input, textarea { font-family: var(--sans); }
 .merge-ws-study-title { color: var(--text); flex: 1; }
 .merge-ws-no-studies { font-size: 12px; color: var(--text-3); }
 .merges-empty, .merges-loading { padding: 40px; text-align: center; color: var(--text-2); }
+.merge-ws-card.active { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ── Merges two-column layout ────────────────────────────────── */
+.merges-layout { display: flex; flex: 1; height: 100%; overflow: hidden; }
+.merges-list-col {
+  width: 280px; flex-shrink: 0; overflow-y: auto;
+  border-right: 1px solid var(--border-soft); padding: 12px;
+}
+.merges-detail-col { flex: 1; overflow-y: auto; position: relative; }
+.merges-detail-empty { padding: 60px 40px; text-align: center; color: var(--text-3); font-size: 0.9rem; }
+.merges-detail-col .merge-panel {
+  position: relative; width: 100%; height: auto; min-height: 100%;
+  box-shadow: none; border-left: none;
+}
+
+/* ── BIOM checkbox in merge artifacts ────────────────────────── */
+.merge-artifacts-use-col { width: 40px; text-align: center; }
+.merge-biom-check { cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent); }
 
 /* ── Browse panel ────────────────────────────────────────────── */
 .browse-panel {

@@ -199,6 +199,46 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 }
 
 
+function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
+  if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
+  if (!detail) return null;
+  const artifacts = detail.artifacts || [];
+  if (artifacts.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No artifacts found.</p>;
+  return (
+    <table className="prep-table">
+      <thead>
+        <tr>
+          <th className="merge-artifacts-use-col">Use</th>
+          <th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th>
+        </tr>
+      </thead>
+      <tbody>
+        {artifacts.map(a => (
+          <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
+            <td className="merge-artifacts-use-col">
+              {a.artifact_type === 'BIOM' && (
+                <input type="checkbox" className="merge-biom-check"
+                  checked={a.artifact_id === chosenId}
+                  onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)}
+                />
+              )}
+            </td>
+            <td>{a.artifact_id}</td>
+            <td>{a.artifact_type || '—'}</td>
+            <td>{a.data_type || '—'}</td>
+            <td className="artifact-path-cell">
+              <span className="artifact-path" title={a.full_path}>
+                {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+
 function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
   const [detail, setDetail]     = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -217,7 +257,6 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
     setOpen(p => !p);
   }
 
-  const bioms = (detail?.artifacts || []).filter(a => a.artifact_type === 'BIOM');
   const autoArtifact = validationStudy?.auto_artifact;
   const chosenId = slot.chosen_artifact_id || autoArtifact?.artifact_id;
 
@@ -226,6 +265,9 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
       <div className="merge-slot-header">
         <span className="merge-slot-id">ID {slot.study_id}</span>
         <span className="merge-slot-title">{slot.study_title || 'Untitled'}</span>
+        <button className="merge-btn-ghost merge-detail-toggle" onClick={handleToggle}>
+          {open ? '▲ Hide' : '▼ Detail'}
+        </button>
         <button className="merge-btn-ghost merge-slot-remove" onClick={onRemove} title="Remove">✕</button>
       </div>
 
@@ -237,34 +279,6 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
         </div>
       )}
 
-      {/* Artifact picker */}
-      <div className="merge-slot-artifact">
-        <span className="merge-slot-label">BIOM:</span>
-        {autoArtifact && !slot.chosen_artifact_id && (
-          <span className="merge-auto-badge">auto</span>
-        )}
-        {bioms.length > 1 ? (
-          <select className="merge-artifact-select"
-            value={chosenId || ''}
-            onChange={e => onPickArtifact(parseInt(e.target.value) || null)}>
-            {bioms.map(a => (
-              <option key={a.artifact_id} value={a.artifact_id}>
-                {a.artifact_id} — {a.data_type} — {(a.full_path || '').split('/').slice(-2).join('/')}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="merge-artifact-info">
-            {autoArtifact
-              ? `${autoArtifact.artifact_id} — ${autoArtifact.data_type}`
-              : detailLoading ? 'Loading…' : '—'}
-          </span>
-        )}
-        <button className="merge-btn-ghost merge-detail-toggle" onClick={handleToggle}>
-          {open ? '▲ Hide' : '▼ Detail'}
-        </button>
-      </div>
-
       {open && (
         <div className="merge-slot-detail">
           <div className="merge-slot-section">
@@ -273,7 +287,8 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
           </div>
           <div className="merge-slot-section">
             <div className="merge-slot-section-title">Artifacts</div>
-            <ArtifactsTable detail={detail} loading={detailLoading} />
+            <MergeArtifactsTable detail={detail} loading={detailLoading}
+              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} />
           </div>
         </div>
       )}
@@ -371,7 +386,7 @@ function MergeJobHistory({ workspaceId }) {
 }
 
 
-function MergesTab({ onOpenWorkspace }) {
+function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   const [workspaces, setWorkspaces] = useState(null);
 
   useEffect(() => {
@@ -400,7 +415,7 @@ function MergesTab({ onOpenWorkspace }) {
   return (
     <div className="merges-tab">
       {workspaces.map(ws => (
-        <div key={ws.workspace_id} className="merge-ws-card">
+        <div key={ws.workspace_id} className={`merge-ws-card${ws.workspace_id === activeWorkspaceId ? ' active' : ''}`}>
           <div className="merge-ws-card-header">
             <span className="merge-ws-name">{ws.name}</span>
             <button className="merge-btn-ghost" onClick={() => onOpenWorkspace(ws.workspace_id)}>Open ↗</button>
