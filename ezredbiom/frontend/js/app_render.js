@@ -195,6 +195,21 @@ function renderApp(s) {
 
         <div className="content">
 
+          {/* ── TABS ── */}
+          {(view.type === 'browse' || view.type === 'merges') && (
+            <div className="main-tabs">
+              <button className={`main-tab${view.type === 'browse' ? ' active' : ''}`}
+                onClick={() => setView({ type: 'browse' })}>Browse Studies</button>
+              <button className={`main-tab${view.type === 'merges' ? ' active' : ''}`}
+                onClick={() => setView({ type: 'merges' })}>Merges</button>
+            </div>
+          )}
+
+          {/* ── MERGES ── */}
+          {view.type === 'merges' && (
+            <MergesTab onOpenWorkspace={(wsId) => { setMergeWorkspaceId(wsId); setShowMergePanel(true); }} />
+          )}
+
           {/* ── BROWSE ── */}
           {view.type === 'browse' && (
             <div className="browse-panel">

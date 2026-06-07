@@ -369,3 +369,56 @@ function MergeJobHistory({ workspaceId }) {
     </div>
   );
 }
+
+
+function MergesTab({ onOpenWorkspace }) {
+  const [workspaces, setWorkspaces] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/merge-workspaces?user_id=default')
+      .then(r => r.ok ? r.json() : [])
+      .then(async (list) => {
+        const detailed = await Promise.all(
+          list.map(ws =>
+            apiFetch(`/merge-workspaces/${ws.workspace_id}?user_id=default`)
+              .then(r => r.ok ? r.json() : ws)
+          )
+        );
+        setWorkspaces(detailed);
+      });
+  }, []);
+
+  if (workspaces === null) return <div className="merges-loading">Loading…</div>;
+
+  if (workspaces.length === 0) return (
+    <div className="merges-empty">
+      <p>No merge workspaces yet.</p>
+      <p>Click <strong>⊕ Merge</strong> on any study card to create one.</p>
+    </div>
+  );
+
+  return (
+    <div className="merges-tab">
+      {workspaces.map(ws => (
+        <div key={ws.workspace_id} className="merge-ws-card">
+          <div className="merge-ws-card-header">
+            <span className="merge-ws-name">{ws.name}</span>
+            <button className="merge-btn-ghost" onClick={() => onOpenWorkspace(ws.workspace_id)}>Open ↗</button>
+          </div>
+          <div className="merge-ws-studies">
+            {(ws.studies || []).length === 0
+              ? <span className="merge-ws-no-studies">No studies added</span>
+              : (ws.studies || []).map(s => (
+                  <div key={s.study_id} className="merge-ws-study-row">
+                    <span className="merge-ws-study-id">#{s.study_id}</span>
+                    <span className="merge-ws-study-title">{s.study_title || 'Untitled'}</span>
+                    {s.data_types && <span className="dtype-chip">{s.data_types}</span>}
+                  </div>
+                ))
+            }
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
