@@ -85,6 +85,10 @@ def first_studies(limit=20):
             JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
             WHERE sa.study_id = s.study_id AND v.visibility = 'public'
         )
+        AND EXISTS (
+            SELECT 1 FROM qiita.per_study_tags pst
+            WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
+        )
         ORDER BY s.study_id
         LIMIT %s
         """
@@ -108,6 +112,7 @@ def first_studies(limit=20):
             "num_samples":     row[9],
             "data_types":      row[10],
             "num_preps":       row[11],
+            "is_gold":         True,
         }
         for row in results
     ]

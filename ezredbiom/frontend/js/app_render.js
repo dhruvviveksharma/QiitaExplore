@@ -280,7 +280,7 @@ function renderApp(s) {
 
               {!searching && (
                 <>
-                  <div className="browse-count">{searched ? `${results.length} results` : 'First 20 studies'}</div>
+                  <div className="browse-count">{searched ? `${results.length} results` : 'GOLD studies'}</div>
                   {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
                     {displayStudies.map(study => {
@@ -294,8 +294,10 @@ function renderApp(s) {
                       return (
                         <div key={study.study_id} className="study-card" onClick={() => openStudyModal(study)}>
                           <div className="study-card-top">
-                            <span className="study-id-badge">ID {study.study_id}</span>
-                            {study.is_gold && <span className="gold-badge">GOLD</span>}
+                            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                              <span className="study-id-badge">ID {study.study_id}</span>
+                              {study.is_gold && <span className="gold-badge">GOLD</span>}
+                            </div>
                             <div className="study-card-actions" onClick={e => e.stopPropagation()}>
                               {openProjId ? (
                                 <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
