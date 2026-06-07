@@ -216,7 +216,7 @@ function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
         {artifacts.map(a => (
           <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
             <td className="merge-artifacts-use-col">
-              {a.artifact_type === 'BIOM' && (
+              {a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
                 <input type="checkbox" className="merge-biom-check"
                   checked={a.artifact_id === chosenId}
                   onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)}

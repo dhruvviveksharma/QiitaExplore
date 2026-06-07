@@ -5,6 +5,8 @@ using paramiko — upload BIOMs to remote node, ssh exec, download result.
 Same on_status interface; only the internals change.
 """
 
+import csv
+import io
 import json
 import logging
 import os
@@ -26,6 +28,42 @@ _SCRIPT_PATH = os.path.join(
 )
 
 os.makedirs(MERGE_RESULTS_DIR, exist_ok=True)
+
+
+def _write_merged_sample_metadata(jobdir: Path, workspace_snap: list) -> bool:
+    """Fetch sample metadata for each study and write a combined TSV.
+
+    Returns True if the file was written, False on any error.
+    """
+    try:
+        from helpers.qiita_fetch import _fetch_full_sample_metadata
+    except Exception as e:
+        logger.warning("Could not import _fetch_full_sample_metadata: %s", e)
+        return False
+
+    all_rows = []
+    all_keys = set()
+    for entry in workspace_snap:
+        try:
+            rows = _fetch_full_sample_metadata(entry["study_id"], limit=9_999_999)
+            for r in rows:
+                all_keys.update(r["fields"].keys())
+            all_rows.extend(rows)
+        except Exception as e:
+            logger.warning("Could not fetch sample metadata for study %s: %s", entry["study_id"], e)
+
+    if not all_rows:
+        return False
+
+    cols = sorted(all_keys)
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
+    writer.writerow(["#SampleID"] + cols)
+    for r in all_rows:
+        writer.writerow([r["sample_id"]] + [r["fields"].get(c, "not applicable") for c in cols])
+
+    (jobdir / "sample_metadata.tsv").write_text(buf.getvalue())
+    return True
 
 
 def run_merge_job(job_id: str, workspace_snap: list, on_status):
@@ -51,6 +89,9 @@ def run_merge_job(job_id: str, workspace_snap: list, on_status):
         # Write manifest
         manifest = {"job_id": job_id, "studies": workspace_snap}
         (jobdir / "manifest.json").write_text(json.dumps(manifest))
+
+        # Write merged sample metadata (best-effort — failure won't abort the merge)
+        _write_merged_sample_metadata(jobdir, workspace_snap)
 
         # Run merge script in conda env
         cmd = [

@@ -78,10 +78,16 @@ def main():
     prov_path = jobdir / "provenance.json"
     prov_path.write_text(json.dumps(prov, indent=2))
 
+    meta_path = jobdir / "sample_metadata.tsv"
+    prov["includes_sample_metadata"] = meta_path.exists()
+    prov_path.write_text(json.dumps(prov, indent=2))
+
     result_path = jobdir / "result.tar.gz"
     with tarfile.open(str(result_path), "w:gz") as tar:
         tar.add(str(merged_path), arcname="merged.biom")
         tar.add(str(prov_path), arcname="provenance.json")
+        if meta_path.exists():
+            tar.add(str(meta_path), arcname="sample_metadata.tsv")
 
     print(f"DONE — {merged.shape[0]} features × {merged.shape[1]} samples")
     sys.exit(0)
