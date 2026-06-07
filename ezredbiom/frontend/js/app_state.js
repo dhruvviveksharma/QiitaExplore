@@ -14,6 +14,7 @@ function useAppState() {
   const [searched,     setSearched]     = useState(false);
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [showSql,      setShowSql]      = useState(false);
+  const [deepSearch,   setDeepSearch]   = useState(false);
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
@@ -541,7 +542,7 @@ function useAppState() {
     if (!q) return;
     if (override) setQuery(override);
     setSearching(true); setSearched(false);
-    const res = await apiPost('/search', { query: q });
+    const res = await apiPost('/search', { query: q, deep_search: deepSearch });
     if (res.ok) { const d = await res.json(); setResults(d.results || []); setSqlQuery(d.sql_query || null); }
     else setResults([]);
     setSearched(true); setSearching(false);
@@ -571,14 +572,14 @@ function useAppState() {
   return {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql,
+    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql,
+    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,

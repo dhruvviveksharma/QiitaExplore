@@ -1,13 +1,13 @@
 function renderApp(s) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql,
+    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql,
+    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed,
@@ -209,6 +209,11 @@ function renderApp(s) {
                 <button className="btn-search" onClick={() => doSearch()} disabled={searching || !query.trim()}>
                   {searching ? '…' : 'Search'}
                 </button>
+                <button
+                  className={`btn-deepsearch${deepSearch ? ' active' : ''}`}
+                  onClick={() => setDeepSearch(v => !v)}
+                  title="Also scan sample metadata (slower)"
+                >⚡ Deep</button>
                 {searched && (
                   <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); }}>
                     Clear
@@ -233,7 +238,7 @@ function renderApp(s) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><div className="spinner" /><br />Searching…</div>}
+              {searching && <div className="state-loading"><div className="spinner" /><br />{deepSearch ? 'Deep searching sample metadata…' : 'Searching…'}</div>}
 
               {!searching && (
                 <>
@@ -252,6 +257,7 @@ function renderApp(s) {
                         <div key={study.study_id} className="study-card" onClick={() => openStudyModal(study)}>
                           <div className="study-card-top">
                             <span className="study-id-badge">ID {study.study_id}</span>
+                            {study.is_gold && <span className="gold-badge">GOLD</span>}
                             <div className="study-card-actions" onClick={e => e.stopPropagation()}>
                               {openProjId ? (
                                 <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>

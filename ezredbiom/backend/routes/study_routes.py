@@ -7,9 +7,10 @@ from flask import jsonify, request
 from qiita_db.sql_connection import TRN
 
 from run import app
-from config import client, ALLOWED_MODELS, MODEL_METADATA
+from config import client, ALLOWED_MODELS, MODEL_METADATA, SAMPLE_SEARCH_DEEP_CANDIDATES
 from services.llm import llm_query_to_sql
 from services.study_service import search_studies_with_sql
+from helpers.sample_search import search_studies_by_sample_meta
 from store import get_study_detail_cache, upsert_study_detail_cache
 from helpers.qiita_fetch import (
     first_studies,
@@ -101,21 +102,37 @@ def search():
     try:
         data        = request.get_json() or {}
         user_query  = data.get('query', '')
+        deep_search = bool(data.get('deep_search', False))
         if not user_query:
             return jsonify({'error': 'Query is required'}), 400
 
-        sql_query   = llm_query_to_sql(user_query)
+        sql_query    = llm_query_to_sql(user_query)
         where_clause = sql_query.get('where_clause') or '1=1'
         params       = sql_query.get('params') if isinstance(sql_query.get('params'), list) else []
         lim          = sql_query.get("search_limit", 50) if isinstance(sql_query, dict) else 50
-        results      = search_studies_with_sql(
+        text_results = search_studies_with_sql(
             custom_sql_where=where_clause, params=params, limit=lim
         )
+        if not isinstance(text_results, list):
+            text_results = []
+
+        if deep_search:
+            keywords = sql_query.get('keywords') if isinstance(sql_query.get('keywords'), list) else []
+            if not keywords:
+                keywords = [w for w in user_query.split() if len(w) >= 2]
+            seen_ids = {s['study_id'] for s in text_results}
+            meta_results = search_studies_by_sample_meta(
+                keywords, max_candidates=SAMPLE_SEARCH_DEEP_CANDIDATES
+            )
+            for s in meta_results:
+                if s['study_id'] not in seen_ids:
+                    seen_ids.add(s['study_id'])
+                    text_results.append(s)
 
         return jsonify({
-            'results':   results if isinstance(results, list) else [],
+            'results':   text_results,
             'sql_query': sql_query,
-            'count':     len(results) if isinstance(results, list) else 0,
+            'count':     len(text_results),
         })
     except Exception as e:
         traceback.print_exc()

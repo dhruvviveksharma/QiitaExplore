@@ -147,6 +147,7 @@ def build_relevance_score(keywords) -> tuple:
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
                             relevance_keywords=None,
                             data_types=None, investigation_types=None,
+                            gold_only=False,
                             return_sql=False):
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
@@ -184,6 +185,9 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     else:
         topic_where = custom_sql_where if custom_sql_where else "1=1"
 
+    if gold_only:
+        topic_where += " AND EXISTS (SELECT 1 FROM qiita.per_study_tags pst WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD')"
+
     full_params = score_params + dt_params + list(params)
 
     logger.info(
@@ -211,7 +215,11 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
                 WHERE spt2.study_id = s.study_id) AS data_types,
                (SELECT COUNT(DISTINCT spt3.prep_template_id)
                 FROM qiita.study_prep_template spt3
-                WHERE spt3.study_id = s.study_id) AS num_preps{score_select}
+                WHERE spt3.study_id = s.study_id) AS num_preps,
+               EXISTS (
+                 SELECT 1 FROM qiita.per_study_tags pst
+                 WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
+               ) AS is_gold{score_select}
         FROM qiita.study s
         LEFT JOIN qiita.study_person sp_pi
             ON s.principal_investigator_id = sp_pi.study_person_id
@@ -257,6 +265,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
             'num_samples': row[9],
             'data_types': row[10],
             'num_preps': row[11],
+            'is_gold': bool(row[12]),
         })
 
     if return_sql:
