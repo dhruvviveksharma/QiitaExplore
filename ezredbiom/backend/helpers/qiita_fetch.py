@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from qiita_db.sql_connection import TRN
 
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
+
+_QIITA_BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
 from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
     get_study_detail_cache,
@@ -499,6 +502,11 @@ def _fetch_study_detail_from_qiita(study_id: int):
         """,
         [study_id],
     )
+    def _abs(path):
+        if path and not os.path.isabs(path) and _QIITA_BASE:
+            return f"{_QIITA_BASE}/{path}"
+        return path
+
     artifacts = [
         {
             "prep_template_id": r[0],
@@ -506,7 +514,7 @@ def _fetch_study_detail_from_qiita(study_id: int):
             "artifact_id":      r[2],
             "artifact_type":    r[3],
             "data_type":        r[4],
-            "full_path":        r[5],
+            "full_path":        _abs(r[5]),
             "generated_timestamp": str(r[6]) if r[6] else None,
         }
         for r in artifact_rows
