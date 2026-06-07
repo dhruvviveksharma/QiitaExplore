@@ -110,8 +110,10 @@ def search():
         where_clause = sql_query.get('where_clause') or '1=1'
         params       = sql_query.get('params') if isinstance(sql_query.get('params'), list) else []
         lim          = sql_query.get("search_limit", 50) if isinstance(sql_query, dict) else 50
+        kws = sql_query.get('keywords') or []
         text_results = search_studies_with_sql(
-            custom_sql_where=where_clause, params=params, limit=lim
+            custom_sql_where=where_clause, params=params, limit=lim,
+            relevance_keywords=kws if kws else None,
         )
         if not isinstance(text_results, list):
             text_results = []

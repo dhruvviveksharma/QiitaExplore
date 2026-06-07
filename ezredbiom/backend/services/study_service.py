@@ -138,9 +138,10 @@ def build_relevance_score(keywords) -> tuple:
         terms.append(
             "(CASE WHEN s.study_title ILIKE %s THEN 3 ELSE 0 END"
             " + CASE WHEN s.study_alias ILIKE %s THEN 2 ELSE 0 END"
+            " + CASE WHEN sp_pi.name ILIKE %s THEN 2 ELSE 0 END"
             " + CASE WHEN s.study_abstract ILIKE %s THEN 1 ELSE 0 END)"
         )
-        params.extend([f"%{kw}%"] * 3)
+        params.extend([f"%{kw}%"] * 4)
     return " + ".join(terms), params
 
 
