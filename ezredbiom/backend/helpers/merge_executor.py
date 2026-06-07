@@ -39,8 +39,11 @@ def run_merge_job(job_id: str, workspace_snap: list, on_status):
         on_status("running")
 
         # Copy BIOM files into the temp jobdir
+        _base = os.getenv("QIITA_BASE_DATA_DIR", "").rstrip("/")
         for entry in workspace_snap:
             src = entry["artifact_path"]
+            if _base and not os.path.isabs(src):
+                src = f"{_base}/{src}"
             dst = jobdir / f"{entry['study_id']}.biom"
             shutil.copy2(src, dst)
             entry["biom_file"] = f"{entry['study_id']}.biom"
