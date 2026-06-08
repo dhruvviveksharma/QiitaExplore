@@ -220,6 +220,7 @@ function renderApp(s) {
               <div className="merges-detail-col">
                 {mergeWorkspaceId
                   ? <MergeWorkspacePanel
+                      key={mergeWorkspaceId}
                       workspaceId={mergeWorkspaceId}
                       setWorkspaceId={setMergeWorkspaceId}
                       pendingStudy={pendingMergeStudy}

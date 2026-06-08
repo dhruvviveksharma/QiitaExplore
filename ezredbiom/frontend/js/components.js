@@ -245,59 +245,77 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
 
 // ─── PrepsTable ───────────────────────────────────────────────────────────────
 function PrepsTable({ detail, loading, onMount }) {
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
   const preps = detail.preps || [];
   if (preps.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No prep templates found.</p>;
+  const shown = expanded ? preps : preps.slice(0, 20);
   return (
-    <table className="prep-table">
-      <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
-      <tbody>
-        {preps.map(p => (
-          <tr key={p.prep_template_id}>
-            <td>{p.prep_template_id}</td>
-            <td>{p.data_type || '—'}</td>
-            <td>{p.investigation_type || '—'}</td>
-            <td>{p.platform || '—'}</td>
-            <td>{p.target_gene || '—'}</td>
-            <td>{p.preprocessing_status || '—'}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="prep-table">
+        <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
+        <tbody>
+          {shown.map(p => (
+            <tr key={p.prep_template_id}>
+              <td>{p.prep_template_id}</td>
+              <td>{p.data_type || '—'}</td>
+              <td>{p.investigation_type || '—'}</td>
+              <td>{p.platform || '—'}</td>
+              <td>{p.target_gene || '—'}</td>
+              <td>{p.preprocessing_status || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {preps.length > 20 && (
+        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? '▲ Show fewer' : `▼ Show all (${preps.length})`}
+        </button>
+      )}
+    </>
   );
 }
 
 // ─── ArtifactsTable ───────────────────────────────────────────────────────────
 function ArtifactsTable({ detail, loading, onMount }) {
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
   const artifacts = detail.artifacts || [];
   if (artifacts.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No artifacts found.</p>;
+  const shown = expanded ? artifacts : artifacts.slice(0, 20);
   return (
-    <table className="prep-table">
-      <thead><tr><th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th></tr></thead>
-      <tbody>
-        {artifacts.map(a => (
-          <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
-            <td>{a.artifact_id}</td>
-            <td>{a.artifact_type || '—'}</td>
-            <td>{a.data_type || '—'}</td>
-            <td className="artifact-path-cell">
-              <span className="artifact-path" title={a.full_path}>
-                {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
-              </span>
-              {a.full_path && (
-                <button className="btn-copy-path" title="Copy full path"
-                  onClick={() => navigator.clipboard?.writeText(a.full_path)}>⎘</button>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="prep-table">
+        <thead><tr><th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th></tr></thead>
+        <tbody>
+          {shown.map(a => (
+            <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
+              <td>{a.artifact_id}</td>
+              <td>{a.artifact_type || '—'}</td>
+              <td>{a.data_type || '—'}</td>
+              <td className="artifact-path-cell">
+                <span className="artifact-path" title={a.full_path}>
+                  {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
+                </span>
+                {a.full_path && (
+                  <button className="btn-copy-path" title="Copy full path"
+                    onClick={() => navigator.clipboard?.writeText(a.full_path)}>⎘</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {artifacts.length > 20 && (
+        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}
+        </button>
+      )}
+    </>
   );
 }
 

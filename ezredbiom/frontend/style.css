@@ -863,9 +863,11 @@ input, textarea { font-family: var(--sans); }
 .main-tab:hover { color: var(--text); }
 .main-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
 
+.show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
+.show-more-btn:hover { color: var(--accent); }
 /* ── Merges tab ───────────────────────────────────────────────── */
 .merges-tab { padding: 0 4px; max-width: 860px; }
-.merge-ws-card { border: 1px solid var(--border-soft); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+.merge-ws-card { border: 1px solid var(--border-soft); border-radius: 8px; margin-bottom: 12px; overflow: hidden; cursor: pointer; }
 .merge-ws-card-header { display: flex; align-items: center; padding: 10px 14px; background: var(--surface); }
 .merge-ws-name { font-weight: 500; font-size: 13px; flex: 1; }
 .merge-ws-studies { padding: 8px 14px 10px; display: flex; flex-direction: column; gap: 4px; }

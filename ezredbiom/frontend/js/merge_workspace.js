@@ -200,41 +200,50 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
 
 function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
+  const [expanded, setExpanded] = useState(false);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
   const artifacts = detail.artifacts || [];
   if (artifacts.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No artifacts found.</p>;
+  const shown = expanded ? artifacts : artifacts.slice(0, 20);
   return (
-    <table className="prep-table">
-      <thead>
-        <tr>
-          <th className="merge-artifacts-use-col">Use</th>
-          <th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th>
-        </tr>
-      </thead>
-      <tbody>
-        {artifacts.map(a => (
-          <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
-            <td className="merge-artifacts-use-col">
-              {a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
-                <input type="checkbox" className="merge-biom-check"
-                  checked={a.artifact_id === chosenId}
-                  onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)}
-                />
-              )}
-            </td>
-            <td>{a.artifact_id}</td>
-            <td>{a.artifact_type || '—'}</td>
-            <td>{a.data_type || '—'}</td>
-            <td className="artifact-path-cell">
-              <span className="artifact-path" title={a.full_path}>
-                {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
-              </span>
-            </td>
+    <>
+      <table className="prep-table">
+        <thead>
+          <tr>
+            <th className="merge-artifacts-use-col">Use</th>
+            <th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {shown.map(a => (
+            <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
+              <td className="merge-artifacts-use-col">
+                {a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
+                  <input type="checkbox" className="merge-biom-check"
+                    checked={a.artifact_id === chosenId}
+                    onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)}
+                  />
+                )}
+              </td>
+              <td>{a.artifact_id}</td>
+              <td>{a.artifact_type || '—'}</td>
+              <td>{a.data_type || '—'}</td>
+              <td className="artifact-path-cell">
+                <span className="artifact-path" title={a.full_path}>
+                  {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {artifacts.length > 20 && (
+        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -415,10 +424,10 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   return (
     <div className="merges-tab">
       {workspaces.map(ws => (
-        <div key={ws.workspace_id} className={`merge-ws-card${ws.workspace_id === activeWorkspaceId ? ' active' : ''}`}>
+        <div key={ws.workspace_id} className={`merge-ws-card${ws.workspace_id === activeWorkspaceId ? ' active' : ''}`} onClick={() => onOpenWorkspace(ws.workspace_id)}>
           <div className="merge-ws-card-header">
             <span className="merge-ws-name">{ws.name}</span>
-            <button className="merge-btn-ghost" onClick={() => onOpenWorkspace(ws.workspace_id)}>Open ↗</button>
+            <span className="merge-btn-ghost">Open ↗</span>
           </div>
           <div className="merge-ws-studies">
             {(ws.studies || []).length === 0
