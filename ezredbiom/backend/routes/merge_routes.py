@@ -20,7 +20,8 @@ from store import (
     upsert_study_detail_cache,
 )
 from helpers.qiita_fetch import _fetch_study_detail_from_qiita
-from helpers.biom_autopick import autopick_artifact, check_namespace_compatibility
+from helpers.biom_autopick import (autopick_artifact, check_namespace_compatibility,
+                                   studies_type_intersection, _namespace)
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
 _DEFAULT_USER = "default"
@@ -40,6 +41,14 @@ def _get_artifacts(study_id: int) -> list:
     preps, artifacts = _fetch_study_detail_from_qiita(study_id)
     upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))
     return artifacts
+
+
+def _type_filtered_artifacts(artifacts: list, common_type: str) -> list:
+    """Return artifacts whose namespace matches common_type, or all if none match."""
+    if not common_type:
+        return artifacts
+    filtered = [a for a in artifacts if _namespace(a.get("data_type", "")) == common_type]
+    return filtered or artifacts
 
 
 def _get_sample_ids(study_id: int):
@@ -135,22 +144,33 @@ def validate_merge_workspace(workspace_id):
     if ws is None:
         return jsonify({"error": "Not found"}), 404
 
+    studies_list = ws.get("studies") or []
+
+    # Study-level intersection check
+    common_type = studies_type_intersection([s.get("data_types", "") for s in studies_list])
+    if len(studies_list) > 1 and not common_type:
+        return jsonify({
+            "compatible": False,
+            "namespace_groups": {},
+            "warnings": [],
+            "errors": ["Studies share no data type in common. Select studies with at least one overlapping data type (e.g. both have 16S or both have ITS)."],
+            "studies": [],
+        })
+
     studies_payload = []
-    for slot in ws.get("studies") or []:
+    for slot in studies_list:
         sid = int(slot["study_id"])
         artifacts = _get_artifacts(sid)
 
-        # Determine effective data_type for autopick
-        data_type = (slot.get("data_types") or "").split(",")[0].strip()
-
-        # Auto-pick or use chosen artifact
+        # Pre-filter artifacts to intersection type, then autopick within that set
+        type_artifacts = _type_filtered_artifacts(artifacts, common_type)
         chosen_id = slot.get("chosen_artifact_id")
         if chosen_id:
             artifact = next((a for a in artifacts if a.get("artifact_id") == chosen_id), None)
             if artifact is None:
-                artifact = autopick_artifact(artifacts, data_type)
+                artifact = autopick_artifact(type_artifacts, common_type)
         else:
-            artifact = autopick_artifact(artifacts, data_type)
+            artifact = autopick_artifact(type_artifacts, common_type)
 
         # Gather sample IDs (for collision/length checks)
         sample_filter = slot.get("sample_filter")
@@ -166,9 +186,10 @@ def validate_merge_workspace(workspace_id):
             "study_id": sid,
             "artifact": artifact,
             "sample_ids": sample_ids,
+            "is_chosen": bool(chosen_id),
         })
 
-    validation = check_namespace_compatibility(studies_payload)
+    validation = check_namespace_compatibility(studies_payload, explicit_only=True)
 
     response_studies = []
     for entry in studies_payload:
@@ -202,20 +223,29 @@ def submit_merge_job(workspace_id):
     if not ws.get("studies"):
         return jsonify({"error": "No studies in workspace"}), 400
 
+    # Study-level intersection check
+    studies_list = ws["studies"]
+    common_type = studies_type_intersection([s.get("data_types", "") for s in studies_list])
+    if len(studies_list) > 1 and not common_type:
+        return jsonify({
+            "error": "Studies share no data type in common.",
+            "errors": ["Studies share no data type in common. Select studies with at least one overlapping data type."],
+        }), 400
+
     # Validate first
     studies_for_validation = []
     workspace_snap = []
-    for slot in ws["studies"]:
+    for slot in studies_list:
         sid = int(slot["study_id"])
         artifacts = _get_artifacts(sid)
-        data_type = (slot.get("data_types") or "").split(",")[0].strip()
+        type_artifacts = _type_filtered_artifacts(artifacts, common_type)
 
         chosen_id = slot.get("chosen_artifact_id")
         if chosen_id:
             artifact = next((a for a in artifacts if a.get("artifact_id") == chosen_id), None) \
-                       or autopick_artifact(artifacts, data_type)
+                       or autopick_artifact(type_artifacts, common_type)
         else:
-            artifact = autopick_artifact(artifacts, data_type)
+            artifact = autopick_artifact(type_artifacts, common_type)
 
         if artifact is None:
             return jsonify({"error": f"Study {sid} has no BIOM artifact"}), 400

@@ -54,12 +54,38 @@ def _namespace(data_type: str) -> str:
     return _NS_GROUPS.get(dt, data_type or "Unknown")
 
 
-def check_namespace_compatibility(studies_with_artifacts: list) -> dict:
+def studies_type_intersection(data_types_strings: list) -> str:
+    """Return canonical namespace common to all studies, or '' if no intersection.
+
+    Args:
+        data_types_strings: one comma-sep data_types string per study
+            (e.g. ["16S, ITS", "ITS", "ITS, Metagenomic"])
+    """
+    sets = []
+    for dt_str in data_types_strings:
+        ns_set = {_namespace(t.strip()) for t in (dt_str or "").split(",") if t.strip()}
+        ns_set.discard("Unknown")
+        if ns_set:
+            sets.append(ns_set)
+    if not sets:
+        return ""
+    intersection = sets[0]
+    for s in sets[1:]:
+        intersection &= s
+    return next(iter(intersection), "")
+
+
+def check_namespace_compatibility(studies_with_artifacts: list,
+                                   explicit_only: bool = False) -> dict:
     """Validate that studies can be meaningfully merged.
 
     Args:
         studies_with_artifacts: list of dicts with keys:
-            study_id (int), artifact (dict), sample_ids (list|None)
+            study_id (int), artifact (dict), sample_ids (list|None),
+            is_chosen (bool, optional)
+        explicit_only: when True, namespace check only covers entries where
+            is_chosen=True (used during validate; autopicked artifacts are
+            excluded since the user hasn't committed to them yet)
 
     Returns dict with keys: compatible (bool), namespace_groups (dict),
         warnings (list[str]), errors (list[str])
@@ -68,7 +94,12 @@ def check_namespace_compatibility(studies_with_artifacts: list) -> dict:
     errors = []
     namespace_groups: dict[str, list] = {}
 
-    for entry in studies_with_artifacts:
+    ns_entries = (
+        [e for e in studies_with_artifacts if e.get("is_chosen")]
+        if explicit_only
+        else studies_with_artifacts
+    )
+    for entry in ns_entries:
         sid = entry["study_id"]
         artifact = entry.get("artifact") or {}
         ns = _namespace(artifact.get("data_type") or "")
@@ -76,8 +107,8 @@ def check_namespace_compatibility(studies_with_artifacts: list) -> dict:
 
     if len(namespace_groups) > 1:
         ns_list = ", ".join(sorted(namespace_groups.keys()))
-        errors.append(f"Studies span multiple feature namespaces: {ns_list}. "
-                       "Merging across namespaces produces biologically meaningless results.")
+        errors.append(f"Selected BIOMs are of different data types: {ns_list}. "
+                       "All selected BIOMs must be of the same type.")
 
     # Sample ID collision check
     all_sample_sets: list[tuple[int, set]] = []
