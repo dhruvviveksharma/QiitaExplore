@@ -140,16 +140,20 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
     setWorkspaceId(null); setWorkspace(null); setValidation(null); setJobId(null);
   }
 
+  function handleBack() {
+    setWorkspaceId(null); setWorkspace(null); setValidation(null); setJobId(null); setError('');
+    if (!existingWs) apiFetch('/merge-workspaces?user_id=default').then(r => r.ok ? r.json() : []).then(setExistingWs);
+  }
+
   const studies = workspace?.studies || [];
 
   return (
     <div className="merge-panel">
       <div className="merge-panel-header">
+        {workspaceId && <button className="merge-btn-ghost" onClick={handleBack} title="Back to list">←</button>}
         <span className="merge-panel-title">⊕ Merge Workspace</span>
         <span style={{flex:1}} />
-        {workspaceId && (
-          <button className="merge-btn-ghost" onClick={handleDeleteWorkspace} title="Delete workspace">🗑</button>
-        )}
+        {workspaceId && <button className="merge-btn-ghost" onClick={handleDeleteWorkspace} title="Delete workspace">🗑</button>}
         <button className="merge-btn-ghost" onClick={onClose}>✕</button>
       </div>
 
@@ -275,11 +279,7 @@ function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
           ))}
         </tbody>
       </table>
-      {artifacts.length > 20 && (
-        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
-          {expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}
-        </button>
-      )}
+      {artifacts.length > 20 && <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>{expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}</button>}
     </>
   );
 }

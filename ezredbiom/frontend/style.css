@@ -865,6 +865,7 @@ input, textarea { font-family: var(--sans); }
 
 .show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
 .show-more-btn:hover { color: var(--accent); }
+.content.merge-open { padding-right: 430px; transition: padding-right .2s ease; }
 /* Workspace picker (floating panel create state) */
 .merge-picker-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
 .merge-ws-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }

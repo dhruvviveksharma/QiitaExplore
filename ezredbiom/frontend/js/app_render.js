@@ -206,7 +206,7 @@ function renderApp(s) {
           </button>
         </div>
 
-        <div className="content">
+        <div className={`content${showMergePanel ? ' merge-open' : ''}`}>
 
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
