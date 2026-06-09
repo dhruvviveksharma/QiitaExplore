@@ -49,6 +49,8 @@ from .cache import (  # noqa: F401
     update_project_study_data,
     get_study_detail_cache,
     upsert_study_detail_cache,
+    get_biom_sample_cache,
+    upsert_biom_sample_cache,
     pin_study_to_chat,
     unpin_study_from_chat,
     list_pinned_studies,

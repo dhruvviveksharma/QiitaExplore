@@ -75,6 +75,25 @@ def studies_type_intersection(data_types_strings: list) -> str:
     return next(iter(intersection), "")
 
 
+def autopick_reason(artifact: dict, data_type: str) -> str:
+    """Return a human-readable explanation for why this artifact was auto-picked."""
+    if not artifact:
+        return ""
+    dtype = (data_type or "").strip().lower()
+    name = ((artifact.get("prep_name") or "") + (artifact.get("full_path") or "")).lower()
+    if "16s" in dtype:
+        if "deblur" in name and "150" in name:
+            return "Deblur + 150 bp (preferred for 16S)"
+        if "deblur" in name:
+            return "Deblur (preferred for 16S)"
+        return "Most recently processed"
+    if "metagenomic" in dtype or "wgs" in dtype:
+        if "biom_final" in name:
+            return "Final BIOM (preferred for metagenomic)"
+        return "Most recently processed"
+    return "Most recently processed"
+
+
 def check_namespace_compatibility(studies_with_artifacts: list,
                                    explicit_only: bool = False) -> dict:
     """Validate that studies can be meaningfully merged.

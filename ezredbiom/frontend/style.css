@@ -1462,6 +1462,34 @@ input, textarea { font-family: var(--sans); }
 }
 .btn-card-merge:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* Study summary card */
+.study-summary-card { margin: 4px 0 6px; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border-soft); background: var(--surface-2); }
+.study-summary-pending { color: var(--text-3); font-size: 0.8rem; font-style: italic; }
+.study-summary-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.study-summary-check { font-size: 1rem; color: #16a34a; flex-shrink: 0; }
+.study-summary-name { font-size: 0.85rem; font-weight: 500; color: var(--text-1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.study-summary-samples { font-size: 0.78rem; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+.study-summary-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+.study-summary-reason { font-size: 0.75rem; color: var(--text-3); font-style: italic; flex: 1; }
+.study-summary-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.study-summary-change, .study-summary-peek { font-size: 0.75rem; color: var(--accent); }
+
+/* Sample peek table */
+.sample-peek { margin-top: 6px; border: 1px solid var(--border-soft); border-radius: 6px; overflow: hidden; }
+.sample-peek-header { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: var(--surface); font-size: 0.78rem; color: var(--text-3); border-bottom: 1px solid var(--border-soft); }
+.sample-peek-msg { padding: 8px 10px; font-size: 0.8rem; color: var(--text-3); }
+.sample-peek-err { color: #c00; }
+.sample-peek-table { font-size: 0.75rem; }
+.sample-peek-table td, .sample-peek-table th { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Merge preview */
+.merge-preview { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.08); font-size: 0.82rem; }
+.merge-preview-total { display: block; }
+.merge-preview-overlap { color: #a05000; }
+.dark .merge-preview-overlap { color: #e0a060; }
+.merge-preview-studies { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.merge-preview-chip { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; font-size: 0.75rem; color: var(--text-2); }
+
 /* Artifact processing graph */
 .artifact-graph-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; padding: 6px 4px; }
 .dark .artifact-graph-scroll { background: #1a1f2b; }

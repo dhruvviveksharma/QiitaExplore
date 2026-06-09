@@ -1,0 +1,213 @@
+// Merge detail UI: per-study summary card, merge preview, sample peek, job status/history
+// useState, useEffect, etc. are available globally from utils.js
+
+// ── Study summary card ────────────────────────────────────────────────────────
+
+function StudySummaryCard({ autoArtifact, chosenIds, showGraph, onChangeSelection, studyId }) {
+  const [showPeek, setShowPeek] = useState(false);
+
+  if (!autoArtifact) {
+    return <div className="study-summary-card study-summary-pending">Validating selection…</div>;
+  }
+
+  const fname = (autoArtifact.full_path || '').split('/').pop();
+  const displayName = autoArtifact.prep_name || autoArtifact.name || fname
+    || `Artifact ${autoArtifact.artifact_id}`;
+  const isOverridden = chosenIds?.length > 0 &&
+    !chosenIds.includes(autoArtifact.artifact_id);
+
+  return (
+    <div className="study-summary-card">
+      <div className="study-summary-main">
+        <span className="study-summary-check">{isOverridden ? '○' : '✓'}</span>
+        <span className="study-summary-name" title={fname}>{displayName}</span>
+        {autoArtifact.data_type && (
+          <span className="dtype-chip">{autoArtifact.data_type}</span>
+        )}
+        {autoArtifact.num_samples != null && (
+          <span className="study-summary-samples">
+            {autoArtifact.num_samples.toLocaleString()} samples
+          </span>
+        )}
+      </div>
+      <div className="study-summary-footer">
+        {autoArtifact.reason && (
+          <span className="study-summary-reason">{autoArtifact.reason}</span>
+        )}
+        <div className="study-summary-actions">
+          {autoArtifact.artifact_id && (
+            <button className="merge-btn-ghost study-summary-peek"
+              onClick={() => setShowPeek(p => !p)}>
+              {showPeek ? 'Hide samples' : 'Peek samples'}
+            </button>
+          )}
+          <button className="merge-btn-ghost study-summary-change"
+            onClick={onChangeSelection}>
+            {showGraph ? '▲ Hide selection' : '▼ Change selection'}
+          </button>
+        </div>
+      </div>
+      {showPeek && autoArtifact.artifact_id && (
+        <SamplePeek artifactId={autoArtifact.artifact_id} studyId={studyId}
+          onClose={() => setShowPeek(false)} />
+      )}
+    </div>
+  );
+}
+
+// ── Sample peek ───────────────────────────────────────────────────────────────
+
+function SamplePeek({ artifactId, studyId, onClose }) {
+  const [rows, setRows] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    apiFetch(`/artifacts/${artifactId}/samples?study_id=${studyId}&limit=50`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { setRows(d); setLoading(false); })
+      .catch(() => { setErr('Could not load samples.'); setLoading(false); });
+  }, [artifactId]);
+
+  const cols = rows?.length ? Object.keys(rows[0].fields || {}) : [];
+
+  return (
+    <div className="sample-peek">
+      <div className="sample-peek-header">
+        <span>First {rows?.length ?? '…'} sample IDs</span>
+        <button className="merge-btn-ghost" onClick={onClose}>✕</button>
+      </div>
+      {loading && <div className="sample-peek-msg">Loading…</div>}
+      {err   && <div className="sample-peek-msg sample-peek-err">{err}</div>}
+      {rows  && (
+        <table className="prep-table sample-peek-table">
+          <thead>
+            <tr>
+              <th>Sample ID</th>
+              {cols.map(c => <th key={c}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.sample_id}>
+                <td>{r.sample_id}</td>
+                {cols.map(c => <td key={c}>{r.fields?.[c] ?? ''}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Merge preview + validation panel ──────────────────────────────────────────
+
+function MergePreviewPanel({ validation, validating }) {
+  if (validating) return <div className="merge-validation validating">Validating…</div>;
+  if (!validation) return null;
+
+  const { compatible, warnings = [], errors = [], preview } = validation;
+  return (
+    <div className={`merge-validation ${compatible ? 'ok' : 'fail'}`}>
+      <div className="merge-val-status">
+        {compatible ? '✓ Compatible' : '✗ Incompatible'}
+      </div>
+      {errors.map((e, i) => <div key={i} className="merge-val-error">⊘ {e}</div>)}
+      {warnings.map((w, i) => <div key={i} className="merge-val-warn">⚠ {w}</div>)}
+      {compatible && preview && (
+        <div className="merge-preview">
+          <span className="merge-preview-total">
+            Output: <strong>{preview.total_unique.toLocaleString()}</strong> unique samples
+          </span>
+          {preview.overlap_count > 0 && (
+            <span className="merge-preview-overlap">
+              &nbsp;({preview.overlap_count.toLocaleString()} shared IDs collapsed)
+            </span>
+          )}
+          {preview.per_study?.length > 0 && (
+            <div className="merge-preview-studies">
+              {preview.per_study.map(s => (
+                <span key={s.study_id} className="merge-preview-chip">
+                  #{s.study_id}: {s.num_samples.toLocaleString()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Job status and history (moved from merge_workspace.js) ────────────────────
+
+function MergeJobStatus({ jobId, onReset }) {
+  const [job, setJob] = useState(null);
+
+  useEffect(() => {
+    let timer;
+    async function poll() {
+      const res = await apiFetch(`/merge-jobs/${jobId}`);
+      if (!res.ok) return;
+      const j = await res.json();
+      setJob(j);
+      if (j.status !== 'done' && j.status !== 'failed') {
+        timer = setTimeout(poll, 3000);
+      }
+    }
+    poll();
+    return () => clearTimeout(timer);
+  }, [jobId]);
+
+  if (!job) return <div className="merge-job-status">Queued…</div>;
+
+  return (
+    <div className={`merge-job-status ${job.status}`}>
+      {job.status === 'pending' && <><div className="spinner" style={{display:'inline-block',marginRight:6}}/> Waiting…</>}
+      {job.status === 'running' && <><div className="spinner" style={{display:'inline-block',marginRight:6}}/> Merging…</>}
+      {job.status === 'done' && (
+        <div>
+          <span>✓ Done — </span>
+          <a href={`${API}/merge-jobs/${jobId}/download`} className="merge-download-link">
+            Download bundle
+          </a>
+          <button className="merge-btn-ghost" style={{marginLeft:8}} onClick={onReset}>↺ New job</button>
+        </div>
+      )}
+      {job.status === 'failed' && (
+        <div>
+          <span className="merge-val-error">✗ Failed: {job.error_message}</span>
+          <button className="merge-btn-ghost" style={{marginLeft:8}} onClick={onReset}>↺ Retry</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MergeJobHistory({ workspaceId }) {
+  const [jobs, setJobs] = useState([]);
+
+  useEffect(() => {
+    apiFetch(`/merge-workspaces/${workspaceId}/jobs`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setJobs);
+  }, [workspaceId]);
+
+  const doneJobs = jobs.filter(j => j.status === 'done');
+  if (!doneJobs.length) return null;
+
+  return (
+    <div className="merge-job-history">
+      <div className="merge-slot-label">Past merges</div>
+      {doneJobs.slice(0, 3).map(j => (
+        <div key={j.job_id} className="merge-job-row">
+          <span className="merge-job-date">{(j.created_at || '').slice(0, 10)}</span>
+          <a href={`${API}/merge-jobs/${j.job_id}/download`} className="merge-download-link">
+            Download
+          </a>
+        </div>
+      ))}
+    </div>
+  );
+}

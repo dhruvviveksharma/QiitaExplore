@@ -1,4 +1,6 @@
 // Merge Workspace panel — browse studies, pick BIOMs, validate, merge
+// StudySummaryCard, MergePreviewPanel, SamplePeek, MergeJobStatus, MergeJobHistory
+// are defined in merge_detail.js (loaded before this file).
 
 function MergePanelNameField({ name, workspaceId, onRename }) {
   const [editing, setEditing] = useState(false);
@@ -51,10 +53,13 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
     else apiFetch('/merge-workspaces?user_id=default').then(r => r.ok ? r.json() : []).then(setExistingWs);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-run validation whenever study list changes
+  // Auto-run validation whenever study list or artifact selection changes
+  const _chosenSig = (workspace?.studies || [])
+    .map(s => `${s.study_id}:${(s.chosen_artifact_ids || []).join(',')}`)
+    .join('|');
   useEffect(() => {
     if (workspaceId && workspace?.studies?.length) runValidation(workspaceId);
-  }, [workspace?.studies?.length, workspaceId]);
+  }, [_chosenSig, workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function ensureWorkspace() {
     if (workspaceId) return workspaceId;
@@ -219,9 +224,9 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
         )}
       </div>
 
-      {/* Validation */}
+      {/* Validation + merge preview */}
       {workspaceId && studies.length > 0 && (
-        <MergeValidationPanel validation={validation} validating={validating} />
+        <MergePreviewPanel validation={validation} validating={validating} />
       )}
 
       {/* Merge button */}
@@ -255,10 +260,15 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
 
 function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onDetailLoaded }) {
-  const [detail, setDetail]     = useState(null);
+  const [detail,        setDetail]        = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [open, setOpen]         = useState(false);
-  const [prepFilter, setPrepFilter] = useState('');
+  const [showGraph,     setShowGraph]     = useState(false);
+  const [prepFilter,    setPrepFilter]    = useState('');
+  const [sampleCounts,  setSampleCounts]  = useState({});
+
+  const autoArtifact = validationStudy?.auto_artifact;
+  const autoId       = autoArtifact?.artifact_id;
+  const chosenIds    = slot.chosen_artifact_ids?.length ? slot.chosen_artifact_ids : (autoId ? [autoId] : []);
 
   async function loadDetail() {
     if (detail) return;
@@ -272,24 +282,32 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
     setDetailLoading(false);
   }
 
-  function handleToggle() {
-    if (!open) loadDetail();
-    setOpen(p => !p);
+  // Fetch per-BIOM sample counts when the advanced graph is opened
+  useEffect(() => {
+    if (!showGraph || !detail?.artifact_graph) return;
+    const biomIds = detail.artifact_graph
+      .filter(n => n.kind === 'artifact' && n.artifact_type === 'BIOM' && n.artifact_id)
+      .map(n => n.artifact_id);
+    if (!biomIds.length) return;
+    apiPost(`/artifacts/sample-counts`, { study_id: slot.study_id, artifact_ids: biomIds })
+      .then(r => r.ok ? r.json() : {})
+      .then(counts => setSampleCounts(prev => ({ ...prev, ...counts })));
+  }, [showGraph, detail]);
+
+  function handleChangeSelection() {
+    if (!showGraph) loadDetail();
+    setShowGraph(p => !p);
   }
 
-  const autoId = validationStudy?.auto_artifact?.artifact_id;
-  const chosenIds = slot.chosen_artifact_ids?.length ? slot.chosen_artifact_ids : (autoId ? [autoId] : []);
-  const graph = detail?.artifact_graph || [];
-  const hasOrphans = graph.length > 0 && graph.some(n => !prepReachableSet(graph).has(n.node_id));
+  const graph   = detail?.artifact_graph || [];
+  const reachable = prepReachableSet(graph);
+  const hasOrphans = graph.length > 0 && graph.some(n => !reachable.has(n.node_id));
 
   return (
     <div className="merge-study-slot">
       <div className="merge-slot-header">
         <span className="merge-slot-id">ID {slot.study_id}</span>
         <span className="merge-slot-title">{slot.study_title || 'Untitled'}</span>
-        <button className="merge-btn-ghost merge-detail-toggle" onClick={handleToggle}>
-          {open ? '▲ Hide' : '▼ Detail'}
-        </button>
         <button className="merge-btn-ghost merge-slot-remove" onClick={onRemove} title="Remove">✕</button>
       </div>
 
@@ -301,7 +319,15 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
         </div>
       )}
 
-      {open && (
+      <StudySummaryCard
+        autoArtifact={autoArtifact}
+        chosenIds={chosenIds}
+        showGraph={showGraph}
+        onChangeSelection={handleChangeSelection}
+        studyId={slot.study_id}
+      />
+
+      {showGraph && (
         <div className="merge-slot-detail">
           <div className="merge-slot-section">
             <div className="merge-slot-section-title">Preps</div>
@@ -330,7 +356,8 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
               )}
             </div>
             <ArtifactGraphView detail={detail} loading={detailLoading}
-              chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} prepFilter={prepFilter} />
+              chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} prepFilter={prepFilter}
+              recommendedId={autoId} sampleCounts={sampleCounts} />
           </div>
         </div>
       )}
@@ -338,91 +365,7 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
   );
 }
 
-function MergeValidationPanel({ validation, validating }) {
-  if (validating) return <div className="merge-validation validating">Validating…</div>;
-  if (!validation) return null;
-
-  const { compatible, warnings = [], errors = [] } = validation;
-  return (
-    <div className={`merge-validation ${compatible ? 'ok' : 'fail'}`}>
-      <div className="merge-val-status">
-        {compatible ? '✓ Compatible' : '✗ Incompatible'}
-      </div>
-      {errors.map((e, i) => <div key={i} className="merge-val-error">⊘ {e}</div>)}
-      {warnings.map((w, i) => <div key={i} className="merge-val-warn">⚠ {w}</div>)}
-    </div>
-  );
-}
-
-function MergeJobStatus({ jobId, onReset }) {
-  const [job, setJob] = useState(null);
-
-  useEffect(() => {
-    let timer;
-    async function poll() {
-      const res = await apiFetch(`/merge-jobs/${jobId}`);
-      if (!res.ok) return;
-      const j = await res.json();
-      setJob(j);
-      if (j.status !== 'done' && j.status !== 'failed') {
-        timer = setTimeout(poll, 3000);
-      }
-    }
-    poll();
-    return () => clearTimeout(timer);
-  }, [jobId]);
-
-  if (!job) return <div className="merge-job-status">Queued…</div>;
-
-  return (
-    <div className={`merge-job-status ${job.status}`}>
-      {job.status === 'pending'  && <><div className="spinner" style={{display:'inline-block',marginRight:6}}/> Waiting…</>}
-      {job.status === 'running'  && <><div className="spinner" style={{display:'inline-block',marginRight:6}}/> Merging…</>}
-      {job.status === 'done'     && (
-        <div>
-          <span>✓ Done — </span>
-          <a href={`${API}/merge-jobs/${jobId}/download`} className="merge-download-link">
-            Download bundle
-          </a>
-          <button className="merge-btn-ghost" style={{marginLeft:8}} onClick={onReset}>↺ New job</button>
-        </div>
-      )}
-      {job.status === 'failed'   && (
-        <div>
-          <span className="merge-val-error">✗ Failed: {job.error_message}</span>
-          <button className="merge-btn-ghost" style={{marginLeft:8}} onClick={onReset}>↺ Retry</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MergeJobHistory({ workspaceId }) {
-  const [jobs, setJobs] = useState([]);
-
-  useEffect(() => {
-    apiFetch(`/merge-workspaces/${workspaceId}/jobs`)
-      .then(r => r.ok ? r.json() : [])
-      .then(setJobs);
-  }, [workspaceId]);
-
-  const doneJobs = jobs.filter(j => j.status === 'done');
-  if (!doneJobs.length) return null;
-
-  return (
-    <div className="merge-job-history">
-      <div className="merge-slot-label">Past merges</div>
-      {doneJobs.slice(0, 3).map(j => (
-        <div key={j.job_id} className="merge-job-row">
-          <span className="merge-job-date">{(j.created_at || '').slice(0, 10)}</span>
-          <a href={`${API}/merge-jobs/${j.job_id}/download`} className="merge-download-link">
-            Download
-          </a>
-        </div>
-      ))}
-    </div>
-  );
-}
+// MergeJobStatus, MergeJobHistory, MergePreviewPanel → merge_detail.js
 
 function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   const [workspaces, setWorkspaces] = useState(null);

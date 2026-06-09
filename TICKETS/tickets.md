@@ -377,4 +377,24 @@ Two files now exceed the 500-line limit (both were already over before the /pin 
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-05-30*
+## TKT-012: Merge page request fan-outs
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Two spots in the merge page fan out parallel requests that could become expensive at scale:
+
+1. **`MergesTab` mount** (`merge_workspace.js`, `MergesTab` component): on load, fetches the full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`. Bounded to the user's workspace count but could add up.
+
+2. **`GlobalBiomSelector` Smart Select** (`merge_artifacts.js`, `GlobalBiomSelector.handleApply`): when study details are missing, fetches all missing study details in parallel — up to 5 studies, but no rate limiting or request cancellation.
+
+### Plan
+
+- Lazy-load workspace detail in `MergesTab` only when the user expands/hovers a card (or batch-fetch on a short delay rather than immediately on mount).
+- In `GlobalBiomSelector`, fetch missing details sequentially or add a concurrency limit (e.g. `p-limit(3)`).
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-06-09*

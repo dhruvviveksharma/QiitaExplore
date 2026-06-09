@@ -182,6 +182,13 @@ def _create_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_ws ON merge_jobs(workspace_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_user ON merge_jobs(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS biom_sample_cache (
+            artifact_id     INTEGER PRIMARY KEY,
+            num_samples     INTEGER,
+            sample_ids_json TEXT,
+            cached_at       TEXT
+        );
         """
     )
     for col, definition in [

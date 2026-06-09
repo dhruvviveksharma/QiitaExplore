@@ -104,7 +104,7 @@ function buildGraphLayout(nodes) {
 function _cx(rank) { return rank * COL_W + COL_W / 2; }
 function _cy(rp)   { return rp * ROW_H + ROW_H / 2 + 10; }
 
-function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact }) {
+function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedId, sampleCounts }) {
   const { nodes, edges, maxRank, maxPos } = graphData;
   const W = (maxRank + 1) * COL_W + 20;
   const H = (maxPos + 1) * ROW_H + 30;
@@ -112,7 +112,7 @@ function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact }) {
   const byId = {};
   nodes.forEach(n => { byId[n.node_id] = n; });
 
-  const chosen = new Set(chosenIds || []);
+  const chosen = new Set(chosenIds || {});
 
   return (
     <svg width={W} height={H} style={{ display: 'block' }}>
@@ -154,11 +154,13 @@ function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact }) {
           );
         }
 
-        const isBiom   = n.artifact_type === 'BIOM';
-        const isChosen = chosen.has(n.artifact_id);
-        const fname    = n.full_path ? n.full_path.split('/').pop() : null;
-        const label    = n.name || (n.artifact_type + ' ' + n.artifact_id);
-        const trunc    = (s, max) => s && s.length > max ? s.slice(0, max - 1) + '…' : (s || '');
+        const isBiom      = n.artifact_type === 'BIOM';
+        const isChosen    = chosen.has(n.artifact_id);
+        const isRec       = isBiom && n.artifact_id === recommendedId;
+        const fname       = n.full_path ? n.full_path.split('/').pop() : null;
+        const label       = n.name || (n.artifact_type + ' ' + n.artifact_id);
+        const trunc       = (s, max) => s && s.length > max ? s.slice(0, max - 1) + '…' : (s || '');
+        const numSamples  = isBiom && sampleCounts ? sampleCounts[n.artifact_id] : null;
 
         return (
           <g key={n.node_id}
@@ -177,17 +179,33 @@ function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact }) {
               {n.artifact_type || '?'}
             </text>
             {/* Name */}
-            <text x={cx} y={cy + 5}
+            <text x={cx} y={cy + (numSamples != null ? 1 : 5)}
               textAnchor="middle" fontSize="9.5" fill="#374151"
               style={{ pointerEvents: 'none' }}>
               {trunc(label, 20)}
             </text>
-            {/* Filename for BIOMs */}
-            {isBiom && fname && (
+            {/* Sample count for BIOMs */}
+            {isBiom && numSamples != null && (
+              <text x={cx} y={cy + NODE_H / 2 - 4}
+                textAnchor="middle" fontSize="8" fill="#6b7280"
+                style={{ pointerEvents: 'none' }}>
+                {numSamples.toLocaleString()} samples
+              </text>
+            )}
+            {/* Filename when no sample count */}
+            {isBiom && fname && numSamples == null && (
               <text x={cx} y={cy + NODE_H / 2 - 4}
                 textAnchor="middle" fontSize="8" fill="#6b7280"
                 style={{ pointerEvents: 'none' }}>
                 {trunc(fname, 22)}
+              </text>
+            )}
+            {/* Recommended badge (top-right area) */}
+            {isRec && !isChosen && (
+              <text x={cx + NODE_W / 2 - 5} y={cy - NODE_H / 2 + 13}
+                textAnchor="end" fontSize="8" fill="#16a34a"
+                style={{ pointerEvents: 'none' }}>
+                rec
               </text>
             )}
             {/* Selection checkmark */}
@@ -229,7 +247,7 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
-function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter }) {
+function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts }) {
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -278,7 +296,8 @@ function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepF
   const graphData = buildGraphLayout(filtered);
   return (
     <div className="artifact-graph-scroll">
-      <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} />
+      <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
+        recommendedId={recommendedId} sampleCounts={sampleCounts} />
     </div>
   );
 }

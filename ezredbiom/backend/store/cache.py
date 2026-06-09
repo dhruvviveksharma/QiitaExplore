@@ -137,6 +137,32 @@ def upsert_study_detail_cache(
     return True
 
 
+def get_biom_sample_cache(artifact_id: int):
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT num_samples, sample_ids_json, cached_at FROM biom_sample_cache WHERE artifact_id = ?",
+            (int(artifact_id),),
+        ).fetchone()
+    return _as_dict(row)
+
+
+def upsert_biom_sample_cache(artifact_id: int, num_samples: int, sample_ids_json: str):
+    with _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO biom_sample_cache(artifact_id, num_samples, sample_ids_json, cached_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(artifact_id) DO UPDATE SET
+                num_samples     = excluded.num_samples,
+                sample_ids_json = excluded.sample_ids_json,
+                cached_at       = excluded.cached_at
+            """,
+            (int(artifact_id), num_samples, sample_ids_json, _now()),
+        )
+        conn.commit()
+    return True
+
+
 def _normalize_scope(scope: str) -> str:
     s = (scope or "").strip()
     return s if s in (SCOPE_PROJECT, SCOPE_GLOBAL) else SCOPE_PROJECT

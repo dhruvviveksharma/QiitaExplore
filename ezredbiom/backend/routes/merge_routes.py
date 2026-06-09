@@ -21,8 +21,10 @@ from store import (
     upsert_study_detail_cache,
 )
 from helpers.qiita_fetch import _fetch_study_detail_from_qiita
-from helpers.biom_autopick import (autopick_artifact, check_namespace_compatibility,
+from helpers.biom_autopick import (autopick_artifact, autopick_reason,
+                                   check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
+from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
 _DEFAULT_USER = "default"
@@ -183,15 +185,31 @@ def validate_merge_workspace(workspace_id):
         else:
             artifact = autopick_artifact(type_artifacts, common_type)
 
-        # Gather sample IDs (for collision/length checks)
+        # Get per-BIOM sample IDs (true membership, cached forever)
+        biom_sample_ids = None
+        if artifact and artifact.get("artifact_id") and artifact.get("full_path"):
+            try:
+                biom_sample_ids = get_biom_sample_ids(
+                    artifact["artifact_id"], artifact["full_path"]
+                )
+            except Exception:
+                biom_sample_ids = _get_sample_ids(sid)
+
+        # Attach display fields to a copy of the artifact dict
+        if artifact:
+            artifact = dict(artifact)
+            artifact["num_samples"] = len(biom_sample_ids) if biom_sample_ids is not None else None
+            artifact["reason"] = autopick_reason(artifact, common_type)
+
+        # Honour explicit sample filter; otherwise use per-BIOM membership
         sample_filter = slot.get("sample_filter")
         if sample_filter:
             try:
                 sample_ids = json.loads(sample_filter) if isinstance(sample_filter, str) else sample_filter
             except Exception:
-                sample_ids = None
+                sample_ids = biom_sample_ids
         else:
-            sample_ids = _get_sample_ids(sid)
+            sample_ids = biom_sample_ids or _get_sample_ids(sid)
 
         studies_payload.append({
             "study_id": sid,
@@ -201,6 +219,14 @@ def validate_merge_workspace(workspace_id):
         })
 
     validation = check_namespace_compatibility(studies_payload, explicit_only=True)
+
+    # Merge preview (only when all chosen studies have sample data)
+    preview_sets = {
+        e["study_id"]: e["sample_ids"]
+        for e in studies_payload
+        if e.get("sample_ids")
+    }
+    preview = compute_merge_preview(preview_sets) if len(preview_sets) >= 2 else None
 
     response_studies = []
     for entry in studies_payload:
@@ -218,6 +244,7 @@ def validate_merge_workspace(workspace_id):
         "warnings": validation["warnings"],
         "errors": validation["errors"],
         "studies": response_studies,
+        "preview": preview,
     })
 
 
@@ -318,6 +345,75 @@ def poll_merge_job(job_id):
     if job is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify(job)
+
+
+# ── Per-artifact sample endpoints ─────────────────────────────────────────────
+
+@app.route("/api/artifacts/<int:artifact_id>/samples", methods=["GET"])
+def get_artifact_samples(artifact_id):
+    """Return sample IDs (+ a few metadata fields) for a BIOM artifact."""
+    study_id = request.args.get("study_id", type=int)
+    limit = min(request.args.get("limit", 50, type=int), 500)
+    if not study_id:
+        return jsonify({"error": "study_id required"}), 400
+
+    artifacts = _get_artifacts(study_id)
+    art = next((a for a in artifacts if a.get("artifact_id") == artifact_id), None)
+    if not art or not art.get("full_path"):
+        return jsonify({"error": "Artifact not found or has no file path"}), 404
+
+    try:
+        sample_ids = get_biom_sample_ids(artifact_id, art["full_path"])
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    # Attach a few metadata fields from full_samples_json cache
+    cached = get_study_detail_cache(study_id)
+    meta_by_id = {}
+    if cached and cached.get("full_samples_json"):
+        try:
+            for row in json.loads(cached["full_samples_json"]):
+                meta_by_id[row["sample_id"]] = row.get("fields", {})
+        except Exception:
+            pass
+
+    rows = []
+    for sid in sample_ids[:limit]:
+        fields = meta_by_id.get(sid, {})
+        # Include up to 3 metadata columns for the peek table
+        preview_cols = ["host_subject_id", "sample_type", "env_biome", "body_site"]
+        rows.append({
+            "sample_id": sid,
+            "fields": {k: fields[k] for k in preview_cols if k in fields},
+        })
+
+    return jsonify(rows)
+
+
+@app.route("/api/artifacts/sample-counts", methods=["POST"])
+def get_artifact_sample_counts():
+    """Return {artifact_id: num_samples} for a batch of artifact IDs from one study."""
+    body = request.json or {}
+    study_id = body.get("study_id")
+    artifact_ids = body.get("artifact_ids") or []
+    if not study_id or not artifact_ids:
+        return jsonify({"error": "study_id and artifact_ids required"}), 400
+
+    artifacts = _get_artifacts(int(study_id))
+    art_by_id = {a["artifact_id"]: a for a in artifacts}
+
+    counts = {}
+    for aid in artifact_ids:
+        art = art_by_id.get(aid)
+        if not art or not art.get("full_path"):
+            continue
+        try:
+            ids = get_biom_sample_ids(aid, art["full_path"])
+            counts[aid] = len(ids)
+        except Exception:
+            pass
+
+    return jsonify(counts)
 
 
 @app.route("/api/merge-jobs/<job_id>/download", methods=["GET"])
