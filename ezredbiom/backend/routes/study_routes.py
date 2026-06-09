@@ -12,6 +12,7 @@ from services.llm import llm_query_to_sql
 from services.study_service import search_studies_with_sql
 from helpers.sample_search import search_studies_by_sample_meta
 from store import get_study_detail_cache, upsert_study_detail_cache
+from helpers.artifact_graph import fetch_artifact_graph
 from helpers.qiita_fetch import (
     first_studies,
     is_study_public,
@@ -29,17 +30,26 @@ def api_study_detail(study_id):
         return jsonify({'error': 'Study not found or not public'}), 404
     cached = get_study_detail_cache(study_id)
     if cached:
-        preps     = json.loads(cached.get("preps_json") or "[]")
-        artifacts = json.loads(cached.get("artifacts_json") or "[]")
+        preps          = json.loads(cached.get("preps_json") or "[]")
+        artifacts      = json.loads(cached.get("artifacts_json") or "[]")
+        artifact_graph = json.loads(cached["artifact_graph_json"]) if cached.get("artifact_graph_json") else None
         cache_hit = True
     else:
         try:
             preps, artifacts = _fetch_study_detail_from_qiita(study_id)
             upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))
+            artifact_graph = None
             cache_hit = False
         except Exception as e:
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
+
+    if artifact_graph is None:
+        artifact_graph = fetch_artifact_graph(study_id)
+        upsert_study_detail_cache(
+            study_id, json.dumps(preps), json.dumps(artifacts),
+            artifact_graph_json=json.dumps(artifact_graph),
+        )
 
     prep_ids = [p.get("prep_template_id") for p in preps if p.get("prep_template_id") is not None]
     if prep_ids:
@@ -64,12 +74,13 @@ def api_study_detail(study_id):
             )
 
     return jsonify({
-        "study_id":      study_id,
-        "preps":         preps,
-        "artifacts":     artifacts,
-        "samples":       samples,
-        "total_samples": total_samples,
-        "cached":        cache_hit,
+        "study_id":       study_id,
+        "preps":          preps,
+        "artifacts":      artifacts,
+        "artifact_graph": artifact_graph,
+        "samples":        samples,
+        "total_samples":  total_samples,
+        "cached":         cache_hit,
     })
 
 

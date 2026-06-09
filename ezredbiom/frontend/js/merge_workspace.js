@@ -24,6 +24,15 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   const [merging,      setMerging]      = useState(false);
   const [error,        setError]        = useState('');
   const [existingWs,   setExistingWs]   = useState(null);
+  const [studyDetails, setStudyDetails] = useState(new Map());
+
+  function handleDetailLoaded(studyId, detail) {
+    setStudyDetails(prev => new Map(prev).set(studyId, detail));
+  }
+
+  function handleGlobalApply(selections) {
+    selections.forEach(({ studyId, artifactId }) => handlePickArtifact(studyId, artifactId));
+  }
 
   // Consume any study queued before the panel was mounted
   useEffect(() => {
@@ -187,6 +196,11 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
       {error && <div className="merge-error">{error}</div>}
 
+      {/* Global BIOM selector */}
+      {workspaceId && (
+        <GlobalBiomSelector workspace={workspace} studyDetails={studyDetails} onApply={handleGlobalApply} />
+      )}
+
       {/* Study slots */}
       <div className="merge-slots">
         {studies.map(slot => (
@@ -196,6 +210,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
             validationStudy={validation?.studies?.find(s => s.study_id === slot.study_id)}
             onRemove={() => handleRemoveStudy(slot.study_id)}
             onPickArtifact={(aId) => handlePickArtifact(slot.study_id, aId)}
+            onDetailLoaded={handleDetailLoaded}
           />
         ))}
         {studies.length === 0 && workspaceId && (
@@ -240,60 +255,22 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   );
 }
 
-function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
-  const [expanded, setExpanded] = useState(false);
-  if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
-  if (!detail) return null;
-  const artifacts = detail.artifacts || [];
-  if (artifacts.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No artifacts found.</p>;
-  const shown = expanded ? artifacts : artifacts.slice(0, 20);
-  return (
-    <>
-      <table className="prep-table">
-        <thead>
-          <tr>
-            <th className="merge-artifacts-use-col">Use</th>
-            <th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map(a => (
-            <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
-              <td className="merge-artifacts-use-col">
-                {a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
-                  <input type="checkbox" className="merge-biom-check"
-                    checked={a.artifact_id === chosenId}
-                    onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)}
-                  />
-                )}
-              </td>
-              <td>{a.artifact_id}</td>
-              <td>{a.artifact_type || '—'}</td>
-              <td>{a.data_type || '—'}</td>
-              <td className="artifact-path-cell">
-                <span className="artifact-path" title={a.full_path}>
-                  {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {artifacts.length > 20 && <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>{expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}</button>}
-    </>
-  );
-}
 
-function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
+function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDetailLoaded }) {
   const [detail, setDetail]     = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [open, setOpen]         = useState(false);
+  const [dtFilter, setDtFilter] = useState('');
 
   async function loadDetail() {
     if (detail) return;
     setDetailLoading(true);
     const res = await apiFetch(`/studies/${slot.study_id}/detail`);
-    if (res.ok) setDetail(await res.json());
+    if (res.ok) {
+      const d = await res.json();
+      setDetail(d);
+      if (onDetailLoaded) onDetailLoaded(slot.study_id, d);
+    }
     setDetailLoading(false);
   }
 
@@ -331,9 +308,19 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
             <PrepsTable detail={detail} loading={detailLoading} />
           </div>
           <div className="merge-slot-section">
-            <div className="merge-slot-section-title">Artifacts</div>
-            <MergeArtifactsTable detail={detail} loading={detailLoading}
-              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} />
+            <div className="merge-slot-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              Artifacts
+              {detail && (detail.preps || []).length > 0 && (
+                <select value={dtFilter} onChange={e => setDtFilter(e.target.value)} className="merge-dt-select">
+                  <option value="">All</option>
+                  {[...new Set((detail.preps || []).map(p => p.data_type).filter(Boolean))].map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <ArtifactGraphView detail={detail} loading={detailLoading}
+              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} dtFilter={dtFilter} />
           </div>
         </div>
       )}

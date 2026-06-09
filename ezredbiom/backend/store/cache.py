@@ -93,7 +93,7 @@ def get_study_detail_cache(study_id: int):
     """Return cached study detail if it exists and is less than TTL hours old, else None."""
     with _conn() as conn:
         row = conn.execute(
-            "SELECT preps_json, artifacts_json, samples_context, full_samples_json, cached_at FROM study_detail_cache WHERE study_id = ?",
+            "SELECT preps_json, artifacts_json, samples_context, full_samples_json, artifact_graph_json, cached_at FROM study_detail_cache WHERE study_id = ?",
             (int(study_id),),
         ).fetchone()
     if row is None:
@@ -115,21 +115,23 @@ def upsert_study_detail_cache(
     artifacts_json: str,
     samples_context: str = None,
     full_samples_json: str = None,
+    artifact_graph_json: str = None,
 ):
     """Cache study detail. Pass None for any field to preserve the existing value (COALESCE)."""
     with _conn() as conn:
         conn.execute(
             """
-            INSERT INTO study_detail_cache(study_id, preps_json, artifacts_json, samples_context, full_samples_json, cached_at)
-            VALUES(?, ?, ?, ?, ?, ?)
+            INSERT INTO study_detail_cache(study_id, preps_json, artifacts_json, samples_context, full_samples_json, artifact_graph_json, cached_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(study_id) DO UPDATE SET
-                preps_json       = COALESCE(excluded.preps_json,       study_detail_cache.preps_json),
-                artifacts_json   = COALESCE(excluded.artifacts_json,   study_detail_cache.artifacts_json),
-                samples_context  = COALESCE(excluded.samples_context,  study_detail_cache.samples_context),
-                full_samples_json = COALESCE(excluded.full_samples_json, study_detail_cache.full_samples_json),
-                cached_at        = excluded.cached_at
+                preps_json          = COALESCE(excluded.preps_json,          study_detail_cache.preps_json),
+                artifacts_json      = COALESCE(excluded.artifacts_json,      study_detail_cache.artifacts_json),
+                samples_context     = COALESCE(excluded.samples_context,     study_detail_cache.samples_context),
+                full_samples_json   = COALESCE(excluded.full_samples_json,   study_detail_cache.full_samples_json),
+                artifact_graph_json = COALESCE(excluded.artifact_graph_json, study_detail_cache.artifact_graph_json),
+                cached_at           = excluded.cached_at
             """,
-            (int(study_id), preps_json, artifacts_json, samples_context, full_samples_json, _now()),
+            (int(study_id), preps_json, artifacts_json, samples_context, full_samples_json, artifact_graph_json, _now()),
         )
         conn.commit()
     return True

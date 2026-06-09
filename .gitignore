@@ -82,6 +82,9 @@ qiita_db/support_files/patches/test_db_sql/91.sql
 
 *.env
 
+# Archives
+*.tar.gz
+
 # Study data files
 *.qz
 *.qza
