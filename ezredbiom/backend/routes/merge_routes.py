@@ -9,6 +9,7 @@ from store import (
     list_workspaces,
     get_workspace,
     delete_workspace,
+    rename_workspace,
     add_study_to_workspace,
     remove_study_from_workspace,
     update_workspace_study,
@@ -96,6 +97,16 @@ def delete_merge_workspace(workspace_id):
     if not ok:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"deleted": workspace_id})
+
+
+@app.route("/api/merge-workspaces/<workspace_id>", methods=["PATCH"])
+def patch_merge_workspace(workspace_id):
+    user_id = _user_id()
+    name = ((request.json or {}).get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    rename_workspace(workspace_id, user_id, name)
+    return jsonify({"workspace_id": workspace_id, "name": name})
 
 
 # ── Studies in workspace ──────────────────────────────────────────────────────

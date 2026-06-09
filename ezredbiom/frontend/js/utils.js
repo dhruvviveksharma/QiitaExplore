@@ -9,6 +9,7 @@ const USER_ID = 'default';
 const apiFetch = (path, opts = {}) =>
   fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json' }, ...opts });
 const apiPost  = (path, body) => apiFetch(path, { method: 'POST',   body: JSON.stringify(body) });
+const apiPatch = (path, body) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body) });
 const apiDel   = (path)       => apiFetch(path, { method: 'DELETE' });
 
 // Module-scope coalescing for /studies/<id>/detail. All callers (modal + every

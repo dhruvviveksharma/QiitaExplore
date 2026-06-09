@@ -29,6 +29,7 @@ from .merge_crud import (  # noqa: F401
     list_workspaces,
     get_workspace,
     delete_workspace,
+    rename_workspace,
     add_study_to_workspace,
     remove_study_from_workspace,
     update_workspace_study,

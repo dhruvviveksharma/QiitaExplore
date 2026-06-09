@@ -58,6 +58,15 @@ def delete_workspace(workspace_id: str, user_id: str) -> bool:
     return cur.rowcount > 0
 
 
+def rename_workspace(workspace_id: str, user_id: str, name: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE merge_workspaces SET name=?, updated_at=? WHERE workspace_id=? AND user_id=?",
+            (name, _now(), workspace_id, user_id),
+        )
+        conn.commit()
+
+
 def add_study_to_workspace(workspace_id: str, study: dict) -> Optional[dict]:
     """Returns None if workspace already has _MAX_STUDIES studies."""
     now = _now()

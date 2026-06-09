@@ -1,13 +1,30 @@
 // Merge Workspace panel — browse studies, pick BIOMs, validate, merge
 
+function MergePanelNameField({ name, workspaceId, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(name);
+  async function save() {
+    const t = val.trim(); setEditing(false);
+    if (!t || t === name) { setVal(name); return; }
+    await apiPatch(`/merge-workspaces/${workspaceId}`, { name: t }); onRename(t);
+  }
+  if (editing) return <input className="merge-name-edit-input" value={val} autoFocus
+    onChange={e => setVal(e.target.value)} onBlur={save}
+    onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setVal(name); } }} />;
+  return <div className="merge-panel-name editable" onClick={() => setEditing(true)} title="Click to rename">
+    {name} <span className="rename-hint">✎</span>
+  </div>;
+}
+
 function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearPendingStudy, onClose }) {
-  const [workspace,   setWorkspace]   = useState(null);
-  const [validation,  setValidation]  = useState(null);
-  const [validating,  setValidating]  = useState(false);
-  const [jobId,       setJobId]       = useState(null);
-  const [wsNameInput, setWsNameInput] = useState('Merge Workspace');
-  const [merging,     setMerging]     = useState(false);
-  const [error,       setError]       = useState('');
+  const [workspace,    setWorkspace]    = useState(null);
+  const [validation,   setValidation]   = useState(null);
+  const [validating,   setValidating]   = useState(false);
+  const [jobId,        setJobId]        = useState(null);
+  const [wsNameInput,  setWsNameInput]  = useState('Merge Workspace');
+  const [merging,      setMerging]      = useState(false);
+  const [error,        setError]        = useState('');
+  const [existingWs,   setExistingWs]   = useState(null);
 
   // Consume any study queued before the panel was mounted
   useEffect(() => {
@@ -23,6 +40,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   // race against the addStudy POST and overwrite the workspace with an empty list.
   useEffect(() => {
     if (workspaceId) loadWorkspace(workspaceId);
+    else apiFetch('/merge-workspaces?user_id=default').then(r => r.ok ? r.json() : []).then(setExistingWs);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-run validation whenever study list changes
@@ -43,6 +61,11 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   async function loadWorkspace(wsId) {
     const res = await apiFetch(`/merge-workspaces/${wsId}?user_id=default`);
     if (res.ok) setWorkspace(await res.json());
+  }
+
+  async function selectExisting(wsId) {
+    setWorkspaceId(wsId);
+    await loadWorkspace(wsId);
   }
 
   async function runValidation(wsId) {
@@ -133,6 +156,18 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
       {!workspaceId && (
         <div className="merge-panel-create">
+          {existingWs && existingWs.length > 0 && (
+            <>
+              <div className="merge-picker-label">Open existing</div>
+              <div className="merge-ws-picker">
+                {existingWs.map(ws => (
+                  <div key={ws.workspace_id} className="merge-ws-picker-item"
+                       onClick={() => selectExisting(ws.workspace_id)}>{ws.name}</div>
+                ))}
+              </div>
+              <div className="merge-picker-label" style={{marginTop:'10px'}}>New workspace</div>
+            </>
+          )}
           <input className="merge-name-input" value={wsNameInput}
             onChange={e => setWsNameInput(e.target.value)} placeholder="Workspace name" />
           <p className="merge-hint">Click "+ Merge" on any study card to begin.</p>
@@ -140,7 +175,11 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
       )}
 
       {workspaceId && workspace && (
-        <div className="merge-panel-name">{workspace.name}</div>
+        <MergePanelNameField
+          name={workspace.name}
+          workspaceId={workspaceId}
+          onRename={name => setWorkspace(w => ({ ...w, name }))}
+        />
       )}
 
       {error && <div className="merge-error">{error}</div>}
@@ -198,7 +237,6 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   );
 }
 
-
 function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
   const [expanded, setExpanded] = useState(false);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
@@ -246,7 +284,6 @@ function MergeArtifactsTable({ detail, loading, chosenId, onPickArtifact }) {
     </>
   );
 }
-
 
 function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
   const [detail, setDetail]     = useState(null);
@@ -305,7 +342,6 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact }) {
   );
 }
 
-
 function MergeValidationPanel({ validation, validating }) {
   if (validating) return <div className="merge-validation validating">Validating…</div>;
   if (!validation) return null;
@@ -321,7 +357,6 @@ function MergeValidationPanel({ validation, validating }) {
     </div>
   );
 }
-
 
 function MergeJobStatus({ jobId, onReset }) {
   const [job, setJob] = useState(null);
@@ -366,7 +401,6 @@ function MergeJobStatus({ jobId, onReset }) {
   );
 }
 
-
 function MergeJobHistory({ workspaceId }) {
   const [jobs, setJobs] = useState([]);
 
@@ -394,9 +428,10 @@ function MergeJobHistory({ workspaceId }) {
   );
 }
 
-
 function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   const [workspaces, setWorkspaces] = useState(null);
+  const [editingId,  setEditingId]  = useState(null);
+  const [editVal,    setEditVal]    = useState('');
 
   useEffect(() => {
     apiFetch('/merge-workspaces?user_id=default')
@@ -412,6 +447,14 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
       });
   }, []);
 
+  async function saveRename(wsId) {
+    const t = editVal.trim();
+    setEditingId(null);
+    if (!t) return;
+    await apiPatch(`/merge-workspaces/${wsId}`, { name: t });
+    setWorkspaces(list => list.map(w => w.workspace_id === wsId ? { ...w, name: t } : w));
+  }
+
   if (workspaces === null) return <div className="merges-loading">Loading…</div>;
 
   if (workspaces.length === 0) return (
@@ -426,7 +469,16 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
       {workspaces.map(ws => (
         <div key={ws.workspace_id} className={`merge-ws-card${ws.workspace_id === activeWorkspaceId ? ' active' : ''}`} onClick={() => onOpenWorkspace(ws.workspace_id)}>
           <div className="merge-ws-card-header">
-            <span className="merge-ws-name">{ws.name}</span>
+            {editingId === ws.workspace_id
+              ? <input className="merge-ws-name-input" value={editVal} autoFocus
+                  onChange={e => setEditVal(e.target.value)}
+                  onBlur={() => saveRename(ws.workspace_id)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveRename(ws.workspace_id); if (e.key === 'Escape') setEditingId(null); }}
+                  onClick={e => e.stopPropagation()} />
+              : <span className="merge-ws-name" onClick={e => { e.stopPropagation(); setEditingId(ws.workspace_id); setEditVal(ws.name); }}>
+                  {ws.name} <span className="rename-hint">✎</span>
+                </span>
+            }
             <span className="merge-btn-ghost">Open ↗</span>
           </div>
           <div className="merge-ws-studies">

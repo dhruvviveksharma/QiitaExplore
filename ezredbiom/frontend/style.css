@@ -865,6 +865,18 @@ input, textarea { font-family: var(--sans); }
 
 .show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
 .show-more-btn:hover { color: var(--accent); }
+/* Workspace picker (floating panel create state) */
+.merge-picker-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+.merge-ws-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.merge-ws-picker-item { padding: 7px 10px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border-soft); color: var(--text); }
+.merge-ws-picker-item:hover { background: var(--accent-soft); border-color: var(--accent); }
+/* Inline rename */
+.merge-panel-name.editable { cursor: pointer; }
+.merge-panel-name.editable:hover .rename-hint { opacity: 1; }
+.merge-ws-name:hover .rename-hint { opacity: 1; }
+.rename-hint { opacity: 0; font-size: 0.75em; color: var(--text-3); transition: opacity .15s; margin-left: 4px; }
+.merge-name-edit-input { font-size: 0.9rem; border: 1px solid var(--accent); border-radius: 4px; padding: 3px 8px; outline: none; background: var(--surface); color: var(--text); width: 100%; }
+.merge-ws-name-input { font-size: 0.85rem; border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; outline: none; background: var(--surface); color: var(--text); flex: 1; min-width: 0; }
 /* ── Merges tab ───────────────────────────────────────────────── */
 .merges-tab { padding: 0 4px; max-width: 860px; }
 .merge-ws-card { border: 1px solid var(--border-soft); border-radius: 8px; margin-bottom: 12px; overflow: hidden; cursor: pointer; }
