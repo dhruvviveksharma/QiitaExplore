@@ -6,14 +6,13 @@ function MergePanelNameField({ name, workspaceId, onRename }) {
   async function save() {
     const t = val.trim(); setEditing(false);
     if (!t || t === name) { setVal(name); return; }
-    await apiPatch(`/merge-workspaces/${workspaceId}`, { name: t }); onRename(t);
+    const res = await apiPatch(`/merge-workspaces/${workspaceId}`, { name: t });
+    if (res.ok) onRename(t); else setVal(name);
   }
   if (editing) return <input className="merge-name-edit-input" value={val} autoFocus
     onChange={e => setVal(e.target.value)} onBlur={save}
     onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setVal(name); } }} />;
-  return <div className="merge-panel-name editable" onClick={() => setEditing(true)} title="Click to rename">
-    {name} <span className="rename-hint">✎</span>
-  </div>;
+  return <div className="merge-panel-name editable" onClick={() => setEditing(true)} title="Click to rename">{name} <span className="rename-hint">✎</span></div>;
 }
 
 function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearPendingStudy, onClose }) {
@@ -451,8 +450,8 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
     const t = editVal.trim();
     setEditingId(null);
     if (!t) return;
-    await apiPatch(`/merge-workspaces/${wsId}`, { name: t });
-    setWorkspaces(list => list.map(w => w.workspace_id === wsId ? { ...w, name: t } : w));
+    const res = await apiPatch(`/merge-workspaces/${wsId}`, { name: t });
+    if (res.ok) setWorkspaces(list => list.map(w => w.workspace_id === wsId ? { ...w, name: t } : w));
   }
 
   if (workspaces === null) return <div className="merges-loading">Loading…</div>;
