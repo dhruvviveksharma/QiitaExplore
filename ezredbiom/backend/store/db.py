@@ -210,6 +210,11 @@ def _create_schema(conn):
     except Exception:
         pass
 
+    try:
+        conn.execute("ALTER TABLE merge_workspace_studies ADD COLUMN chosen_artifact_ids TEXT")
+    except Exception:
+        pass
+
     for tbl in ("project_chat_messages", "global_chat_messages"):
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN ui_payload TEXT")

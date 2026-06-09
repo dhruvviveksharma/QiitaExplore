@@ -84,9 +84,10 @@ def run_merge_job(job_id: str, workspace_snap: list, on_status):
             src = entry["artifact_path"]
             if _base and not os.path.isabs(src):
                 src = f"{_base}/{src}"
-            dst = jobdir / f"{entry['study_id']}.biom"
-            shutil.copy2(src, dst)
-            entry["biom_file"] = f"{entry['study_id']}.biom"
+            art_id = entry.get("artifact_id") or entry["study_id"]
+            fname = f"{entry['study_id']}_{art_id}.biom"
+            shutil.copy2(src, jobdir / fname)
+            entry["biom_file"] = fname
 
         # Write manifest
         manifest = {"job_id": job_id, "studies": workspace_snap}

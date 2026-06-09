@@ -31,7 +31,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   }
 
   function handleGlobalApply(selections) {
-    selections.forEach(({ studyId, artifactId }) => handlePickArtifact(studyId, artifactId));
+    selections.forEach(({ studyId, artifactId }) => handleToggleArtifact(studyId, artifactId));
   }
 
   // Consume any study queued before the panel was mounted
@@ -115,17 +115,15 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
     }
   }
 
-  async function handlePickArtifact(studyId, artifactId) {
+  async function handleToggleArtifact(studyId, artifactId) {
     if (!workspaceId) return;
+    const cur = workspace?.studies?.find(s => s.study_id === studyId)?.chosen_artifact_ids || [];
+    const next = cur.includes(artifactId) ? cur.filter(id => id !== artifactId) : [...cur, artifactId];
     const res = await apiFetch(`/merge-workspaces/${workspaceId}/studies/${studyId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chosen_artifact_id: artifactId }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chosen_artifact_ids: next }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      setWorkspace(prev => ({ ...prev, studies: data.studies }));
-    }
+    if (res.ok) { const d = await res.json(); setWorkspace(p => ({ ...p, studies: d.studies })); }
   }
 
   async function handleMerge() {
@@ -209,7 +207,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
             slot={slot}
             validationStudy={validation?.studies?.find(s => s.study_id === slot.study_id)}
             onRemove={() => handleRemoveStudy(slot.study_id)}
-            onPickArtifact={(aId) => handlePickArtifact(slot.study_id, aId)}
+            onToggleArtifact={(aId) => handleToggleArtifact(slot.study_id, aId)}
             onDetailLoaded={handleDetailLoaded}
           />
         ))}
@@ -256,7 +254,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 }
 
 
-function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDetailLoaded }) {
+function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onDetailLoaded }) {
   const [detail, setDetail]     = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [open, setOpen]         = useState(false);
@@ -279,8 +277,10 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDet
     setOpen(p => !p);
   }
 
-  const autoArtifact = validationStudy?.auto_artifact;
-  const chosenId = slot.chosen_artifact_id || autoArtifact?.artifact_id;
+  const autoId = validationStudy?.auto_artifact?.artifact_id;
+  const chosenIds = slot.chosen_artifact_ids?.length ? slot.chosen_artifact_ids : (autoId ? [autoId] : []);
+  const graph = detail?.artifact_graph || [];
+  const hasOrphans = graph.length > 0 && graph.some(n => !prepReachableSet(graph).has(n.node_id));
 
   return (
     <div className="merge-study-slot">
@@ -311,18 +311,26 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDet
             <div className="merge-slot-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               Artifacts
               {detail && (detail.preps || []).length > 0 && (
-                <select value={prepFilter} onChange={e => setPrepFilter(e.target.value ? +e.target.value : '')} className="merge-dt-select">
+                <select
+                  value={prepFilter}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setPrepFilter(v === '' ? '' : v === 'other' ? 'other' : +v);
+                  }}
+                  className="merge-dt-select"
+                >
                   <option value="">All preps</option>
                   {(detail.preps || []).map(p => (
                     <option key={p.prep_template_id} value={p.prep_template_id}>
                       Prep {p.prep_template_id} · {p.data_type || '?'}
                     </option>
                   ))}
+                  {hasOrphans && <option value="other">Other</option>}
                 </select>
               )}
             </div>
             <ArtifactGraphView detail={detail} loading={detailLoading}
-              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} prepFilter={prepFilter} />
+              chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} prepFilter={prepFilter} />
           </div>
         </div>
       )}

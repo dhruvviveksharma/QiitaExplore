@@ -137,10 +137,11 @@ def remove_study_from_merge_workspace(workspace_id, study_id):
 @app.route("/api/merge-workspaces/<workspace_id>/studies/<int:study_id>", methods=["PATCH"])
 def update_merge_workspace_study(workspace_id, study_id):
     body = request.json or {}
+    chosen = body.get("chosen_artifact_ids") or body.get("chosen_artifact_id")
     studies = update_workspace_study(
         workspace_id,
         study_id,
-        chosen_artifact_id=body.get("chosen_artifact_id"),
+        chosen_artifact_ids=chosen if isinstance(chosen, list) else ([chosen] if chosen else []),
         sample_filter=body.get("sample_filter"),
     )
     return jsonify({"studies": studies})
@@ -175,11 +176,10 @@ def validate_merge_workspace(workspace_id):
 
         # Pre-filter artifacts to intersection type, then autopick within that set
         type_artifacts = _type_filtered_artifacts(artifacts, common_type)
-        chosen_id = slot.get("chosen_artifact_id")
-        if chosen_id:
-            artifact = next((a for a in artifacts if a.get("artifact_id") == chosen_id), None)
-            if artifact is None:
-                artifact = autopick_artifact(type_artifacts, common_type)
+        chosen_ids = slot.get("chosen_artifact_ids") or []
+        if chosen_ids:
+            chosen_arts = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
+            artifact = chosen_arts[0] if chosen_arts else autopick_artifact(type_artifacts, common_type)
         else:
             artifact = autopick_artifact(type_artifacts, common_type)
 
@@ -197,7 +197,7 @@ def validate_merge_workspace(workspace_id):
             "study_id": sid,
             "artifact": artifact,
             "sample_ids": sample_ids,
-            "is_chosen": bool(chosen_id),
+            "is_chosen": bool(chosen_ids),
         })
 
     validation = check_namespace_compatibility(studies_payload, explicit_only=True)
@@ -209,7 +209,7 @@ def validate_merge_workspace(workspace_id):
         response_studies.append({
             "study_id": sid,
             "auto_artifact": entry["artifact"],
-            "chosen_artifact_id": slot.get("chosen_artifact_id"),
+            "chosen_artifact_ids": slot.get("chosen_artifact_ids") or [],
         })
 
     return jsonify({
@@ -251,17 +251,20 @@ def submit_merge_job(workspace_id):
         artifacts = _get_artifacts(sid)
         type_artifacts = _type_filtered_artifacts(artifacts, common_type)
 
-        chosen_id = slot.get("chosen_artifact_id")
-        if chosen_id:
-            artifact = next((a for a in artifacts if a.get("artifact_id") == chosen_id), None) \
-                       or autopick_artifact(type_artifacts, common_type)
+        chosen_ids = slot.get("chosen_artifact_ids") or []
+        if chosen_ids:
+            chosen_arts = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
+            if not chosen_arts:
+                chosen_arts = [autopick_artifact(type_artifacts, common_type)]
         else:
-            artifact = autopick_artifact(type_artifacts, common_type)
+            chosen_arts = [autopick_artifact(type_artifacts, common_type)]
 
-        if artifact is None:
+        chosen_arts = [a for a in chosen_arts if a]
+        if not chosen_arts:
             return jsonify({"error": f"Study {sid} has no BIOM artifact"}), 400
-        if not artifact.get("full_path"):
-            return jsonify({"error": f"Study {sid} artifact has no file path"}), 400
+        for art in chosen_arts:
+            if not art.get("full_path"):
+                return jsonify({"error": f"Study {sid} artifact {art.get('artifact_id')} has no file path"}), 400
 
         sample_filter = slot.get("sample_filter")
         sample_ids = None
@@ -270,17 +273,21 @@ def submit_merge_job(workspace_id):
                 sample_ids = json.loads(sample_filter) if isinstance(sample_filter, str) else sample_filter
             except Exception:
                 pass
+        resolved_sample_ids = sample_ids or _get_sample_ids(sid)
 
+        # Use first chosen artifact for namespace compatibility check
         studies_for_validation.append({
             "study_id": sid,
-            "artifact": artifact,
-            "sample_ids": sample_ids or _get_sample_ids(sid),
+            "artifact": chosen_arts[0],
+            "sample_ids": resolved_sample_ids,
         })
-        workspace_snap.append({
-            "study_id": sid,
-            "artifact_path": artifact["full_path"],
-            "sample_ids": sample_ids,
-        })
+        for art in chosen_arts:
+            workspace_snap.append({
+                "study_id": sid,
+                "artifact_id": art["artifact_id"],
+                "artifact_path": art["full_path"],
+                "sample_ids": sample_ids,
+            })
 
     validation = check_namespace_compatibility(studies_for_validation)
     if not validation["compatible"]:

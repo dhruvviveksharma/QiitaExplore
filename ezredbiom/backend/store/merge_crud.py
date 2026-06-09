@@ -9,6 +9,24 @@ from .db import _conn, _as_dict, _now
 _MAX_STUDIES = 5
 
 
+def _hydrate_study(d: dict) -> dict:
+    """Normalise chosen_artifact_ids from the DB row dict.
+
+    Legacy rows have chosen_artifact_id (int) and no chosen_artifact_ids column.
+    New rows have chosen_artifact_ids (JSON list). We always expose chosen_artifact_ids.
+    """
+    raw = d.get("chosen_artifact_ids")
+    if raw:
+        try:
+            d["chosen_artifact_ids"] = json.loads(raw)
+        except Exception:
+            d["chosen_artifact_ids"] = []
+    else:
+        legacy = d.get("chosen_artifact_id")
+        d["chosen_artifact_ids"] = [legacy] if legacy else []
+    return d
+
+
 def create_workspace(user_id: str, name: str) -> dict:
     workspace_id = str(uuid.uuid4())[:12]
     now = _now()
@@ -44,7 +62,7 @@ def get_workspace(workspace_id: str, user_id: str) -> Optional[dict]:
             "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
             (workspace_id,),
         ).fetchall()
-    ws["studies"] = [_as_dict(s) for s in studies]
+    ws["studies"] = [_hydrate_study(_as_dict(s)) for s in studies]
     return ws
 
 
@@ -94,7 +112,7 @@ def add_study_to_workspace(workspace_id: str, study: dict) -> Optional[dict]:
             "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
             (workspace_id,),
         ).fetchall()
-    return [_as_dict(r) for r in rows]
+    return [_hydrate_study(_as_dict(r)) for r in rows]
 
 
 def remove_study_from_workspace(workspace_id: str, study_id: int) -> list:
@@ -113,19 +131,30 @@ def remove_study_from_workspace(workspace_id: str, study_id: int) -> list:
             "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
             (workspace_id,),
         ).fetchall()
-    return [_as_dict(r) for r in rows]
+    return [_hydrate_study(_as_dict(r)) for r in rows]
 
 
 def update_workspace_study(workspace_id: str, study_id: int, *,
-                           chosen_artifact_id=None, sample_filter=None) -> list:
+                           chosen_artifact_ids=None, chosen_artifact_id=None,
+                           sample_filter=None) -> list:
     now = _now()
     sample_filter_str = json.dumps(sample_filter) if isinstance(sample_filter, list) else sample_filter
+    # Normalise to list; legacy single-id callers still work
+    if chosen_artifact_ids is not None:
+        ids_list = chosen_artifact_ids if isinstance(chosen_artifact_ids, list) else [chosen_artifact_ids]
+    elif chosen_artifact_id is not None:
+        ids_list = [chosen_artifact_id]
+    else:
+        ids_list = []
+    ids_json = json.dumps(ids_list) if ids_list else None
+    # Also keep legacy single column in sync for any old readers
+    legacy_id = ids_list[0] if ids_list else None
     with _conn() as conn:
         conn.execute(
             """UPDATE merge_workspace_studies
-               SET chosen_artifact_id=?, sample_filter=?
+               SET chosen_artifact_id=?, chosen_artifact_ids=?, sample_filter=?
                WHERE workspace_id=? AND study_id=?""",
-            (chosen_artifact_id, sample_filter_str, workspace_id, int(study_id)),
+            (legacy_id, ids_json, sample_filter_str, workspace_id, int(study_id)),
         )
         conn.execute(
             "UPDATE merge_workspaces SET updated_at=? WHERE workspace_id=?",
@@ -136,7 +165,7 @@ def update_workspace_study(workspace_id: str, study_id: int, *,
             "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
             (workspace_id,),
         ).fetchall()
-    return [_as_dict(r) for r in rows]
+    return [_hydrate_study(_as_dict(r)) for r in rows]
 
 
 def create_merge_job(workspace_id: str, user_id: str, workspace_snap: list) -> dict:

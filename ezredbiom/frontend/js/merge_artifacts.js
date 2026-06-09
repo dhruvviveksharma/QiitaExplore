@@ -22,6 +22,31 @@ function _nodeColor(n) {
   return ARTIFACT_COLORS[n.artifact_type] || ARTIFACT_COLORS.default;
 }
 
+// Returns the Set of node_ids reachable from prep-linked artifact roots (BFS via children).
+function prepReachableSet(graph) {
+  const children = {};
+  for (const n of graph) {
+    if (n.parent_node_id) {
+      (children[n.parent_node_id] = children[n.parent_node_id] || []).push(n.node_id);
+    }
+  }
+  const reachable = new Set();
+  const queue = [];
+  for (const n of graph) {
+    if (n.kind === 'artifact' && n.prep_template_id != null) {
+      reachable.add(n.node_id);
+      queue.push(n.node_id);
+    }
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    for (const cnid of (children[nid] || [])) {
+      if (!reachable.has(cnid)) { reachable.add(cnid); queue.push(cnid); }
+    }
+  }
+  return reachable;
+}
+
 function buildGraphLayout(nodes) {
   const byId = {};
   nodes.forEach(n => { byId[n.node_id] = n; });
@@ -39,20 +64,33 @@ function buildGraphLayout(nodes) {
     nodes.filter(n => n.parent_node_id === id).forEach(n => q.push({ id: n.node_id, r: r + 1 }));
   }
 
-  // Assign vertical position within each rank
-  const rankPos = {};
-  const perRank = {};
+  // Barycenter ordering within each rank: sort by mean parent rankPos so children
+  // land near their parents, reducing edge crossings.
+  const maxRank = Math.max(0, ...nodes.map(n => rank[n.node_id] ?? 0));
+  const rankNodes = {}; // rank → [node, ...]
   nodes.forEach(n => {
     const r = rank[n.node_id] ?? 0;
-    perRank[r] = perRank[r] || 0;
-    rankPos[n.node_id] = perRank[r]++;
+    (rankNodes[r] = rankNodes[r] || []).push(n);
   });
+  const rankPos = {};
+  // Process rank 0 first (roots keep stable insertion order)
+  (rankNodes[0] || []).forEach((n, i) => { rankPos[n.node_id] = i; });
+  for (let r = 1; r <= maxRank; r++) {
+    const tier = rankNodes[r] || [];
+    tier.sort((a, b) => {
+      const pa = byId[a.parent_node_id];
+      const pb = byId[b.parent_node_id];
+      const rpa = pa ? (rankPos[pa.node_id] ?? 0) : 0;
+      const rpb = pb ? (rankPos[pb.node_id] ?? 0) : 0;
+      return rpa - rpb;
+    });
+    tier.forEach((n, i) => { rankPos[n.node_id] = i; });
+  }
 
   const edges = nodes
     .filter(n => n.parent_node_id && byId[n.parent_node_id])
     .map(n => ({ from: n.parent_node_id, to: n.node_id }));
 
-  const maxRank = Math.max(0, ...nodes.map(n => rank[n.node_id] ?? 0));
   const maxPos  = Math.max(0, ...nodes.map(n => rankPos[n.node_id] ?? 0));
 
   return {
@@ -66,13 +104,15 @@ function buildGraphLayout(nodes) {
 function _cx(rank) { return rank * COL_W + COL_W / 2; }
 function _cy(rp)   { return rp * ROW_H + ROW_H / 2 + 10; }
 
-function ArtifactGraphSvg({ graphData, chosenId, onPickArtifact }) {
+function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact }) {
   const { nodes, edges, maxRank, maxPos } = graphData;
   const W = (maxRank + 1) * COL_W + 20;
   const H = (maxPos + 1) * ROW_H + 30;
 
   const byId = {};
   nodes.forEach(n => { byId[n.node_id] = n; });
+
+  const chosen = new Set(chosenIds || []);
 
   return (
     <svg width={W} height={H} style={{ display: 'block' }}>
@@ -115,7 +155,7 @@ function ArtifactGraphSvg({ graphData, chosenId, onPickArtifact }) {
         }
 
         const isBiom   = n.artifact_type === 'BIOM';
-        const isChosen = n.artifact_id === chosenId;
+        const isChosen = chosen.has(n.artifact_id);
         const fname    = n.full_path ? n.full_path.split('/').pop() : null;
         const label    = n.name || (n.artifact_type + ' ' + n.artifact_id);
         const trunc    = (s, max) => s && s.length > max ? s.slice(0, max - 1) + '…' : (s || '');
@@ -123,7 +163,7 @@ function ArtifactGraphSvg({ graphData, chosenId, onPickArtifact }) {
         return (
           <g key={n.node_id}
             style={{ cursor: isBiom ? 'pointer' : 'default' }}
-            onClick={isBiom ? () => onPickArtifact(isChosen ? null : n.artifact_id) : undefined}>
+            onClick={isBiom ? () => onToggleArtifact(n.artifact_id) : undefined}>
             <rect
               x={cx - NODE_W / 2} y={cy - NODE_H / 2}
               width={NODE_W} height={NODE_H} rx="4" ry="4"
@@ -189,7 +229,7 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
-function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, prepFilter }) {
+function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter }) {
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -199,6 +239,7 @@ function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, prepFilt
   if (!graph || graph.length === 0) {
     const arts = detail.artifacts || [];
     if (!arts.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts found.</p>;
+    const chosen = new Set(chosenIds || []);
     return (
       <table className="prep-table">
         <thead><tr><th>Use</th><th>ID</th><th>Type</th><th>Data Type</th><th>File</th></tr></thead>
@@ -206,8 +247,8 @@ function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, prepFilt
           {arts.slice(0, 20).map(a => (
             <tr key={a.artifact_id}>
               <td>{a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
-                <input type="checkbox" checked={a.artifact_id === chosenId}
-                  onChange={() => onPickArtifact(a.artifact_id === chosenId ? null : a.artifact_id)} />
+                <input type="checkbox" checked={chosen.has(a.artifact_id)}
+                  onChange={() => onToggleArtifact(a.artifact_id)} />
               )}</td>
               <td>{a.artifact_id}</td><td>{a.artifact_type}</td><td>{a.data_type}</td>
               <td>{(a.full_path || '').split('/').pop()}</td>
@@ -218,14 +259,26 @@ function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, prepFilt
     );
   }
 
-  const filtered = filterGraphByPrep(graph, prepFilter);
+  // Compute prep-reachable set once for "All preps" filtering
+  const reachable = prepReachableSet(graph);
+  const hasOrphans = graph.some(n => !reachable.has(n.node_id));
+
+  let filtered;
+  if (prepFilter === 'other') {
+    filtered = graph.filter(n => !reachable.has(n.node_id));
+  } else if (prepFilter) {
+    filtered = filterGraphByPrep(graph, prepFilter);
+  } else {
+    // Default: show only prep-reachable nodes; orphans hidden unless "Other" selected
+    filtered = reachable.size > 0 ? graph.filter(n => reachable.has(n.node_id)) : graph;
+  }
 
   if (!filtered.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts for selected prep.</p>;
 
   const graphData = buildGraphLayout(filtered);
   return (
     <div className="artifact-graph-scroll">
-      <ArtifactGraphSvg graphData={graphData} chosenId={chosenId} onPickArtifact={onPickArtifact} />
+      <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} />
     </div>
   );
 }
