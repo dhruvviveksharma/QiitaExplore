@@ -260,7 +260,7 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDet
   const [detail, setDetail]     = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [open, setOpen]         = useState(false);
-  const [dtFilter, setDtFilter] = useState('');
+  const [prepFilter, setPrepFilter] = useState('');
 
   async function loadDetail() {
     if (detail) return;
@@ -311,16 +311,18 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onPickArtifact, onDet
             <div className="merge-slot-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               Artifacts
               {detail && (detail.preps || []).length > 0 && (
-                <select value={dtFilter} onChange={e => setDtFilter(e.target.value)} className="merge-dt-select">
-                  <option value="">All</option>
-                  {[...new Set((detail.preps || []).map(p => p.data_type).filter(Boolean))].map(t => (
-                    <option key={t} value={t}>{t}</option>
+                <select value={prepFilter} onChange={e => setPrepFilter(e.target.value ? +e.target.value : '')} className="merge-dt-select">
+                  <option value="">All preps</option>
+                  {(detail.preps || []).map(p => (
+                    <option key={p.prep_template_id} value={p.prep_template_id}>
+                      Prep {p.prep_template_id} · {p.data_type || '?'}
+                    </option>
                   ))}
                 </select>
               )}
             </div>
             <ArtifactGraphView detail={detail} loading={detailLoading}
-              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} dtFilter={dtFilter} />
+              chosenId={chosenId} onPickArtifact={(aId) => onPickArtifact(aId)} prepFilter={prepFilter} />
           </div>
         </div>
       )}

@@ -473,7 +473,7 @@ input, textarea { font-family: var(--sans); }
 }
 
 /* ── Agent segments ──────────────────────────────────────────── */
-.agent-msg { display: flex; flex-direction: column; gap: 6px; }
+.agent-msg { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 
 .tool-call-card {
   border-left: 2px solid var(--accent-muted, rgba(99,102,241,.3));

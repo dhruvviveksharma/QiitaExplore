@@ -164,7 +164,32 @@ function ArtifactGraphSvg({ graphData, chosenId, onPickArtifact }) {
   );
 }
 
-function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, dtFilter }) {
+function filterGraphByPrep(graph, prepId) {
+  if (!prepId) return graph;
+  const children = {};
+  for (const n of graph) {
+    if (n.parent_node_id) {
+      (children[n.parent_node_id] = children[n.parent_node_id] || []).push(n.node_id);
+    }
+  }
+  const included = new Set();
+  const queue = [];
+  for (const n of graph) {
+    if (n.kind === 'artifact' && n.prep_template_id === prepId) {
+      included.add(n.node_id);
+      queue.push(n.node_id);
+    }
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    for (const cnid of (children[nid] || [])) {
+      if (!included.has(cnid)) { included.add(cnid); queue.push(cnid); }
+    }
+  }
+  return graph.filter(n => included.has(n.node_id));
+}
+
+function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, prepFilter }) {
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -193,11 +218,9 @@ function ArtifactGraphView({ detail, loading, chosenId, onPickArtifact, dtFilter
     );
   }
 
-  const filtered = dtFilter
-    ? graph.filter(n => (n.data_type || '').includes(dtFilter))
-    : graph;
+  const filtered = filterGraphByPrep(graph, prepFilter);
 
-  if (!filtered.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts for selected data type.</p>;
+  if (!filtered.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts for selected prep.</p>;
 
   const graphData = buildGraphLayout(filtered);
   return (
