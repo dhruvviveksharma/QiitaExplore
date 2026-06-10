@@ -468,7 +468,7 @@ function ToolResultWidget({ payload, msgKey }) {
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
 function ToolCallCard({ seg, msgKey }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
   const detail = done ? seg.result?.detail : '';
@@ -484,6 +484,9 @@ function ToolCallCard({ seg, msgKey }) {
         <div className="tool-call-body">
           {seg.args?.keywords?.length > 0 &&
             <p className="tool-call-args">Keywords: {seg.args.keywords.join(', ')}</p>}
+          {seg.args?.field_filters?.length > 0 && (
+            <p className="tool-call-args">Filters: {seg.args.field_filters.map(f => `${f.field}="${f.value}"`).join(', ')}</p>
+          )}
           {seg.args?.study_id != null &&
             <p className="tool-call-args">Study ID: {seg.args.study_id}</p>}
           {seg.args?.study_ids?.length > 0 &&
