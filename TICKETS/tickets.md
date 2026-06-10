@@ -397,4 +397,28 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 
 ---
 
+---
+
+## TKT-013: Split agent_tools.py (over 500-line cap)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`ezredbiom/backend/helpers/agent_tools.py` is currently 548 lines after the `search_by_sample` tool was added, exceeding the 500-line cap.
+
+### Plan
+
+Extract tool implementations into `helpers/agent_tool_impls.py`:
+- Move `_tool_search_studies`, `_tool_search_by_sample`, `_tool_get_study_report`, `_tool_pin_study`, `_tool_compute_diversity` there
+- Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers (`_collect_terms`) in `agent_tools.py`
+
+### Files Changed
+
+- `ezredbiom/backend/helpers/agent_tools.py`
+- `ezredbiom/backend/helpers/agent_tool_impls.py` (new)
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-06-09*

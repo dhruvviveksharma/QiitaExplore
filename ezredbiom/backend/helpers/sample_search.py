@@ -101,6 +101,111 @@ def _probe_study_raw(pool, study_id, kws):
         pool.putconn(conn)
 
 
+def _probe_fields_raw(pool, study_id, field_filters, keywords):
+    """Return True if any sample in study matches field_filters or keywords.
+
+    field_filters: list of {"field": str, "value": str} → sample_values->>'field' ILIKE '%value%'
+    keywords:      free-text list → sample_values::text ILIKE '%kw%'
+    Uses a dedicated connection from the pool, safe to call from multiple threads.
+    """
+    sid = int(study_id)
+    clauses, params = [], [sid]
+    for f in field_filters[:_MAX_KEYWORDS_PER_PROBE]:
+        clauses.append(f"sm.sample_values->>'{f['field']}' ILIKE %s")
+        params.append(f"%{f['value']}%")
+    for kw in keywords[:_MAX_KEYWORDS_PER_PROBE]:
+        clauses.append("sm.sample_values::text ILIKE %s")
+        params.append(f"%{kw}%")
+    if not clauses:
+        return False
+    sql = f"""
+        SELECT EXISTS (
+            SELECT 1 FROM qiita.study_sample ss
+            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
+            WHERE ss.study_id = %s
+              AND ss.sample_id <> 'qiita_sample_column_names'
+              AND ({" OR ".join(clauses)})
+        )
+    """
+    conn = pool.getconn()
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except Exception:
+        logger.exception("_probe_fields_raw study=%s failed", sid)
+        return False
+    finally:
+        pool.putconn(conn)
+
+
+def search_studies_by_field_filters(field_filters=None, keywords=None,
+                                     data_types=None, exclude_ids=None,
+                                     max_candidates=200, pool_size=16):
+    """Search studies whose sample metadata matches structured field filters or keywords.
+
+    field_filters: [{"field": str, "value": str}] — checked via JSONB key lookup
+    keywords:      [str] — checked across full JSONB text (any field)
+    Returns matched studies in standard header dict shape with 'via': 'sample_metadata'.
+    """
+    ff  = [f for f in (field_filters or []) if f.get("field") and f.get("value")]
+    kws = [k.strip() for k in (keywords or []) if k.strip()]
+    if not ff and not kws:
+        return []
+
+    candidate_ids = _get_candidate_ids(data_types, exclude_ids, max_candidates)
+    if not candidate_ids:
+        return []
+
+    workers = min(len(candidate_ids), pool_size)
+    timeout = max(30, len(candidate_ids) * 0.4)
+
+    pool = ThreadedConnectionPool(
+        1, workers,
+        user=qiita_config.user,
+        password=qiita_config.password,
+        database=qiita_config.database,
+        host=qiita_config.host,
+        port=qiita_config.port,
+        options=f"-c statement_timeout={SAMPLE_SEARCH_PROBE_TIMEOUT_MS}",
+    )
+    matched_ids = []
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {
+        executor.submit(_probe_fields_raw, pool, sid, ff, kws): sid
+        for sid in candidate_ids
+    }
+    try:
+        for fut in as_completed(futures, timeout=timeout):
+            sid = futures[fut]
+            try:
+                if fut.result():
+                    matched_ids.append(sid)
+            except Exception:
+                pass
+    except (TimeoutError, concurrent.futures.TimeoutError):
+        n_done = sum(1 for f in futures if f.done())
+        logger.warning(
+            "[field_filter_search] timed out after %.0fs; %d/%d scanned, %d matched — returning partial",
+            timeout, n_done, len(candidate_ids), len(matched_ids),
+        )
+        for f in futures:
+            f.cancel()
+    finally:
+        executor.shutdown(wait=False)
+        pool.closeall()
+
+    studies = []
+    for sid in matched_ids:
+        header = _fetch_study_header(sid)
+        if header:
+            header["via"] = "sample_metadata"
+            studies.append(header)
+    return studies
+
+
 def search_studies_by_sample_meta(topic_keywords, data_types=None,
                                    exclude_ids=None, max_candidates=500,
                                    pool_size=16):

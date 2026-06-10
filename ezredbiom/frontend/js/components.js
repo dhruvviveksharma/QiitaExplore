@@ -43,6 +43,9 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   const [loading,      setLoading]      = useState(false);
   const [filterText,   setFilterText]   = useState('');
   const [showVaryingOnly, setShowVaryingOnly] = useState(false);
+  const [leftPct, setLeftPct] = useState(55);
+  const dragging = React.useRef(false);
+  const containerRef = React.useRef(null);
 
   const onRowClick = async (s) => {
     if (activeId === s.sample_id) { setActiveId(null); setActiveFields(null); return; }
@@ -170,7 +173,7 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   );
 
   const tableEl = (
-    <div className="samples-table-wrap" style={isStacked ? null : {flex:'0 0 auto', maxWidth:'55%'}}>
+    <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflow:'hidden'}}>
       <table className="prep-table">
         <thead><tr><th>Sample ID</th><th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
         <tbody>
@@ -238,7 +241,22 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   return (
     <div>
       {toolbarEl}
-      <div style={{display:'flex', gap:'1rem', alignItems:'flex-start'}}>{tableEl}{detailEl}</div>
+      <div
+        ref={containerRef}
+        style={{display:'flex', gap:0, alignItems:'flex-start'}}
+        onMouseMove={e => {
+          if (!dragging.current || !containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const pct = ((e.clientX - rect.left) / rect.width) * 100;
+          setLeftPct(Math.min(80, Math.max(20, pct)));
+        }}
+        onMouseUp={() => { dragging.current = false; }}
+        onMouseLeave={() => { dragging.current = false; }}
+      >
+        {tableEl}
+        <div className="resize-handle" onMouseDown={e => { dragging.current = true; e.preventDefault(); }} />
+        {detailEl}
+      </div>
     </div>
   );
 }
@@ -424,11 +442,12 @@ function ToolResultWidget({ payload, msgKey }) {
       <pre className="tool-sql-pre">{payload.sql_query}</pre>
     </details>
   ) : null;
-  if (payload.tool === 'search_studies' && studies.length) return (
+  const isSampleSearch = payload.tool === 'search_by_sample';
+  if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
       {sqlBlock}
       <table className="prep-table tool-result-table">
-        <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th></tr></thead>
+        <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th>{isSampleSearch && <th>Via</th>}</tr></thead>
         <tbody>{studies.map(s => (
           <tr key={s.study_id}>
             <td>{s.study_id}</td>
@@ -436,6 +455,7 @@ function ToolResultWidget({ payload, msgKey }) {
             <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
             <td>{s.num_samples ?? '—'}</td>
             <td>{s.data_types || '—'}</td>
+            {isSampleSearch && <td><span className="via-badge">sample match</span></td>}
           </tr>
         ))}</tbody>
       </table>
