@@ -1140,6 +1140,11 @@ input, textarea { font-family: var(--sans); }
 .btn-copy-path { font-size: 13px; color: var(--text-3); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border-soft); flex-shrink: 0; transition: all var(--t); }
 .btn-copy-path:hover { color: var(--accent); border-color: var(--accent); }
 
+/* ── Resize handle (two-pane SamplesBrowser) ────────────────── */
+.resize-handle { flex: 0 0 6px; cursor: col-resize; background: var(--border-soft); border-radius: 3px; margin: 0 2px; align-self: stretch; transition: background 0.15s; }
+.resize-handle:hover, .resize-handle:active { background: var(--accent, #4a90e2); }
+.via-badge { font-size: 10px; background: var(--accent-bg,#f0f4ff); color: var(--accent,#4a90e2); border-radius: 3px; padding: 1px 5px; white-space: nowrap; }
+
 /* ── Sample preview card ─────────────────────────────────────── */
 .sample-preview-card {
   flex: 1;

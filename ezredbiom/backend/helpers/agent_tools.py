@@ -9,7 +9,7 @@ from services.study_service import (
     detect_data_types, expand_keyword_variants,
 )
 from helpers.llm_helpers import _format_discovery_study_list
-from helpers.sample_search import search_studies_by_sample_meta
+from helpers.sample_search import search_studies_by_sample_meta, search_studies_by_field_filters
 from helpers.qiita_fetch import (
     _build_samples_report_payload,
     _build_full_samples_block,
@@ -169,6 +169,57 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "search_by_sample",
+            "description": (
+                "Search for studies where samples match specific metadata attributes. "
+                "Use this when the user asks about subject characteristics: body site, disease, "
+                "age, sex, BMI, host organism, tissue type, or any sample-level metadata field. "
+                "Different from search_studies which searches study-level titles and abstracts — "
+                "this searches the actual recorded sample records."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "field_filters": {
+                        "type": "array",
+                        "description": (
+                            "Specific field-value pairs to match in sample metadata. "
+                            "e.g. [{\"field\":\"disease\",\"value\":\"IBD\"},"
+                            "{\"field\":\"body_site\",\"value\":\"rectum\"}]. "
+                            "Common fields: disease, body_site, env_package, host_sex, "
+                            "host_age, host_bmi, tissue_type, treatment."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["field", "value"],
+                        },
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Free-text terms matched across all sample metadata fields.",
+                    },
+                    "data_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Restrict to studies of these data types (e.g. '16S', 'Metagenomic').",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max studies to return (default 8, max 20).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "compute_diversity",
             "description": (
                 "Compute alpha/beta diversity metrics from study OTU tables. "
@@ -238,6 +289,8 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
         return _tool_get_study_report(args, scope=scope, chat_id=chat_id)
     if name == "pin_study":
         return _tool_pin_study(args, scope=scope, chat_id=chat_id)
+    if name == "search_by_sample":
+        return _tool_search_by_sample(args)
     if name == "compute_diversity":
         return _tool_compute_diversity(args)
     return ToolResult(
@@ -418,6 +471,66 @@ def _tool_pin_study(args: dict, *, scope: str, chat_id: str) -> ToolResult:
             "tool": "pin_study",
             "args": {"study_ids": study_ids},
             "result_summary": summary,
+        },
+    )
+
+
+def _tool_search_by_sample(args: dict) -> ToolResult:
+    field_filters = [f for f in (args.get("field_filters") or [])
+                     if isinstance(f, dict) and f.get("field") and f.get("value")]
+    keywords      = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
+    data_types    = [str(t).strip() for t in (args.get("data_types") or []) if t]
+    limit         = max(1, min(20, int(args.get("limit") or 8)))
+
+    logger.info(
+        "[search_by_sample] field_filters=%d keywords=%d data_types=%s limit=%d",
+        len(field_filters), len(keywords), data_types or None, limit,
+    )
+
+    if not field_filters and not keywords:
+        return ToolResult(
+            text="No field filters or keywords provided — cannot search sample metadata.",
+            label="Sample metadata search",
+            detail="no criteria",
+            ui_payload={"kind": "tool_call", "tool": "search_by_sample",
+                        "args": {}, "result_summary": "no criteria"},
+        )
+
+    results = search_studies_by_field_filters(
+        field_filters=field_filters,
+        keywords=keywords,
+        data_types=data_types or None,
+        max_candidates=200,
+        pool_size=16,
+    )
+    results = results[:limit]
+
+    if not results:
+        text = "No studies found with samples matching those metadata criteria."
+    else:
+        header = f"search_by_sample returned {len(results)} studies with matching samples:"
+        text   = _format_discovery_study_list(results, header, 8_000)
+
+    return ToolResult(
+        text=text,
+        label="Searched sample metadata",
+        detail=f"{len(results)} studies" if results else "no matches",
+        ui_payload={
+            "kind":           "tool_call",
+            "tool":           "search_by_sample",
+            "args":           {"field_filters": field_filters, "keywords": keywords, "data_types": data_types},
+            "result_summary": f"{len(results)} studies" if results else "no matches",
+            "result_studies": [
+                {
+                    "study_id":    s.get("study_id"),
+                    "study_title": s.get("study_title"),
+                    "pi_name":     s.get("pi_name"),
+                    "num_samples": s.get("num_samples"),
+                    "data_types":  s.get("data_types"),
+                    "via":         "sample_metadata",
+                }
+                for s in results
+            ],
         },
     )
 

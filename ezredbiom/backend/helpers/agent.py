@@ -323,4 +323,9 @@ def _tool_label(name: str, args: dict) -> str:
         return f"Pinning {len(ids)} {'study' if len(ids) == 1 else 'studies'}…"
     if name == "compute_diversity":
         return "Computing diversity…"
+    if name == "search_by_sample":
+        ff  = args.get("field_filters") or []
+        kws = args.get("keywords") or []
+        parts = [f"{f['field']}={f['value']}" for f in ff[:2]] + kws[:2]
+        return f"Sample search: {', '.join(parts)}…" if parts else "Searching sample metadata…"
     return f"Running {name}…"
