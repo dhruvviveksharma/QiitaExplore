@@ -104,7 +104,7 @@ function buildGraphLayout(nodes) {
 function _cx(rank) { return rank * COL_W + COL_W / 2; }
 function _cy(rp)   { return rp * ROW_H + ROW_H / 2 + 10; }
 
-function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedId, sampleCounts }) {
+function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedId, sampleCounts, expanded, onToggleExpand, onPeekBiom }) {
   const { nodes, edges, maxRank, maxPos } = graphData;
   const W = (maxRank + 1) * COL_W + 20;
   const H = (maxPos + 1) * ROW_H + 30;
@@ -149,6 +149,40 @@ function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedI
               <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
                 fontSize="9" fill="#92400e" style={{ pointerEvents: 'none' }}>
                 {lbl}
+              </text>
+            </g>
+          );
+        }
+
+        if (n.kind === 'file') {
+          const fname = (n.filename || '').split('/').pop();
+          const trunc = (s, mx) => s && s.length > mx ? s.slice(0, mx - 1) + '…' : (s || '');
+          return (
+            <g key={n.node_id} style={{ cursor: 'pointer' }}
+               onClick={() => window.open(n.download_url)}>
+              <rect x={cx - NODE_W/2} y={cy - 16} width={NODE_W} height={32} rx={3} ry={3}
+                fill="#f8fafc" stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4 2" />
+              <text x={cx} y={cy - 3} textAnchor="middle" fontSize={9} fill="#374151"
+                style={{ pointerEvents: 'none' }}>
+                {trunc(fname, 21)}
+              </text>
+              <text x={cx} y={cy + 9} textAnchor="middle" fontSize={7.5} fill="#94a3b8"
+                style={{ pointerEvents: 'none' }}>
+                {n.filepath_type || 'file'}
+              </text>
+            </g>
+          );
+        }
+
+        if (n.kind === 'samples') {
+          return (
+            <g key={n.node_id} style={{ cursor: 'pointer' }}
+               onClick={() => onPeekBiom && onPeekBiom(n.artifact_id)}>
+              <rect x={cx - NODE_W/2} y={cy - 16} width={NODE_W} height={32} rx={3} ry={3}
+                fill="#ecfdf5" stroke="#6ee7b7" strokeWidth={1} />
+              <text x={cx} y={cy} textAnchor="middle" fontSize={9.5} fill="#065f46"
+                dominantBaseline="middle" style={{ pointerEvents: 'none' }}>
+                {n.num_samples != null ? `Samples (${n.num_samples.toLocaleString()})` : 'Samples ▸'}
               </text>
             </g>
           );
@@ -215,6 +249,15 @@ function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedI
                 ✓
               </text>
             )}
+            {/* Expand toggle (files / sample peek) */}
+            {((n.filepaths && n.filepaths.length > 0) || isBiom) && onToggleExpand && (
+              <text x={cx + NODE_W / 2 - 4} y={cy + NODE_H / 2 - 3}
+                textAnchor="end" fontSize="9" fill="#94a3b8"
+                style={{ cursor: 'pointer', userSelect: 'none' }}
+                onClick={e => { e.stopPropagation(); onToggleExpand(n.artifact_id); }}>
+                {expanded && expanded.has(n.artifact_id) ? '−' : '+'}
+              </text>
+            )}
           </g>
         );
       })}
@@ -247,7 +290,10 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
-function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts }) {
+function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId }) {
+  const [expanded, setExpanded] = useState(new Set());
+  const [peekBiomId, setPeekBiomId] = useState(null);
+
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -293,11 +339,44 @@ function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepF
 
   if (!filtered.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts for selected prep.</p>;
 
-  const graphData = buildGraphLayout(filtered);
+  // Inject synthetic file/samples child nodes for expanded artifacts
+  const extraNodes = [];
+  for (const n of filtered) {
+    if (n.kind !== 'artifact' || !expanded.has(n.artifact_id)) continue;
+    (n.filepaths || []).forEach(fp => {
+      extraNodes.push({
+        kind: 'file', node_id: `f${n.artifact_id}_${fp.filepath_id}`,
+        parent_node_id: n.node_id, filename: fp.filename,
+        filepath_type: fp.filepath_type, artifact_id: n.artifact_id,
+        filepath_id: fp.filepath_id,
+        download_url: `${API}/artifacts/${n.artifact_id}/files/${fp.filepath_id}/download?study_id=${studyId}`,
+      });
+    });
+    if (n.artifact_type === 'BIOM') {
+      extraNodes.push({
+        kind: 'samples', node_id: `s${n.artifact_id}`, parent_node_id: n.node_id,
+        artifact_id: n.artifact_id,
+        num_samples: sampleCounts ? sampleCounts[n.artifact_id] : null,
+      });
+    }
+  }
+
+  const graphData = buildGraphLayout([...filtered, ...extraNodes]);
+  const handleToggleExpand = id => setExpanded(prev => {
+    const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s;
+  });
+
   return (
-    <div className="artifact-graph-scroll">
-      <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
-        recommendedId={recommendedId} sampleCounts={sampleCounts} />
+    <div>
+      <div className="artifact-graph-scroll">
+        <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
+          recommendedId={recommendedId} sampleCounts={sampleCounts}
+          expanded={expanded} onToggleExpand={handleToggleExpand} onPeekBiom={setPeekBiomId} />
+      </div>
+      {peekBiomId && (
+        <SamplePeek artifactId={peekBiomId} studyId={studyId}
+          onClose={() => setPeekBiomId(null)} />
+      )}
     </div>
   );
 }

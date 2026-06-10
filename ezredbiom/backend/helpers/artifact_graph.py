@@ -94,15 +94,17 @@ def _build(study_id: int) -> list:
                     if r[0] not in job_map:
                         job_map[r[0]] = (r[1], r[2])
 
-            # Batch-fetch artifact metadata; prefer .biom filepath
+            # Batch-fetch artifact metadata + all filepaths; prefer .biom for the node's full_path
             cur.execute(
                 """
                 SELECT a.artifact_id, at.artifact_type, a.name,
-                       dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath AS full_path
+                       dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath AS full_path,
+                       f.filepath_id, ft.filepath_type, f.filepath AS filename
                 FROM qiita.artifact a
                 JOIN qiita.artifact_type at          ON a.artifact_type_id = at.artifact_type_id
                 LEFT JOIN qiita.artifact_filepath af ON a.artifact_id = af.artifact_id
                 LEFT JOIN qiita.filepath f           ON af.filepath_id = f.filepath_id
+                LEFT JOIN qiita.filepath_type ft     ON f.filepath_type_id = ft.filepath_type_id
                 LEFT JOIN qiita.data_directory dd    ON f.data_directory_id = dd.data_directory_id
                 WHERE a.artifact_id = ANY(%s)
                 ORDER BY a.artifact_id, (f.filepath ILIKE '%%.biom') DESC NULLS LAST
@@ -110,11 +112,20 @@ def _build(study_id: int) -> list:
                 (all_ids,),
             )
             meta: dict = {}
+            files_by_aid: dict = {}
             for r in cur.fetchall():
                 aid, atype, aname = r[0], r[1], r[2]
                 fp = _abs(r[3]) if r[3] else None
+                fpid, ftype, fname = r[4], r[5], r[6]
                 if aid not in meta or (fp and fp.lower().endswith(".biom")):
                     meta[aid] = {"artifact_type": atype, "name": aname, "full_path": fp}
+                if fpid is not None:
+                    files_by_aid.setdefault(aid, []).append({
+                        "filepath_id": fpid,
+                        "filename": fname or "",
+                        "filepath_type": ftype or "",
+                        "full_path": fp or "",
+                    })
     finally:
         conn.close()
 
@@ -172,6 +183,7 @@ def _build(study_id: int) -> list:
             "data_type":        node_dt.get(f"a{aid}"),
             "name":             m.get("name"),
             "full_path":        m.get("full_path"),
+            "filepaths":        files_by_aid.get(aid, []),
         })
     nodes.extend(job_nodes.values())
     return nodes

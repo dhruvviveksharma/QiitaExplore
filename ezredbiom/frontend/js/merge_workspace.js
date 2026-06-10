@@ -229,20 +229,10 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
         <MergePreviewPanel validation={validation} validating={validating} />
       )}
 
-      {/* Merge button */}
-      {workspaceId && studies.length >= 2 && (
-        <div className="merge-actions">
-          <button
-            className="merge-btn-primary"
-            disabled={merging || !validation?.compatible}
-            onClick={handleMerge}
-          >
-            {merging ? 'Submitting…' : 'Merge'}
-          </button>
-          {!validation?.compatible && validation && (
-            <span className="merge-btn-hint">Fix errors above to enable</span>
-          )}
-        </div>
+      {/* Merge cart — selected BIOMs list + Merge button */}
+      {workspaceId && studies.length > 0 && (
+        <MergeCart workspace={workspace} validation={validation}
+          merging={merging} onMerge={handleMerge} />
       )}
 
       {/* Job status */}
@@ -357,7 +347,7 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
             </div>
             <ArtifactGraphView detail={detail} loading={detailLoading}
               chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} prepFilter={prepFilter}
-              recommendedId={autoId} sampleCounts={sampleCounts} />
+              recommendedId={autoId} sampleCounts={sampleCounts} studyId={slot.study_id} />
           </div>
         </div>
       )}

@@ -21,6 +21,7 @@ from store import (
     upsert_study_detail_cache,
 )
 from helpers.qiita_fetch import _fetch_study_detail_from_qiita
+from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
@@ -28,6 +29,36 @@ from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
 _DEFAULT_USER = "default"
+
+_FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
+
+
+def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
+    """Return (real_path, filename) for a file within an artifact, with safety checks."""
+    cached = get_study_detail_cache(study_id)
+    graph = None
+    if cached and cached.get("artifact_graph_json"):
+        try:
+            graph = json.loads(cached["artifact_graph_json"])
+        except Exception:
+            pass
+    if not graph:
+        graph = fetch_artifact_graph(study_id)
+    node = next((n for n in graph if n.get("kind") == "artifact" and n.get("artifact_id") == artifact_id), None)
+    if not node:
+        raise ValueError(f"Artifact {artifact_id} not in study {study_id}")
+    fp_entry = next((f for f in (node.get("filepaths") or []) if f.get("filepath_id") == filepath_id), None)
+    if not fp_entry:
+        raise ValueError(f"File {filepath_id} not in artifact {artifact_id}")
+    full_path = fp_entry.get("full_path") or ""
+    if not full_path:
+        raise ValueError("No path for this file")
+    real = os.path.realpath(full_path)
+    if not os.path.isfile(real):
+        raise ValueError("File not found on disk")
+    if any(real.startswith(r) for r in _FORBIDDEN_ROOTS):
+        raise ValueError("Path not in allowed directory")
+    return real, fp_entry.get("filename") or os.path.basename(real)
 
 
 def _user_id():
@@ -414,6 +445,18 @@ def get_artifact_sample_counts():
             pass
 
     return jsonify(counts)
+
+
+@app.route("/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download", methods=["GET"])
+def download_artifact_file(artifact_id, filepath_id):
+    study_id = request.args.get("study_id", type=int)
+    if not study_id:
+        return jsonify({"error": "study_id required"}), 400
+    try:
+        real_path, filename = _resolve_artifact_file(study_id, artifact_id, filepath_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return send_file(real_path, as_attachment=True, download_name=filename)
 
 
 @app.route("/api/merge-jobs/<job_id>/download", methods=["GET"])

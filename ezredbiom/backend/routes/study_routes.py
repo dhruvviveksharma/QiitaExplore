@@ -44,6 +44,12 @@ def api_study_detail(study_id):
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
 
+    # Re-fetch if cached graph predates the filepaths feature
+    if artifact_graph is not None:
+        art_nodes = [n for n in artifact_graph if n.get("kind") == "artifact"]
+        if art_nodes and "filepaths" not in art_nodes[0]:
+            artifact_graph = None
+
     if artifact_graph is None:
         artifact_graph = fetch_artifact_graph(study_id)
         upsert_study_detail_cache(

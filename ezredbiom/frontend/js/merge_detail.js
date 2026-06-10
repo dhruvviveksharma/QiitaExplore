@@ -211,3 +211,56 @@ function MergeJobHistory({ workspaceId }) {
     </div>
   );
 }
+
+// ── Merge cart — bottom tray of all selected BIOMs + Merge button ─────────────
+
+function MergeCart({ workspace, validation, merging, onMerge }) {
+  const studies = workspace?.studies || [];
+  if (!studies.length) return null;
+
+  const canMerge = !merging && validation?.compatible && studies.length >= 2;
+
+  const items = studies.map(slot => {
+    const vs = validation?.studies?.find(s => s.study_id === slot.study_id);
+    const art = vs?.auto_artifact;
+    return { study_id: slot.study_id, study_title: slot.study_title, art };
+  });
+
+  return (
+    <div className="merge-cart">
+      <div className="merge-cart-title">Merge Queue</div>
+      <div className="merge-cart-items">
+        {items.map(({ study_id, study_title, art }) => (
+          <div key={study_id} className="merge-cart-item">
+            <span className="merge-cart-study">#{study_id}</span>
+            <span className="merge-cart-name">
+              {art ? (art.prep_name || art.name || `Artifact ${art.artifact_id}`) : (study_title || '…')}
+            </span>
+            {art?.data_type && <span className="dtype-chip">{art.data_type}</span>}
+            {art?.num_samples != null && (
+              <span className="merge-cart-count">{art.num_samples.toLocaleString()} samples</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {validation?.preview && (
+        <div className="merge-cart-preview">
+          <strong>{validation.preview.total_unique.toLocaleString()}</strong> unique samples
+          {validation.preview.overlap_count > 0 && (
+            <span className="merge-cart-overlap">&nbsp;({validation.preview.overlap_count.toLocaleString()} shared)</span>
+          )}
+        </div>
+      )}
+      <button className="merge-btn-primary merge-cart-btn"
+        disabled={!canMerge} onClick={onMerge}>
+        {merging ? 'Submitting…' : 'Merge'}
+      </button>
+      {studies.length < 2 && (
+        <span className="merge-btn-hint">Add at least 2 studies to merge</span>
+      )}
+      {studies.length >= 2 && !validation?.compatible && validation && (
+        <span className="merge-btn-hint">Fix errors above to enable</span>
+      )}
+    </div>
+  );
+}
