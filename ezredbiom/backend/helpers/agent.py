@@ -5,11 +5,136 @@ import logging
 import time
 from typing import Generator, Optional
 
-from config import client
-from helpers.llm_helpers import _build_api_messages, _resolve_model, friendly_llm_error
+from config import client, get_client, anthropic_client
+from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model, friendly_llm_error
 from helpers.agent_tools import TOOL_SCHEMAS, execute_tool
 
 logger = logging.getLogger(__name__)
+
+
+def _openai_tools_to_anthropic(tools):
+    return [
+        {
+            "name": t["function"]["name"],
+            "description": t["function"].get("description", ""),
+            "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}}),
+        }
+        for t in tools
+    ]
+
+
+def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max_iters):
+    anth_tools = _openai_tools_to_anthropic(TOOL_SCHEMAS)
+    msgs = list(api_msgs)
+    search_already_done = False
+
+    for iteration in range(max_iters):
+        curr_tools = (
+            [t for t in anth_tools if t["name"] != "search_studies"]
+            if search_already_done else anth_tools
+        )
+        system_text, messages = _extract_system_and_messages(msgs)
+        t_llm = time.perf_counter()
+        ttft = None
+        content_parts = []
+        tool_uses = []
+        current_block = None
+        current_json = ""
+        stop_reason = None
+
+        with anthropic_client.messages.stream(
+            model=resolved,
+            max_tokens=4096,
+            system=system_text,
+            messages=messages,
+            tools=curr_tools,
+        ) as stream:
+            for event in stream:
+                if ttft is None:
+                    ttft = time.perf_counter() - t_llm
+                etype = getattr(event, "type", None)
+                if etype == "content_block_start":
+                    cb = event.content_block
+                    if cb.type == "tool_use":
+                        current_block = {"id": cb.id, "name": cb.name}
+                        current_json = ""
+                    else:
+                        current_block = None
+                elif etype == "content_block_delta":
+                    d = event.delta
+                    dtype = getattr(d, "type", None)
+                    if dtype == "text_delta" and d.text:
+                        content_parts.append(d.text)
+                        yield {"type": "token", "token": d.text}
+                    elif dtype == "input_json_delta":
+                        current_json += d.partial_json or ""
+                elif etype == "content_block_stop":
+                    if current_block is not None:
+                        tool_uses.append({
+                            "id": current_block["id"],
+                            "name": current_block["name"],
+                            "arguments": current_json,
+                        })
+                        current_block = None
+                elif etype == "message_delta":
+                    stop_reason = getattr(event.delta, "stop_reason", None)
+
+        elapsed = time.perf_counter() - t_llm
+        logger.info(
+            "[anthropic round %d] ttft=%.3fs total=%.3fs content=%d stop=%s tools=%d",
+            iteration, ttft or -1, elapsed, len("".join(content_parts)), stop_reason, len(tool_uses),
+        )
+
+        if stop_reason != "tool_use" or not tool_uses:
+            break
+
+        asst_content = []
+        if content_parts:
+            asst_content.append({"type": "text", "text": "".join(content_parts)})
+        for tu in tool_uses:
+            try:
+                inp = json.loads(tu["arguments"] or "{}")
+            except json.JSONDecodeError:
+                inp = {}
+            asst_content.append({"type": "tool_use", "id": tu["id"], "name": tu["name"], "input": inp})
+        msgs.append({"role": "assistant", "content": asst_content})
+
+        tool_results = []
+        for tu in tool_uses:
+            try:
+                args = json.loads(tu["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            name = tu["name"]
+            step_name = f"tool_{name}_{tu['id'][:6]}"
+            yield {"type": "segment_tool_call", "name": step_name,
+                   "label": _tool_label(name, args), "args": args}
+            t0 = time.perf_counter()
+            try:
+                result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+            except Exception as exc:
+                dt = time.perf_counter() - t0
+                logger.exception("tool %s raised after %.3fs", name, dt)
+                yield {"type": "segment_tool_result", "name": step_name,
+                       "label": f"{name} failed",
+                       "detail": f"{str(exc)[:60]} · {dt:.1f}s",
+                       "ui_payload": None}
+                tool_results.append({"type": "tool_result", "tool_use_id": tu["id"],
+                                      "content": f"Tool {name} failed: {exc}"})
+                continue
+            dt = time.perf_counter() - t0
+            if name == "search_studies":
+                search_already_done = True
+            detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
+            yield {"type": "segment_tool_result", "name": step_name,
+                   "label": result.label, "detail": detail,
+                   "ui_payload": result.ui_payload}
+            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"],
+                                  "content": result.text})
+        msgs.append({"role": "user", "content": tool_results})
+
+    if iteration == max_iters - 1 and stop_reason == "tool_use":
+        logger.warning("anthropic agent hit max_iters=%d without stopping", max_iters)
 
 
 def stream_agent(
@@ -40,6 +165,11 @@ def stream_agent(
                 model, resolved, deep_search, len(api_msgs))
 
     yield {"type": "agent_start"}
+
+    _, provider = get_client(resolved)
+    if provider == "anthropic":
+        yield from _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max_iters)
+        return
 
     search_already_done = False  # allow model only ONE search_studies call
 

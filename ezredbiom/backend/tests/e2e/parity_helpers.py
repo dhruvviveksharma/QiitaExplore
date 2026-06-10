@@ -147,17 +147,13 @@ _REFUSAL_FALLBACK_RE = re.compile(
 )
 
 
-def llm_judge(question: str, answer: str, rubric: str) -> bool:
-    """Ask kimi to evaluate whether the assistant's answer meets the rubric.
+def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL) -> bool:
+    """Ask an LLM to evaluate whether the assistant's answer meets the rubric.
 
+    Defaults to kimi (NRP). Pass model="claude-haiku-4-5" to use Anthropic.
     Returns True if the judge says YES, False for NO.
     Falls back to a simple regex check if the endpoint is unreachable.
     """
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
-    if not api_key:
-        # No key in env — can't judge; treat as inconclusive (pass)
-        return True
-
     prompt = (
         "You are evaluating whether an AI assistant's response achieved a specific goal.\n"
         f"User question: {question}\n"
@@ -167,15 +163,31 @@ def llm_judge(question: str, answer: str, rubric: str) -> bool:
     )
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
-        resp = client.chat.completions.create(
-            model=_JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=5,
-        )
-        verdict = (resp.choices[0].message.content or "").strip().upper()
+        anthropic_models = {"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"}
+        if model in anthropic_models:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return True
+            client = anthropic.Anthropic(api_key=api_key, timeout=45.0)
+            resp = client.messages.create(
+                model=model,
+                max_tokens=5,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            verdict = (resp.content[0].text or "").strip().upper()
+        else:
+            api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
+            if not api_key:
+                return True
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=5,
+            )
+            verdict = (resp.choices[0].message.content or "").strip().upper()
         return verdict.startswith("YES")
     except Exception:
-        # Endpoint unreachable — fall back to a simple keyword heuristic
         return bool(re.search(r"\b(yes|found|available|mention|recommend|compare|sample)\b", answer, re.I))

@@ -3,8 +3,11 @@
 import json
 import re
 
+import anthropic as _anthropic
+
 from config import (
     client,
+    get_client,
     CHAT_SYSTEM_PROMPT,
     DEFAULT_MODEL,
     ALLOWED_MODELS,
@@ -18,6 +21,10 @@ def _resolve_model(model):
 
 
 def friendly_llm_error(exc, model=None):
+    if isinstance(exc, _anthropic.RateLimitError):
+        return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
+    if isinstance(exc, (_anthropic.APIConnectionError, _anthropic.APIStatusError)):
+        return f"{model or 'Claude'} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."
     raw = str(exc) or exc.__class__.__name__
     lowered = raw.lower()
     connection_markers = (
@@ -33,6 +40,18 @@ def friendly_llm_error(exc, model=None):
         name = model or "the selected model"
         return f"{name} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."
     return raw
+
+
+def _extract_system_and_messages(api_msgs):
+    """Split the system message from conversation messages for Anthropic's separate system param."""
+    system = ""
+    msgs = []
+    for m in api_msgs:
+        if m.get("role") == "system":
+            system = m.get("content") or ""
+        else:
+            msgs.append(m)
+    return system, msgs
 from store import (
     get_project_context_summary,
     get_study_detail_cache,
@@ -379,19 +398,32 @@ def llm_plan_query(messages: list) -> dict:
 
 
 def llm_chat(messages, study_context_text: str, system_prompt: str = None, model: str = None):
-    r = client.chat.completions.create(
-        model=_resolve_model(model),
-        messages=_build_api_messages(messages, study_context_text, system_prompt),
-    )
+    resolved = _resolve_model(model)
+    llm_client, provider = get_client(resolved)
+    api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    if provider == "anthropic":
+        system, msgs = _extract_system_and_messages(api_msgs)
+        resp = llm_client.messages.create(model=resolved, max_tokens=4096, system=system, messages=msgs)
+        return (resp.content[0].text or "").strip()
+    r = llm_client.chat.completions.create(model=resolved, messages=api_msgs)
     return (r.choices[0].message.content or "").strip()
 
 
 def llm_chat_stream(messages, study_context_text: str, system_prompt: str = None, model: str = None):
-    stream  = client.chat.completions.create(
-        model=_resolve_model(model),
-        messages=_build_api_messages(messages, study_context_text, system_prompt),
-        stream=True,
-    )
+    resolved = _resolve_model(model)
+    llm_client, provider = get_client(resolved)
+    api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    if provider == "anthropic":
+        system, msgs = _extract_system_and_messages(api_msgs)
+        with llm_client.messages.stream(model=resolved, max_tokens=4096, system=system, messages=msgs) as stream:
+            yielded = False
+            for text in stream.text_stream:
+                yield text
+                yielded = True
+        if not yielded:
+            yield "(No response received from model)"
+        return
+    stream = llm_client.chat.completions.create(model=resolved, messages=api_msgs, stream=True)
     yielded = False
     for chunk in stream:
         if not chunk.choices:

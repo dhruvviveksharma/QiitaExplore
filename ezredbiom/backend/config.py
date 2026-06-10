@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+import anthropic as _anthropic
 
 load_dotenv()
 
@@ -12,23 +13,37 @@ client = OpenAI(
     timeout=300.0,
 )
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+anthropic_client = _anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=300.0)
+
 DEFAULT_MODEL  = "gemma"
 ALLOWED_MODELS = {
     "qwen3", "qwen3-small", "gpt-oss",
     "gemma", "gemma-small",
     "kimi", "glm-5", "minimax-m2",
+    "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
 }
 
 MODEL_METADATA = {
-    "qwen3":       {"tier": "main",       "size": "397B",  "context": 1_010_000, "modalities": "image, video",       "supports_tools": True},
-    "qwen3-small": {"tier": "main",       "size": "27B",   "context": 1_010_000, "modalities": "image, video",       "supports_tools": True},
-    "gpt-oss":     {"tier": "main",       "size": "120B",  "context": 131_072,   "modalities": "—",                  "supports_tools": True},
-    "gemma":       {"tier": "main",       "size": "31B",   "context": 262_144,   "modalities": "image, video",       "supports_tools": True},
-    "gemma-small": {"tier": "evaluating", "size": "~8B",   "context": 131_072,   "modalities": "image, video, audio","supports_tools": False},
-    "kimi":        {"tier": "evaluating", "size": "1T",    "context": 262_144,   "modalities": "image, video",       "supports_tools": True},
-    "glm-5":       {"tier": "evaluating", "size": "744B",  "context": 202_752,   "modalities": "—",                  "supports_tools": True},
-    "minimax-m2":  {"tier": "evaluating", "size": "230B",  "context": 204_800,   "modalities": "—",                  "supports_tools": True},
+    "qwen3":             {"provider": "nrp",       "tier": "main",       "size": "397B", "context": 1_010_000, "modalities": "image, video",        "supports_tools": True},
+    "qwen3-small":       {"provider": "nrp",       "tier": "main",       "size": "27B",  "context": 1_010_000, "modalities": "image, video",        "supports_tools": True},
+    "gpt-oss":           {"provider": "nrp",       "tier": "main",       "size": "120B", "context": 131_072,   "modalities": "—",                   "supports_tools": True},
+    "gemma":             {"provider": "nrp",       "tier": "main",       "size": "31B",  "context": 262_144,   "modalities": "image, video",        "supports_tools": True},
+    "gemma-small":       {"provider": "nrp",       "tier": "evaluating", "size": "~8B",  "context": 131_072,   "modalities": "image, video, audio", "supports_tools": False},
+    "kimi":              {"provider": "nrp",       "tier": "evaluating", "size": "1T",   "context": 262_144,   "modalities": "image, video",        "supports_tools": True},
+    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 202_752,   "modalities": "—",                   "supports_tools": True},
+    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—",                   "supports_tools": True},
+    "claude-haiku-4-5":  {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
+    "claude-sonnet-4-6": {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
+    "claude-opus-4-8":   {"provider": "anthropic", "tier": "evaluating", "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
 }
+
+
+def get_client(model: str):
+    """Return (client, provider_str) for the given model."""
+    meta = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])
+    provider = meta.get("provider", "nrp")
+    return (anthropic_client if provider == "anthropic" else client), provider
 
 
 def model_supports_tools(model: str) -> bool:
@@ -36,9 +51,7 @@ def model_supports_tools(model: str) -> bool:
 
 
 def context_budget_chars(model: str) -> int:
-    """Return the character budget for study context, scaled to the model's context window."""
     ctx_tokens = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])["context"]
-    # Reserve ~8k tokens for system prompt + response; convert remaining to chars at ~3.5 chars/token
     chars = int((ctx_tokens - 8_000) * 3.5)
     return max(8_000, chars)
 
