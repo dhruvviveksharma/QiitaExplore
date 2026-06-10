@@ -12,6 +12,7 @@ from services.llm import llm_query_to_sql
 from services.study_service import search_studies_with_sql
 from helpers.sample_search import search_studies_by_sample_meta
 from store import get_study_detail_cache, upsert_study_detail_cache
+from store.crud import get_setting, set_setting
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.qiita_fetch import (
     first_studies,
@@ -185,6 +186,21 @@ def api_systems():
         key=lambda x: (0 if x[1].get("tier") == "main" else 1, x[0]),
     )
     return jsonify([{"name": k, **v} for k, v in ordered])
+
+
+@app.route('/api/settings', methods=['GET'])
+def api_get_settings():
+    key = get_setting('anthropic_api_key') or ''
+    return jsonify({"anthropic_key_set": bool(key)})
+
+
+@app.route('/api/settings', methods=['POST'])
+def api_post_settings():
+    data = request.get_json(force=True) or {}
+    raw = (data.get('anthropic_api_key') or '').strip()
+    if raw:
+        set_setting('anthropic_api_key', raw)
+    return jsonify({"ok": True})
 
 
 @app.route('/api/studies/first', methods=['GET'])

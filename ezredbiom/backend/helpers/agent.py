@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Generator, Optional
 
-from config import client, get_client, anthropic_client
+from config import client, get_client
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model, friendly_llm_error
 from helpers.agent_tools import TOOL_SCHEMAS, execute_tool
 
@@ -46,10 +46,11 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search):
     return (result.text, name == "search_studies")
 
 
-def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max_iters):
+def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters):
     anth_tools = _openai_tools_to_anthropic(TOOL_SCHEMAS)
     msgs = list(api_msgs)
     search_already_done = False
+    final_had_synthesis = False
 
     for iteration in range(max_iters):
         curr_tools = (
@@ -65,7 +66,7 @@ def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max
         current_json = ""
         stop_reason = None
 
-        with anthropic_client.messages.stream(
+        with anth_client.messages.stream(
             model=resolved,
             max_tokens=4096,
             system=system_text,
@@ -113,6 +114,7 @@ def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max
         )
 
         if stop_reason != "tool_use" or not tool_uses:
+            final_had_synthesis = bool(content_parts)
             break
 
         asst_content = []
@@ -135,6 +137,19 @@ def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max
 
     if iteration == max_iters - 1 and stop_reason == "tool_use":
         logger.warning("anthropic agent hit max_iters=%d without stopping", max_iters)
+
+    if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
+            any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
+        logger.info("[anthropic agent] forcing synthesis — loop ended on tool results")
+        sys_txt, anth_msgs = _extract_system_and_messages(msgs)
+        with anth_client.messages.stream(
+            model=resolved, max_tokens=4096, system=sys_txt, messages=anth_msgs,
+        ) as stream:
+            for event in stream:
+                if getattr(event, "type", None) == "content_block_delta":
+                    d = event.delta
+                    if getattr(d, "type", None) == "text_delta" and d.text:
+                        yield {"type": "token", "token": d.text}
 
 
 def stream_agent(
@@ -166,12 +181,13 @@ def stream_agent(
 
     yield {"type": "agent_start"}
 
-    _, provider = get_client(resolved)
+    llm_client, provider = get_client(resolved)
     if provider == "anthropic":
-        yield from _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max_iters)
+        yield from _stream_anthropic_agent(llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters)
         return
 
     search_already_done = False  # allow model only ONE search_studies call
+    final_had_synthesis = False
 
     for iteration in range(max_iters):
         # After a search completes, drop search_studies from the schema so the
@@ -257,6 +273,7 @@ def stream_agent(
         )
 
         if finish_reason != "tool_calls" or not tool_call_map:
+            final_had_synthesis = bool(content_parts)
             break
 
         ordered_calls = [tool_call_map[i] for i in sorted(tool_call_map)]
@@ -286,6 +303,18 @@ def stream_agent(
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
         logger.warning("agent hit max_iters=%d without stopping", max_iters)
+
+    if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
+        logger.info("[agent] forcing synthesis — loop ended on tool results")
+        synth = client.chat.completions.create(
+            model=resolved, messages=api_msgs, stream=True, timeout=300.0,
+        )
+        for chunk in synth:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield {"type": "token", "token": delta.content}
 
 
 def _tool_label(name: str, args: dict) -> str:

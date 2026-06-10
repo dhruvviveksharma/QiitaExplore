@@ -43,7 +43,11 @@ def get_client(model: str):
     """Return (client, provider_str) for the given model."""
     meta = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])
     provider = meta.get("provider", "nrp")
-    return (anthropic_client if provider == "anthropic" else client), provider
+    if provider == "anthropic":
+        from store.crud import get_setting
+        key = get_setting('anthropic_api_key') or ANTHROPIC_API_KEY
+        return _anthropic.Anthropic(api_key=key, timeout=300.0), "anthropic"
+    return client, "nrp"
 
 
 def model_supports_tools(model: str) -> bool:

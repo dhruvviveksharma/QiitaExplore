@@ -26,7 +26,7 @@ function useAppState() {
   const [compErr,        setCompErr]        = useState('');
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const _VALID_MODELS = new Set(['qwen3','qwen3-small','gpt-oss','gemma','gemma-small','kimi','glm-5','minimax-m2']);
+  const _VALID_MODELS = new Set([..._NRP_MODELS, ..._CLAUDE_MODELS].map(m => m[0]));
   const [selectedModel, setSelectedModelState] = useState(() => {
     try {
       const saved = localStorage.getItem('llm:model');
@@ -35,8 +35,14 @@ function useAppState() {
   });
   const setSelectedModel = (value) => {
     setSelectedModelState(value);
-    try { localStorage.setItem('llm:model', value); } catch (_) {}
+    const chatId = view.chatId || null;
+    try {
+      if (chatId) localStorage.setItem(`model:chat:${chatId}`, value);
+      localStorage.setItem('llm:model', value);
+    } catch (_) {}
   };
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
     try { return localStorage.getItem('ui:theme') || 'light'; } catch (_) { return 'light'; }
   });
@@ -73,7 +79,21 @@ function useAppState() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useEffect(() => { loadProjects(); loadGlobalChats(); loadFirstStudies(); }, []);
+  useEffect(() => {
+    loadProjects(); loadGlobalChats(); loadFirstStudies();
+    fetch('/api/settings').then(r => r.json()).then(d => setAnthropicKeySet(d.anthropic_key_set)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const chatId = view.chatId || null;
+    try {
+      const perChat = chatId ? localStorage.getItem(`model:chat:${chatId}`) : null;
+      const global  = localStorage.getItem('llm:model') || 'qwen3';
+      const effective = (perChat && _VALID_MODELS.has(perChat)) ? perChat
+                      : (_VALID_MODELS.has(global) ? global : 'qwen3');
+      setSelectedModelState(effective);
+    } catch (_) {}
+  }, [view.chatId]);
 
   useEffect(() => {
     if (!openProjId) { setOpenProject(null); return; }
@@ -334,6 +354,12 @@ function useAppState() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
+    if (/^\/model\s*$/i.test(msg)) {
+      setSending(false);
+      setShowModelPicker(true);
+      return;
+    }
+
     const reportMatch   = /^\/report\s+(\d+)\s*$/i.exec(msg);
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
     const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
@@ -574,13 +600,14 @@ function useAppState() {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setShowModelPicker, setAnthropicKeySet,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
-    slashIndex, slashDismissed,
+    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     // refs

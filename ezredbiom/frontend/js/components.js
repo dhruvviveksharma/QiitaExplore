@@ -173,7 +173,7 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   );
 
   const tableEl = (
-    <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflow:'hidden'}}>
+    <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflowX:'hidden'}}>
       <table className="prep-table">
         <thead><tr><th>Sample ID</th><th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
         <tbody>
@@ -521,6 +521,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey }) {
 
 // ─── SLASH_COMMANDS registry ──────────────────────────────────────────────────
 const SLASH_COMMANDS = [
+  { cmd: '/model',      insert: '/model',       usage: '/model',                 desc: 'Choose the LLM model for this chat.' },
   { cmd: '/systems',    insert: '/systems',     usage: '/systems',               desc: 'Check status & latency of all available LLM models.' },
   { cmd: '/report',    insert: '/report ',     usage: '/report 104',            desc: 'Load full sample-level metadata for a Qiita study.' },
   { cmd: '/pin',       insert: '/pin ',        usage: '/pin 77 101',            desc: 'Pin one or more studies into this chat context.' },
@@ -540,6 +541,74 @@ function SlashCommandMenu({ matches, activeIndex, onPick }) {
           <span className="slash-menu-desc">{item.desc}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── ModelPickerCard ──────────────────────────────────────────────────────────
+const _NRP_MODELS = [
+  ['qwen3','Qwen 3 (397B)'], ['qwen3-small','Qwen 3 Small (27B)'],
+  ['gpt-oss','GPT-OSS (120B)'], ['gemma','Gemma (31B)'],
+  ['gemma-small','Gemma Small (~8B)'], ['kimi','Kimi (1T)'],
+  ['glm-5','GLM-5 (744B)'], ['minimax-m2','Minimax M2 (230B)'],
+];
+const _CLAUDE_MODELS = [
+  ['claude-haiku-4-5','Claude Haiku 4.5'],
+  ['claude-sonnet-4-6','Claude Sonnet 4.6'],
+  ['claude-opus-4-8','Claude Opus 4.8'],
+];
+
+function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
+  const [apiKeyInput,  setApiKeyInput]  = React.useState('');
+  const [pendingClaude, setPendingClaude] = React.useState(null);
+  const [saving,       setSaving]       = React.useState(false);
+
+  const pick = (id) => {
+    if (id.startsWith('claude-') && !anthropicKeySet) { setPendingClaude(id); return; }
+    onPick(id, false);
+  };
+
+  const saveKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    setSaving(true);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anthropic_api_key: apiKeyInput.trim() }),
+    });
+    setSaving(false);
+    onPick(pendingClaude, true);
+  };
+
+  const row = (id, label) => (
+    <div key={id} className={`model-picker-row${id === current ? ' active' : ''}`} onClick={() => pick(id)}>
+      <span className="model-picker-dot">{id === current ? '●' : '○'}</span>{label}
+    </div>
+  );
+
+  return (
+    <div className="model-picker-card">
+      <div className="model-picker-header">
+        <span>Choose model</span>
+        <button className="model-picker-close" onClick={onClose}>×</button>
+      </div>
+      <div className="model-picker-group">NRP-Nautilus</div>
+      {_NRP_MODELS.map(([id, label]) => row(id, label))}
+      <div className="model-picker-group">
+        Anthropic
+        {!anthropicKeySet && <span className="model-picker-key-note"> — API key required</span>}
+      </div>
+      {_CLAUDE_MODELS.map(([id, label]) => row(id, label))}
+      {pendingClaude && (
+        <div className="model-picker-key-prompt">
+          <span>Enter your Anthropic API key:</span>
+          <input type="password" placeholder="sk-ant-..." value={apiKeyInput}
+            onChange={e => setApiKeyInput(e.target.value)} autoFocus />
+          <button onClick={saveKey} disabled={saving || !apiKeyInput.trim()}>
+            {saving ? '…' : 'Save & use'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

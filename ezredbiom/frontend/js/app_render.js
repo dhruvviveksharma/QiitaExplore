@@ -5,12 +5,13 @@ function renderApp(s) {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setShowModelPicker, setAnthropicKeySet,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
     input, sending, compErr, selectedModel, theme,
-    slashIndex, slashDismissed,
+    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     taRef, bottomRef,
@@ -475,6 +476,18 @@ function renderApp(s) {
 
         {/* Composer */}
         {view.type !== 'merges' && <div className="composer-wrap">
+          {showModelPicker && (
+            <ModelPickerCard
+              current={selectedModel}
+              anthropicKeySet={anthropicKeySet}
+              onPick={(model, keySaved) => {
+                setSelectedModel(model);
+                if (keySaved) setAnthropicKeySet(true);
+                setShowModelPicker(false);
+              }}
+              onClose={() => setShowModelPicker(false)}
+            />
+          )}
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
             <div className="composer-pins">
               <span className="composer-pins-label">Pinned:</span>
@@ -522,25 +535,10 @@ function renderApp(s) {
             />
             <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
           </div>
-          <div className="composer-model">
-            <label className="composer-model-label" htmlFor="composer-model-select">Model:</label>
-            <select
-              id="composer-model-select"
-              className="composer-model-select"
-              value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value)}
-              disabled={sending}
-              title="Choose the LLM that answers your message. Switch if one is down."
-            >
-              <option value="qwen3">Qwen 3 (397B)</option>
-              <option value="qwen3-small">Qwen 3 Small (27B)</option>
-              <option value="gpt-oss">GPT-OSS (120B)</option>
-              <option value="gemma">Gemma (31B)</option>
-              <option value="gemma-small">Gemma Small (~8B)</option>
-              <option value="kimi">Kimi (1T)</option>
-              <option value="glm-5">GLM-5 (744B)</option>
-              <option value="minimax-m2">Minimax M2 (230B)</option>
-            </select>
+          <div className="composer-model" onClick={() => setShowModelPicker(v => !v)}
+               title="Click or type /model to change" style={{cursor:'pointer'}}>
+            <span className="composer-model-label">Model:</span>
+            <span className="composer-model-name">{selectedModel}</span>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}
         </div>}
