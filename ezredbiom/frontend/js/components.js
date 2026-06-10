@@ -468,7 +468,7 @@ function ToolResultWidget({ payload, msgKey }) {
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
 function ToolCallCard({ seg, msgKey }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
   const detail = done ? seg.result?.detail : '';

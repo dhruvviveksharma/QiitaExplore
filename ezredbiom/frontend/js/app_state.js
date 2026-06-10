@@ -256,9 +256,7 @@ function useAppState() {
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const pins = cur.pinnedStudies || [];
-      const nextPins = pinnedList != null ? pinnedList
-                     : (reportStudyId != null && !pins.includes(reportStudyId)) ? [...pins, reportStudyId]
-                     : pins;
+      const nextPins = pinnedList != null ? pinnedList : pins;
       return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
     });
   };

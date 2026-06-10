@@ -23,6 +23,29 @@ def _openai_tools_to_anthropic(tools):
     ]
 
 
+def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search):
+    """Yield segment events for one tool call; return (result_text, is_search_studies)."""
+    step_name = f"tool_{name}_{call_id[:6]}"
+    yield {"type": "segment_tool_call", "name": step_name,
+           "label": _tool_label(name, args), "args": args}
+    t0 = time.perf_counter()
+    try:
+        result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+    except Exception as exc:
+        dt = time.perf_counter() - t0
+        logger.exception("tool %s raised after %.3fs", name, dt)
+        yield {"type": "segment_tool_result", "name": step_name,
+               "label": f"{name} failed",
+               "detail": f"{str(exc)[:60]} · {dt:.1f}s", "ui_payload": None}
+        return (f"Tool {name} failed: {exc}", False)
+    dt = time.perf_counter() - t0
+    logger.info("[timing] tool=%s elapsed=%.3fs result_chars=%d", name, dt, len(result.text or ""))
+    detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
+    yield {"type": "segment_tool_result", "name": step_name,
+           "label": result.label, "detail": detail, "ui_payload": result.ui_payload}
+    return (result.text, name == "search_studies")
+
+
 def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max_iters):
     anth_tools = _openai_tools_to_anthropic(TOOL_SCHEMAS)
     msgs = list(api_msgs)
@@ -70,10 +93,14 @@ def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max
                         current_json += d.partial_json or ""
                 elif etype == "content_block_stop":
                     if current_block is not None:
+                        try:
+                            parsed = json.loads(current_json or "{}")
+                        except json.JSONDecodeError:
+                            parsed = {}
                         tool_uses.append({
                             "id": current_block["id"],
                             "name": current_block["name"],
-                            "arguments": current_json,
+                            "args": parsed,
                         })
                         current_block = None
                 elif etype == "message_delta":
@@ -92,45 +119,18 @@ def _stream_anthropic_agent(api_msgs, resolved, scope, chat_id, deep_search, max
         if content_parts:
             asst_content.append({"type": "text", "text": "".join(content_parts)})
         for tu in tool_uses:
-            try:
-                inp = json.loads(tu["arguments"] or "{}")
-            except json.JSONDecodeError:
-                inp = {}
-            asst_content.append({"type": "tool_use", "id": tu["id"], "name": tu["name"], "input": inp})
+            asst_content.append({"type": "tool_use", "id": tu["id"], "name": tu["name"], "input": tu["args"]})
         msgs.append({"role": "assistant", "content": asst_content})
 
         tool_results = []
         for tu in tool_uses:
-            try:
-                args = json.loads(tu["arguments"] or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            name = tu["name"]
-            step_name = f"tool_{name}_{tu['id'][:6]}"
-            yield {"type": "segment_tool_call", "name": step_name,
-                   "label": _tool_label(name, args), "args": args}
-            t0 = time.perf_counter()
-            try:
-                result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
-            except Exception as exc:
-                dt = time.perf_counter() - t0
-                logger.exception("tool %s raised after %.3fs", name, dt)
-                yield {"type": "segment_tool_result", "name": step_name,
-                       "label": f"{name} failed",
-                       "detail": f"{str(exc)[:60]} · {dt:.1f}s",
-                       "ui_payload": None}
-                tool_results.append({"type": "tool_result", "tool_use_id": tu["id"],
-                                      "content": f"Tool {name} failed: {exc}"})
-                continue
-            dt = time.perf_counter() - t0
-            if name == "search_studies":
+            result_text, is_search = yield from _execute_tool_call(
+                tu["name"], tu["args"], tu["id"],
+                scope=scope, chat_id=chat_id, deep_search=deep_search,
+            )
+            if is_search:
                 search_already_done = True
-            detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
-            yield {"type": "segment_tool_result", "name": step_name,
-                   "label": result.label, "detail": detail,
-                   "ui_payload": result.ui_payload}
-            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"],
-                                  "content": result.text})
+            tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
         msgs.append({"role": "user", "content": tool_results})
 
     if iteration == max_iters - 1 and stop_reason == "tool_use":
@@ -276,35 +276,13 @@ def stream_agent(
                 args = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-
-            step_name = f"tool_{name}_{tc['id'][:6]}"
-            yield {"type": "segment_tool_call", "name": step_name,
-                   "label": _tool_label(name, args), "args": args}
-
-            t0 = time.perf_counter()
-            try:
-                result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
-            except Exception as exc:
-                dt = time.perf_counter() - t0
-                logger.exception("tool %s raised after %.3fs", name, dt)
-                yield {"type": "segment_tool_result", "name": step_name,
-                       "label": f"{name} failed",
-                       "detail": f"{str(exc)[:60]} · {dt:.1f}s",
-                       "ui_payload": None}
-                api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
-                                  "content": f"Tool {name} failed: {exc}"})
-                continue
-
-            dt = time.perf_counter() - t0
-            if name == "search_studies":
+            result_text, is_search = yield from _execute_tool_call(
+                name, args, tc["id"],
+                scope=scope, chat_id=chat_id, deep_search=deep_search,
+            )
+            if is_search:
                 search_already_done = True
-            logger.info("[timing] tool=%s elapsed=%.3fs result_chars=%d", name, dt, len(result.text or ""))
-            detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
-            yield {"type": "segment_tool_result", "name": step_name,
-                   "label": result.label, "detail": detail,
-                   "ui_payload": result.ui_payload}
-            api_msgs.append({"role": "tool", "tool_call_id": tc["id"],
-                              "content": result.text})
+            api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
         logger.warning("agent hit max_iters=%d without stopping", max_iters)

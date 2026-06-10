@@ -33,7 +33,7 @@ function renderApp(s) {
 
         <div className="sidebar-body">
 
-          <div className="sb-label">Projects</div>
+          <div className="sb-label">Workspaces</div>
           {projLoading && <div className="sb-loading">Loading…</div>}
 
           {projects.map(p => (
@@ -69,7 +69,7 @@ function renderApp(s) {
 
                   <div className="inner-tabs">
                     <button className={`inner-tab ${projInnerTab === 'chats' ? 'active' : ''}`} onClick={() => setProjInnerTab('chats')}>Chats</button>
-                    <button className={`inner-tab ${projInnerTab === 'sources' ? 'active' : ''}`} onClick={() => setProjInnerTab('sources')}>Sources</button>
+                    <button className={`inner-tab ${projInnerTab === 'sources' ? 'active' : ''}`} onClick={() => setProjInnerTab('sources')}>Studies</button>
                   </div>
 
                   {projInnerTab === 'chats' && (openProject?.chats || []).length === 0 && (
@@ -120,7 +120,7 @@ function renderApp(s) {
           ))}
 
           {!showNewProj ? (
-            <button className="new-proj-btn" onClick={() => setShowNewProj(true)}>+ New Project</button>
+            <button className="new-proj-btn" onClick={() => setShowNewProj(true)}>+ New Workspace</button>
           ) : (
             <div className="new-proj-form">
               <input
@@ -349,7 +349,7 @@ function renderApp(s) {
             <>
               {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
                 <div className="sources-bar">
-                  <span className="sources-label">Sources</span>
+                  <span className="sources-label">Studies</span>
                   {(openProject.studies||[]).map(s => (
                     <button key={s.study_id} className="src-chip" onClick={() => openStudyModal(s)}>
                       {(s.study_title||'Untitled').slice(0,40)}

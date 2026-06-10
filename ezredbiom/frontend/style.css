@@ -477,28 +477,20 @@ input, textarea { font-family: var(--sans); }
 
 .tool-call-card {
   border-left: 2px solid var(--accent-muted, rgba(99,102,241,.3));
-  background: var(--surface-2, #f7f8fa);
-  border-radius: 0 6px 6px 0;
-  overflow: hidden;
   font-size: 11.5px;
 }
+.app.dark .tool-call-card { border-left-color: rgba(201,100,66,.35); }
 .tool-call-header {
   display: inline-flex; align-items: center; gap: 6px;
-  width: 100%; padding: 5px 10px;
+  width: 100%; padding: 3px 8px;
   background: none; border: none; cursor: pointer;
   font-family: monospace; color: var(--text-2);
   text-align: left;
 }
-.tool-call-header:hover { background: var(--surface-3, #eef0f4); }
-.app.dark .tool-call-card {
-  background: #2a2825;
-  border-left-color: rgba(201, 100, 66, 0.35);
-}
-.app.dark .tool-call-header:hover { background: #333028; }
 .tool-call-label { flex: 1; color: var(--text-2); }
-.tool-call-toggle { color: var(--text-3); margin-left: auto; }
+.tool-call-toggle { color: var(--text-3); margin-left: 6px; font-size: 10px; }
 .tool-call-body {
-  padding: 6px 12px 10px;
+  padding: 4px 10px 8px;
   border-top: 1px solid var(--border, #e5e7eb);
 }
 .tool-call-args {
@@ -552,18 +544,22 @@ input, textarea { font-family: var(--sans); }
   color: var(--text);
 }
 .msg-bubble h1:first-child, .msg-bubble h2:first-child, .msg-bubble h3:first-child { margin-top: 0; }
-.msg-bubble h1 { font-size: 1.2em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.2em; }
-.msg-bubble h2 { font-size: 1.08em; }
-.msg-bubble h3 { font-size: 1em; }
-.msg-bubble h4 { font-size: 0.95em; }
+.msg-bubble h1 { font-size: 1.15em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.2em; }
+.msg-bubble h2 {
+  font-size: 0.76em; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-3); margin: 1.1em 0 0.4em;
+}
+.msg-bubble h3 { font-size: 0.98em; }
+.msg-bubble h4 { font-size: 0.92em; }
 
 .msg-bubble ul, .msg-bubble ol {
-  margin: 0.25em 0 0.45em 0;
-  padding-left: 1.4em;
+  margin: 0.2em 0 0.35em 0;
+  padding-left: 1.25em;
 }
 .msg-bubble li {
-  margin-bottom: 0.2em;
-  line-height: 1.5;
+  margin-bottom: 0.35em;
+  line-height: 1.55;
 }
 .msg-bubble li > ul, .msg-bubble li > ol {
   margin: 0.3em 0 0.3em 0;

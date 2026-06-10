@@ -14,7 +14,6 @@ from store import (
     get_project_studies_only,
     list_chats,
     list_pinned_studies,
-    pin_study_to_chat,
     unpin_study_from_chat,
 )
 from helpers.llm_helpers import (
@@ -190,12 +189,7 @@ def api_chat_message_stream(project_id, chat_id):
                     yield _sse("token", {"token": token})
             assistant_content = "".join(assistant_parts).strip()
             append_chat_messages(project_id, user_id, chat_id, user_content, assistant_content, assistant_ui_payload=ui_payload)
-            if report_study_id is not None and ui_payload is not None:
-                try:
-                    pin_study_to_chat(chat_id, SCOPE_PROJECT, report_study_id)
-                except Exception:
-                    logger.exception("failed to pin study %s to project chat %s", report_study_id, chat_id)
-            yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_study_id": report_study_id if ui_payload else None})
+            yield _sse("done", {"chat_id": chat_id, "persisted": True})
         except Exception as e:
             logger.exception("stream error in project chat %s", chat_id)
             yield _sse("error", {"error": friendly_llm_error(e, model)})
