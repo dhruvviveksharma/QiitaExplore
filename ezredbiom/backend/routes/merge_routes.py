@@ -25,7 +25,7 @@ from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
-from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview, build_merged_sample_rows
+from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview, build_per_study_sample_rows
 from helpers.qiita_fetch import _get_or_fetch_full_samples
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
@@ -322,16 +322,17 @@ def get_workspace_samples(workspace_id):
 
         entries.append({
             "study_id": sid,
+            "study_title": slot.get("study_title", ""),
             "artifact_id": artifact["artifact_id"],
             "full_path": artifact["full_path"],
             "meta_by_id": meta_by_id,
         })
 
     try:
-        rows = build_merged_sample_rows(entries)
+        studies = build_per_study_sample_rows(entries)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-    return jsonify({"rows": rows})
+    return jsonify({"studies": studies})
 
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────

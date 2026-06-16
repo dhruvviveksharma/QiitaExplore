@@ -1578,6 +1578,11 @@ input, textarea { font-family: var(--sans); }
 .merge-sample-filter { width: 100%; margin: 6px 0; padding: 4px 7px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
 .merge-sample-table-wrap { max-height: 340px; overflow-y: auto; }
 
+.merge-study-table  { margin-top: 10px; }
+.merge-study-header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.merge-study-title  { flex: 1; font-weight: 500; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-study-count  { font-weight: 400; color: var(--text-3); }
+
 /* Artifact processing graph */
 .artifact-graph-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; padding: 6px 4px; }
 .dark .artifact-graph-scroll { background: #1a1f2b; }

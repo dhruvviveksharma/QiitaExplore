@@ -120,36 +120,61 @@ function deriveCols(rows, max = 8) {
     .map(([k]) => k);
 }
 
+function StudySampleTable({ study, filter }) {
+  const cols = deriveCols(study.rows);
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? study.rows.filter(r =>
+        r.sample_id.toLowerCase().includes(q) ||
+        cols.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q)))
+    : study.rows;
+  return (
+    <div className="merge-study-table">
+      <div className="merge-study-header">
+        <span className="data-type-badge">#{study.study_id}</span>
+        <span className="merge-study-title">{study.study_title}</span>
+        <span className="merge-study-count">{study.rows.length.toLocaleString()} samples</span>
+      </div>
+      <div className="merge-sample-table-wrap">
+        <table className="prep-table sample-peek-table">
+          <thead>
+            <tr>
+              <th>Sample ID</th>
+              {cols.map(c => <th key={c}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map(r => (
+              <tr key={r.sample_id}>
+                <td>{r.sample_id}</td>
+                {cols.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {q && <div className="sample-peek-msg">{visible.length} / {study.rows.length} shown</div>}
+      </div>
+    </div>
+  );
+}
+
 function MergeSampleBrowser({ workspaceId, total }) {
-  const [open, setOpen]       = useState(false);
-  const [rows, setRows]       = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr]         = useState('');
-  const [filter, setFilter]   = useState('');
+  const [open, setOpen]         = useState(false);
+  const [studies, setStudies]   = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [err, setErr]           = useState('');
+  const [filter, setFilter]     = useState('');
 
   function toggle() {
     setOpen(o => !o);
-    if (!rows && !loading) {
+    if (!studies && !loading) {
       setLoading(true);
       apiFetch(`/merge-workspaces/${workspaceId}/samples`)
         .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
-        .then(d => { setRows(d.rows); setLoading(false); })
+        .then(d => { setStudies(d.studies); setLoading(false); })
         .catch(e => { setErr(String(e)); setLoading(false); });
     }
   }
-
-  const cols = deriveCols(rows);
-
-  const visible = rows
-    ? (filter.trim()
-        ? rows.filter(r => {
-            const q = filter.toLowerCase();
-            return r.sample_id.toLowerCase().includes(q)
-              || String(r.study_id).includes(q)
-              || cols.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q));
-          })
-        : rows)
-    : [];
 
   return (
     <div className="merge-sample-browser">
@@ -166,29 +191,9 @@ function MergeSampleBrowser({ workspaceId, total }) {
           />
           {loading && <div className="sample-peek-msg">Loading…</div>}
           {err && <div className="sample-peek-msg sample-peek-err">Error: {err}</div>}
-          {!loading && rows && (
-            <div className="merge-sample-table-wrap">
-              <table className="prep-table sample-peek-table">
-                <thead>
-                  <tr>
-                    <th>Sample ID</th>
-                    <th>Study</th>
-                    {cols.map(c => <th key={c}>{c}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map(r => (
-                    <tr key={r.sample_id}>
-                      <td>{r.sample_id}</td>
-                      <td><span className="data-type-badge">#{r.study_id}</span></td>
-                      {cols.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filter && <div className="sample-peek-msg">{visible.length} / {rows.length} shown</div>}
-            </div>
-          )}
+          {!loading && studies && studies.map(st => (
+            <StudySampleTable key={st.study_id} study={st} filter={filter} />
+          ))}
         </>
       )}
     </div>
