@@ -101,9 +101,86 @@ function SamplePeek({ artifactId, studyId, onClose }) {
   );
 }
 
+// ── Sample browser (collapsible, inside Compatible banner) ────────────────────
+
+const SAMPLE_COLS = ['sex', 'age', 'age_unit', 'obesitycat', 'country'];
+
+function MergeSampleBrowser({ workspaceId, total }) {
+  const [open, setOpen]       = useState(false);
+  const [rows, setRows]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState('');
+  const [filter, setFilter]   = useState('');
+
+  function toggle() {
+    setOpen(o => !o);
+    if (!rows && !loading) {
+      setLoading(true);
+      apiFetch(`/merge-workspaces/${workspaceId}/samples`)
+        .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || r.status)))
+        .then(d => { setRows(d.rows); setLoading(false); })
+        .catch(e => { setErr(String(e)); setLoading(false); });
+    }
+  }
+
+  const visible = rows
+    ? (filter.trim()
+        ? rows.filter(r => {
+            const q = filter.toLowerCase();
+            return r.sample_id.toLowerCase().includes(q)
+              || String(r.study_id).includes(q)
+              || SAMPLE_COLS.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q));
+          })
+        : rows)
+    : [];
+
+  return (
+    <div className="merge-sample-browser">
+      <button className="merge-sample-toggle" onClick={toggle}>
+        {open ? '▲ Hide samples' : `▼ Browse ${total.toLocaleString()} samples`}
+      </button>
+      {open && (
+        <>
+          <input
+            className="merge-sample-filter"
+            placeholder="Filter by sample ID or metadata…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+          />
+          {loading && <div className="sample-peek-msg">Loading…</div>}
+          {err && <div className="sample-peek-msg sample-peek-err">Error: {err}</div>}
+          {!loading && rows && (
+            <div className="merge-sample-table-wrap">
+              <table className="prep-table sample-peek-table">
+                <thead>
+                  <tr>
+                    <th>Sample ID</th>
+                    <th>Study</th>
+                    {SAMPLE_COLS.map(c => <th key={c}>{c}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map(r => (
+                    <tr key={r.sample_id}>
+                      <td>{r.sample_id}</td>
+                      <td><span className="data-type-badge">#{r.study_id}</span></td>
+                      {SAMPLE_COLS.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filter && <div className="sample-peek-msg">{visible.length} / {rows.length} shown</div>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Merge preview + validation panel ──────────────────────────────────────────
 
-function MergePreviewPanel({ validation, validating }) {
+function MergePreviewPanel({ validation, validating, workspaceId }) {
   if (validating) return <div className="merge-validation validating">Validating…</div>;
   if (!validation) return null;
 
@@ -133,6 +210,9 @@ function MergePreviewPanel({ validation, validating }) {
                 </span>
               ))}
             </div>
+          )}
+          {workspaceId && (
+            <MergeSampleBrowser workspaceId={workspaceId} total={preview.total_unique} />
           )}
         </div>
       )}

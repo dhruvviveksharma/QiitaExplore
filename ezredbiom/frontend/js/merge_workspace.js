@@ -226,7 +226,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
       {/* Validation + merge preview */}
       {workspaceId && studies.length > 0 && (
-        <MergePreviewPanel validation={validation} validating={validating} />
+        <MergePreviewPanel validation={validation} validating={validating} workspaceId={workspaceId} />
       )}
 
       {/* Merge cart — selected BIOMs list + Merge button */}

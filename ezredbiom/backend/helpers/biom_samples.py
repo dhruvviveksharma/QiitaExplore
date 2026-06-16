@@ -41,6 +41,28 @@ def get_biom_sample_ids(artifact_id: int, biom_path: str) -> list:
     return ids
 
 
+def build_merged_sample_rows(studies_entries: list) -> list:
+    """Return [{sample_id, study_id, fields}] for the union of all studies.
+
+    studies_entries: [{study_id, artifact_id, full_path, meta_by_id}]
+    When sample IDs overlap across studies the first study in the list wins.
+    """
+    seen: set = set()
+    rows: list = []
+    for entry in studies_entries:
+        try:
+            ids = get_biom_sample_ids(entry["artifact_id"], entry["full_path"])
+        except Exception:
+            ids = []
+        meta = entry.get("meta_by_id") or {}
+        for sid in ids:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            rows.append({"sample_id": sid, "study_id": entry["study_id"], "fields": meta.get(sid, {})})
+    return rows
+
+
 def compute_merge_preview(per_study_sets: dict) -> dict:
     """Return merge output statistics from per-study sample-id sets.
 

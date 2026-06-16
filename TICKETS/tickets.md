@@ -421,4 +421,28 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 
 ---
 
+## TKT-014: Split merge_routes.py (over 500-line cap)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`ezredbiom/backend/routes/merge_routes.py` reached 518 lines after the `/api/merge-workspaces/<id>/samples` endpoint was added.
+
+### Plan
+
+Extract workspace and job routes into two files:
+- `routes/merge_workspace_routes.py` — workspace CRUD + validate + samples
+- `routes/merge_job_routes.py` — job submit, poll, download
+- Keep shared helpers (`_get_artifacts`, `_type_filtered_artifacts`, `_user_id`, etc.) in a new `helpers/merge_helpers.py`
+
+### Files Changed
+
+- `ezredbiom/backend/routes/merge_routes.py`
+- `ezredbiom/backend/routes/merge_workspace_routes.py` (new)
+- `ezredbiom/backend/routes/merge_job_routes.py` (new)
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-06-09*

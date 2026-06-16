@@ -4,6 +4,7 @@ function useAppState() {
   const [openProjId,  setOpenProjId]  = useState(null);
   const [openProject, setOpenProject] = useState(null);
   const [view,        setView]        = useState({ type: 'browse' });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCache,   setChatCache]   = useState({});
   const [globalChats, setGlobalChats] = useState([]);
   const [projInnerTab, setProjInnerTab] = useState('chats');
@@ -600,12 +601,12 @@ function useAppState() {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
-    setShowModelPicker, setAnthropicKeySet,
+    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
-    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,

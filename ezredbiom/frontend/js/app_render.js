@@ -5,11 +5,11 @@ function renderApp(s) {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
-    setShowModelPicker, setAnthropicKeySet,
+    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
-    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
@@ -27,7 +27,7 @@ function renderApp(s) {
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
 
       {/* ══════════════════ SIDEBAR ══════════════════ */}
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>Qiita<span>Explorer</span></div>
         </div>
@@ -180,9 +180,16 @@ function renderApp(s) {
           {(view.type === 'browse' || view.type === 'merges') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
-                onClick={() => setView({ type: 'browse' })}>Browse Studies</button>
+                onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
               <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
-                onClick={() => setView({ type: 'merges' })}>Merges</button>
+                onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
+              {view.type === 'merges' && (
+                <button
+                  className="sidebar-toggle-btn"
+                  title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                  onClick={() => setSidebarCollapsed(c => !c)}
+                >{sidebarCollapsed ? '▶' : '◀'}</button>
+              )}
             </>
           ) : (
             <>

@@ -25,7 +25,8 @@ from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
-from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
+from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview, build_merged_sample_rows
+from helpers.qiita_fetch import _get_or_fetch_full_samples
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
 _DEFAULT_USER = "default"
@@ -277,6 +278,60 @@ def validate_merge_workspace(workspace_id):
         "studies": response_studies,
         "preview": preview,
     })
+
+
+@app.route("/api/merge-workspaces/<workspace_id>/samples", methods=["GET"])
+def get_workspace_samples(workspace_id):
+    """Return all samples (with metadata) for the union of chosen artifacts in a workspace."""
+    user_id = _user_id()
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        return jsonify({"error": "Not found"}), 404
+
+    studies_list = ws.get("studies") or []
+    common_type = studies_type_intersection([s.get("data_types", "") for s in studies_list])
+
+    entries = []
+    for slot in studies_list:
+        sid = int(slot["study_id"])
+        artifacts = _get_artifacts(sid)
+        type_artifacts = _type_filtered_artifacts(artifacts, common_type)
+        chosen_ids = slot.get("chosen_artifact_ids") or []
+        if chosen_ids:
+            chosen_arts = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
+            artifact = chosen_arts[0] if chosen_arts else autopick_artifact(type_artifacts, common_type)
+        else:
+            artifact = autopick_artifact(type_artifacts, common_type)
+
+        if not artifact or not artifact.get("full_path"):
+            continue
+
+        # Read metadata from cache; fall back to Qiita fetch if not cached yet
+        meta_by_id = {}
+        try:
+            cached = get_study_detail_cache(sid)
+            if cached and cached.get("full_samples_json"):
+                for row in json.loads(cached["full_samples_json"]):
+                    meta_by_id[row["sample_id"]] = row.get("fields", {})
+            else:
+                samples = _get_or_fetch_full_samples(sid)
+                if samples:
+                    meta_by_id = {r["sample_id"]: r.get("fields", {}) for r in samples}
+        except Exception:
+            pass
+
+        entries.append({
+            "study_id": sid,
+            "artifact_id": artifact["artifact_id"],
+            "full_path": artifact["full_path"],
+            "meta_by_id": meta_by_id,
+        })
+
+    try:
+        rows = build_merged_sample_rows(entries)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"rows": rows})
 
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────
