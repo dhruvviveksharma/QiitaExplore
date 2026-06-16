@@ -103,7 +103,22 @@ function SamplePeek({ artifactId, studyId, onClose }) {
 
 // ── Sample browser (collapsible, inside Compatible banner) ────────────────────
 
-const SAMPLE_COLS = ['sex', 'age', 'age_unit', 'obesitycat', 'country'];
+const BLANK = new Set(['not applicable', 'not provided', 'missing', '', 'NA', 'N/A', 'none']);
+
+function deriveCols(rows, max = 8) {
+  if (!rows || !rows.length) return [];
+  // Count non-blank values per field across all rows
+  const counts = {};
+  for (const r of rows) {
+    for (const [k, v] of Object.entries(r.fields || {})) {
+      if (!BLANK.has(String(v ?? '').toLowerCase())) counts[k] = (counts[k] || 0) + 1;
+    }
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, max)
+    .map(([k]) => k);
+}
 
 function MergeSampleBrowser({ workspaceId, total }) {
   const [open, setOpen]       = useState(false);
@@ -123,13 +138,15 @@ function MergeSampleBrowser({ workspaceId, total }) {
     }
   }
 
+  const cols = deriveCols(rows);
+
   const visible = rows
     ? (filter.trim()
         ? rows.filter(r => {
             const q = filter.toLowerCase();
             return r.sample_id.toLowerCase().includes(q)
               || String(r.study_id).includes(q)
-              || SAMPLE_COLS.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q));
+              || cols.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q));
           })
         : rows)
     : [];
@@ -156,7 +173,7 @@ function MergeSampleBrowser({ workspaceId, total }) {
                   <tr>
                     <th>Sample ID</th>
                     <th>Study</th>
-                    {SAMPLE_COLS.map(c => <th key={c}>{c}</th>)}
+                    {cols.map(c => <th key={c}>{c}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -164,7 +181,7 @@ function MergeSampleBrowser({ workspaceId, total }) {
                     <tr key={r.sample_id}>
                       <td>{r.sample_id}</td>
                       <td><span className="data-type-badge">#{r.study_id}</span></td>
-                      {SAMPLE_COLS.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
+                      {cols.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
                     </tr>
                   ))}
                 </tbody>
