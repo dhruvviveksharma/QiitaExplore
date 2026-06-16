@@ -308,6 +308,7 @@ def get_workspace_samples(workspace_id):
 
         # Read metadata from cache; fall back to Qiita fetch if not cached yet
         meta_by_id = {}
+        meta_error = ""
         try:
             cached = get_study_detail_cache(sid)
             if cached and cached.get("full_samples_json"):
@@ -317,8 +318,11 @@ def get_workspace_samples(workspace_id):
                 samples = _get_or_fetch_full_samples(sid)
                 if samples:
                     meta_by_id = {r["sample_id"]: r.get("fields", {}) for r in samples}
-        except Exception:
-            pass
+                else:
+                    meta_error = "no metadata in cache or Qiita DB"
+        except Exception as exc:
+            meta_error = str(exc)
+            app.logger.error("metadata fetch failed for study %s: %s", sid, exc)
 
         entries.append({
             "study_id": sid,
@@ -326,6 +330,7 @@ def get_workspace_samples(workspace_id):
             "artifact_id": artifact["artifact_id"],
             "full_path": artifact["full_path"],
             "meta_by_id": meta_by_id,
+            "meta_error": meta_error,
         })
 
     try:

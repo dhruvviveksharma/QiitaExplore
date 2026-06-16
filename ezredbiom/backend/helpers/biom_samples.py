@@ -54,11 +54,14 @@ def build_per_study_sample_rows(studies_entries: list) -> list:
         except Exception:
             ids = []
         meta = entry.get("meta_by_id") or {}
-        groups.append({
+        group = {
             "study_id": entry["study_id"],
             "study_title": entry.get("study_title", ""),
             "rows": [{"sample_id": sid, "fields": meta.get(sid, {})} for sid in ids],
-        })
+        }
+        if entry.get("meta_error"):
+            group["meta_error"] = entry["meta_error"]
+        groups.append(group)
     return groups
 
 

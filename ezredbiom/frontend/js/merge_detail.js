@@ -135,6 +135,11 @@ function StudySampleTable({ study, filter }) {
         <span className="merge-study-title">{study.study_title}</span>
         <span className="merge-study-count">{study.rows.length.toLocaleString()} samples</span>
       </div>
+      {study.meta_error && (
+        <div className="sample-peek-msg sample-peek-err">
+          ⚠ Metadata unavailable: {study.meta_error}
+        </div>
+      )}
       <div className="merge-sample-table-wrap">
         <table className="prep-table sample-peek-table">
           <thead>
