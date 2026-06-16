@@ -64,7 +64,7 @@ def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
 
 def _user_id():
     return (request.args.get("user_id") or
-            (request.json or {}).get("user_id") or
+            (request.get_json(silent=True) or {}).get("user_id") or
             _DEFAULT_USER)
 
 
