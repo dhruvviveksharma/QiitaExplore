@@ -117,7 +117,7 @@ function MergeSampleBrowser({ workspaceId, total }) {
     if (!rows && !loading) {
       setLoading(true);
       apiFetch(`/merge-workspaces/${workspaceId}/samples`)
-        .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || r.status)))
+        .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
         .then(d => { setRows(d.rows); setLoading(false); })
         .catch(e => { setErr(String(e)); setLoading(false); });
     }
