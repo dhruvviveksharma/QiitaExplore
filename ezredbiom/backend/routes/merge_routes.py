@@ -249,7 +249,7 @@ def validate_merge_workspace(workspace_id):
             "study_id": sid,
             "artifact": artifact,
             "sample_ids": sample_ids,
-            "is_chosen": bool(chosen_ids),
+            "is_chosen": bool(slot.get("chosen_artifact_ids")),
         })
 
     validation = check_namespace_compatibility(studies_payload, explicit_only=True)
