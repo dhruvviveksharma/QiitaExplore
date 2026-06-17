@@ -1583,9 +1583,45 @@ input, textarea { font-family: var(--sans); }
 .merge-study-title  { flex: 1; font-weight: 500; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-study-count  { font-weight: 400; color: var(--text-3); }
 
-/* Artifact processing graph */
-.artifact-graph-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; padding: 6px 4px; }
-.dark .artifact-graph-scroll { background: #1a1f2b; }
+/* Artifact output cards */
+.ao-card-list { display: flex; flex-direction: column; gap: 8px; }
+.ao-card { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); padding: 10px 12px; }
+.ao-card-chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.ao-card-header { margin-bottom: 6px; }
+.ao-select-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; cursor: pointer; font-size: 0.88rem; }
+.ao-select-row input[type=checkbox] { width: 14px; height: 14px; flex-shrink: 0; cursor: pointer; }
+.ao-card-name { font-weight: 500; color: var(--text-1); }
+.ao-rec-badge { font-size: 0.7rem; font-weight: 600; color: #15803d; background: #dcfce7; border-radius: 10px; padding: 1px 7px; }
+.dark .ao-rec-badge { color: #4ade80; background: rgba(74,222,128,0.15); }
+.ao-sample-count { font-size: 0.78rem; color: var(--text-3); }
+
+/* Pipeline breadcrumb */
+.ao-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.ao-breadcrumb-sep { color: var(--text-3); font-size: 0.8rem; }
+.ao-step-chip { font-size: 0.75rem; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 12px; padding: 2px 9px; color: var(--text-2); white-space: nowrap; }
+.ao-step-params { color: var(--text-3); }
+
+/* Files row */
+.ao-files-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ao-file-btn { font-size: 0.78rem; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text-1); text-decoration: none; white-space: nowrap; }
+.ao-file-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ao-samples-btn { font-size: 0.78rem; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text-2); cursor: pointer; }
+.ao-samples-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ao-expand-btn { font-size: 0.78rem; padding: 3px 9px; border: none; background: none; color: var(--text-3); cursor: pointer; text-decoration: underline; margin-left: auto; }
+.ao-expand-btn:hover { color: var(--accent); }
+
+/* Vertical workflow map */
+.ao-workflow-map { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 0; }
+.ao-workflow-step { display: flex; gap: 10px; }
+.ao-workflow-step-left { display: flex; flex-direction: column; align-items: center; width: 16px; flex-shrink: 0; }
+.ao-workflow-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex-shrink: 0; margin-top: 3px; }
+.ao-workflow-dot-last { background: #16a34a; }
+.ao-workflow-line { width: 2px; flex: 1; background: var(--border); margin: 3px 0; min-height: 12px; }
+.ao-workflow-step-body { padding-bottom: 12px; flex: 1; min-width: 0; }
+.ao-workflow-cmd { font-size: 0.85rem; font-weight: 500; color: var(--text-1); margin-bottom: 4px; }
+.ao-workflow-params { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.ao-param-pill { font-size: 0.72rem; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 10px; padding: 1px 7px; color: var(--text-3); }
+.ao-workflow-files { display: flex; flex-wrap: wrap; gap: 5px; }
 
 /* Global BIOM selector bar */
 .global-biom-selector { display: flex; align-items: center; gap: 6px; padding: 6px 12px 4px; flex-wrap: wrap; }

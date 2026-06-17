@@ -1,26 +1,4 @@
-// Artifact processing graph for the Merge panel
-
-const COL_W = 175;
-const ROW_H = 70;
-const NODE_W = 148;
-const NODE_H = 42;
-const JOB_RX  = 46;
-const JOB_RY  = 19;
-
-const ARTIFACT_COLORS = {
-  BIOM:               '#3b82f6',
-  Demultiplexed:      '#0d9488',
-  FASTQ:              '#6b7280',
-  per_sample_FASTQ:   '#6b7280',
-  SFF:                '#8b5cf6',
-  FASTA:              '#f59e0b',
-  default:            '#9ca3af',
-};
-
-function _nodeColor(n) {
-  if (n.kind === 'job') return '#d97706';
-  return ARTIFACT_COLORS[n.artifact_type] || ARTIFACT_COLORS.default;
-}
+// Artifact output browser for the Merge panel
 
 // Returns the Set of node_ids reachable from prep-linked artifact roots (BFS via children).
 function prepReachableSet(graph) {
@@ -45,224 +23,6 @@ function prepReachableSet(graph) {
     }
   }
   return reachable;
-}
-
-function buildGraphLayout(nodes) {
-  const byId = {};
-  nodes.forEach(n => { byId[n.node_id] = n; });
-
-  // Roots: no parent, or parent not in this filtered set
-  const roots = nodes.filter(n => !n.parent_node_id || !byId[n.parent_node_id]);
-
-  // BFS to assign rank (column index)
-  const rank = {};
-  const q = roots.map(n => ({ id: n.node_id, r: 0 }));
-  while (q.length) {
-    const { id, r } = q.shift();
-    if (rank[id] !== undefined) continue;
-    rank[id] = r;
-    nodes.filter(n => n.parent_node_id === id).forEach(n => q.push({ id: n.node_id, r: r + 1 }));
-  }
-
-  // Barycenter ordering within each rank: sort by mean parent rankPos so children
-  // land near their parents, reducing edge crossings.
-  const maxRank = Math.max(0, ...nodes.map(n => rank[n.node_id] ?? 0));
-  const rankNodes = {}; // rank → [node, ...]
-  nodes.forEach(n => {
-    const r = rank[n.node_id] ?? 0;
-    (rankNodes[r] = rankNodes[r] || []).push(n);
-  });
-  const rankPos = {};
-  // Process rank 0 first (roots keep stable insertion order)
-  (rankNodes[0] || []).forEach((n, i) => { rankPos[n.node_id] = i; });
-  for (let r = 1; r <= maxRank; r++) {
-    const tier = rankNodes[r] || [];
-    tier.sort((a, b) => {
-      const pa = byId[a.parent_node_id];
-      const pb = byId[b.parent_node_id];
-      const rpa = pa ? (rankPos[pa.node_id] ?? 0) : 0;
-      const rpb = pb ? (rankPos[pb.node_id] ?? 0) : 0;
-      return rpa - rpb;
-    });
-    tier.forEach((n, i) => { rankPos[n.node_id] = i; });
-  }
-
-  const edges = nodes
-    .filter(n => n.parent_node_id && byId[n.parent_node_id])
-    .map(n => ({ from: n.parent_node_id, to: n.node_id }));
-
-  const maxPos  = Math.max(0, ...nodes.map(n => rankPos[n.node_id] ?? 0));
-
-  return {
-    nodes: nodes.map(n => ({ ...n, rank: rank[n.node_id] ?? 0, rankPos: rankPos[n.node_id] ?? 0 })),
-    edges,
-    maxRank,
-    maxPos,
-  };
-}
-
-function _cx(rank) { return rank * COL_W + COL_W / 2; }
-function _cy(rp)   { return rp * ROW_H + ROW_H / 2 + 10; }
-
-function ArtifactGraphSvg({ graphData, chosenIds, onToggleArtifact, recommendedId, sampleCounts, expanded, onToggleExpand, onPeekBiom }) {
-  const { nodes, edges, maxRank, maxPos } = graphData;
-  const W = (maxRank + 1) * COL_W + 20;
-  const H = (maxPos + 1) * ROW_H + 30;
-
-  const byId = {};
-  nodes.forEach(n => { byId[n.node_id] = n; });
-
-  const chosen = new Set(chosenIds || {});
-
-  return (
-    <svg width={W} height={H} style={{ display: 'block' }}>
-      {/* Edges behind nodes */}
-      {edges.map((e, i) => {
-        const fn = byId[e.from];
-        const tn = byId[e.to];
-        if (!fn || !tn) return null;
-        const fx = _cx(fn.rank) + (fn.kind === 'job' ? JOB_RX : NODE_W / 2);
-        const fy = _cy(fn.rankPos);
-        const tx = _cx(tn.rank) - (tn.kind === 'job' ? JOB_RX : NODE_W / 2);
-        const ty = _cy(tn.rankPos);
-        const mx = (fx + tx) / 2;
-        return (
-          <path key={i} d={`M${fx},${fy} C${mx},${fy} ${mx},${ty} ${tx},${ty}`}
-            fill="none" stroke="#cbd5e1" strokeWidth="1.5" />
-        );
-      })}
-
-      {/* Nodes */}
-      {nodes.map(n => {
-        const cx = _cx(n.rank);
-        const cy = _cy(n.rankPos);
-        const color = _nodeColor(n);
-
-        if (n.kind === 'job') {
-          const lbl = (n.command_name || '').length > 16
-            ? n.command_name.slice(0, 14) + '…'
-            : n.command_name;
-          return (
-            <g key={n.node_id}>
-              <ellipse cx={cx} cy={cy} rx={JOB_RX} ry={JOB_RY}
-                fill="#fef3c7" stroke={color} strokeWidth="1.5" />
-              <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-                fontSize="9" fill="#92400e" style={{ pointerEvents: 'none' }}>
-                {lbl}
-              </text>
-            </g>
-          );
-        }
-
-        if (n.kind === 'file') {
-          const fname = (n.filename || '').split('/').pop();
-          const trunc = (s, mx) => s && s.length > mx ? s.slice(0, mx - 1) + '…' : (s || '');
-          return (
-            <g key={n.node_id} style={{ cursor: 'pointer' }}
-               onClick={() => window.open(n.download_url)}>
-              <rect x={cx - NODE_W/2} y={cy - 16} width={NODE_W} height={32} rx={3} ry={3}
-                fill="#f8fafc" stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4 2" />
-              <text x={cx} y={cy - 3} textAnchor="middle" fontSize={9} fill="#374151"
-                style={{ pointerEvents: 'none' }}>
-                {trunc(fname, 21)}
-              </text>
-              <text x={cx} y={cy + 9} textAnchor="middle" fontSize={7.5} fill="#94a3b8"
-                style={{ pointerEvents: 'none' }}>
-                {n.filepath_type || 'file'}
-              </text>
-            </g>
-          );
-        }
-
-        if (n.kind === 'samples') {
-          return (
-            <g key={n.node_id} style={{ cursor: 'pointer' }}
-               onClick={() => onPeekBiom && onPeekBiom(n.artifact_id)}>
-              <rect x={cx - NODE_W/2} y={cy - 16} width={NODE_W} height={32} rx={3} ry={3}
-                fill="#ecfdf5" stroke="#6ee7b7" strokeWidth={1} />
-              <text x={cx} y={cy} textAnchor="middle" fontSize={9.5} fill="#065f46"
-                dominantBaseline="middle" style={{ pointerEvents: 'none' }}>
-                {n.num_samples != null ? `Samples (${n.num_samples.toLocaleString()})` : 'Samples ▸'}
-              </text>
-            </g>
-          );
-        }
-
-        const isBiom      = n.artifact_type === 'BIOM';
-        const isChosen    = chosen.has(n.artifact_id);
-        const isRec       = isBiom && n.artifact_id === recommendedId;
-        const fname       = n.full_path ? n.full_path.split('/').pop() : null;
-        const label       = n.name || (n.artifact_type + ' ' + n.artifact_id);
-        const trunc       = (s, max) => s && s.length > max ? s.slice(0, max - 1) + '…' : (s || '');
-        const numSamples  = isBiom && sampleCounts ? sampleCounts[n.artifact_id] : null;
-
-        return (
-          <g key={n.node_id}
-            style={{ cursor: isBiom ? 'pointer' : 'default' }}
-            onClick={isBiom ? () => onToggleArtifact(n.artifact_id) : undefined}>
-            <rect
-              x={cx - NODE_W / 2} y={cy - NODE_H / 2}
-              width={NODE_W} height={NODE_H} rx="4" ry="4"
-              fill={isBiom && isChosen ? '#eff6ff' : '#f8fafc'}
-              stroke={isBiom ? (isChosen ? '#3b82f6' : color) : '#e2e8f0'}
-              strokeWidth={isBiom && isChosen ? 2.5 : 1}
-            />
-            {/* Type label (top-left) */}
-            <text x={cx - NODE_W / 2 + 5} y={cy - 7}
-              fontSize="8.5" fill={color} style={{ pointerEvents: 'none' }}>
-              {n.artifact_type || '?'}
-            </text>
-            {/* Name */}
-            <text x={cx} y={cy + (numSamples != null ? 1 : 5)}
-              textAnchor="middle" fontSize="9.5" fill="#374151"
-              style={{ pointerEvents: 'none' }}>
-              {trunc(label, 20)}
-            </text>
-            {/* Sample count for BIOMs */}
-            {isBiom && numSamples != null && (
-              <text x={cx} y={cy + NODE_H / 2 - 4}
-                textAnchor="middle" fontSize="8" fill="#6b7280"
-                style={{ pointerEvents: 'none' }}>
-                {numSamples.toLocaleString()} samples
-              </text>
-            )}
-            {/* Filename when no sample count */}
-            {isBiom && fname && numSamples == null && (
-              <text x={cx} y={cy + NODE_H / 2 - 4}
-                textAnchor="middle" fontSize="8" fill="#6b7280"
-                style={{ pointerEvents: 'none' }}>
-                {trunc(fname, 22)}
-              </text>
-            )}
-            {/* Recommended badge (top-right area) */}
-            {isRec && !isChosen && (
-              <text x={cx + NODE_W / 2 - 5} y={cy - NODE_H / 2 + 13}
-                textAnchor="end" fontSize="8" fill="#16a34a"
-                style={{ pointerEvents: 'none' }}>
-                rec
-              </text>
-            )}
-            {/* Selection checkmark */}
-            {isChosen && (
-              <text x={cx + NODE_W / 2 - 11} y={cy - NODE_H / 2 + 13}
-                fontSize="12" fill="#3b82f6" style={{ pointerEvents: 'none' }}>
-                ✓
-              </text>
-            )}
-            {/* Expand toggle (files / sample peek) */}
-            {((n.filepaths && n.filepaths.length > 0) || isBiom) && onToggleExpand && (
-              <text x={cx + NODE_W / 2 - 4} y={cy + NODE_H / 2 - 3}
-                textAnchor="end" fontSize="9" fill="#94a3b8"
-                style={{ cursor: 'pointer', userSelect: 'none' }}
-                onClick={e => { e.stopPropagation(); onToggleExpand(n.artifact_id); }}>
-                {expanded && expanded.has(n.artifact_id) ? '−' : '+'}
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </svg>
-  );
 }
 
 function filterGraphByPrep(graph, prepId) {
@@ -290,8 +50,153 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
-function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId }) {
-  const [expanded, setExpanded] = useState(new Set());
+// Walk parent_node_id from a BIOM node up to the root, collecting job steps in order.
+// Returns [{command_name, command_params}] from root → leaf.
+function buildPipeline(graph, biomNode) {
+  const byId = {};
+  for (const n of graph) byId[n.node_id] = n;
+
+  const steps = [];
+  let cur = biomNode;
+  while (cur && cur.parent_node_id) {
+    const parent = byId[cur.parent_node_id];
+    if (!parent) break;
+    if (parent.kind === 'job') {
+      steps.unshift({ command_name: parent.command_name, command_params: parent.command_params || {} });
+    }
+    cur = parent;
+  }
+  return steps;
+}
+
+// Pick 1-2 distinguishing params to show inline on a step chip.
+const KEY_PARAM_PATTERNS = /trim|length|reference|tax|threshold|database|gg|silva|similarity|phred/i;
+function pickKeyParams(params) {
+  return Object.entries(params || {})
+    .filter(([k]) => KEY_PARAM_PATTERNS.test(k))
+    .slice(0, 2)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(', ');
+}
+
+function PipelineBreadcrumb({ steps }) {
+  if (!steps.length) return null;
+  return (
+    <div className="ao-breadcrumb">
+      {steps.map((s, i) => {
+        const key = pickKeyParams(s.command_params);
+        return (
+          <React.Fragment key={i}>
+            {i > 0 && <span className="ao-breadcrumb-sep">→</span>}
+            <span className="ao-step-chip">
+              {s.command_name}
+              {key && <span className="ao-step-params"> · {key}</span>}
+            </span>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function VerticalWorkflowMap({ steps, filepaths, artifactId, studyId }) {
+  if (!steps.length) return null;
+  return (
+    <div className="ao-workflow-map">
+      {steps.map((s, i) => {
+        const isLast = i === steps.length - 1;
+        const params = Object.entries(s.command_params || {});
+        return (
+          <div key={i} className="ao-workflow-step">
+            <div className="ao-workflow-step-left">
+              <span className={`ao-workflow-dot${isLast ? ' ao-workflow-dot-last' : ''}`} />
+              {!isLast && <span className="ao-workflow-line" />}
+            </div>
+            <div className="ao-workflow-step-body">
+              <div className="ao-workflow-cmd">{s.command_name}</div>
+              {params.length > 0 && (
+                <div className="ao-workflow-params">
+                  {params.map(([k, v]) => (
+                    <span key={k} className="ao-param-pill">{k}: {String(v)}</span>
+                  ))}
+                </div>
+              )}
+              {isLast && filepaths.length > 0 && (
+                <div className="ao-workflow-files">
+                  {filepaths.map(fp => (
+                    <a key={fp.filepath_id} className="ao-file-btn"
+                      href={`${API}/artifacts/${artifactId}/files/${fp.filepath_id}/download?study_id=${studyId}`}
+                      target="_blank" rel="noreferrer">
+                      ↓ {fp.filename || fp.filepath_type}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, onPeekBiom }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const isChosen  = (chosenIds || []).includes(node.artifact_id);
+  const isRec     = node.artifact_id === recommendedId;
+  const numSamples = sampleCounts ? sampleCounts[node.artifact_id] : null;
+  const steps      = buildPipeline(graph, node);
+  const filepaths  = node.filepaths || [];
+
+  return (
+    <div className={`ao-card${isChosen ? ' ao-card-chosen' : ''}`}>
+      <div className="ao-card-header">
+        <label className="ao-select-row">
+          <input type="checkbox" checked={isChosen}
+            onChange={() => onToggleArtifact(node.artifact_id)} />
+          <span className="ao-card-name">
+            {node.name || (node.artifact_type + ' ' + node.artifact_id)}
+          </span>
+          {isRec && <span className="ao-rec-badge">recommended</span>}
+          {node.data_type && <span className="dtype-chip">{node.data_type}</span>}
+          {numSamples != null && (
+            <span className="ao-sample-count">{numSamples.toLocaleString()} samples</span>
+          )}
+        </label>
+      </div>
+
+      <PipelineBreadcrumb steps={steps} />
+
+      <div className="ao-files-row">
+        {filepaths.map(fp => (
+          <a key={fp.filepath_id} className="ao-file-btn"
+            href={`${API}/artifacts/${node.artifact_id}/files/${fp.filepath_id}/download?study_id=${studyId}`}
+            target="_blank" rel="noreferrer">
+            ↓ {fp.filename || fp.filepath_type}
+          </a>
+        ))}
+        {onPeekBiom && (
+          <button className="ao-samples-btn" onClick={() => onPeekBiom(node.artifact_id)}>
+            View samples
+          </button>
+        )}
+        {steps.length > 0 && (
+          <button className="ao-expand-btn" onClick={() => setExpanded(p => !p)}>
+            {expanded ? 'Hide workflow' : 'Show workflow'}
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <VerticalWorkflowMap steps={steps} filepaths={filepaths}
+          artifactId={node.artifact_id} studyId={studyId} />
+      )}
+    </div>
+  );
+}
+
+function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId }) {
   const [peekBiomId, setPeekBiomId] = useState(null);
 
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
@@ -323,7 +228,6 @@ function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepF
     );
   }
 
-  // Compute prep-reachable set once for "All preps" filtering
   const reachable = prepReachableSet(graph);
   const hasOrphans = graph.some(n => !reachable.has(n.node_id));
 
@@ -333,45 +237,22 @@ function ArtifactGraphView({ detail, loading, chosenIds, onToggleArtifact, prepF
   } else if (prepFilter) {
     filtered = filterGraphByPrep(graph, prepFilter);
   } else {
-    // Default: show only prep-reachable nodes; orphans hidden unless "Other" selected
     filtered = reachable.size > 0 ? graph.filter(n => reachable.has(n.node_id)) : graph;
   }
 
-  if (!filtered.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No artifacts for selected prep.</p>;
+  const bioms = filtered.filter(n => n.kind === 'artifact' && n.artifact_type === 'BIOM');
 
-  // Inject synthetic file/samples child nodes for expanded artifacts
-  const extraNodes = [];
-  for (const n of filtered) {
-    if (n.kind !== 'artifact' || !expanded.has(n.artifact_id)) continue;
-    (n.filepaths || []).forEach(fp => {
-      extraNodes.push({
-        kind: 'file', node_id: `f${n.artifact_id}_${fp.filepath_id}`,
-        parent_node_id: n.node_id, filename: fp.filename,
-        filepath_type: fp.filepath_type, artifact_id: n.artifact_id,
-        filepath_id: fp.filepath_id,
-        download_url: `${API}/artifacts/${n.artifact_id}/files/${fp.filepath_id}/download?study_id=${studyId}`,
-      });
-    });
-    if (n.artifact_type === 'BIOM') {
-      extraNodes.push({
-        kind: 'samples', node_id: `s${n.artifact_id}`, parent_node_id: n.node_id,
-        artifact_id: n.artifact_id,
-        num_samples: sampleCounts ? sampleCounts[n.artifact_id] : null,
-      });
-    }
-  }
-
-  const graphData = buildGraphLayout([...filtered, ...extraNodes]);
-  const handleToggleExpand = id => setExpanded(prev => {
-    const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s;
-  });
+  if (!bioms.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No BIOM artifacts for selected prep.</p>;
 
   return (
     <div>
-      <div className="artifact-graph-scroll">
-        <ArtifactGraphSvg graphData={graphData} chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
-          recommendedId={recommendedId} sampleCounts={sampleCounts}
-          expanded={expanded} onToggleExpand={handleToggleExpand} onPeekBiom={setPeekBiomId} />
+      <div className="ao-card-list">
+        {bioms.map(n => (
+          <BiomCard key={n.artifact_id} node={n} graph={filtered}
+            chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
+            recommendedId={recommendedId} sampleCounts={sampleCounts}
+            studyId={studyId} onPeekBiom={setPeekBiomId} />
+        ))}
       </div>
       {peekBiomId && (
         <SamplePeek artifactId={peekBiomId} studyId={studyId}

@@ -345,7 +345,7 @@ function MergeStudySlot({ slot, validationStudy, onRemove, onToggleArtifact, onD
                 </select>
               )}
             </div>
-            <ArtifactGraphView detail={detail} loading={detailLoading}
+            <ArtifactOutputsView detail={detail} loading={detailLoading}
               chosenIds={chosenIds} onToggleArtifact={onToggleArtifact} prepFilter={prepFilter}
               recommendedId={autoId} sampleCounts={sampleCounts} studyId={slot.study_id} />
           </div>

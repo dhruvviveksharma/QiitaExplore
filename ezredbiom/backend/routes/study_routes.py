@@ -45,10 +45,13 @@ def api_study_detail(study_id):
             traceback.print_exc()
             return jsonify({"error": str(e)}), 500
 
-    # Re-fetch if cached graph predates the filepaths feature
+    # Re-fetch if cached graph predates the filepaths or command_params feature
     if artifact_graph is not None:
         art_nodes = [n for n in artifact_graph if n.get("kind") == "artifact"]
-        if art_nodes and "filepaths" not in art_nodes[0]:
+        job_nodes = [n for n in artifact_graph if n.get("kind") == "job"]
+        stale = (art_nodes and "filepaths" not in art_nodes[0]) or \
+                (job_nodes and "command_params" not in job_nodes[0])
+        if stale:
             artifact_graph = None
 
     if artifact_graph is None:

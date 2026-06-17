@@ -82,7 +82,8 @@ def _build(study_id: int) -> list:
             if non_roots:
                 cur.execute(
                     """
-                    SELECT aopj.artifact_id, aopj.processing_job_id::text, sc.name
+                    SELECT aopj.artifact_id, aopj.processing_job_id::text, sc.name,
+                           pj.command_parameters
                     FROM qiita.artifact_output_processing_job aopj
                     JOIN qiita.processing_job pj   ON aopj.processing_job_id = pj.processing_job_id
                     JOIN qiita.software_command sc  ON pj.command_id = sc.command_id
@@ -92,7 +93,14 @@ def _build(study_id: int) -> list:
                 )
                 for r in cur.fetchall():
                     if r[0] not in job_map:
-                        job_map[r[0]] = (r[1], r[2])
+                        raw_params = r[3] or {}
+                        # Keep only scalar values; drop artifact-reference keys
+                        params = {
+                            k: v for k, v in raw_params.items()
+                            if isinstance(v, (str, int, float, bool))
+                            and k not in ("input_data",)
+                        }
+                        job_map[r[0]] = (r[1], r[2], params)
 
             # Batch-fetch artifact metadata + all filepaths; prefer .biom for the node's full_path
             cur.execute(
@@ -137,13 +145,14 @@ def _build(study_id: int) -> list:
         if parent_id is None:
             art_parent[aid] = None
         elif aid in job_map:
-            job_id, cmd = job_map[aid]
+            job_id, cmd, params = job_map[aid]
             jnid = "j" + job_id.replace("-", "")[:12]
             if jnid not in job_nodes:
                 job_nodes[jnid] = {
                     "kind": "job", "node_id": jnid,
                     "parent_node_id": f"a{parent_id}",
                     "job_id": job_id, "command_name": cmd,
+                    "command_params": params,
                 }
             art_parent[aid] = jnid
         else:
