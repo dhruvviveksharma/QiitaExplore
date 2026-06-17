@@ -122,7 +122,6 @@ function deriveCols(rows, max = 8) {
 
 function StudySampleTable({ workspaceId, study, filter }) {
   const [rows, setRows]       = useState([]);
-  const [offset, setOffset]   = useState(0);
   const [loadErr, setLoadErr] = useState('');
   const [loading, setLoading] = useState(false);
   const PAGE = 100;
@@ -130,12 +129,10 @@ function StudySampleTable({ workspaceId, study, filter }) {
   function loadMore() {
     if (loading) return;
     setLoading(true);
-    apiFetch(`/merge-workspaces/${workspaceId}/studies/${study.study_id}/samples?offset=${offset}&limit=${PAGE}`)
+    apiFetch(`/merge-workspaces/${workspaceId}/studies/${study.study_id}/samples?offset=${rows.length}&limit=${PAGE}`)
       .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
       .then(d => {
-        const newRows = d.rows || [];
-        setRows(prev => [...prev, ...newRows]);
-        setOffset(prev => prev + newRows.length);
+        setRows(prev => [...prev, ...(d.rows || [])]);
         if (d.meta_error) setLoadErr(`Metadata unavailable: ${d.meta_error}`);
         setLoading(false);
       })
@@ -160,7 +157,7 @@ function StudySampleTable({ workspaceId, study, filter }) {
         <span className="data-type-badge">#{study.study_id}</span>
         <span className="merge-study-title">{study.study_title}</span>
         <span className="merge-study-count">
-          {rows.length < study.total
+          {hasMore
             ? `${rows.length.toLocaleString()} / ${study.total.toLocaleString()} loaded`
             : `${study.total.toLocaleString()} samples`}
         </span>
