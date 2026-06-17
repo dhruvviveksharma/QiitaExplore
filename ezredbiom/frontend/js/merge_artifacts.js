@@ -50,6 +50,16 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
+function FileLink({ fp, artifactId, studyId }) {
+  return (
+    <a className="ao-file-btn"
+      href={`${API}/artifacts/${artifactId}/files/${fp.filepath_id}/download?study_id=${studyId}`}
+      target="_blank" rel="noreferrer">
+      ↓ {fp.filename || fp.filepath_type}
+    </a>
+  );
+}
+
 // Walk parent_node_id from a BIOM node up to the root, collecting job steps in order.
 // Returns [{command_name, command_params}] from root → leaf.
 function buildPipeline(graph, biomNode) {
@@ -124,11 +134,7 @@ function VerticalWorkflowMap({ steps, filepaths, artifactId, studyId }) {
               {isLast && filepaths.length > 0 && (
                 <div className="ao-workflow-files">
                   {filepaths.map(fp => (
-                    <a key={fp.filepath_id} className="ao-file-btn"
-                      href={`${API}/artifacts/${artifactId}/files/${fp.filepath_id}/download?study_id=${studyId}`}
-                      target="_blank" rel="noreferrer">
-                      ↓ {fp.filename || fp.filepath_type}
-                    </a>
+                    <FileLink key={fp.filepath_id} fp={fp} artifactId={artifactId} studyId={studyId} />
                   ))}
                 </div>
               )}
@@ -170,11 +176,7 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
 
       <div className="ao-files-row">
         {filepaths.map(fp => (
-          <a key={fp.filepath_id} className="ao-file-btn"
-            href={`${API}/artifacts/${node.artifact_id}/files/${fp.filepath_id}/download?study_id=${studyId}`}
-            target="_blank" rel="noreferrer">
-            ↓ {fp.filename || fp.filepath_type}
-          </a>
+          <FileLink key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />
         ))}
         {onPeekBiom && (
           <button className="ao-samples-btn" onClick={() => onPeekBiom(node.artifact_id)}>
@@ -229,7 +231,6 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
   }
 
   const reachable = prepReachableSet(graph);
-  const hasOrphans = graph.some(n => !reachable.has(n.node_id));
 
   let filtered;
   if (prepFilter === 'other') {

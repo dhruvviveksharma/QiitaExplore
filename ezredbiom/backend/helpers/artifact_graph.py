@@ -98,7 +98,7 @@ def _build(study_id: int) -> list:
                         params = {
                             k: v for k, v in raw_params.items()
                             if isinstance(v, (str, int, float, bool))
-                            and k not in ("input_data",)
+                            and k != "input_data"
                         }
                         job_map[r[0]] = (r[1], r[2], params)
 
