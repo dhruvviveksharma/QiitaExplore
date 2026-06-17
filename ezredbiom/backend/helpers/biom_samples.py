@@ -41,30 +41,6 @@ def get_biom_sample_ids(artifact_id: int, biom_path: str) -> list:
     return ids
 
 
-def build_per_study_sample_rows(studies_entries: list) -> list:
-    """Return [{study_id, study_title, rows:[{sample_id, fields}]}] — full BIOM
-    membership per study with no cross-study deduplication.
-
-    studies_entries: [{study_id, study_title, artifact_id, full_path, meta_by_id}]
-    """
-    groups = []
-    for entry in studies_entries:
-        try:
-            ids = get_biom_sample_ids(entry["artifact_id"], entry["full_path"])
-        except Exception:
-            ids = []
-        meta = entry.get("meta_by_id") or {}
-        group = {
-            "study_id": entry["study_id"],
-            "study_title": entry.get("study_title", ""),
-            "rows": [{"sample_id": sid, "fields": meta.get(sid, {})} for sid in ids],
-        }
-        if entry.get("meta_error"):
-            group["meta_error"] = entry["meta_error"]
-        groups.append(group)
-    return groups
-
-
 def compute_merge_preview(per_study_sets: dict) -> dict:
     """Return merge output statistics from per-study sample-id sets.
 

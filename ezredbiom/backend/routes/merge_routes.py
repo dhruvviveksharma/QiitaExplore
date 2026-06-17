@@ -25,8 +25,8 @@ from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
-from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview, build_per_study_sample_rows
-from helpers.qiita_fetch import _get_or_fetch_full_samples
+from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
+from helpers.merge_samples import build_sample_page
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
 
 _DEFAULT_USER = "default"
@@ -84,6 +84,16 @@ def _type_filtered_artifacts(artifacts: list, common_type: str) -> list:
         return artifacts
     filtered = [a for a in artifacts if _namespace(a.get("data_type", "")) == common_type]
     return filtered or artifacts
+
+
+def _resolve_artifact(slot: dict, artifacts: list, common_type: str):
+    """Return the chosen or autopicked BIOM artifact for a workspace study slot."""
+    type_artifacts = _type_filtered_artifacts(artifacts, common_type)
+    chosen_ids = slot.get("chosen_artifact_ids") or []
+    if chosen_ids:
+        chosen = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
+        return chosen[0] if chosen else autopick_artifact(type_artifacts, common_type)
+    return autopick_artifact(type_artifacts, common_type)
 
 
 def _get_sample_ids(study_id: int):
@@ -207,15 +217,7 @@ def validate_merge_workspace(workspace_id):
     for slot in studies_list:
         sid = int(slot["study_id"])
         artifacts = _get_artifacts(sid)
-
-        # Pre-filter artifacts to intersection type, then autopick within that set
-        type_artifacts = _type_filtered_artifacts(artifacts, common_type)
-        chosen_ids = slot.get("chosen_artifact_ids") or []
-        if chosen_ids:
-            chosen_arts = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
-            artifact = chosen_arts[0] if chosen_arts else autopick_artifact(type_artifacts, common_type)
-        else:
-            artifact = autopick_artifact(type_artifacts, common_type)
+        artifact = _resolve_artifact(slot, artifacts, common_type)
 
         # Get per-BIOM sample IDs (true membership, cached forever)
         biom_sample_ids = None
@@ -282,7 +284,7 @@ def validate_merge_workspace(workspace_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>/samples", methods=["GET"])
 def get_workspace_samples(workspace_id):
-    """Return all samples (with metadata) for the union of chosen artifacts in a workspace."""
+    """Return skeleton (study_id, study_title, total BIOM sample count) for each study."""
     user_id = _user_id()
     ws = get_workspace(workspace_id, user_id)
     if ws is None:
@@ -291,53 +293,48 @@ def get_workspace_samples(workspace_id):
     studies_list = ws.get("studies") or []
     common_type = studies_type_intersection([s.get("data_types", "") for s in studies_list])
 
-    entries = []
+    studies = []
     for slot in studies_list:
         sid = int(slot["study_id"])
-        artifacts = _get_artifacts(sid)
-        type_artifacts = _type_filtered_artifacts(artifacts, common_type)
-        chosen_ids = slot.get("chosen_artifact_ids") or []
-        if chosen_ids:
-            chosen_arts = [a for a in artifacts if a.get("artifact_id") in set(chosen_ids)]
-            artifact = chosen_arts[0] if chosen_arts else autopick_artifact(type_artifacts, common_type)
-        else:
-            artifact = autopick_artifact(type_artifacts, common_type)
+        artifact = _resolve_artifact(slot, _get_artifacts(sid), common_type)
+        total = 0
+        if artifact and artifact.get("artifact_id") and artifact.get("full_path"):
+            try:
+                total = len(get_biom_sample_ids(artifact["artifact_id"], artifact["full_path"]))
+            except Exception:
+                pass
+        studies.append({"study_id": sid, "study_title": slot.get("study_title", ""), "total": total})
+    return jsonify({"studies": studies})
 
-        if not artifact or not artifact.get("full_path"):
-            continue
 
-        # Read metadata from cache; fall back to Qiita fetch if not cached yet
-        meta_by_id = {}
-        meta_error = ""
-        try:
-            cached = get_study_detail_cache(sid)
-            if cached and cached.get("full_samples_json"):
-                for row in json.loads(cached["full_samples_json"]):
-                    meta_by_id[row["sample_id"]] = row.get("fields", {})
-            else:
-                samples = _get_or_fetch_full_samples(sid)
-                if samples:
-                    meta_by_id = {r["sample_id"]: r.get("fields", {}) for r in samples}
-                else:
-                    meta_error = "no metadata in cache or Qiita DB"
-        except Exception as exc:
-            meta_error = str(exc)
-            app.logger.error("metadata fetch failed for study %s: %s", sid, exc)
-
-        entries.append({
-            "study_id": sid,
-            "study_title": slot.get("study_title", ""),
-            "artifact_id": artifact["artifact_id"],
-            "full_path": artifact["full_path"],
-            "meta_by_id": meta_by_id,
-            "meta_error": meta_error,
-        })
+@app.route("/api/merge-workspaces/<workspace_id>/studies/<int:study_id>/samples", methods=["GET"])
+def get_workspace_study_samples(workspace_id, study_id):
+    """Return a page of samples with metadata for one study in a workspace."""
+    user_id = _user_id()
+    ws = get_workspace(workspace_id, user_id)
+    if ws is None:
+        return jsonify({"error": "Not found"}), 404
 
     try:
-        studies = build_per_study_sample_rows(entries)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-    return jsonify({"studies": studies})
+        offset = max(0, int(request.args.get("offset", 0)))
+        limit = min(500, max(1, int(request.args.get("limit", 100))))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid offset or limit"}), 400
+
+    slot = next((s for s in (ws.get("studies") or []) if int(s["study_id"]) == study_id), None)
+    if slot is None:
+        return jsonify({"error": "Study not in workspace"}), 404
+
+    common_type = studies_type_intersection([s.get("data_types", "") for s in ws.get("studies") or []])
+    artifact = _resolve_artifact(slot, _get_artifacts(study_id), common_type)
+    if not artifact or not artifact.get("full_path"):
+        return jsonify({"error": "No BIOM artifact for this study"}), 404
+
+    return jsonify(build_sample_page(
+        artifact["artifact_id"], artifact["full_path"],
+        study_id, slot.get("study_title", ""),
+        offset, limit,
+    ))
 
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────

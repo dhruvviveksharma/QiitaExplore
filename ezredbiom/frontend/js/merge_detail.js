@@ -120,45 +120,79 @@ function deriveCols(rows, max = 8) {
     .map(([k]) => k);
 }
 
-function StudySampleTable({ study, filter }) {
-  const cols = deriveCols(study.rows);
+function StudySampleTable({ workspaceId, study, filter }) {
+  const [rows, setRows]       = useState([]);
+  const [offset, setOffset]   = useState(0);
+  const [loadErr, setLoadErr] = useState('');
+  const [loading, setLoading] = useState(false);
+  const PAGE = 100;
+
+  function loadMore() {
+    if (loading) return;
+    setLoading(true);
+    apiFetch(`/merge-workspaces/${workspaceId}/studies/${study.study_id}/samples?offset=${offset}&limit=${PAGE}`)
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(d => {
+        const newRows = d.rows || [];
+        setRows(prev => [...prev, ...newRows]);
+        setOffset(prev => prev + newRows.length);
+        if (d.meta_error) setLoadErr(`Metadata unavailable: ${d.meta_error}`);
+        setLoading(false);
+      })
+      .catch(e => { setLoadErr(String(e)); setLoading(false); });
+  }
+
+  useEffect(() => { loadMore(); }, []);
+
+  const cols = deriveCols(rows);
   const q = filter.trim().toLowerCase();
   const visible = q
-    ? study.rows.filter(r =>
+    ? rows.filter(r =>
         r.sample_id.toLowerCase().includes(q) ||
         cols.some(c => String(r.fields[c] ?? '').toLowerCase().includes(q)))
-    : study.rows;
+    : rows;
+
+  const hasMore = rows.length < study.total;
+
   return (
     <div className="merge-study-table">
       <div className="merge-study-header">
         <span className="data-type-badge">#{study.study_id}</span>
         <span className="merge-study-title">{study.study_title}</span>
-        <span className="merge-study-count">{study.rows.length.toLocaleString()} samples</span>
+        <span className="merge-study-count">
+          {rows.length < study.total
+            ? `${rows.length.toLocaleString()} / ${study.total.toLocaleString()} loaded`
+            : `${study.total.toLocaleString()} samples`}
+        </span>
       </div>
-      {study.meta_error && (
-        <div className="sample-peek-msg sample-peek-err">
-          ⚠ Metadata unavailable: {study.meta_error}
+      {loadErr && <div className="sample-peek-msg sample-peek-err">⚠ {loadErr}</div>}
+      {rows.length > 0 && (
+        <div className="merge-sample-table-wrap">
+          <table className="prep-table sample-peek-table">
+            <thead>
+              <tr>
+                <th>Sample ID</th>
+                {cols.map(c => <th key={c}>{c}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(r => (
+                <tr key={r.sample_id}>
+                  <td>{r.sample_id}</td>
+                  {cols.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {q && <div className="sample-peek-msg">{visible.length} / {rows.length} shown</div>}
         </div>
       )}
-      <div className="merge-sample-table-wrap">
-        <table className="prep-table sample-peek-table">
-          <thead>
-            <tr>
-              <th>Sample ID</th>
-              {cols.map(c => <th key={c}>{c}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map(r => (
-              <tr key={r.sample_id}>
-                <td>{r.sample_id}</td>
-                {cols.map(c => <td key={c}>{r.fields[c] ?? ''}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {q && <div className="sample-peek-msg">{visible.length} / {study.rows.length} shown</div>}
-      </div>
+      {loading && <div className="sample-peek-msg">Loading…</div>}
+      {!loading && hasMore && (
+        <button className="merge-btn-ghost merge-load-more" onClick={loadMore}>
+          Load more ({rows.length.toLocaleString()} of {study.total.toLocaleString()})
+        </button>
+      )}
     </div>
   );
 }
@@ -197,7 +231,7 @@ function MergeSampleBrowser({ workspaceId, total }) {
           {loading && <div className="sample-peek-msg">Loading…</div>}
           {err && <div className="sample-peek-msg sample-peek-err">Error: {err}</div>}
           {!loading && studies && studies.map(st => (
-            <StudySampleTable key={st.study_id} study={st} filter={filter} />
+            <StudySampleTable key={st.study_id} workspaceId={workspaceId} study={st} filter={filter} />
           ))}
         </>
       )}
