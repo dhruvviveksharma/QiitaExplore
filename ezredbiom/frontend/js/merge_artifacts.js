@@ -146,8 +146,9 @@ function VerticalWorkflowMap({ steps, filepaths, artifactId, studyId }) {
   );
 }
 
-function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, onPeekBiom }) {
+function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId }) {
   const [expanded, setExpanded] = useState(false);
+  const [peekOpen, setPeekOpen] = useState(false);
 
   const isChosen  = (chosenIds || []).includes(node.artifact_id);
   const isRec     = node.artifact_id === recommendedId;
@@ -178,11 +179,9 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
         {filepaths.map(fp => (
           <FileLink key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />
         ))}
-        {onPeekBiom && (
-          <button className="ao-samples-btn" onClick={() => onPeekBiom(node.artifact_id)}>
-            View samples
-          </button>
-        )}
+        <button className="ao-samples-btn" onClick={() => setPeekOpen(p => !p)}>
+          {peekOpen ? 'Hide samples' : 'View samples'}
+        </button>
         {steps.length > 0 && (
           <button className="ao-expand-btn" onClick={() => setExpanded(p => !p)}>
             {expanded ? 'Hide workflow' : 'Show workflow'}
@@ -194,13 +193,15 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
         <VerticalWorkflowMap steps={steps} filepaths={filepaths}
           artifactId={node.artifact_id} studyId={studyId} />
       )}
+      {peekOpen && (
+        <SamplePeek artifactId={node.artifact_id} studyId={studyId}
+          onClose={() => setPeekOpen(false)} />
+      )}
     </div>
   );
 }
 
 function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId }) {
-  const [peekBiomId, setPeekBiomId] = useState(null);
-
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -252,13 +253,9 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
           <BiomCard key={n.artifact_id} node={n} graph={filtered}
             chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
             recommendedId={recommendedId} sampleCounts={sampleCounts}
-            studyId={studyId} onPeekBiom={setPeekBiomId} />
+            studyId={studyId} />
         ))}
       </div>
-      {peekBiomId && (
-        <SamplePeek artifactId={peekBiomId} studyId={studyId}
-          onClose={() => setPeekBiomId(null)} />
-      )}
     </div>
   );
 }
