@@ -79,32 +79,73 @@ function buildPipeline(graph, biomNode) {
   return steps;
 }
 
-// Pick 1-2 distinguishing params to show inline on a step chip.
-const KEY_PARAM_PATTERNS = /trim|length|reference|tax|threshold|database|gg|silva|similarity|phred/i;
-function pickKeyParams(params) {
-  return Object.entries(params || {})
-    .filter(([k]) => KEY_PARAM_PATTERNS.test(k))
-    .slice(0, 2)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(', ');
+// Step parameters ("flags"), revealed on demand. Shared by the breadcrumb and map.
+function FlagList({ params }) {
+  const entries = Object.entries(params || {});
+  if (!entries.length) return null;
+  return (
+    <div className="ao-flags-pop">
+      {entries.map(([k, v]) => (
+        <div key={k} className="ao-flag-row">
+          <span className="ao-flag-k">{k}</span> {String(v)}
+        </div>
+      ))}
+    </div>
+  );
 }
 
+// Clean command-name chips; click a step to reveal its flags below the row.
 function PipelineBreadcrumb({ steps }) {
+  const [openIdx, setOpenIdx] = useState(null);
   if (!steps.length) return null;
+  const open = openIdx != null ? steps[openIdx] : null;
   return (
-    <div className="ao-breadcrumb">
-      {steps.map((s, i) => {
-        const key = pickKeyParams(s.command_params);
-        return (
-          <React.Fragment key={i}>
-            {i > 0 && <span className="ao-breadcrumb-sep">→</span>}
-            <span className="ao-step-chip">
-              {s.command_name}
-              {key && <span className="ao-step-params"> · {key}</span>}
-            </span>
-          </React.Fragment>
-        );
-      })}
+    <div className="ao-breadcrumb-wrap">
+      <div className="ao-breadcrumb">
+        {steps.map((s, i) => {
+          const hasFlags = Object.keys(s.command_params || {}).length > 0;
+          return (
+            <React.Fragment key={i}>
+              {i > 0 && <span className="ao-breadcrumb-sep">→</span>}
+              <button type="button" disabled={!hasFlags}
+                className={`ao-step-chip${openIdx === i ? ' ao-step-chip-open' : ''}`}
+                onClick={() => setOpenIdx(openIdx === i ? null : i)}>
+                {s.command_name}
+                {hasFlags && <span className="ao-step-caret">{openIdx === i ? '▾' : '▸'}</span>}
+              </button>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {open && <FlagList params={open.command_params} />}
+    </div>
+  );
+}
+
+function WorkflowStep({ step, isLast, filepaths, artifactId, studyId }) {
+  const [open, setOpen] = useState(false);
+  const hasFlags = Object.keys(step.command_params || {}).length > 0;
+  return (
+    <div className="ao-workflow-step">
+      <div className="ao-workflow-step-left">
+        <span className={`ao-workflow-dot${isLast ? ' ao-workflow-dot-last' : ''}`} />
+        {!isLast && <span className="ao-workflow-line" />}
+      </div>
+      <div className="ao-workflow-step-body">
+        <button type="button" disabled={!hasFlags} className="ao-workflow-cmd"
+          onClick={() => setOpen(p => !p)}>
+          {step.command_name}
+          {hasFlags && <span className="ao-step-caret">{open ? '▾' : '▸'}</span>}
+        </button>
+        {open && <FlagList params={step.command_params} />}
+        {isLast && filepaths.length > 0 && (
+          <div className="ao-workflow-files">
+            {filepaths.map(fp => (
+              <FileLink key={fp.filepath_id} fp={fp} artifactId={artifactId} studyId={studyId} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -113,35 +154,10 @@ function VerticalWorkflowMap({ steps, filepaths, artifactId, studyId }) {
   if (!steps.length) return null;
   return (
     <div className="ao-workflow-map">
-      {steps.map((s, i) => {
-        const isLast = i === steps.length - 1;
-        const params = Object.entries(s.command_params || {});
-        return (
-          <div key={i} className="ao-workflow-step">
-            <div className="ao-workflow-step-left">
-              <span className={`ao-workflow-dot${isLast ? ' ao-workflow-dot-last' : ''}`} />
-              {!isLast && <span className="ao-workflow-line" />}
-            </div>
-            <div className="ao-workflow-step-body">
-              <div className="ao-workflow-cmd">{s.command_name}</div>
-              {params.length > 0 && (
-                <div className="ao-workflow-params">
-                  {params.map(([k, v]) => (
-                    <span key={k} className="ao-param-pill">{k}: {String(v)}</span>
-                  ))}
-                </div>
-              )}
-              {isLast && filepaths.length > 0 && (
-                <div className="ao-workflow-files">
-                  {filepaths.map(fp => (
-                    <FileLink key={fp.filepath_id} fp={fp} artifactId={artifactId} studyId={studyId} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {steps.map((s, i) => (
+        <WorkflowStep key={i} step={s} isLast={i === steps.length - 1}
+          filepaths={filepaths} artifactId={artifactId} studyId={studyId} />
+      ))}
     </div>
   );
 }
