@@ -69,12 +69,12 @@ function SamplePeek({ artifactId, studyId, onClose }) {
       .catch(() => { setErr('Could not load samples.'); setLoading(false); });
   }, [artifactId]);
 
-  const cols = rows?.length ? Object.keys(rows[0].fields || {}) : [];
+  const cols = deriveCols(rows);
 
   return (
     <div className="sample-peek">
       <div className="sample-peek-header">
-        <span>First {rows?.length ?? '…'} sample IDs</span>
+        <span>First {rows?.length ?? '…'} samples</span>
         <button className="merge-btn-ghost" onClick={onClose}>✕</button>
       </div>
       {loading && <div className="sample-peek-msg">Loading…</div>}

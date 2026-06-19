@@ -20,7 +20,7 @@ from store import (
     get_study_detail_cache,
     upsert_study_detail_cache,
 )
-from helpers.qiita_fetch import _fetch_study_detail_from_qiita
+from helpers.qiita_fetch import _fetch_study_detail_from_qiita, _qiita_fetch
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
@@ -456,26 +456,19 @@ def get_artifact_samples(artifact_id):
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
-    # Attach a few metadata fields from full_samples_json cache
-    cached = get_study_detail_cache(study_id)
-    meta_by_id = {}
-    if cached and cached.get("full_samples_json"):
-        try:
-            for row in json.loads(cached["full_samples_json"]):
-                meta_by_id[row["sample_id"]] = row.get("fields", {})
-        except Exception:
-            pass
+    target_ids = sample_ids[:limit]
+    meta_rows = _qiita_fetch(
+        f"""
+        SELECT sample_id, sample_values
+        FROM qiita.sample_{study_id}
+        WHERE sample_id = ANY(%s)
+          AND sample_id <> 'qiita_sample_column_names'
+        """,
+        [target_ids],
+    )
+    meta_by_id = {r[0]: dict(r[1]) for r in meta_rows}
 
-    rows = []
-    for sid in sample_ids[:limit]:
-        fields = meta_by_id.get(sid, {})
-        # Include up to 3 metadata columns for the peek table
-        preview_cols = ["host_subject_id", "sample_type", "env_biome", "body_site"]
-        rows.append({
-            "sample_id": sid,
-            "fields": {k: fields[k] for k in preview_cols if k in fields},
-        })
-
+    rows = [{"sample_id": sid, "fields": meta_by_id.get(sid, {})} for sid in target_ids]
     return jsonify(rows)
 
 
