@@ -1632,6 +1632,28 @@ input, textarea { font-family: var(--sans); }
 .ao-workflow-cmd:not(:disabled):hover { color: var(--accent); }
 .ao-workflow-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 
+/* Provenance tree (CSS org-chart) */
+.ao-tree { overflow-x: auto; padding: 4px 0 8px; }
+.ao-tree-node { display: flex; flex-direction: column; align-items: center; }
+.ao-tree-children { display: flex; gap: 16px; padding-top: 16px; position: relative; }
+.ao-tree-children::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 2px; height: 16px; background: var(--border); }
+.ao-tree-children > .ao-tree-node { padding-top: 14px; position: relative; }
+.ao-tree-children > .ao-tree-node::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 2px; height: 14px; background: var(--border); }
+.ao-tree-children > .ao-tree-node::after { content: ''; position: absolute; top: 0; left: -8px; right: -8px; height: 2px; background: var(--border); }
+.ao-tree-children > .ao-tree-node:first-child::after { left: 50%; }
+.ao-tree-children > .ao-tree-node:last-child::after { right: 50%; }
+.ao-tree-children > .ao-tree-node:only-child { padding-top: 0; }
+.ao-tree-children > .ao-tree-node:only-child::before, .ao-tree-children > .ao-tree-node:only-child::after { display: none; }
+.ao-tree-box { font-size: 0.8rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); padding: 6px 12px; text-align: center; white-space: nowrap; color: var(--text-2); cursor: pointer; min-width: 80px; }
+.ao-tree-box:disabled { cursor: default; }
+.ao-tree-box:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+.ao-tree-box-open { border-color: var(--accent); color: var(--accent); }
+.ao-tree-box-root { background: var(--surface-2); color: var(--text-1); font-weight: 500; cursor: default; }
+.ao-tree-box-leaf { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; cursor: default; min-width: 120px; }
+.ao-tree-box-chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.ao-tree-leaf-name { font-weight: 500; color: var(--text-1); }
+.ao-card-list-below { margin-top: 12px; }
+
 /* Global BIOM selector bar */
 .global-biom-selector { display: flex; align-items: center; gap: 6px; padding: 6px 12px 4px; flex-wrap: wrap; }
 .merge-dt-select { font-size: 0.8rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text-1); }
