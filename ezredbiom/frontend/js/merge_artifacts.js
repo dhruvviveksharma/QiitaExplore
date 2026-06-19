@@ -404,8 +404,10 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
 
   if (!bioms.length) return <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>No BIOM artifacts for selected prep.</p>;
 
-  const parentless = bioms.filter(n => buildPipeline(filtered, n).length === 0);
-  const rooted     = bioms.filter(n => buildPipeline(filtered, n).length > 0);
+  const rooted = [], parentless = [];
+  for (const n of bioms) {
+    (buildPipeline(filtered, n).length > 0 ? rooted : parentless).push(n);
+  }
   const selProps   = { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId };
   const forest     = rooted.length > 0 ? provenanceForest(filtered, rooted) : null;
 
