@@ -1635,6 +1635,8 @@ input, textarea { font-family: var(--sans); }
 /* Provenance tree (CSS org-chart) */
 .ao-tree { overflow-x: auto; padding: 4px 0 8px; }
 .ao-tree-node { display: flex; flex-direction: column; align-items: center; }
+/* overflow fix: root node materialises its full width so scroll reaches every branch */
+.ao-tree > .ao-tree-node { width: max-content; margin: 0 auto; }
 .ao-tree-children { display: flex; gap: 16px; padding-top: 16px; position: relative; }
 .ao-tree-children::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 2px; height: 16px; background: var(--border); }
 .ao-tree-children > .ao-tree-node { padding-top: 14px; position: relative; }
@@ -1649,9 +1651,11 @@ input, textarea { font-family: var(--sans); }
 .ao-tree-box:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
 .ao-tree-box-open { border-color: var(--accent); color: var(--accent); }
 .ao-tree-box-root { background: var(--surface-2); color: var(--text-1); font-weight: 500; cursor: default; }
-.ao-tree-box-leaf { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; cursor: default; min-width: 120px; }
+.ao-tree-box-leaf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; cursor: default; min-width: 100px; padding: 5px 8px; }
 .ao-tree-box-chosen { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
 .ao-tree-leaf-name { font-weight: 500; color: var(--text-1); }
+.ao-tree-files-toggle { font-size: 0.72rem; background: none; border: none; cursor: pointer; color: var(--accent); padding: 0 2px; line-height: 1; }
+.ao-tree-leaf-detail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; max-width: 220px; justify-content: center; }
 .ao-card-list-below { margin-top: 12px; }
 
 /* Global BIOM selector bar */
