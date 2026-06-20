@@ -417,9 +417,7 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
                   <div key={s.study_id} className="merge-ws-study-row">
                     <span className="merge-ws-study-id">#{s.study_id}</span>
                     <span className="merge-ws-study-title">{s.study_title || 'Untitled'}</span>
-                    {s.data_types && s.data_types.split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                      <span key={t} className="dtype-chip">{t}</span>
-                    ))}
+                    {s.data_types && <span className="merge-ws-dtypes" title={s.data_types}>{s.data_types}</span>}
                   </div>
                 ))
             }
