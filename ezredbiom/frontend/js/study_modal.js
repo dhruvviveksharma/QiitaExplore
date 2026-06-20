@@ -4,40 +4,121 @@
 //   ArtifactsTable (components.js), ArtifactOutputsView, prepReachableSet
 //   (merge_artifacts.js), ProvenanceForest (merge_tree.js)
 
-// ── Add-to-workspace bar ───────────────────────────────────────────────────────
+// ── Add to project ────────────────────────────────────────────────────────────
 
-function AddToWorkspaceBar({ study, chosenIds }) {
-  const [workspaces,  setWorkspaces]  = useState(null);
-  const [selectedWs,  setSelectedWs]  = useState('');
-  const [newName,     setNewName]     = useState('');
-  const [adding,      setAdding]      = useState(false);
-  const [msg,         setMsg]         = useState('');
+function AddToProjectBar({ study }) {
+  const [projects,   setProjects]   = useState(null);
+  const [selected,   setSelected]   = useState('');
+  const [newName,    setNewName]    = useState('');
+  const [adding,     setAdding]     = useState(false);
+  const [msg,        setMsg]        = useState('');
 
   useEffect(() => {
-    apiFetch('/merge-workspaces?user_id=default')
-      .then(r => r.ok ? r.json() : [])
-      .then(list => {
-        setWorkspaces(list);
-        if (list.length > 0) setSelectedWs(list[0].workspace_id);
+    apiFetch('/projects?user_id=default')
+      .then(r => r.ok ? r.json() : { projects: [] })
+      .then(d => {
+        const list = d.projects || [];
+        setProjects(list);
+        if (list.length > 0) setSelected(list[0].project_id);
       });
   }, []);
 
   async function handleAdd() {
     setAdding(true); setMsg('');
     try {
-      let wsId = selectedWs;
+      let projId = selected;
+      let projName = '';
+      if (!projId) {
+        const name = newName.trim() || 'New Project';
+        const res = await apiPost('/projects', { user_id: 'default', name });
+        if (!res.ok) { setMsg('Failed to create project.'); setAdding(false); return; }
+        const p = await res.json();
+        projId = p.project_id;
+        projName = p.name;
+      } else {
+        projName = projects.find(p => p.project_id === projId)?.name || projId;
+      }
+      const addRes = await apiPost(`/projects/${projId}/studies`, {
+        user_id: 'default',
+        study: {
+          study_id: study.study_id,
+          study_title: study.study_title,
+          data_types: study.data_types || '',
+          num_samples: study.num_samples || 0,
+        },
+      });
+      if (!addRes.ok) {
+        const err = await addRes.json().catch(() => ({}));
+        setMsg(err.error || `Error ${addRes.status}`);
+        setAdding(false); return;
+      }
+      setMsg(`Added to "${projName}"`);
+    } catch (e) {
+      setMsg('Unexpected error.');
+    }
+    setAdding(false);
+  }
+
+  if (projects === null) return null;
+  const isNew = selected === '';
+  return (
+    <div className="modal-ws-row">
+      <span className="modal-ws-label">Add to project</span>
+      <select className="merge-dt-select" value={selected}
+        onChange={e => { setSelected(e.target.value); setMsg(''); }}>
+        {projects.map(p => (
+          <option key={p.project_id} value={p.project_id}>
+            {p.name} ({(p.studies || []).length})
+          </option>
+        ))}
+        <option value="">+ New project…</option>
+      </select>
+      {isNew && (
+        <input className="merge-name-filter" placeholder="Project name"
+          value={newName} onChange={e => setNewName(e.target.value)} />
+      )}
+      <button className="merge-btn-primary" style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+        disabled={adding} onClick={handleAdd}>
+        {adding ? 'Adding…' : 'Add'}
+      </button>
+      {msg && <span className="modal-ws-msg">{msg}</span>}
+    </div>
+  );
+}
+
+// ── Add to merge workspace ─────────────────────────────────────────────────────
+
+function AddToMergeBar({ study, chosenIds }) {
+  const [workspaces, setWorkspaces] = useState(null);
+  const [selected,   setSelected]   = useState('');
+  const [newName,    setNewName]    = useState('');
+  const [adding,     setAdding]     = useState(false);
+  const [msg,        setMsg]        = useState('');
+
+  useEffect(() => {
+    apiFetch('/merge-workspaces?user_id=default')
+      .then(r => r.ok ? r.json() : [])
+      .then(list => {
+        setWorkspaces(list);
+        if (list.length > 0) setSelected(list[0].workspace_id);
+      });
+  }, []);
+
+  async function handleAdd() {
+    setAdding(true); setMsg('');
+    try {
+      let wsId = selected;
       let wsName = '';
       if (!wsId) {
-        const name = newName.trim() || 'New Workspace';
+        const name = newName.trim() || 'New Merge';
         const res = await apiPost('/merge-workspaces', { user_id: 'default', name });
-        if (!res.ok) { setMsg('Failed to create workspace.'); setAdding(false); return; }
+        if (!res.ok) { setMsg('Failed to create merge.'); setAdding(false); return; }
         const ws = await res.json();
         wsId = ws.workspace_id;
         wsName = ws.name;
       } else {
         wsName = workspaces.find(w => w.workspace_id === wsId)?.name || wsId;
       }
-
       const addRes = await apiPost(`/merge-workspaces/${wsId}/studies`, {
         study_id: study.study_id,
         study_title: study.study_title,
@@ -49,13 +130,11 @@ function AddToWorkspaceBar({ study, chosenIds }) {
         setMsg(err.error || `Error ${addRes.status}`);
         setAdding(false); return;
       }
-
       if (chosenIds && chosenIds.length > 0) {
         await apiPatch(`/merge-workspaces/${wsId}/studies/${study.study_id}`, {
           chosen_artifact_ids: chosenIds,
         });
       }
-
       setMsg(`Added to "${wsName}"`);
     } catch (e) {
       setMsg('Unexpected error.');
@@ -64,30 +143,37 @@ function AddToWorkspaceBar({ study, chosenIds }) {
   }
 
   if (workspaces === null) return null;
-
-  const isNew = selectedWs === '';
-
+  const isNew = selected === '';
   return (
-    <div className="modal-ws-bar">
-      <select className="merge-dt-select"
-        value={selectedWs}
-        onChange={e => { setSelectedWs(e.target.value); setMsg(''); }}>
+    <div className="modal-ws-row">
+      <span className="modal-ws-label">Add to merge</span>
+      <select className="merge-dt-select" value={selected}
+        onChange={e => { setSelected(e.target.value); setMsg(''); }}>
         {workspaces.map(w => (
           <option key={w.workspace_id} value={w.workspace_id}>
-            {w.name} ({(w.studies || []).length} studies)
+            {w.name} ({(w.studies || []).length})
           </option>
         ))}
-        <option value="">+ New workspace…</option>
+        <option value="">+ New merge…</option>
       </select>
       {isNew && (
-        <input className="merge-name-filter" placeholder="Workspace name"
+        <input className="merge-name-filter" placeholder="Merge name"
           value={newName} onChange={e => setNewName(e.target.value)} />
       )}
       <button className="merge-btn-primary" style={{ padding: '4px 10px', fontSize: '0.8rem' }}
         disabled={adding} onClick={handleAdd}>
-        {adding ? 'Adding…' : 'Add to workspace'}
+        {adding ? 'Adding…' : 'Add'}
       </button>
       {msg && <span className="modal-ws-msg">{msg}</span>}
+    </div>
+  );
+}
+
+function StudyActionBar({ study, chosenIds }) {
+  return (
+    <div className="modal-ws-bar">
+      <AddToProjectBar study={study} />
+      <AddToMergeBar study={study} chosenIds={chosenIds} />
     </div>
   );
 }
@@ -142,7 +228,7 @@ function StudyModalOutputs({ study, detail, loading }) {
         prepFilter={prepFilter} recommendedId={null}
         sampleCounts={sampleCounts} studyId={study.study_id}
       />
-      <AddToWorkspaceBar study={study} chosenIds={chosenIds} />
+      <StudyActionBar study={study} chosenIds={chosenIds} />
     </div>
   );
 }
