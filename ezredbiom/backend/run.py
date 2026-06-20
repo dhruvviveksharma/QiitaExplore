@@ -1,6 +1,13 @@
 # backend/run.py
 import sys
 import os
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger().setLevel(logging.INFO)
 
 # Ensure the backend directory is always first in sys.path so that local
 # modules (config, store, helpers/, routes/) are found even if the qiita
@@ -29,6 +36,7 @@ import routes.study_routes        # noqa: F401, E402
 import routes.project_routes      # noqa: F401, E402
 import routes.chat_routes         # noqa: F401, E402
 import routes.global_chat_routes  # noqa: F401, E402
+import routes.merge_routes        # noqa: F401, E402
 
 if __name__ == '__main__':
     print("QIITA SEARCH API -- http://localhost:5001 (DEBUG MODE)")

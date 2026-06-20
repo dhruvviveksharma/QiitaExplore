@@ -145,6 +145,50 @@ def _create_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_project_chats_project_updated ON project_chats(project_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_global_chats_user_updated ON global_chats(user_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_chat_pins ON chat_pinned_studies(chat_id, chat_scope);
+
+        CREATE TABLE IF NOT EXISTS merge_workspaces (
+            workspace_id TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            created_at   TEXT,
+            updated_at   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_merge_ws_user ON merge_workspaces(user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS merge_workspace_studies (
+            workspace_id       TEXT NOT NULL,
+            study_id           INTEGER NOT NULL,
+            study_title        TEXT,
+            data_types         TEXT,
+            num_samples        INTEGER,
+            chosen_artifact_id INTEGER,
+            sample_filter      TEXT,
+            added_at           TEXT,
+            PRIMARY KEY (workspace_id, study_id),
+            FOREIGN KEY (workspace_id) REFERENCES merge_workspaces(workspace_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS merge_jobs (
+            job_id         TEXT PRIMARY KEY,
+            workspace_id   TEXT,
+            user_id        TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            error_message  TEXT,
+            result_path    TEXT,
+            workspace_snap TEXT,
+            created_at     TEXT,
+            updated_at     TEXT,
+            FOREIGN KEY (workspace_id) REFERENCES merge_workspaces(workspace_id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_merge_jobs_ws ON merge_jobs(workspace_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_merge_jobs_user ON merge_jobs(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS biom_sample_cache (
+            artifact_id     INTEGER PRIMARY KEY,
+            num_samples     INTEGER,
+            sample_ids_json TEXT,
+            cached_at       TEXT
+        );
         """
     )
     for col, definition in [
@@ -165,6 +209,16 @@ def _create_schema(conn):
 
     try:
         conn.execute("ALTER TABLE study_detail_cache ADD COLUMN full_samples_json TEXT")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN artifact_graph_json TEXT")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE merge_workspace_studies ADD COLUMN chosen_artifact_ids TEXT")
     except Exception:
         pass
 

@@ -1,0 +1,841 @@
+[log → /home/d4sharma/qiita-web/ezredbiom/logs/harness_20260603_004837.log]
+
+YOU: Find me all studies on wild mice and filter to ones with shotgun metagenomics
+(model=qwen3  scope=global  mode=DEEP)
+2026-06-03 00:48:42,873 [INFO] helpers.agent: [agent_start] model=qwen3 resolved=qwen3 deep=True msg_count=2
+
+ASSISTANT: 
+
+2026-06-03 00:49:23,696 [DEBUG] helpers.agent: [chunk iter=0] content=2 reasoning=0 tools=0 finish=-
+2026-06-03 00:49:24,709 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:24,834 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:33,065 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:35,365 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:37,010 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:37,518 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:49:37,901 [DEBUG] helpers.agent: [chunk iter=0] content=0 reasoning=0 tools=0 finish=tool_calls
+2026-06-03 00:49:37,904 [INFO] helpers.agent: [round 0] ttft=1.725s total=55.030s content=2 chars reasoning=0 chars finish=tool_calls tool_calls=1
+
+  → LLM requested: Searching: wild, mouse, mice…
+
+  ┌─ TOOL  search_studies({"keywords": ["wild", "mouse", "mice", "murine", "Mus musculus"], "data_types": ["Metagenomic"], "limit": 20})
+2026-06-03 00:49:37,904 [INFO] helpers.agent_tools: [search_studies] raw_kws=5 deep=True explicit_types=['Metagenomic'] explicit_inv=None limit=20
+2026-06-03 00:49:37,904 [DEBUG] helpers.agent_tools: [search_studies] raw_kws=['wild', 'mouse', 'mice', 'murine', 'Mus musculus']
+2026-06-03 00:49:37,904 [INFO] helpers.agent_tools: [search_studies] expanded_kws=7  ['wild', 'wilds', 'mouse', 'mice', 'murine', 'murines', 'Mus musculus']
+2026-06-03 00:49:37,904 [INFO] helpers.agent_tools: [search_studies] effective_types=['Metagenomic'] effective_inv=None
+2026-06-03 00:49:37,904 [INFO] services.study_service: [sql] search limit=40 offset=0 data_types=['Metagenomic'] investigation_types=None keyword_clauses=7 score_params=21 total_params=64
+2026-06-03 00:49:37,926 [DEBUG] services.study_service: [sql] query_snippet="\n        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,\n               s.study_alias, s.metadata_complete,\n               sp_pi.name as pi_name, sp_pi.email as pi_email,\n               sp_pi.affiliation as pi_affiliation,\n               sp_lab.name as lab_person_name,\n               (SELECT COUNT(*)\n                FROM qiita.study_sample ss\n                WHERE ss.study_id = s.study_id) AS num_samples,\n               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')\n              " param_count=64
+2026-06-03 00:49:37,986 [INFO] services.study_service: [sql] rows_returned=0
+2026-06-03 00:49:37,987 [INFO] helpers.agent_tools: [search_studies] text_hits=0
+2026-06-03 00:52:48,974 [ERROR] helpers.sample_search: probe study=10317 failed
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 93, in _probe_study_raw
+    row = cur.fetchone()
+psycopg2.InterfaceError: cursor already closed
+2026-06-03 00:52:48,974 [ERROR] helpers.agent: tool search_studies raised after 191.071s
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent.py", line 156, in stream_agent
+    result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/agent_harness.py", line 78, in _traced_execute_tool
+    result = execute_tool(name, args, **kw)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 159, in execute_tool
+    return _tool_search_studies(args, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 220, in _tool_search_studies
+    sample_studies = search_studies_by_sample_meta(
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 137, in search_studies_by_sample_meta
+    for fut in as_completed(futures, timeout=timeout):
+  File "/home/d4sharma/miniconda3/envs/qiita-web/lib/python3.9/concurrent/futures/_base.py", line 241, in as_completed
+    raise TimeoutError(
+concurrent.futures._base.TimeoutError: 1 (of 114) futures unfinished
+
+
+2026-06-03 00:52:54,049 [DEBUG] helpers.agent: [chunk iter=1] content=2 reasoning=0 tools=0 finish=-
+2026-06-03 00:52:54,816 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:52:54,910 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:52:57,930 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:52:59,457 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:53:01,081 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:53:01,464 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:53:01,757 [DEBUG] helpers.agent: [chunk iter=1] content=0 reasoning=0 tools=0 finish=tool_calls
+2026-06-03 00:53:01,757 [INFO] helpers.agent: [round 1] ttft=1.701s total=12.773s content=2 chars reasoning=0 chars finish=tool_calls tool_calls=1
+
+  → LLM requested: Searching: wild, mouse, mice…
+
+  ┌─ TOOL  search_studies({"keywords": ["wild", "mouse", "mice", "murine", "Mus musculus"], "data_types": ["Metagenomic"], "limit": 10})
+2026-06-03 00:53:01,758 [INFO] helpers.agent_tools: [search_studies] raw_kws=5 deep=True explicit_types=['Metagenomic'] explicit_inv=None limit=10
+2026-06-03 00:53:01,758 [DEBUG] helpers.agent_tools: [search_studies] raw_kws=['wild', 'mouse', 'mice', 'murine', 'Mus musculus']
+2026-06-03 00:53:01,758 [INFO] helpers.agent_tools: [search_studies] expanded_kws=7  ['wild', 'wilds', 'mouse', 'mice', 'murine', 'murines', 'Mus musculus']
+2026-06-03 00:53:01,758 [INFO] helpers.agent_tools: [search_studies] effective_types=['Metagenomic'] effective_inv=None
+2026-06-03 00:53:01,758 [INFO] services.study_service: [sql] search limit=20 offset=0 data_types=['Metagenomic'] investigation_types=None keyword_clauses=7 score_params=21 total_params=64
+2026-06-03 00:53:01,758 [DEBUG] services.study_service: [sql] query_snippet="\n        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,\n               s.study_alias, s.metadata_complete,\n               sp_pi.name as pi_name, sp_pi.email as pi_email,\n               sp_pi.affiliation as pi_affiliation,\n               sp_lab.name as lab_person_name,\n               (SELECT COUNT(*)\n                FROM qiita.study_sample ss\n                WHERE ss.study_id = s.study_id) AS num_samples,\n               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')\n              " param_count=64
+2026-06-03 00:53:01,806 [INFO] services.study_service: [sql] rows_returned=0
+2026-06-03 00:53:01,806 [INFO] helpers.agent_tools: [search_studies] text_hits=0
+2026-06-03 00:56:14,296 [ERROR] helpers.agent: tool search_studies raised after 192.539s
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent.py", line 156, in stream_agent
+    result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/agent_harness.py", line 78, in _traced_execute_tool
+    result = execute_tool(name, args, **kw)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 159, in execute_tool
+    return _tool_search_studies(args, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 220, in _tool_search_studies
+    sample_studies = search_studies_by_sample_meta(
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 137, in search_studies_by_sample_meta
+    for fut in as_completed(futures, timeout=timeout):
+  File "/home/d4sharma/miniconda3/envs/qiita-web/lib/python3.9/concurrent/futures/_base.py", line 241, in as_completed
+    raise TimeoutError(
+concurrent.futures._base.TimeoutError: 1 (of 114) futures unfinished
+2026-06-03 00:56:14,297 [ERROR] helpers.sample_search: probe study=10317 failed
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 93, in _probe_study_raw
+    row = cur.fetchone()
+psycopg2.InterfaceError: cursor already closed
+
+
+2026-06-03 00:56:56,896 [DEBUG] helpers.agent: [chunk iter=2] content=2 reasoning=0 tools=0 finish=-
+2026-06-03 00:56:57,831 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:56:57,947 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:57:01,832 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:57:03,996 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:57:05,409 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:57:05,877 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 00:57:07,002 [DEBUG] helpers.agent: [chunk iter=2] content=0 reasoning=0 tools=0 finish=tool_calls
+2026-06-03 00:57:07,003 [INFO] helpers.agent: [round 2] ttft=1.605s total=52.701s content=2 chars reasoning=0 chars finish=tool_calls tool_calls=1
+
+  → LLM requested: Searching: wild mice, mouse, mice…
+
+  ┌─ TOOL  search_studies({"keywords": ["wild mice", "mouse", "mice", "murine", "Mus musculus", "wild"], "data_types": ["Metagenomic"], "limit": 8})
+2026-06-03 00:57:07,003 [INFO] helpers.agent_tools: [search_studies] raw_kws=6 deep=True explicit_types=['Metagenomic'] explicit_inv=None limit=8
+2026-06-03 00:57:07,003 [DEBUG] helpers.agent_tools: [search_studies] raw_kws=['wild mice', 'mouse', 'mice', 'murine', 'Mus musculus', 'wild']
+2026-06-03 00:57:07,003 [INFO] helpers.agent_tools: [search_studies] expanded_kws=9  ['wild mice', 'wild mices', 'mouse', 'mice', 'murine', 'murines', 'Mus musculus', 'wild', 'wilds']
+2026-06-03 00:57:07,003 [INFO] helpers.agent_tools: [search_studies] effective_types=['Metagenomic'] effective_inv=None
+2026-06-03 00:57:07,003 [INFO] services.study_service: [sql] search limit=16 offset=0 data_types=['Metagenomic'] investigation_types=None keyword_clauses=9 score_params=27 total_params=82
+2026-06-03 00:57:07,003 [DEBUG] services.study_service: [sql] query_snippet="\n        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,\n               s.study_alias, s.metadata_complete,\n               sp_pi.name as pi_name, sp_pi.email as pi_email,\n               sp_pi.affiliation as pi_affiliation,\n               sp_lab.name as lab_person_name,\n               (SELECT COUNT(*)\n                FROM qiita.study_sample ss\n                WHERE ss.study_id = s.study_id) AS num_samples,\n               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')\n              " param_count=82
+2026-06-03 00:57:07,059 [INFO] services.study_service: [sql] rows_returned=0
+2026-06-03 00:57:07,059 [INFO] helpers.agent_tools: [search_studies] text_hits=0
+2026-06-03 01:00:53,415 [ERROR] helpers.agent: tool search_studies raised after 226.412s
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent.py", line 156, in stream_agent
+    result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/agent_harness.py", line 78, in _traced_execute_tool
+    result = execute_tool(name, args, **kw)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 159, in execute_tool
+    return _tool_search_studies(args, deep_search=deep_search)
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/agent_tools.py", line 220, in _tool_search_studies
+    sample_studies = search_studies_by_sample_meta(
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 137, in search_studies_by_sample_meta
+    for fut in as_completed(futures, timeout=timeout):
+  File "/home/d4sharma/miniconda3/envs/qiita-web/lib/python3.9/concurrent/futures/_base.py", line 241, in as_completed
+    raise TimeoutError(
+concurrent.futures._base.TimeoutError: 1 (of 114) futures unfinished
+2026-06-03 01:00:53,415 [ERROR] helpers.sample_search: probe study=10317 failed
+Traceback (most recent call last):
+  File "/home/d4sharma/qiita-web/ezredbiom/backend/helpers/sample_search.py", line 93, in _probe_study_raw
+    row = cur.fetchone()
+psycopg2.InterfaceError: cursor already closed
+
+
+2026-06-03 01:01:00,172 [DEBUG] helpers.agent: [chunk iter=3] content=2 reasoning=0 tools=0 finish=-
+2026-06-03 01:01:01,188 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:01:01,312 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:01:05,121 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:01:06,624 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:01:07,129 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:01:07,509 [DEBUG] helpers.agent: [chunk iter=3] content=0 reasoning=0 tools=0 finish=tool_calls
+2026-06-03 01:01:07,509 [INFO] helpers.agent: [round 3] ttft=0.993s total=14.089s content=2 chars reasoning=0 chars finish=tool_calls tool_calls=1
+
+  → LLM requested: Searching: wild mice, mouse, mice…
+
+  ┌─ TOOL  search_studies({"keywords": ["wild mice", "mouse", "mice", "murine", "Mus musculus"], "limit": 8})
+2026-06-03 01:01:07,509 [INFO] helpers.agent_tools: [search_studies] raw_kws=5 deep=True explicit_types=None explicit_inv=None limit=8
+2026-06-03 01:01:07,510 [DEBUG] helpers.agent_tools: [search_studies] raw_kws=['wild mice', 'mouse', 'mice', 'murine', 'Mus musculus']
+2026-06-03 01:01:07,510 [INFO] helpers.agent_tools: [search_studies] expanded_kws=7  ['wild mice', 'wild mices', 'mouse', 'mice', 'murine', 'murines', 'Mus musculus']
+2026-06-03 01:01:07,510 [INFO] helpers.agent_tools: [search_studies] effective_types=None effective_inv=None
+2026-06-03 01:01:07,510 [INFO] services.study_service: [sql] search limit=16 offset=0 data_types=None investigation_types=None keyword_clauses=7 score_params=21 total_params=63
+2026-06-03 01:01:07,510 [DEBUG] services.study_service: [sql] query_snippet="\n        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,\n               s.study_alias, s.metadata_complete,\n               sp_pi.name as pi_name, sp_pi.email as pi_email,\n               sp_pi.affiliation as pi_affiliation,\n               sp_lab.name as lab_person_name,\n               (SELECT COUNT(*)\n                FROM qiita.study_sample ss\n                WHERE ss.study_id = s.study_id) AS num_samples,\n               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')\n              " param_count=63
+2026-06-03 01:01:08,712 [INFO] services.study_service: [sql] rows_returned=16
+2026-06-03 01:01:08,713 [INFO] helpers.agent_tools: [search_studies] text_hits=16
+2026-06-03 01:04:19,933 [INFO] helpers.agent_tools: [search_studies] sample_hits=85
+2026-06-03 01:04:19,936 [INFO] helpers.agent_tools: [search_studies] final_merged=8 (after trim to limit=8)
+  ├─ 192.43s  Deep-searched Qiita database · top 8 results (incl. 85 from sample metadata of ≤500 studies)
+  │  RETURNED TO LLM:
+  │  search_studies returned the top 8 studies:
+  │  
+  │  - ID 459: The effect of diet on the human gut microbiome: a metagenomic analysis in humanized gnotobiotic mice - humanized mouse donor
+  │    PI: Jeff Gordon (Washington University) | 8 samples · 1 preps | Types: 16S
+  │    Abstract: Diet and nutritional status are among the most important modifiable determinants of human health. The nutritional value of food is influenced in part by a persons gut microbial community (microbiota) and its component genes (microbiome)....
+  │  
+  │  - ID 11625: The effect of treatment with the helminth product Tuftsin-phosphorylcholine (TPC) on the microbiome of mice with active lupus
+  │    PI: Omry Koren (Faculty of Medicine, Bar-Ilan University, Safed, Israel) | 160 samples · 5 preps | Types: 16S
+  │    Abstract: The hygiene hypothesis claims that lack of exposure to microorganisms in developed countries, correlates with increased incidence of autoimmune diseases. It was also found that helminths are able to modulate the immune response in hosts ...
+  │  
+  │  - ID 11841: ONR Mv/CDR/SD mouse study
+  │    PI: Chris Lowry (University of Colorado) | 437 samples · 3 preps | Types: 16S, Metagenomic
+  │    Abstract: Previous studies in our laboratory demonstrate that a heat-killed preparation of the immunoregulatory and anti-inflammatory environmental bacterium Mycobacterium vaccae NCTC 11659 (M. vaccae) is a potentially useful countermeasure that p...
+  │  
+  │  - ID 12849: Dietary fat and fiber impacts intestinal microbiome resilience to antibiotics and Clostridoides difficile infection in mice
+  │    PI: Catherine Lozupone (UC Denver) | 244 samples · 3 preps | Types: 16S
+  │    Abstract: Abstract:  Clostridioides difficile infection (CDI), is the leading cause of hospital-acquired diarrhea and emerging evidence has linked dietary components with CDI pathogenesis,  suggesting that dietary modulation may be an effective st...
+  │  
+  │  - ID 10801: 3D Mouse
+  │    PI: Pieter Dorrestein (UCSD) | 2456 samples · 6 preps | Types: 16S, Metabolomic
+  │    Abstract: This study is a compar  …(+1541 chars)
+  └─────
+2026-06-03 01:04:19,937 [INFO] helpers.agent: [timing] tool=search_studies elapsed=192.428s result_chars=3541
+
+
+2026-06-03 01:04:23,136 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+I2026-06-03 01:04:23,251 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ found2026-06-03 01:04:23,372 [DEBUG] helpers.agent: [chunk iter=4] content=6 reasoning=0 tools=0 finish=-
+ several2026-06-03 01:04:23,486 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:04:23,837 [DEBUG] helpers.agent: [chunk iter=4] content=6 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:04:24,196 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+,2026-06-03 01:04:24,312 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ but2026-06-03 01:04:24,425 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ I2026-06-03 01:04:24,835 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+ need2026-06-03 01:04:24,950 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:04:25,066 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ clarify2026-06-03 01:04:25,185 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+ an2026-06-03 01:04:25,304 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ important2026-06-03 01:04:25,421 [DEBUG] helpers.agent: [chunk iter=4] content=10 reasoning=0 tools=0 finish=-
+ distinction2026-06-03 01:04:25,539 [DEBUG] helpers.agent: [chunk iter=4] content=12 reasoning=0 tools=0 finish=-
+:2026-06-03 01:04:25,696 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ you2026-06-03 01:04:25,781 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ asked2026-06-03 01:04:25,886 [DEBUG] helpers.agent: [chunk iter=4] content=6 reasoning=0 tools=0 finish=-
+ for2026-06-03 01:04:26,001 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:04:26,117 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:04:26,235 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:26,352 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+**2026-06-03 01:04:26,472 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+ with2026-06-03 01:04:26,587 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:04:26,704 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+shot2026-06-03 01:04:26,821 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+gun2026-06-03 01:04:26,938 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:04:27,052 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:04:27,172 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+omics2026-06-03 01:04:27,287 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+**.2026-06-03 01:04:27,403 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ 
+
+2026-06-03 01:04:27,519 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+Looking2026-06-03 01:04:27,638 [DEBUG] helpers.agent: [chunk iter=4] content=7 reasoning=0 tools=0 finish=-
+ at2026-06-03 01:04:27,792 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:04:27,873 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ results2026-06-03 01:04:27,990 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+:2026-06-03 01:04:28,108 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:04:28,222 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+-2026-06-03 01:04:28,341 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ Most2026-06-03 01:04:28,456 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:04:28,576 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+ are2026-06-03 01:04:28,691 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:04:28,807 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:04:28,925 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+labor2026-06-03 01:04:29,045 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+atory2026-06-03 01:04:29,160 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:29,275 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+**2026-06-03 01:04:29,391 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+ (2026-06-03 01:04:29,507 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+in2026-06-03 01:04:29,625 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+bred2026-06-03 01:04:29,745 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ strains2026-06-03 01:04:29,863 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+,2026-06-03 01:04:29,983 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ g2026-06-03 01:04:30,100 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+not2026-06-03 01:04:30,214 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ob2026-06-03 01:04:30,593 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+iotic2026-06-03 01:04:30,707 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:30,821 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:04:30,936 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ disease2026-06-03 01:04:31,051 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+ models2026-06-03 01:04:31,167 [DEBUG] helpers.agent: [chunk iter=4] content=7 reasoning=0 tools=0 finish=-
+),2026-06-03 01:04:31,281 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+ not2026-06-03 01:04:31,695 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:04:31,812 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:04:31,932 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+-ca2026-06-03 01:04:32,052 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ught2026-06-03 01:04:32,171 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:32,285 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+**2026-06-03 01:04:32,403 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:04:32,752 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+-2026-06-03 01:04:32,865 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ Only2026-06-03 01:04:32,984 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:04:33,103 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+Study2026-06-03 01:04:33,220 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ ID2026-06-03 01:04:33,339 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:04:33,457 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:04:33,570 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:04:33,687 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+82026-06-03 01:04:33,805 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:04:33,923 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:04:34,037 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+**2026-06-03 01:04:34,154 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+ includes2026-06-03 01:04:34,272 [DEBUG] helpers.agent: [chunk iter=4] content=9 reasoning=0 tools=0 finish=-
+ "2026-06-03 01:04:34,390 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+Met2026-06-03 01:04:34,506 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:04:34,621 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:04:35,056 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+"2026-06-03 01:04:35,165 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ data2026-06-03 01:04:35,281 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ type2026-06-03 01:04:35,397 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ alongside2026-06-03 01:04:35,513 [DEBUG] helpers.agent: [chunk iter=4] content=10 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:04:35,629 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:04:35,743 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+62026-06-03 01:04:35,859 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+S2026-06-03 01:04:35,974 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:04:36,088 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+-2026-06-03 01:04:36,205 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ None2026-06-03 01:04:36,322 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ of2026-06-03 01:04:36,436 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ these2026-06-03 01:04:36,549 [DEBUG] helpers.agent: [chunk iter=4] content=6 reasoning=0 tools=0 finish=-
+ explicitly2026-06-03 01:04:36,666 [DEBUG] helpers.agent: [chunk iter=4] content=11 reasoning=0 tools=0 finish=-
+ mention2026-06-03 01:04:36,780 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+ "2026-06-03 01:04:36,893 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:04:37,007 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+"2026-06-03 01:04:37,123 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:37,238 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ in2026-06-03 01:04:37,353 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ their2026-06-03 01:04:37,467 [DEBUG] helpers.agent: [chunk iter=4] content=6 reasoning=0 tools=0 finish=-
+ titles2026-06-03 01:04:37,583 [DEBUG] helpers.agent: [chunk iter=4] content=7 reasoning=0 tools=0 finish=-
+ or2026-06-03 01:04:37,697 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ abstract2026-06-03 01:04:37,817 [DEBUG] helpers.agent: [chunk iter=4] content=9 reasoning=0 tools=0 finish=-
+s2026-06-03 01:04:37,931 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:04:38,041 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+Let2026-06-03 01:04:38,154 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ me2026-06-03 01:04:38,269 [DEBUG] helpers.agent: [chunk iter=4] content=3 reasoning=0 tools=0 finish=-
+ search2026-06-03 01:04:38,383 [DEBUG] helpers.agent: [chunk iter=4] content=7 reasoning=0 tools=0 finish=-
+ more2026-06-03 01:04:38,500 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ specifically2026-06-03 01:04:38,906 [DEBUG] helpers.agent: [chunk iter=4] content=13 reasoning=0 tools=0 finish=-
+ for2026-06-03 01:04:39,023 [DEBUG] helpers.agent: [chunk iter=4] content=4 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:04:39,134 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:04:39,247 [DEBUG] helpers.agent: [chunk iter=4] content=5 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:04:39,364 [DEBUG] helpers.agent: [chunk iter=4] content=8 reasoning=0 tools=0 finish=-
+:2026-06-03 01:04:39,480 [DEBUG] helpers.agent: [chunk iter=4] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:04:39,592 [DEBUG] helpers.agent: [chunk iter=4] content=2 reasoning=0 tools=0 finish=-
+2026-06-03 01:04:40,769 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:04:40,882 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:04:47,165 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:04:49,034 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:04:49,472 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=1 finish=-
+2026-06-03 01:04:50,260 [DEBUG] helpers.agent: [chunk iter=4] content=0 reasoning=0 tools=0 finish=tool_calls
+2026-06-03 01:04:50,260 [INFO] helpers.agent: [round 4] ttft=3.094s total=30.323s content=491 chars reasoning=0 chars finish=tool_calls tool_calls=1
+
+  → LLM requested: Searching: [, ", w…
+
+  ┌─ TOOL  search_studies({"keywords": "[\"wild\", \"wild-caught\", \"wild mouse\", \"wild mice\", \"Peromyscus\", \"Mus spicilegus\", \"Mus spretus\"]", "limit": "10"})
+2026-06-03 01:04:50,261 [INFO] helpers.agent_tools: [search_studies] raw_kws=87 deep=True explicit_types=None explicit_inv=None limit=10
+2026-06-03 01:04:50,261 [DEBUG] helpers.agent_tools: [search_studies] raw_kws=['[', '"', 'w', 'i', 'l', 'd', '"', ',', '"', 'w', 'i', 'l', 'd', '-', 'c', 'a', 'u', 'g', 'h', 't', '"', ',', '"', 'w', 'i', 'l', 'd', 'm', 'o', 'u', 's', 'e', '"', ',', '"', 'w', 'i', 'l', 'd', 'm', 'i', 'c', 'e', '"', ',', '"', 'P', 'e', 'r', 'o', 'm', 'y', 's', 'c', 'u', 's', '"', ',', '"', 'M', 'u', 's', 's', 'p', 'i', 'c', 'i', 'l', 'e', 'g', 'u', 's', '"', ',', '"', 'M', 'u', 's', 's', 'p', 'r', 'e', 't', 'u', 's', '"', ']']
+2026-06-03 01:04:50,261 [INFO] helpers.agent_tools: [search_studies] expanded_kws=24  ['[', '"', 'w', 'i', 'l', 'd', ',', '-', 'c', 'a']
+2026-06-03 01:04:50,261 [INFO] helpers.agent_tools: [search_studies] effective_types=None effective_inv=None
+2026-06-03 01:04:50,261 [INFO] services.study_service: [sql] search limit=20 offset=0 data_types=None investigation_types=None keyword_clauses=0 score_params=0 total_params=0
+2026-06-03 01:04:50,261 [DEBUG] services.study_service: [sql] query_snippet="\n        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,\n               s.study_alias, s.metadata_complete,\n               sp_pi.name as pi_name, sp_pi.email as pi_email,\n               sp_pi.affiliation as pi_affiliation,\n               sp_lab.name as lab_person_name,\n               (SELECT COUNT(*)\n                FROM qiita.study_sample ss\n                WHERE ss.study_id = s.study_id) AS num_samples,\n               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')\n              " param_count=0
+2026-06-03 01:05:06,872 [INFO] services.study_service: [sql] rows_returned=20
+2026-06-03 01:05:06,873 [INFO] helpers.agent_tools: [search_studies] text_hits=20
+2026-06-03 01:05:22,059 [INFO] helpers.agent_tools: [search_studies] sample_hits=496
+2026-06-03 01:05:22,066 [INFO] helpers.agent_tools: [search_studies] final_merged=10 (after trim to limit=10)
+  ├─ 31.81s  Deep-searched Qiita database · top 10 results (incl. 496 from sample metadata of ≤500 studies)
+  │  RETURNED TO LLM:
+  │  search_studies returned the top 10 studies:
+  │  
+  │  - ID 2020: Microbial biogeography of wine grapes is conditioned by cultivar, vintage, and climate - ITS
+  │    PI: David Mills (UC Davis) | 274 samples · 1 preps | Types: ITS
+  │    Abstract: Wine grapes present a unique biogeography model, wherein microbial biodiversity patterns across viticultural zones not only answer questions of dispersal and community maintenance, they are also an inherent component of the quality, cons...
+  │  
+  │  - ID 14341: Single-tooth resolved, whole-mouth prediction of early childhood caries via spatiotemporal variations of plaque microbiota
+  │    PI: Shi Huang (Faculty of Dentistry, University of Hong Kong) | 2528 samples · 5 preps | Types: 16S, Metagenomic
+  │    Abstract: Early Childhood Caries (ECC) demonstrates marked tooth specificity, highlighting the critical need for single-tooth-level prevention. We profiled 2504 dental plaque microbiomes from 89 preschoolers across two cohorts, tracking microbial ...
+  │  
+  │  - ID 2229: Continental-scale variation in seaweed host-associated bacterial communities is a function of host condition, not geography
+  │    PI: Torsten Thomas (University of New South Wales) | 1393 samples · 1 preps | Types: 16S
+  │    Abstract: Interactions between hosts and associated microbial communities can fundamentally shape the development and ecology of 'holobionts', from humans to marine habitat-forming organisms such as seaweeds. In marine systems, planktonic microbia...
+  │  
+  │  - ID 10469: Antibiotic perturbation of the murine gut microbiome enhances the adiposity, insulin resistance, and liver disease associated with high-f...
+  │    PI: Martin J. Blaser (NYU School of Medicine) | 391 samples · 1 preps | Types: 16S
+  │    Abstract: Obesity, type 2 diabetes, and non-alcoholic fatty liver disease (NAFLD) are serious health concerns, especially in Western populations. Antibiotic exposure and high-fat diet (HFD) are important and modifiable factors that may contribute ...
+  │  
+  │  - ID 15605: Protective effects of Mycobacterium vaccae   …(+2864 chars)
+  └─────
+2026-06-03 01:05:22,067 [INFO] helpers.agent: [timing] tool=search_studies elapsed=31.807s result_chars=4864
+
+
+2026-06-03 01:05:44,496 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+The2026-06-03 01:05:44,611 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ search2026-06-03 01:05:44,719 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ results2026-06-03 01:05:44,826 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ don2026-06-03 01:05:44,930 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+'t2026-06-03 01:05:45,036 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ show2026-06-03 01:05:45,145 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:05:45,258 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ specifically2026-06-03 01:05:45,361 [DEBUG] helpers.agent: [chunk iter=5] content=13 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:05:45,777 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:05:45,888 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:05:45,993 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:05:46,104 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+**.2026-06-03 01:05:46,212 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ Most2026-06-03 01:05:46,323 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:05:46,436 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:05:46,546 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ in2026-06-03 01:05:46,650 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ Qi2026-06-03 01:05:46,760 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ita2026-06-03 01:05:46,868 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ appear2026-06-03 01:05:46,975 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:05:47,085 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ be2026-06-03 01:05:47,193 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:05:47,306 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ laboratory2026-06-03 01:05:47,419 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+ strains2026-06-03 01:05:47,527 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ (2026-06-03 01:05:47,637 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+C2026-06-03 01:05:47,746 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+52026-06-03 01:05:47,856 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+72026-06-03 01:05:47,965 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+BL2026-06-03 01:05:48,075 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+/2026-06-03 01:05:48,185 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+62026-06-03 01:05:48,292 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+,2026-06-03 01:05:48,403 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ germ2026-06-03 01:05:48,508 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+-free2026-06-03 01:05:49,795 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:05:51,135 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ g2026-06-03 01:05:51,834 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+not2026-06-03 01:05:52,439 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ob2026-06-03 01:05:53,052 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+iotic2026-06-03 01:05:53,164 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:05:53,531 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ etc2026-06-03 01:05:53,644 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+.).2026-06-03 01:05:53,764 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ 
+
+2026-06-03 01:05:54,124 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+**2026-06-03 01:05:54,740 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+Important2026-06-03 01:05:54,856 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ clarification2026-06-03 01:05:54,972 [DEBUG] helpers.agent: [chunk iter=5] content=14 reasoning=0 tools=0 finish=-
+:**2026-06-03 01:05:55,413 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ You2026-06-03 01:05:55,529 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ asked2026-06-03 01:05:55,646 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ for2026-06-03 01:05:55,766 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:05:55,890 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:05:56,006 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ with2026-06-03 01:05:56,124 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ shotgun2026-06-03 01:05:56,243 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:05:56,361 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:05:56,485 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omics2026-06-03 01:05:56,601 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:05:56,717 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ but2026-06-03 01:05:56,834 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+:2026-06-03 01:05:56,952 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:05:57,072 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:05:57,189 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:05:57,307 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ The2026-06-03 01:05:57,425 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ available2026-06-03 01:05:57,544 [DEBUG] helpers.agent: [chunk iter=5] content=10 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:05:57,661 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ are2026-06-03 01:05:57,781 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ predominantly2026-06-03 01:05:57,899 [DEBUG] helpers.agent: [chunk iter=5] content=14 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:05:58,019 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:05:58,133 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+labor2026-06-03 01:05:58,251 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+atory2026-06-03 01:05:58,372 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:05:58,493 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+**,2026-06-03 01:05:58,608 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ not2026-06-03 01:05:58,734 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:05:58,842 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+-ca2026-06-03 01:05:58,969 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ught2026-06-03 01:05:59,089 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:05:59,205 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:05:59,324 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+22026-06-03 01:05:59,444 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:05:59,562 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ Only2026-06-03 01:05:59,681 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:05:59,794 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+Study2026-06-03 01:05:59,912 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ ID2026-06-03 01:06:00,027 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:00,143 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:00,258 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:00,378 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+82026-06-03 01:06:00,498 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:06:00,617 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:00,729 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:00,846 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ (2026-06-03 01:06:00,966 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ON2026-06-03 01:06:01,085 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+R2026-06-03 01:06:01,202 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ M2026-06-03 01:06:01,322 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+v2026-06-03 01:06:01,439 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+/2026-06-03 01:06:01,556 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+CD2026-06-03 01:06:01,676 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+R2026-06-03 01:06:01,809 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+/2026-06-03 01:06:02,200 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+SD2026-06-03 01:06:02,319 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:02,437 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ study2026-06-03 01:06:02,806 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+)2026-06-03 01:06:02,921 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ includes2026-06-03 01:06:03,038 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ Met2026-06-03 01:06:03,154 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:03,272 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:06:03,388 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ data2026-06-03 01:06:03,503 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ type2026-06-03 01:06:03,623 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:06:03,743 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+32026-06-03 01:06:03,866 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:03,983 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ None2026-06-03 01:06:04,102 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ of2026-06-03 01:06:04,221 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:04,337 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ top2026-06-03 01:06:04,451 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ results2026-06-03 01:06:04,567 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ explicitly2026-06-03 01:06:04,683 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+ mention2026-06-03 01:06:04,799 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ "2026-06-03 01:06:04,918 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:06:05,034 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+"2026-06-03 01:06:05,153 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ or2026-06-03 01:06:05,273 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ "2026-06-03 01:06:05,386 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+wild2026-06-03 01:06:05,497 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+-ca2026-06-03 01:06:05,607 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ught2026-06-03 01:06:05,716 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+"2026-06-03 01:06:06,286 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:06:06,392 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:06,505 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:06,614 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ Study2026-06-03 01:06:06,727 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ ID2026-06-03 01:06:06,837 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:06,945 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Title2026-06-03 01:06:07,056 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:07,162 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ PI2026-06-03 01:06:07,270 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:07,385 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Samples2026-06-03 01:06:07,494 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:07,608 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Data2026-06-03 01:06:07,718 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ Types2026-06-03 01:06:07,828 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:08,399 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Abstract2026-06-03 01:06:08,503 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:08,612 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:06:08,722 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:08,832 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+----------2026-06-03 01:06:08,947 [DEBUG] helpers.agent: [chunk iter=5] content=10 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:09,054 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+-------2026-06-03 01:06:09,169 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:09,273 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+-----2026-06-03 01:06:09,386 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:09,494 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+---------2026-06-03 01:06:09,903 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:10,013 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+------------2026-06-03 01:06:10,134 [DEBUG] helpers.agent: [chunk iter=5] content=12 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:11,410 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+----------2026-06-03 01:06:12,276 [DEBUG] helpers.agent: [chunk iter=5] content=10 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:12,988 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+2026-06-03 01:06:13,054 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+|2026-06-03 01:06:13,162 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:13,519 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:13,620 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:13,730 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+82026-06-03 01:06:13,836 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:06:13,943 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:14,053 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:14,160 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ ON2026-06-03 01:06:14,274 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+R2026-06-03 01:06:14,381 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ M2026-06-03 01:06:14,492 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+v2026-06-03 01:06:14,596 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+/2026-06-03 01:06:15,151 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+CD2026-06-03 01:06:15,256 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+R2026-06-03 01:06:15,365 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+/2026-06-03 01:06:15,474 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+SD2026-06-03 01:06:15,583 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:15,692 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ study2026-06-03 01:06:15,801 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:15,924 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Chris2026-06-03 01:06:16,028 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ Low2026-06-03 01:06:16,138 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ry2026-06-03 01:06:16,252 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:16,354 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:16,459 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:06:16,568 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+32026-06-03 01:06:16,677 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+72026-06-03 01:06:17,236 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:17,343 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:17,453 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:17,567 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+62026-06-03 01:06:17,675 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+S2026-06-03 01:06:17,789 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+,2026-06-03 01:06:17,896 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ Met2026-06-03 01:06:18,002 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:18,110 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:06:18,570 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:18,676 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Previous2026-06-03 01:06:18,782 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:06:18,894 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ demonstrate2026-06-03 01:06:19,447 [DEBUG] helpers.agent: [chunk iter=5] content=12 reasoning=0 tools=0 finish=-
+ that2026-06-03 01:06:19,461 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ heat2026-06-03 01:06:20,642 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+-k2026-06-03 01:06:20,754 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+illed2026-06-03 01:06:20,871 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ My2026-06-03 01:06:20,992 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+cob2026-06-03 01:06:21,106 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+acter2026-06-03 01:06:21,226 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ium2026-06-03 01:06:21,624 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ vac2026-06-03 01:06:21,739 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+cae2026-06-03 01:06:21,860 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ N2026-06-03 01:06:21,978 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+CT2026-06-03 01:06:22,098 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+C2026-06-03 01:06:22,216 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:22,574 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:22,689 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:22,806 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+62026-06-03 01:06:22,927 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+52026-06-03 01:06:23,045 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+92026-06-03 01:06:23,164 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ is2026-06-03 01:06:23,282 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ a2026-06-03 01:06:23,398 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ potentially2026-06-03 01:06:23,515 [DEBUG] helpers.agent: [chunk iter=5] content=12 reasoning=0 tools=0 finish=-
+ useful2026-06-03 01:06:23,867 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ counter2026-06-03 01:06:24,214 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+measure2026-06-03 01:06:24,326 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+...2026-06-03 01:06:24,444 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ |2026-06-03 01:06:24,566 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:24,683 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+This2026-06-03 01:06:24,799 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ is2026-06-03 01:06:24,917 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:25,035 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:06:25,151 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+only2026-06-03 01:06:25,269 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ study2026-06-03 01:06:25,389 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:25,506 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ from2026-06-03 01:06:25,622 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:25,740 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ results2026-06-03 01:06:25,859 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ that2026-06-03 01:06:25,978 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ includes2026-06-03 01:06:26,095 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:06:26,212 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:26,333 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:06:26,457 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ sequencing2026-06-03 01:06:26,570 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+,2026-06-03 01:06:26,690 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ though2026-06-03 01:06:26,803 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ it2026-06-03 01:06:26,920 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ appears2026-06-03 01:06:27,042 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:06:27,159 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ be2026-06-03 01:06:27,274 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:06:27,395 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ laboratory2026-06-03 01:06:27,511 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:06:27,632 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ rather2026-06-03 01:06:27,748 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ than2026-06-03 01:06:27,869 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:27,985 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:06:28,105 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:28,220 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:28,337 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:28,453 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+Summary2026-06-03 01:06:28,569 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+:**2026-06-03 01:06:28,682 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ Wild2026-06-03 01:06:29,077 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:29,196 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:06:29,308 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ with2026-06-03 01:06:29,427 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ shotgun2026-06-03 01:06:29,548 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:06:29,663 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:29,784 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omics2026-06-03 01:06:29,899 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ appear2026-06-03 01:06:30,014 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:06:30,134 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ be2026-06-03 01:06:30,250 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ rare2026-06-03 01:06:30,374 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ or2026-06-03 01:06:30,487 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ not2026-06-03 01:06:30,599 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ well2026-06-03 01:06:30,722 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+-re2026-06-03 01:06:30,836 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+present2026-06-03 01:06:30,952 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ed2026-06-03 01:06:31,074 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ in2026-06-03 01:06:31,193 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:31,311 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ current2026-06-03 01:06:31,421 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ Qi2026-06-03 01:06:31,540 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ita2026-06-03 01:06:31,656 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ database2026-06-03 01:06:31,779 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:31,898 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ Most2026-06-03 01:06:32,015 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:32,130 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ microbi2026-06-03 01:06:32,496 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ome2026-06-03 01:06:32,836 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:06:32,950 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ use2026-06-03 01:06:33,067 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:33,182 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:33,301 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+62026-06-03 01:06:33,419 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+S2026-06-03 01:06:33,538 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ r2026-06-03 01:06:33,652 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+RNA2026-06-03 01:06:33,770 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ sequencing2026-06-03 01:06:33,886 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:06:34,002 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ laboratory2026-06-03 01:06:34,123 [DEBUG] helpers.agent: [chunk iter=5] content=11 reasoning=0 tools=0 finish=-
+ strains2026-06-03 01:06:34,240 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:34,356 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ Study2026-06-03 01:06:34,471 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:34,591 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:34,708 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:34,829 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+82026-06-03 01:06:34,941 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:06:35,059 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:35,182 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ is2026-06-03 01:06:35,299 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:35,408 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ closest2026-06-03 01:06:35,525 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ match2026-06-03 01:06:35,641 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ with2026-06-03 01:06:35,756 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:06:35,886 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:36,259 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:06:36,371 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ data2026-06-03 01:06:36,487 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:06:36,605 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ but2026-06-03 01:06:36,722 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ it2026-06-03 01:06:36,837 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+'s2026-06-03 01:06:36,953 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ not2026-06-03 01:06:37,068 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ on2026-06-03 01:06:37,186 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:37,302 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ mice2026-06-03 01:06:37,418 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:37,534 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:37,650 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+---2026-06-03 01:06:37,765 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:37,881 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+###2026-06-03 01:06:37,998 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ 💡2026-06-03 01:06:38,230 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Help2026-06-03 01:06:38,345 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ me2026-06-03 01:06:38,461 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ refine2026-06-03 01:06:38,580 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ this2026-06-03 01:06:38,697 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ search2026-06-03 01:06:38,813 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:38,928 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+Would2026-06-03 01:06:39,044 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ you2026-06-03 01:06:39,162 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ like2026-06-03 01:06:39,277 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ me2026-06-03 01:06:39,393 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:06:39,509 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+:2026-06-03 01:06:39,624 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:39,742 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:39,855 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:39,974 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:06:40,090 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+Search2026-06-03 01:06:40,203 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ for2026-06-03 01:06:40,325 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:40,433 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ rod2026-06-03 01:06:40,544 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ent2026-06-03 01:06:40,653 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:06:40,766 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ more2026-06-03 01:06:40,873 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ broadly2026-06-03 01:06:40,982 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:41,097 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ (2026-06-03 01:06:41,201 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+e2026-06-03 01:06:41,313 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.g2026-06-03 01:06:41,422 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+.,2026-06-03 01:06:41,981 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ Per2026-06-03 01:06:42,083 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+om2026-06-03 01:06:42,192 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ys2026-06-03 01:06:42,300 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+cus2026-06-03 01:06:42,654 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+,2026-06-03 01:06:42,757 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:42,867 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ rats2026-06-03 01:06:42,978 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+,2026-06-03 01:06:43,364 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ other2026-06-03 01:06:43,474 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:43,584 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ rodents2026-06-03 01:06:43,695 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+)2026-06-03 01:06:43,806 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ with2026-06-03 01:06:43,914 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:06:44,020 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:44,576 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omics2026-06-03 01:06:44,681 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+?2026-06-03 01:06:44,789 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:44,898 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+22026-06-03 01:06:45,003 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:45,114 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:06:45,223 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+Look2026-06-03 01:06:45,337 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ at2026-06-03 01:06:45,440 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ Study2026-06-03 01:06:45,550 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ 2026-06-03 01:06:45,659 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:45,769 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:45,879 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+82026-06-03 01:06:45,988 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+42026-06-03 01:06:46,095 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+12026-06-03 01:06:46,653 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ in2026-06-03 01:06:46,757 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ detail2026-06-03 01:06:46,867 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:46,975 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:06:47,085 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ see2026-06-03 01:06:47,194 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ the2026-06-03 01:06:47,304 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ specific2026-06-03 01:06:47,413 [DEBUG] helpers.agent: [chunk iter=5] content=9 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:47,522 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ strains2026-06-03 01:06:47,634 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+ and2026-06-03 01:06:47,743 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ experimental2026-06-03 01:06:47,851 [DEBUG] helpers.agent: [chunk iter=5] content=13 reasoning=0 tools=0 finish=-
+ design2026-06-03 01:06:47,961 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+?2026-06-03 01:06:48,068 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+
+
+2026-06-03 01:06:48,175 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+32026-06-03 01:06:48,732 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:49,143 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ **2026-06-03 01:06:49,251 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+Search2026-06-03 01:06:49,361 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ for2026-06-03 01:06:49,471 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ any2026-06-03 01:06:49,581 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ met2026-06-03 01:06:49,691 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+agen2026-06-03 01:06:49,797 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+omic2026-06-03 01:06:49,909 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ mouse2026-06-03 01:06:50,020 [DEBUG] helpers.agent: [chunk iter=5] content=6 reasoning=0 tools=0 finish=-
+ studies2026-06-03 01:06:50,129 [DEBUG] helpers.agent: [chunk iter=5] content=8 reasoning=0 tools=0 finish=-
+**2026-06-03 01:06:50,232 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ (2026-06-03 01:06:50,345 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+reg2026-06-03 01:06:50,453 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ardless2026-06-03 01:06:50,561 [DEBUG] helpers.agent: [chunk iter=5] content=7 reasoning=0 tools=0 finish=-
+ of2026-06-03 01:06:51,114 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ wild2026-06-03 01:06:52,054 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+ vs2026-06-03 01:06:52,542 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+.2026-06-03 01:06:52,926 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ lab2026-06-03 01:06:53,044 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+)2026-06-03 01:06:53,388 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+ to2026-06-03 01:06:53,493 [DEBUG] helpers.agent: [chunk iter=5] content=3 reasoning=0 tools=0 finish=-
+ see2026-06-03 01:06:53,843 [DEBUG] helpers.agent: [chunk iter=5] content=4 reasoning=0 tools=0 finish=-
+ what2026-06-03 01:06:53,949 [DEBUG] helpers.agent: [chunk iter=5] content=5 reasoning=0 tools=0 finish=-
+'s2026-06-03 01:06:54,301 [DEBUG] helpers.agent: [chunk iter=5] content=2 reasoning=0 tools=0 finish=-
+ available2026-06-03 01:06:54,405 [DEBUG] helpers.agent: [chunk iter=5] content=10 reasoning=0 tools=0 finish=-
+?2026-06-03 01:06:54,516 [DEBUG] helpers.agent: [chunk iter=5] content=1 reasoning=0 tools=0 finish=-
+2026-06-03 01:06:54,629 [DEBUG] helpers.agent: [chunk iter=5] content=0 reasoning=0 tools=0 finish=stop
+2026-06-03 01:06:54,629 [INFO] helpers.agent: [round 5] ttft=1.146s total=92.562s content=1655 chars reasoning=0 chars finish=stop tool_calls=0
+
+
+── summary ───────────────────────────────────────
+  total wall time : 1091.76s
+  tool calls      : 2
+    • search_studies     192.43s   top 8 results (incl. 85 from sample metadata of ≤500 studies)  (3541 chars)
+    • search_studies      31.81s   top 10 results (incl. 496 from sample metadata of ≤500 studies)  (4864 chars)
+  bottleneck      : search_studies (192.43s)
+──────────────────────────────────────────────────

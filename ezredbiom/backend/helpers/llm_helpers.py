@@ -3,11 +3,12 @@
 import json
 import re
 
+import anthropic as _anthropic
+
 from config import (
     client,
+    get_client,
     CHAT_SYSTEM_PROMPT,
-    PROJECT_CONTEXT_MAX_CHARS,
-    GLOBAL_CONTEXT_MAX_CHARS,
     DEFAULT_MODEL,
     ALLOWED_MODELS,
 )
@@ -20,6 +21,10 @@ def _resolve_model(model):
 
 
 def friendly_llm_error(exc, model=None):
+    if isinstance(exc, _anthropic.RateLimitError):
+        return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
+    if isinstance(exc, (_anthropic.APIConnectionError, _anthropic.APIStatusError)):
+        return f"{model or 'Claude'} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."
     raw = str(exc) or exc.__class__.__name__
     lowered = raw.lower()
     connection_markers = (
@@ -35,6 +40,18 @@ def friendly_llm_error(exc, model=None):
         name = model or "the selected model"
         return f"{name} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."
     return raw
+
+
+def _extract_system_and_messages(api_msgs):
+    """Split the system message from conversation messages for Anthropic's separate system param."""
+    system = ""
+    msgs = []
+    for m in api_msgs:
+        if m.get("role") == "system":
+            system = m.get("content") or ""
+        else:
+            msgs.append(m)
+    return system, msgs
 from store import (
     get_project_context_summary,
     get_study_detail_cache,
@@ -183,7 +200,7 @@ def _format_discovery_study_list(studies, header_line: str, max_chars: int):
     return out + "\n"
 
 
-def _build_project_study_context(project: dict, user_id: str = "default"):
+def _build_project_study_context(project: dict, user_id: str = "default", budget: int = 12_000):
     if not project:
         return None
     studies    = project.get("studies") or []
@@ -212,15 +229,15 @@ def _build_project_study_context(project: dict, user_id: str = "default"):
     )
     detailed_blocks = [_study_detail_block(s, include_samples_context=True) for s in studies]
     full_context    = header + "\n".join(detailed_blocks)
-    if len(full_context) <= PROJECT_CONTEXT_MAX_CHARS:
+    if len(full_context) <= budget:
         return full_context
 
-    budget      = max(1000, PROJECT_CONTEXT_MAX_CHARS - len(header) - 400)
-    kept_details = []
-    overflow     = []
-    running      = 0
+    detail_budget = max(1000, budget - len(header) - 400)
+    kept_details  = []
+    overflow      = []
+    running       = 0
     for idx, block in enumerate(detailed_blocks):
-        if running + len(block) <= int(budget * 0.65):
+        if running + len(block) <= int(detail_budget * 0.65):
             kept_details.append(block)
             running += len(block)
         else:
@@ -242,7 +259,7 @@ def _build_project_study_context(project: dict, user_id: str = "default"):
     if summary_lines:
         candidate_parts.append("Summaries for remaining studies:\n" + "\n".join(summary_lines))
     candidate = "\n\n".join(candidate_parts)
-    if len(candidate) <= PROJECT_CONTEXT_MAX_CHARS:
+    if len(candidate) <= budget:
         return candidate
 
     project_summary    = None
@@ -259,7 +276,7 @@ def _build_project_study_context(project: dict, user_id: str = "default"):
         + "Project summary:\n"
         + (project_summary or "No cached summary available.")
     )
-    return fallback[:PROJECT_CONTEXT_MAX_CHARS]
+    return fallback[:budget]
 
 
 def _build_api_messages(messages, study_context_text: str, system_prompt: str = None):
@@ -275,17 +292,17 @@ def _build_api_messages(messages, study_context_text: str, system_prompt: str = 
     return [{"role": "system", "content": system_content}] + _normalize_messages(messages)
 
 
-def _build_global_search_context(studies, user_query: str):
+def _build_global_search_context(studies, user_query: str, budget: int = 24_000):
     """Build LLM context from auto-searched studies for global chat (compact rows)."""
     if not studies:
         return f'A database search for "{user_query}" returned no matching studies in Qiita. Suggest rephrasing or broadening the query.'
     header = (
         f'The following {len(studies)} studies were retrieved from Qiita based on the query "{user_query}":'
     )
-    return _format_discovery_study_list(studies, header, GLOBAL_CONTEXT_MAX_CHARS)
+    return _format_discovery_study_list(studies, header, budget)
 
 
-def merge_global_chat_context(selected_studies, db_studies, user_query: str) -> str:
+def merge_global_chat_context(selected_studies, db_studies, user_query: str, budget: int = 24_000) -> str:
     """
     Combine user-selected browse chips with database search hits for global chat.
     Dedupes DB rows that are already in selected_studies by study_id.
@@ -301,7 +318,7 @@ def merge_global_chat_context(selected_studies, db_studies, user_query: str) -> 
         "specifically about those IDs or for comparison.\n"
     )
     sel_budget = min(14000, max(1500, 400 * max(1, len(selected))))
-    db_budget  = max(2000, GLOBAL_CONTEXT_MAX_CHARS - len(intro) - sel_budget - 80)
+    db_budget  = max(2000, budget - len(intro) - sel_budget - 80)
 
     sel_header = f"USER-SELECTED BROWSE CONTEXT ({len(selected)} studies):"
     sel_text   = _format_discovery_study_list(selected, sel_header, sel_budget)
@@ -381,19 +398,32 @@ def llm_plan_query(messages: list) -> dict:
 
 
 def llm_chat(messages, study_context_text: str, system_prompt: str = None, model: str = None):
-    r = client.chat.completions.create(
-        model=_resolve_model(model),
-        messages=_build_api_messages(messages, study_context_text, system_prompt),
-    )
+    resolved = _resolve_model(model)
+    llm_client, provider = get_client(resolved)
+    api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    if provider == "anthropic":
+        system, msgs = _extract_system_and_messages(api_msgs)
+        resp = llm_client.messages.create(model=resolved, max_tokens=4096, system=system, messages=msgs)
+        return (resp.content[0].text or "").strip()
+    r = llm_client.chat.completions.create(model=resolved, messages=api_msgs)
     return (r.choices[0].message.content or "").strip()
 
 
 def llm_chat_stream(messages, study_context_text: str, system_prompt: str = None, model: str = None):
-    stream  = client.chat.completions.create(
-        model=_resolve_model(model),
-        messages=_build_api_messages(messages, study_context_text, system_prompt),
-        stream=True,
-    )
+    resolved = _resolve_model(model)
+    llm_client, provider = get_client(resolved)
+    api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    if provider == "anthropic":
+        system, msgs = _extract_system_and_messages(api_msgs)
+        with llm_client.messages.stream(model=resolved, max_tokens=4096, system=system, messages=msgs) as stream:
+            yielded = False
+            for text in stream.text_stream:
+                yield text
+                yielded = True
+        if not yielded:
+            yield "(No response received from model)"
+        return
+    stream = llm_client.chat.completions.create(model=resolved, messages=api_msgs, stream=True)
     yielded = False
     for chunk in stream:
         if not chunk.choices:

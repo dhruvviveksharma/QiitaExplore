@@ -6,6 +6,21 @@ import uuid
 from .db import _conn, _as_dict, _now
 
 
+def get_setting(key: str):
+    with _conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_setting(key: str, value: str):
+    with _conn() as conn:
+        conn.execute(
+            "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
+
+
 def _project_exists(conn, project_id, user_id):
     row = conn.execute(
         "SELECT project_id FROM projects WHERE project_id = ? AND user_id = ?",

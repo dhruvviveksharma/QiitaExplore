@@ -43,6 +43,9 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   const [loading,      setLoading]      = useState(false);
   const [filterText,   setFilterText]   = useState('');
   const [showVaryingOnly, setShowVaryingOnly] = useState(false);
+  const [leftPct, setLeftPct] = useState(55);
+  const dragging = React.useRef(false);
+  const containerRef = React.useRef(null);
 
   const onRowClick = async (s) => {
     if (activeId === s.sample_id) { setActiveId(null); setActiveFields(null); return; }
@@ -170,7 +173,7 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   );
 
   const tableEl = (
-    <div className="samples-table-wrap" style={isStacked ? null : {flex:'0 0 auto', maxWidth:'55%'}}>
+    <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflowX:'hidden'}}>
       <table className="prep-table">
         <thead><tr><th>Sample ID</th><th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
         <tbody>
@@ -238,66 +241,99 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
   return (
     <div>
       {toolbarEl}
-      <div style={{display:'flex', gap:'1rem', alignItems:'flex-start'}}>{tableEl}{detailEl}</div>
+      <div
+        ref={containerRef}
+        style={{display:'flex', gap:0, alignItems:'flex-start'}}
+        onMouseMove={e => {
+          if (!dragging.current || !containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const pct = ((e.clientX - rect.left) / rect.width) * 100;
+          setLeftPct(Math.min(80, Math.max(20, pct)));
+        }}
+        onMouseUp={() => { dragging.current = false; }}
+        onMouseLeave={() => { dragging.current = false; }}
+      >
+        {tableEl}
+        <div className="resize-handle" onMouseDown={e => { dragging.current = true; e.preventDefault(); }} />
+        {detailEl}
+      </div>
     </div>
   );
 }
 
 // ─── PrepsTable ───────────────────────────────────────────────────────────────
 function PrepsTable({ detail, loading, onMount }) {
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
   const preps = detail.preps || [];
   if (preps.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No prep templates found.</p>;
+  const shown = expanded ? preps : preps.slice(0, 20);
   return (
-    <table className="prep-table">
-      <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
-      <tbody>
-        {preps.map(p => (
-          <tr key={p.prep_template_id}>
-            <td>{p.prep_template_id}</td>
-            <td>{p.data_type || '—'}</td>
-            <td>{p.investigation_type || '—'}</td>
-            <td>{p.platform || '—'}</td>
-            <td>{p.target_gene || '—'}</td>
-            <td>{p.preprocessing_status || '—'}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="prep-table">
+        <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
+        <tbody>
+          {shown.map(p => (
+            <tr key={p.prep_template_id}>
+              <td>{p.prep_template_id}</td>
+              <td>{p.data_type || '—'}</td>
+              <td>{p.investigation_type || '—'}</td>
+              <td>{p.platform || '—'}</td>
+              <td>{p.target_gene || '—'}</td>
+              <td>{p.preprocessing_status || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {preps.length > 20 && (
+        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? '▲ Show fewer' : `▼ Show all (${preps.length})`}
+        </button>
+      )}
+    </>
   );
 }
 
 // ─── ArtifactsTable ───────────────────────────────────────────────────────────
 function ArtifactsTable({ detail, loading, onMount }) {
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
   const artifacts = detail.artifacts || [];
   if (artifacts.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No artifacts found.</p>;
+  const shown = expanded ? artifacts : artifacts.slice(0, 20);
   return (
-    <table className="prep-table">
-      <thead><tr><th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th></tr></thead>
-      <tbody>
-        {artifacts.map(a => (
-          <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
-            <td>{a.artifact_id}</td>
-            <td>{a.artifact_type || '—'}</td>
-            <td>{a.data_type || '—'}</td>
-            <td className="artifact-path-cell">
-              <span className="artifact-path" title={a.full_path}>
-                {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
-              </span>
-              {a.full_path && (
-                <button className="btn-copy-path" title="Copy full path"
-                  onClick={() => navigator.clipboard?.writeText(a.full_path)}>⎘</button>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="prep-table">
+        <thead><tr><th>Artifact ID</th><th>Type</th><th>Data Type</th><th>File Path</th></tr></thead>
+        <tbody>
+          {shown.map(a => (
+            <tr key={`${a.prep_template_id}-${a.artifact_id}`}>
+              <td>{a.artifact_id}</td>
+              <td>{a.artifact_type || '—'}</td>
+              <td>{a.data_type || '—'}</td>
+              <td className="artifact-path-cell">
+                <span className="artifact-path" title={a.full_path}>
+                  {a.full_path ? a.full_path.split('/').slice(-2).join('/') : '—'}
+                </span>
+                {a.full_path && (
+                  <button className="btn-copy-path" title="Copy full path"
+                    onClick={() => navigator.clipboard?.writeText(a.full_path)}>⎘</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {artifacts.length > 20 && (
+        <button className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? '▲ Show fewer' : `▼ Show all (${artifacts.length})`}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -394,10 +430,102 @@ function SamplesReportBubble({ ui, messageKey }) {
   );
 }
 
+// ─── ToolResultWidget ─────────────────────────────────────────────────────────
+function ToolResultWidget({ payload, msgKey }) {
+  if (!payload) return null;
+  if (payload.kind === 'samples_report')
+    return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
+  const studies = payload.result_studies || [];
+  const sqlBlock = payload.sql_query ? (
+    <details className="tool-sql-block">
+      <summary className="tool-sql-summary">SQL query</summary>
+      <pre className="tool-sql-pre">{payload.sql_query}</pre>
+    </details>
+  ) : null;
+  const isSampleSearch = payload.tool === 'search_by_sample';
+  if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
+    <React.Fragment>
+      {sqlBlock}
+      <table className="prep-table tool-result-table">
+        <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th>{isSampleSearch && <th>Via</th>}</tr></thead>
+        <tbody>{studies.map(s => (
+          <tr key={s.study_id}>
+            <td>{s.study_id}</td>
+            <td title={s.study_title}>{(s.study_title || '').slice(0, 55)}</td>
+            <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
+            <td>{s.num_samples ?? '—'}</td>
+            <td>{s.data_types || '—'}</td>
+            {isSampleSearch && <td><span className="via-badge">sample match</span></td>}
+          </tr>
+        ))}</tbody>
+      </table>
+    </React.Fragment>
+  );
+  return payload.result_summary
+    ? <React.Fragment>{sqlBlock}<p className="tool-call-text-result">{payload.result_summary}</p></React.Fragment>
+    : null;
+}
+
+// ─── ToolCallCard ─────────────────────────────────────────────────────────────
+function ToolCallCard({ seg, msgKey }) {
+  const [open, setOpen] = useState(false);
+  const done   = seg.done;
+  const label  = done ? (seg.result?.label || seg.label) : seg.label;
+  const detail = done ? seg.result?.detail : '';
+  return (
+    <div className="tool-call-card">
+      <button className="tool-call-header" onClick={() => setOpen(o => !o)}>
+        {done ? <span className="step-dot" /> : <div className="step-spinner" />}
+        <span className="tool-call-label">{label}</span>
+        {detail && <span className="step-detail"> · {detail}</span>}
+        <span className="tool-call-toggle">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="tool-call-body">
+          {seg.args?.keywords?.length > 0 &&
+            <p className="tool-call-args">Keywords: {seg.args.keywords.join(', ')}</p>}
+          {seg.args?.field_filters?.length > 0 && (
+            <p className="tool-call-args">Filters: {seg.args.field_filters.map(f => `${f.field}="${f.value}"`).join(', ')}</p>
+          )}
+          {seg.args?.study_id != null &&
+            <p className="tool-call-args">Study ID: {seg.args.study_id}</p>}
+          {seg.args?.study_ids?.length > 0 &&
+            <p className="tool-call-args">Studies: {seg.args.study_ids.join(', ')}</p>}
+          {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`} />}
+          {done && !seg.result?.ui_payload && seg.result?.label && (
+            <p className="tool-call-text-result">{seg.result.label}</p>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AgentMessageBubble ───────────────────────────────────────────────────────
+function AgentMessageBubble({ segments, isStreaming, msgKey }) {
+  return (
+    <div className="agent-msg">
+      {(segments || []).map((seg, i) =>
+        seg.type === 'text' && seg.content ? (
+          <div key={i} className={`msg-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
+        ) : seg.type === 'tool' ? (
+          <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`} />
+        ) : null
+      )}
+      {isStreaming && !(segments || []).length && (
+        <div className="msg-bubble"><div className="typing-dots"><span /><span /><span /></div></div>
+      )}
+    </div>
+  );
+}
+
 // ─── SLASH_COMMANDS registry ──────────────────────────────────────────────────
 const SLASH_COMMANDS = [
-  { cmd: '/systems', insert: '/systems',  usage: '/systems',    desc: 'Check status & latency of all available LLM models.' },
-  { cmd: '/report',  insert: '/report ',  usage: '/report 104', desc: 'Load full sample-level metadata for a Qiita study.' },
+  { cmd: '/model',      insert: '/model',       usage: '/model',                 desc: 'Choose the LLM model for this chat.' },
+  { cmd: '/systems',    insert: '/systems',     usage: '/systems',               desc: 'Check status & latency of all available LLM models.' },
+  { cmd: '/report',    insert: '/report ',     usage: '/report 104',            desc: 'Load full sample-level metadata for a Qiita study.' },
+  { cmd: '/pin',       insert: '/pin ',        usage: '/pin 77 101',            desc: 'Pin one or more studies into this chat context.' },
+  { cmd: '/deepsearch',insert: '/deepsearch ', usage: '/deepsearch wild mice',  desc: 'Deep search: scans sample metadata across ~500 studies (slower, more comprehensive).' },
 ];
 
 // ─── SlashCommandMenu ─────────────────────────────────────────────────────────
@@ -413,6 +541,74 @@ function SlashCommandMenu({ matches, activeIndex, onPick }) {
           <span className="slash-menu-desc">{item.desc}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── ModelPickerCard ──────────────────────────────────────────────────────────
+const _NRP_MODELS = [
+  ['qwen3','Qwen 3 (397B)'], ['qwen3-small','Qwen 3 Small (27B)'],
+  ['gpt-oss','GPT-OSS (120B)'], ['gemma','Gemma (31B)'],
+  ['gemma-small','Gemma Small (~8B)'], ['kimi','Kimi (1T)'],
+  ['glm-5','GLM-5 (744B)'], ['minimax-m2','Minimax M2 (230B)'],
+];
+const _CLAUDE_MODELS = [
+  ['claude-haiku-4-5','Claude Haiku 4.5'],
+  ['claude-sonnet-4-6','Claude Sonnet 4.6'],
+  ['claude-opus-4-8','Claude Opus 4.8'],
+];
+
+function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
+  const [apiKeyInput,  setApiKeyInput]  = React.useState('');
+  const [pendingClaude, setPendingClaude] = React.useState(null);
+  const [saving,       setSaving]       = React.useState(false);
+
+  const pick = (id) => {
+    if (id.startsWith('claude-') && !anthropicKeySet) { setPendingClaude(id); return; }
+    onPick(id, false);
+  };
+
+  const saveKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    setSaving(true);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anthropic_api_key: apiKeyInput.trim() }),
+    });
+    setSaving(false);
+    onPick(pendingClaude, true);
+  };
+
+  const row = (id, label) => (
+    <div key={id} className={`model-picker-row${id === current ? ' active' : ''}`} onClick={() => pick(id)}>
+      <span className="model-picker-dot">{id === current ? '●' : '○'}</span>{label}
+    </div>
+  );
+
+  return (
+    <div className="model-picker-card">
+      <div className="model-picker-header">
+        <span>Choose model</span>
+        <button className="model-picker-close" onClick={onClose}>×</button>
+      </div>
+      <div className="model-picker-group">NRP-Nautilus</div>
+      {_NRP_MODELS.map(([id, label]) => row(id, label))}
+      <div className="model-picker-group">
+        Anthropic
+        {!anthropicKeySet && <span className="model-picker-key-note"> — API key required</span>}
+      </div>
+      {_CLAUDE_MODELS.map(([id, label]) => row(id, label))}
+      {pendingClaude && (
+        <div className="model-picker-key-prompt">
+          <span>Enter your Anthropic API key:</span>
+          <input type="password" placeholder="sk-ant-..." value={apiKeyInput}
+            onChange={e => setApiKeyInput(e.target.value)} autoFocus />
+          <button onClick={saveKey} disabled={saving || !apiKeyInput.trim()}>
+            {saving ? '…' : 'Save & use'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

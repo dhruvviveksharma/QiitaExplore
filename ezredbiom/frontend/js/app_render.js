@@ -1,15 +1,17 @@
 function renderApp(s) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql,
-    setCtxStudies, setInput, setSelectedModel,
+    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
+    setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
+    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql,
-    ctxStudies, showNewProj, newProjName,
-    input, sending, compErr, selectedModel,
-    slashIndex, slashDismissed,
+    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    input, sending, compErr, selectedModel, theme,
+    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     taRef, bottomRef,
@@ -22,17 +24,17 @@ function renderApp(s) {
   } = s;
 
   return (
-    <div className="app">
+    <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
 
       {/* ══════════════════ SIDEBAR ══════════════════ */}
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>Qiita<span>Explorer</span></div>
         </div>
 
         <div className="sidebar-body">
 
-          <div className="sb-label">Projects</div>
+          <div className="sb-label">Workspaces</div>
           {projLoading && <div className="sb-loading">Loading…</div>}
 
           {projects.map(p => (
@@ -68,7 +70,7 @@ function renderApp(s) {
 
                   <div className="inner-tabs">
                     <button className={`inner-tab ${projInnerTab === 'chats' ? 'active' : ''}`} onClick={() => setProjInnerTab('chats')}>Chats</button>
-                    <button className={`inner-tab ${projInnerTab === 'sources' ? 'active' : ''}`} onClick={() => setProjInnerTab('sources')}>Sources</button>
+                    <button className={`inner-tab ${projInnerTab === 'sources' ? 'active' : ''}`} onClick={() => setProjInnerTab('sources')}>Studies</button>
                   </div>
 
                   {projInnerTab === 'chats' && (openProject?.chats || []).length === 0 && (
@@ -119,7 +121,7 @@ function renderApp(s) {
           ))}
 
           {!showNewProj ? (
-            <button className="new-proj-btn" onClick={() => setShowNewProj(true)}>+ New Project</button>
+            <button className="new-proj-btn" onClick={() => setShowNewProj(true)}>+ New Workspace</button>
           ) : (
             <div className="new-proj-form">
               <input
@@ -175,13 +177,70 @@ function renderApp(s) {
       <div className="main">
 
         <div className="topbar">
-          <span className="topbar-title">{topTitle}</span>
-          {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
-            <span className="topbar-badge">{openProject.studies.length} sources</span>
+          {(view.type === 'browse' || view.type === 'merges') ? (
+            <>
+              <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
+                onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
+              <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
+                onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
+              {view.type === 'merges' && (
+                <button
+                  className="sidebar-toggle-btn"
+                  title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                  onClick={() => setSidebarCollapsed(c => !c)}
+                >{sidebarCollapsed ? '▶' : '◀'}</button>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="topbar-title">{topTitle}</span>
+              {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
+                <span className="topbar-badge">{openProject.studies.length} sources</span>
+              )}
+            </>
           )}
+          <span className="topbar-spacer" />
+          {view.type !== 'merges' && (
+            <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
+              title="Merge Workspace"
+              onClick={() => setShowMergePanel(p => !p)}>
+              ⊕ Merge
+            </button>
+          )}
+          <button className="theme-toggle"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? '☀' : '☽'}
+          </button>
         </div>
 
-        <div className="content">
+        <div className={`content${showMergePanel ? ' merge-open' : ''}`}>
+
+          {/* ── MERGES ── */}
+          {view.type === 'merges' && (
+            <div className="merges-layout">
+              <div className="merges-list-col">
+                <MergesTab
+                  onOpenWorkspace={(wsId) => setMergeWorkspaceId(wsId)}
+                  activeWorkspaceId={mergeWorkspaceId}
+                />
+              </div>
+              <div className="merges-detail-col">
+                {mergeWorkspaceId
+                  ? <MergeWorkspacePanel
+                      key={mergeWorkspaceId}
+                      workspaceId={mergeWorkspaceId}
+                      setWorkspaceId={setMergeWorkspaceId}
+                      pendingStudy={pendingMergeStudy}
+                      clearPendingStudy={() => setPendingMergeStudy(null)}
+                      onClose={() => setMergeWorkspaceId(null)}
+                      embedded
+                    />
+                  : <div className="merges-detail-empty">Open a workspace to view it here</div>
+                }
+              </div>
+            </div>
+          )}
 
           {/* ── BROWSE ── */}
           {view.type === 'browse' && (
@@ -197,6 +256,11 @@ function renderApp(s) {
                 <button className="btn-search" onClick={() => doSearch()} disabled={searching || !query.trim()}>
                   {searching ? '…' : 'Search'}
                 </button>
+                <button
+                  className={`btn-deepsearch${deepSearch ? ' active' : ''}`}
+                  onClick={() => setDeepSearch(v => !v)}
+                  title="Also scan sample metadata (slower)"
+                >⚡ Deep</button>
                 {searched && (
                   <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); }}>
                     Clear
@@ -221,11 +285,11 @@ function renderApp(s) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><div className="spinner" /><br />Searching…</div>}
+              {searching && <div className="state-loading"><div className="spinner" /><br />{deepSearch ? 'Deep searching sample metadata…' : 'Searching…'}</div>}
 
               {!searching && (
                 <>
-                  <div className="browse-count">{searched ? `${results.length} results` : 'First 20 studies'}</div>
+                  <div className="browse-count">{searched ? `${results.length} results` : 'GOLD studies'}</div>
                   {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
                     {displayStudies.map(study => {
@@ -239,7 +303,10 @@ function renderApp(s) {
                       return (
                         <div key={study.study_id} className="study-card" onClick={() => openStudyModal(study)}>
                           <div className="study-card-top">
-                            <span className="study-id-badge">ID {study.study_id}</span>
+                            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
+                              <span className="study-id-badge">ID {study.study_id}</span>
+                              {study.is_gold && <span className="gold-badge">GOLD</span>}
+                            </div>
                             <div className="study-card-actions" onClick={e => e.stopPropagation()}>
                               {openProjId ? (
                                 <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
@@ -252,6 +319,13 @@ function renderApp(s) {
                                   {inCtx ? '✓ Pinned' : '+ Pin'}
                                 </button>
                               )}
+                              <button className="btn-card-merge"
+                                onClick={() => {
+                                  setPendingMergeStudy(study);
+                                  setShowMergePanel(true);
+                                }}>
+                                + Merge
+                              </button>
                             </div>
                           </div>
                           <div className="study-card-title">{study.study_title || 'Untitled study'}</div>
@@ -283,7 +357,7 @@ function renderApp(s) {
             <>
               {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
                 <div className="sources-bar">
-                  <span className="sources-label">Sources</span>
+                  <span className="sources-label">Studies</span>
                   {(openProject.studies||[]).map(s => (
                     <button key={s.study_id} className="src-chip" onClick={() => openStudyModal(s)}>
                       {(s.study_title||'Untitled').slice(0,40)}
@@ -329,7 +403,12 @@ function renderApp(s) {
                 ) : (
                   activeMsgs.map((m, i) => (
                     <div key={i} className={`msg-row ${m.role}${m.ui?.kind === 'samples_report' ? ' article' : ''}`}>
-                      {m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
+                      {m.role === 'assistant' && (m.segments !== null || m.ui?.kind === 'agent_segments') ? (
+                        <AgentMessageBubble
+                          segments={m.segments ?? m.ui?.segments ?? []}
+                          isStreaming={!!m.isStreaming}
+                          msgKey={`${view.chatId}-${i}`} />
+                      ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
                         <SystemsStatusBubble ui={m.ui} />
@@ -403,7 +482,19 @@ function renderApp(s) {
         </div>
 
         {/* Composer */}
-        <div className="composer-wrap">
+        {view.type !== 'merges' && <div className="composer-wrap">
+          {showModelPicker && (
+            <ModelPickerCard
+              current={selectedModel}
+              anthropicKeySet={anthropicKeySet}
+              onPick={(model, keySaved) => {
+                setSelectedModel(model);
+                if (keySaved) setAnthropicKeySet(true);
+                setShowModelPicker(false);
+              }}
+              onClose={() => setShowModelPicker(false)}
+            />
+          )}
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
             <div className="composer-pins">
               <span className="composer-pins-label">Pinned:</span>
@@ -451,100 +542,28 @@ function renderApp(s) {
             />
             <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
           </div>
-          <div className="composer-model">
-            <label className="composer-model-label" htmlFor="composer-model-select">Model:</label>
-            <select
-              id="composer-model-select"
-              className="composer-model-select"
-              value={selectedModel}
-              onChange={e => setSelectedModel(e.target.value)}
-              disabled={sending}
-              title="Choose the LLM that answers your message. Switch if one is down."
-            >
-              <option value="qwen3">Qwen 3 (397B)</option>
-              <option value="qwen3-small">Qwen 3 Small (27B)</option>
-              <option value="gpt-oss">GPT-OSS (120B)</option>
-              <option value="gemma">Gemma (31B)</option>
-              <option value="gemma-small">Gemma Small (~8B)</option>
-              <option value="kimi">Kimi (1T)</option>
-              <option value="glm-5">GLM-5 (744B)</option>
-              <option value="minimax-m2">Minimax M2 (230B)</option>
-            </select>
+          <div className="composer-model" onClick={() => setShowModelPicker(v => !v)}
+               title="Click or type /model to change" style={{cursor:'pointer'}}>
+            <span className="composer-model-label">Model:</span>
+            <span className="composer-model-name">{selectedModel}</span>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}
-        </div>
+        </div>}
       </div>
 
       {/* ══════════════════ MODAL ══════════════════════ */}
       {modalStudy && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>×</button>
-            <div className="modal-id">Study ID {modalStudy.study_id}</div>
-            <div className="modal-title">{modalStudy.study_title || 'Untitled study'}</div>
-
-            {!modalDetailLoading && modalDetail?.isPrivate ? (
-              <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'3rem 1rem', gap:'1rem', color:'#aaa'}}>
-                <span style={{fontSize:'4rem', lineHeight:1}}>✕</span>
-                <span style={{fontSize:'1rem', fontStyle:'italic', textAlign:'center'}}>This is a private study and its data is not publicly available.</span>
-              </div>
-            ) : (
-              <>
-                {(modalStudy.data_types || modalStudy.num_samples != null || modalStudy.num_preps != null) && (
-                  <div className="modal-stats">
-                    {(modalStudy.data_types || '').split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                      <span key={t} className="dtype-chip">{t}</span>
-                    ))}
-                    {modalStudy.num_samples != null && <span className="modal-stat">{modalStudy.num_samples} samples</span>}
-                    {modalStudy.num_preps   != null && <span className="modal-stat">{modalStudy.num_preps} preps</span>}
-                  </div>
-                )}
-
-                {modalStudy.study_abstract && (
-                  <div className="modal-section"><h4>Abstract</h4><p>{modalStudy.study_abstract}</p></div>
-                )}
-                {modalStudy.pi_name && (
-                  <div className="modal-section">
-                    <h4>Principal Investigator</h4>
-                    <p>{modalStudy.pi_name}{modalStudy.pi_affiliation ? ` — ${modalStudy.pi_affiliation}` : ''}</p>
-                  </div>
-                )}
-                {modalStudy.pi_email && (
-                  <div className="modal-section"><h4>Contact</h4><p>{modalStudy.pi_email}</p></div>
-                )}
-
-                <div className="modal-section">
-                  <h4>Prep Templates</h4>
-                  <PrepsTable detail={modalDetail} loading={modalDetailLoading} />
-                </div>
-
-                {!modalDetailLoading && modalDetail && (
-                  <div className="modal-section">
-                    <h4>Samples{modalDetail.total_samples != null ? ` (${modalDetail.total_samples} total${modalDetail.total_samples > 200 ? ', showing first 200' : ''})` : ''}</h4>
-                    <SamplesBrowser
-                      samples={modalDetail.samples || []}
-                      totalSamples={modalDetail.total_samples}
-                      layout="two-pane"
-                      fetchFields={async (sampleId) => {
-                        const res = await apiFetch(`/studies/${modalStudy.study_id}/samples/${encodeURIComponent(sampleId)}`);
-                        if (!res.ok) return null;
-                        const d = await res.json();
-                        return d.fields || null;
-                      }}
-                    />
-                  </div>
-                )}
-
-                {!modalDetailLoading && modalDetail && (
-                  <div className="modal-section">
-                    <h4>Artifacts</h4>
-                    <ArtifactsTable detail={modalDetail} loading={modalDetailLoading} />
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+        <StudyModal study={modalStudy} detail={modalDetail}
+          loading={modalDetailLoading} onClose={closeModal} />
+      )}
+      {showMergePanel && (
+        <MergeWorkspacePanel
+          workspaceId={mergeWorkspaceId}
+          setWorkspaceId={setMergeWorkspaceId}
+          pendingStudy={pendingMergeStudy}
+          clearPendingStudy={() => setPendingMergeStudy(null)}
+          onClose={() => setShowMergePanel(false)}
+        />
       )}
     </div>
   );

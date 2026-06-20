@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,10 +10,14 @@ from concurrent.futures import ThreadPoolExecutor
 from qiita_db.sql_connection import TRN
 
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
+
+_QIITA_BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
 from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
     get_study_detail_cache,
     upsert_study_detail_cache,
+    pin_study_to_chat,
+    list_pinned_studies,
 )
 from helpers.llm_helpers import _truncate
 
@@ -80,6 +85,10 @@ def first_studies(limit=20):
             JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
             WHERE sa.study_id = s.study_id AND v.visibility = 'public'
         )
+        AND EXISTS (
+            SELECT 1 FROM qiita.per_study_tags pst
+            WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
+        )
         ORDER BY s.study_id
         LIMIT %s
         """
@@ -103,6 +112,7 @@ def first_studies(limit=20):
             "num_samples":     row[9],
             "data_types":      row[10],
             "num_preps":       row[11],
+            "is_gold":         True,
         }
         for row in results
     ]
@@ -334,6 +344,29 @@ def _build_pinned_reports_context(study_ids):
     return text
 
 
+def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):
+    """Validate study IDs against Qiita, pin the valid ones, and return a summary.
+
+    Returns (pinned_now, invalid, rejected, all_pinned) where:
+      pinned_now  — IDs newly pinned this call
+      invalid     — IDs not found / private in Qiita
+      rejected    — IDs skipped because the 10-pin cap was reached
+      all_pinned  — full list of pinned IDs for this chat after the operation
+    """
+    seen = set()
+    deduped = [sid for sid in study_ids if not (sid in seen or seen.add(sid))]
+    pinned_now, invalid, rejected = [], [], []
+    for sid in deduped:
+        header = _fetch_study_header_cached(sid)
+        if header is None or ((header.get("num_samples") or 0) == 0 and (header.get("num_preps") or 0) == 0):
+            invalid.append(sid)
+        else:
+            ok = pin_study_to_chat(chat_id, scope, sid)
+            (pinned_now if ok else rejected).append(sid)
+    all_pinned = list_pinned_studies(chat_id, scope)
+    return pinned_now, invalid, rejected, all_pinned
+
+
 def _build_samples_report_payload(study_id: int, sample_limit: int = REPORT_SAMPLE_LIMIT):
     """Build the structured payload rendered as an inline samples-browser in the chat bubble."""
     study_id = int(study_id)
@@ -474,16 +507,26 @@ def _fetch_study_detail_from_qiita(study_id: int):
         """,
         [study_id],
     )
-    artifacts = [
-        {
-            "prep_template_id": r[0],
-            "prep_name":        r[1],
-            "artifact_id":      r[2],
-            "artifact_type":    r[3],
-            "data_type":        r[4],
-            "full_path":        r[5],
-            "generated_timestamp": str(r[6]) if r[6] else None,
-        }
-        for r in artifact_rows
-    ]
+    def _abs(path):
+        if path and not os.path.isabs(path) and _QIITA_BASE:
+            return f"{_QIITA_BASE}/{path}"
+        return path
+
+    # One entry per artifact_id; prefer the .biom file path
+    artifact_by_id: dict = {}
+    for r in artifact_rows:
+        aid = r[2]
+        path = _abs(r[5])
+        existing = artifact_by_id.get(aid)
+        if existing is None or path.lower().endswith(".biom"):
+            artifact_by_id[aid] = {
+                "prep_template_id": r[0],
+                "prep_name":        r[1],
+                "artifact_id":      aid,
+                "artifact_type":    r[3],
+                "data_type":        r[4],
+                "full_path":        path,
+                "generated_timestamp": str(r[6]) if r[6] else None,
+            }
+    artifacts = list(artifact_by_id.values())
     return preps, artifacts

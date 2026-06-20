@@ -4,6 +4,7 @@ function useAppState() {
   const [openProjId,  setOpenProjId]  = useState(null);
   const [openProject, setOpenProject] = useState(null);
   const [view,        setView]        = useState({ type: 'browse' });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCache,   setChatCache]   = useState({});
   const [globalChats, setGlobalChats] = useState([]);
   const [projInnerTab, setProjInnerTab] = useState('chats');
@@ -14,15 +15,19 @@ function useAppState() {
   const [searched,     setSearched]     = useState(false);
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [showSql,      setShowSql]      = useState(false);
+  const [deepSearch,   setDeepSearch]   = useState(false);
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
+  const [mergeWorkspaceId, setMergeWorkspaceId] = useState(null);
+  const [showMergePanel,   setShowMergePanel]   = useState(false);
+  const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
   const [input,   setInput]   = useState('');
   const [sending, setSending] = useState(false);
   const [compErr,        setCompErr]        = useState('');
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const _VALID_MODELS = new Set(['qwen3','qwen3-small','gpt-oss','gemma','gemma-small','kimi','glm-5','minimax-m2']);
+  const _VALID_MODELS = new Set([..._NRP_MODELS, ..._CLAUDE_MODELS].map(m => m[0]));
   const [selectedModel, setSelectedModelState] = useState(() => {
     try {
       const saved = localStorage.getItem('llm:model');
@@ -31,7 +36,20 @@ function useAppState() {
   });
   const setSelectedModel = (value) => {
     setSelectedModelState(value);
-    try { localStorage.setItem('llm:model', value); } catch (_) {}
+    const chatId = view.chatId || null;
+    try {
+      if (chatId) localStorage.setItem(`model:chat:${chatId}`, value);
+      localStorage.setItem('llm:model', value);
+    } catch (_) {}
+  };
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [anthropicKeySet, setAnthropicKeySet] = useState(false);
+  const [theme, setThemeState] = useState(() => {
+    try { return localStorage.getItem('ui:theme') || 'light'; } catch (_) { return 'light'; }
+  });
+  const setTheme = (t) => {
+    setThemeState(t);
+    try { localStorage.setItem('ui:theme', t); } catch (_) {}
   };
   const [modalStudy,         setModalStudy]         = useState(null);
   const [modalDetail,        setModalDetail]        = useState(null);
@@ -62,7 +80,21 @@ function useAppState() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useEffect(() => { loadProjects(); loadGlobalChats(); loadFirstStudies(); }, []);
+  useEffect(() => {
+    loadProjects(); loadGlobalChats(); loadFirstStudies();
+    fetch('/api/settings').then(r => r.json()).then(d => setAnthropicKeySet(d.anthropic_key_set)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const chatId = view.chatId || null;
+    try {
+      const perChat = chatId ? localStorage.getItem(`model:chat:${chatId}`) : null;
+      const global  = localStorage.getItem('llm:model') || 'qwen3';
+      const effective = (perChat && _VALID_MODELS.has(perChat)) ? perChat
+                      : (_VALID_MODELS.has(global) ? global : 'qwen3');
+      setSelectedModelState(effective);
+    } catch (_) {}
+  }, [view.chatId]);
 
   useEffect(() => {
     if (!openProjId) { setOpenProject(null); return; }
@@ -226,21 +258,64 @@ function useAppState() {
           messages: [
             ...c.messages,
             { role: 'user',      content: userMsg },
-            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null },
+            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null, segments: null },
           ],
         },
       };
     });
 
-  const applyStreamDone = (chatId, title, reportStudyId) => {
-    patchLast(chatId, m => ({ ...m, isStreaming: false, pendingStep: null }));
+  const applyStreamDone = (chatId, title, reportStudyId, pinnedList) => {
+    patchLast(chatId, m => {
+      const next = { ...m, isStreaming: false, pendingStep: null };
+      if (m.segments !== null) {
+        const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
+        next.segments = frozen;
+        next.ui = { kind: 'agent_segments', segments: frozen };
+      }
+      return next;
+    });
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const pins = cur.pinnedStudies || [];
-      const nextPins = (reportStudyId != null && !pins.includes(reportStudyId)) ? [...pins, reportStudyId] : pins;
+      const nextPins = pinnedList != null ? pinnedList : pins;
       return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
     });
   };
+
+  // ─── agent/segments helpers ──────────────────────────────────────────────────
+  const onAgentStart = (chatId) => () =>
+    patchLast(chatId, m => ({ ...m, segments: [] }));
+
+  const onSegmentToolCall = (chatId) => ({ name, label, args }) =>
+    patchLast(chatId, m => {
+      const segs = [...(m.segments || [])];
+      if (segs.length && segs[segs.length - 1].type === 'text')
+        segs[segs.length - 1] = { ...segs[segs.length - 1], done: true };
+      segs.push({ type: 'tool', name, label, args, done: false, result: null });
+      return { ...m, segments: segs };
+    });
+
+  const onSegmentToolResult = (chatId) => ({ name, label, detail, ui_payload }) =>
+    patchLast(chatId, m => {
+      const segs = (m.segments || []).map(s =>
+        s.type === 'tool' && s.name === name && !s.done
+          ? { ...s, done: true, result: { label, detail, ui_payload } }
+          : s
+      );
+      return { ...m, segments: segs };
+    });
+
+  const onTokenAgent = (chatId) => ({ token }) =>
+    patchLast(chatId, m => {
+      if (m.segments === null) return { ...m, content: (m.content || '') + (token || '') };
+      const segs = [...(m.segments || [])];
+      const last = segs[segs.length - 1];
+      if (last && last.type === 'text' && !last.done)
+        segs[segs.length - 1] = { ...last, content: (last.content || '') + token };
+      else
+        segs.push({ type: 'text', content: token, done: false });
+      return { ...m, segments: segs };
+    });
 
   const unpinStudy = async (chatId, studyId) => {
     setChatCache(prev => {
@@ -280,9 +355,22 @@ function useAppState() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
+    if (/^\/model\s*$/i.test(msg)) {
+      setSending(false);
+      setShowModelPicker(true);
+      return;
+    }
+
     const reportMatch   = /^\/report\s+(\d+)\s*$/i.exec(msg);
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
-    const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report` : msg;
+    const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
+    const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
+    const deepMatch     = /^\/deepsearch\s+(.+)/is.exec(msg);
+    const deepSearch    = !!deepMatch;
+    const sendMsg       = deepMatch ? deepMatch[1].trim() : msg;
+    const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
+                        : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
+                        : msg;
 
     try {
       // ── Normalize browse → new global chat ──────────────────────────────────
@@ -368,6 +456,7 @@ function useAppState() {
             message: msg,
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
+            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
           }), signal: ctrl.signal,
         });
         if (!res.ok || !res.body) {
@@ -381,9 +470,9 @@ function useAppState() {
           onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
             ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
-          onDone: () => {
+          onDone: (payload) => {
             const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId);
+            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
             setOpenProject(prev => prev ? {
               ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
             } : prev);
@@ -408,10 +497,12 @@ function useAppState() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             user_id: USER_ID,
-            message: msg,
+            message: sendMsg,
             model: selectedModel,
             selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
+            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(deepSearch              && { deep_search: true }),
           }),
           signal: ctrl.signal,
         });
@@ -420,16 +511,19 @@ function useAppState() {
           throw new Error(err.error || 'Stream failed');
         }
         await parseSSE(res, {
-          onToken:     ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
-          onUi:        (payload)  => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
-          onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
-          onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
+          onToken:             onTokenAgent(chatId),
+          onUi:                (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
+          onStepStart:         ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
+          onStepDone:          ({ name, label, detail }) => patchLast(chatId, m => ({
             ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
           })),
-          onQueryPlan: (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
-          onDone: () => {
+          onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
+          onAgentStart:        onAgentStart(chatId),
+          onSegmentToolCall:   onSegmentToolCall(chatId),
+          onSegmentToolResult: onSegmentToolResult(chatId),
+          onDone: (payload) => {
             const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId);
+            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
             setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
           },
           onError: ({ error }) => setCompErr(error || 'Error'),
@@ -473,7 +567,7 @@ function useAppState() {
     if (!q) return;
     if (override) setQuery(override);
     setSearching(true); setSearched(false);
-    const res = await apiPost('/search', { query: q });
+    const res = await apiPost('/search', { query: q, deep_search: deepSearch });
     if (res.ok) { const d = await res.json(); setResults(d.results || []); setSqlQuery(d.sql_query || null); }
     else setResults([]);
     setSearched(true); setSearching(false);
@@ -503,16 +597,18 @@ function useAppState() {
   return {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql,
-    setCtxStudies, setInput, setSelectedModel,
+    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
+    setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
+    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql,
-    ctxStudies, showNewProj, newProjName,
-    input, sending, compErr, selectedModel,
-    slashIndex, slashDismissed,
+    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
+    ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    input, sending, compErr, selectedModel, theme,
+    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     // refs

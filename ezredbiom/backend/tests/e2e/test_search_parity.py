@@ -11,6 +11,14 @@ DISCOVERY_CASES = [
     ("shotgun metagenomic studies on wild mice", 11043),
 ]
 
+# ---- Multi-study cases: ALL listed IDs must appear in LLM output ----
+MULTI_STUDY_CASES = [
+    (
+        "Find studies related to the American Gut Project",
+        {16057, 2136, 1189},
+    ),
+]
+
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("query,expected_id", DISCOVERY_CASES)
@@ -109,4 +117,20 @@ class TestChatKeywordsAreRicher:
             f"Chat planner missing frontend keywords: {missing}\n"
             f"Frontend keywords: {frontend_kws}\n"
             f"Chat keywords (sample): {sorted(chat_kws)[:20]}"
+        )
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_llm
+@pytest.mark.parametrize("query,required_ids", MULTI_STUDY_CASES)
+class TestChatFindsAllExpectedStudies:
+    """All required study IDs must appear in the LLM output for the query."""
+
+    def test_chat_output_mentions_all_studies(self, backend, global_chat, query, required_ids):
+        result = stream_chat(backend, global_chat["chat_id"], query)
+        missing = required_ids - result["study_ids_mentioned"]
+        assert not missing, (
+            f"Study IDs {missing} not mentioned in LLM output for '{query}'.\n"
+            f"Mentioned IDs: {sorted(result['study_ids_mentioned'])}\n"
+            f"Text snippet: {result['assistant_text'][:500]}"
         )

@@ -26,6 +26,8 @@ def stream_chat(
     chat_id: str,
     message: str,
     report_study_id: int = None,
+    pin_study_ids: list = None,
+    deep_search: bool = False,
     timeout: int = 120,
 ) -> dict:
     """POST a message to a global chat and consume the SSE stream.
@@ -37,10 +39,16 @@ def stream_chat(
       study_ids_mentioned — set of ints found in the assistant text
       ui_payload          — payload from the `ui` SSE event (set when report_study_id is used)
       step_done_labels    — list of (name, label) tuples from all step_done events
+      pinned_studies      — list from the done event's pinned_studies field (or [])
+      step_done_details   — dict of {name: detail} from all step_done events
     """
     body = {"user_id": "parity_test", "message": message}
     if report_study_id is not None:
         body["report_study_id"] = report_study_id
+    if pin_study_ids is not None:
+        body["pin_study_ids"] = pin_study_ids
+    if deep_search:
+        body["deep_search"] = True
 
     r = requests.post(
         f"{backend_url}/api/global-chats/{chat_id}/message/stream",
@@ -54,34 +62,52 @@ def stream_chat(
     search_count = None
     ui_payload = None
     step_done_labels = []
+    step_done_details = {}
+    pinned_studies = []
     tokens = []
+    result_study_ids = set()
 
+    current_event = None
     for raw_line in r.iter_lines(decode_unicode=True):
-        if not raw_line or raw_line.startswith(":"):
+        if not raw_line:
+            current_event = None
+            continue
+        if raw_line.startswith(":"):
+            continue
+        if raw_line.startswith("event:"):
+            current_event = raw_line[6:].strip()
             continue
         if raw_line.startswith("data:"):
             payload_str = raw_line[5:].strip()
             try:
-                event_data = json.loads(payload_str)
+                data = json.loads(payload_str)
             except json.JSONDecodeError:
                 continue
-            event_type = event_data.get("type")
-            data = event_data.get("data") or {}
 
-            if event_type == "query_plan":
+            if current_event == "query_plan":
                 query_plan = data
-            elif event_type == "step_done":
+            elif current_event == "step_done":
                 name = data.get("name") or ""
                 label = data.get("label") or ""
+                detail = data.get("detail") or ""
                 step_done_labels.append((name, label))
+                step_done_details[name] = detail
                 if name == "search_db":
-                    m = re.search(r"(\d+)\s+stud", data.get("detail") or "")
+                    m = re.search(r"(\d+)\s+stud", detail)
                     if m:
                         search_count = int(m.group(1))
-            elif event_type == "ui":
+            elif current_event == "ui":
                 ui_payload = data
-            elif event_type == "token":
+            elif current_event == "token":
                 tokens.append(data.get("token") or "")
+            elif current_event == "segment_tool_result":
+                # agentic path: collect study IDs returned by the search tool
+                for s in (data.get("ui_payload") or {}).get("result_studies") or []:
+                    sid = s.get("study_id")
+                    if sid is not None:
+                        result_study_ids.add(int(sid))
+            elif current_event == "done":
+                pinned_studies = data.get("pinned_studies") or []
 
     assistant_text = "".join(tokens).strip()
     mentioned = set(
@@ -94,8 +120,11 @@ def stream_chat(
         "search_count": search_count,
         "assistant_text": assistant_text,
         "study_ids_mentioned": mentioned,
+        "result_study_ids": result_study_ids,
         "ui_payload": ui_payload,
         "step_done_labels": step_done_labels,
+        "step_done_details": step_done_details,
+        "pinned_studies": pinned_studies,
     }
 
 
@@ -118,17 +147,13 @@ _REFUSAL_FALLBACK_RE = re.compile(
 )
 
 
-def llm_judge(question: str, answer: str, rubric: str) -> bool:
-    """Ask kimi to evaluate whether the assistant's answer meets the rubric.
+def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL) -> bool:
+    """Ask an LLM to evaluate whether the assistant's answer meets the rubric.
 
+    Defaults to kimi (NRP). Pass model="claude-haiku-4-5" to use Anthropic.
     Returns True if the judge says YES, False for NO.
     Falls back to a simple regex check if the endpoint is unreachable.
     """
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
-    if not api_key:
-        # No key in env — can't judge; treat as inconclusive (pass)
-        return True
-
     prompt = (
         "You are evaluating whether an AI assistant's response achieved a specific goal.\n"
         f"User question: {question}\n"
@@ -138,15 +163,31 @@ def llm_judge(question: str, answer: str, rubric: str) -> bool:
     )
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
-        resp = client.chat.completions.create(
-            model=_JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=5,
-        )
-        verdict = (resp.choices[0].message.content or "").strip().upper()
+        anthropic_models = {"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"}
+        if model in anthropic_models:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return True
+            client = anthropic.Anthropic(api_key=api_key, timeout=45.0)
+            resp = client.messages.create(
+                model=model,
+                max_tokens=5,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            verdict = (resp.content[0].text or "").strip().upper()
+        else:
+            api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
+            if not api_key:
+                return True
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=5,
+            )
+            verdict = (resp.choices[0].message.content or "").strip().upper()
         return verdict.startswith("YES")
     except Exception:
-        # Endpoint unreachable — fall back to a simple keyword heuristic
         return bool(re.search(r"\b(yes|found|available|mention|recommend|compare|sample)\b", answer, re.I))

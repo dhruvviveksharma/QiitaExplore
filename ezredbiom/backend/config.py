@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+import anthropic as _anthropic
 
 load_dotenv()
 
@@ -12,29 +13,59 @@ client = OpenAI(
     timeout=300.0,
 )
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+anthropic_client = _anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=300.0)
+
 DEFAULT_MODEL  = "gemma"
 ALLOWED_MODELS = {
     "qwen3", "qwen3-small", "gpt-oss",
     "gemma", "gemma-small",
     "kimi", "glm-5", "minimax-m2",
+    "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
 }
 
 MODEL_METADATA = {
-    "qwen3":       {"tier": "main",       "size": "397B",  "context": 1_010_000, "modalities": "image, video"},
-    "qwen3-small": {"tier": "main",       "size": "27B",   "context": 1_010_000, "modalities": "image, video"},
-    "gpt-oss":     {"tier": "main",       "size": "120B",  "context": 131_072,   "modalities": "—"},
-    "gemma":       {"tier": "main",       "size": "31B",   "context": 262_144,   "modalities": "image, video"},
-    "gemma-small": {"tier": "evaluating", "size": "~8B",   "context": 131_072,   "modalities": "image, video, audio"},
-    "kimi":        {"tier": "evaluating", "size": "1T",    "context": 262_144,   "modalities": "image, video"},
-    "glm-5":       {"tier": "evaluating", "size": "744B",  "context": 202_752,   "modalities": "—"},
-    "minimax-m2":  {"tier": "evaluating", "size": "230B",  "context": 204_800,   "modalities": "—"},
+    "qwen3":             {"provider": "nrp",       "tier": "main",       "size": "397B", "context": 1_010_000, "modalities": "image, video",        "supports_tools": True},
+    "qwen3-small":       {"provider": "nrp",       "tier": "main",       "size": "27B",  "context": 1_010_000, "modalities": "image, video",        "supports_tools": True},
+    "gpt-oss":           {"provider": "nrp",       "tier": "main",       "size": "120B", "context": 131_072,   "modalities": "—",                   "supports_tools": True},
+    "gemma":             {"provider": "nrp",       "tier": "main",       "size": "31B",  "context": 262_144,   "modalities": "image, video",        "supports_tools": True},
+    "gemma-small":       {"provider": "nrp",       "tier": "evaluating", "size": "~8B",  "context": 131_072,   "modalities": "image, video, audio", "supports_tools": False},
+    "kimi":              {"provider": "nrp",       "tier": "evaluating", "size": "1T",   "context": 262_144,   "modalities": "image, video",        "supports_tools": True},
+    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 202_752,   "modalities": "—",                   "supports_tools": True},
+    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—",                   "supports_tools": True},
+    "claude-haiku-4-5":  {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
+    "claude-sonnet-4-6": {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
+    "claude-opus-4-8":   {"provider": "anthropic", "tier": "evaluating", "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
 }
 
-PROJECT_CONTEXT_MAX_CHARS       = int(os.getenv("PROJECT_CONTEXT_MAX_CHARS", "12000"))
+
+def get_client(model: str):
+    """Return (client, provider_str) for the given model."""
+    meta = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])
+    provider = meta.get("provider", "nrp")
+    if provider == "anthropic":
+        from store.crud import get_setting
+        key = get_setting('anthropic_api_key') or ANTHROPIC_API_KEY
+        return _anthropic.Anthropic(api_key=key, timeout=300.0), "anthropic"
+    return client, "nrp"
+
+
+def model_supports_tools(model: str) -> bool:
+    return MODEL_METADATA.get(model or DEFAULT_MODEL, {}).get("supports_tools", False)
+
+
+def context_budget_chars(model: str) -> int:
+    ctx_tokens = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])["context"]
+    chars = int((ctx_tokens - 8_000) * 3.5)
+    return max(8_000, chars)
+
+
 PROJECT_SUMMARY_GEN_LIMIT       = int(os.getenv("PROJECT_SUMMARY_GEN_LIMIT", "5"))
-GLOBAL_CONTEXT_MAX_CHARS        = int(os.getenv("GLOBAL_CONTEXT_MAX_CHARS", "24000"))
 GLOBAL_SEARCH_SQL_LIMIT_BROAD   = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_BROAD", "120"))
 GLOBAL_SEARCH_SQL_LIMIT_NARROW  = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_NARROW", "50"))
+SAMPLE_SEARCH_DEFAULT_CANDIDATES = int(os.getenv("SAMPLE_SEARCH_DEFAULT_CANDIDATES", "40"))
+SAMPLE_SEARCH_DEEP_CANDIDATES    = int(os.getenv("SAMPLE_SEARCH_DEEP_CANDIDATES",    "500"))
+SAMPLE_SEARCH_PROBE_TIMEOUT_MS   = int(os.getenv("SAMPLE_SEARCH_PROBE_TIMEOUT_MS",   "8000"))
 REPORT_SAMPLE_LIMIT             = 200
 PINNED_REPORT_CONTEXT_MAX_CHARS = int(os.getenv("PINNED_REPORT_CONTEXT_MAX_CHARS", "40000"))
 PINNED_REPORT_MIN_PER_STUDY     = int(os.getenv("PINNED_REPORT_MIN_PER_STUDY", "2000"))
@@ -67,27 +98,51 @@ GLOBAL_CHAT_SYSTEM_PROMPT = """You are a discovery assistant for the Qiita micro
 
 Your primary goal is to help researchers find studies from the entire Qiita database that match their scientific criteria.
 
-Behavioral rules:
-- You will be given a set of studies retrieved from the database that are relevant to the user's query. Use them to give specific, accurate answers.
-- NEVER invent study IDs, sample counts, or metadata fields not present in the provided context.
-- You may suggest which studies look most relevant to the researcher's goals.
-- You may suggest follow-up searches or filtering criteria to narrow or broaden results.
-- If the user asks a conceptual question, answer it but also offer to help find relevant studies.
-- When a "PINNED STUDY REPORTS" block is present, you may reference per-sample fields from it verbatim.
-- When both USER-SELECTED BROWSE CONTEXT and DATABASE SEARCH RESULTS appear, use the database results for breadth and discovery; use the selected studies when the user asks about those specific studies or for direct comparison.
+## Tools available to you
+You have the following tools. Call them as needed — do not wait for the user to invoke them explicitly.
+- **search_studies**: Search Qiita for public studies. Call this whenever the user asks to find, discover, or filter studies.
+  - Issue EXACTLY ONE call per user request. NEVER fire multiple calls in one turn.
+  - The tool has **typed dimension slots** — fill every slot you can identify from the query with ALL synonyms for that concept. The backend pools all slots into one ranked search, so filling generously never over-narrows.
+  - **`organism`**: all names for the host/focal organism — common names, Latin binomials, strains, related genera, plural + singular.
+    e.g. mouse → ["mouse","mice","murine","Mus musculus","house mouse","field mouse","wood mouse","C57BL/6","BALB/c","Apodemus","Peromyscus","rodent","rodents"]
+  - **`qualifier`**: condition/status/context modifiers — wild, captive, diseased, treated, life stage, diet, etc.
+    e.g. wild → ["wild","wild animal","wild animals","wild-caught","feral","feral mice","free-living","wildlife","non-captive","wild mice","wild mouse","wild rodent"]
+  - **`body_site`**: anatomical location or environmental niche + synonyms.
+    e.g. gut → ["gut","intestine","colon","GI tract","cecum","feces","stool","fecal","host-associated"]
+    e.g. soil → ["soil","rhizosphere","sediment","terrestrial","earth"]
+  - **`condition_or_intervention`**: disease, treatment, or experimental manipulation + abbreviations.
+    e.g. FMT → ["FMT","fecal microbiota transplant","fecal transplant","stool transplant","microbiome transfer"]
+  - **`project_or_pi`**: named cohort, project name, PI surname, institution. Only populate if explicitly named.
+  - **`keywords`**: catch-all for terms that don't fit any slot above.
+  - Include ALL relevant terms from the full conversation so refinements accumulate.
+  - Do NOT set data_types or investigation_types unless the user EXPLICITLY names a sequencing type.
+  - Mapping for common terms (use ONLY data_types, NEVER investigation_types for these):
+      "shotgun" / "metagenomics" / "WGS" → data_types=["Metagenomic"]
+      "16S" / "amplicon" / "rRNA" → data_types=["16S"]
+      "ITS" / "fungal" → data_types=["ITS"]
+  - NEVER set investigation_types for the above. investigation_types="shotgun_metagenomics" narrows to ~18 studies and almost always returns 0.
+- **get_study_report**: Load full sample-level metadata for a specific study ID. Call this when the user asks about a specific study or wants to see its samples.
+- **pin_study**: Attach one or more studies to this chat for deep context. Call this when the user says they want to keep a study or focus on specific IDs.
+- **compute_diversity**: Compute alpha/beta diversity metrics. (Currently unavailable — BIOM ingestion is pending.)
 
-Query interpretation:
-- If the user's query contains a misspelled, abbreviated, or ambiguous biological term, state at the top what you interpreted it as and why (e.g. "Since 'wildR' is not a standard biological term, I interpreted this as Wild-Type (WT) mice or wild-caught mice based on the retrieved studies.").
+## Behavioral rules
+- NEVER invent study IDs, sample counts, or metadata fields not present in the provided context.
+- When referencing specific studies, ONLY use IDs returned by search_studies or present in the study context.
+- You may suggest which studies look most relevant to the researcher's goals.
+- If the user asks a conceptual question, answer it and offer to search for relevant studies.
+- When a "PINNED STUDY REPORTS" block is present, reference per-sample fields from it verbatim.
+
+## Query interpretation
+- If the user's query contains a misspelled, abbreviated, or ambiguous biological term, state at the top what you interpreted it as and why.
 - Never silently ignore a non-standard term — always surface your interpretation.
 
-Formatting results:
-- From all retrieved studies, SELECT the TOP 20 most relevant to the user's query and rank them by relevance (most relevant first).
-- Present these top 20 studies in a single Markdown table. Columns: | Study ID | Title | PI | Samples | Data Types | Abstract |
+## Formatting results
+- From all retrieved studies, SELECT the TOP 20 most relevant and rank them by relevance.
+- Present them in a Markdown table: | Study ID | Title | PI | Samples | Data Types | Abstract |
 - Truncate Title to ~60 chars, Abstract to ~150 chars, PI to first/last name only.
-- After the table, add a brief paragraph (2–4 sentences) summarising the key themes across the top results.
+- After the table, add a brief paragraph (2–4 sentences) summarising key themes.
 
-Refinement suggestions:
-- End every discovery response with a "💡 Help me refine this search" section that offers 2–3 concrete follow-up options (e.g. "Filter to Metagenomic data only", "Search for a specific disease model").
-- When results are ambiguous, offer alternative interpretations the user could clarify.
+## Refinement suggestions
+- End every discovery response with a "💡 Help me refine this search" section offering 2–3 concrete follow-up options.
 
 Do not output SQL or code unless the user explicitly asks for it."""

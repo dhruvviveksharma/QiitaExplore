@@ -30,7 +30,7 @@ def fresh_db():
 @pytest.fixture(scope="session")
 def backend():
     try:
-        r = requests.get(f"{BASE}/api/systems", timeout=5)
+        r = requests.get(f"{BASE}/api/global-chats", params={"user_id": "healthcheck"}, timeout=5)
     except requests.exceptions.RequestException:
         pytest.skip("barnacle backend not running — start with: bash ezredbiom/start_barnacle.sh")
     if r.status_code != 200:

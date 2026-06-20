@@ -7,7 +7,7 @@ Flask-Cors==3.0.10
 python-dotenv>=1.0.0
 
 # ── LLM client ──────────────────────────────────────────────────────────────
-openai>=1.0,<2.0
+openai>=1.40,<3.0
 
 # ── Legacy / kept for backend imports ───────────────────────────────────────
 # tinydb is referenced by sql_store migration code paths.

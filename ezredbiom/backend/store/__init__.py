@@ -24,6 +24,21 @@ from .crud import (  # noqa: F401
     delete_global_chat,
 )
 
+from .merge_crud import (  # noqa: F401
+    create_workspace,
+    list_workspaces,
+    get_workspace,
+    delete_workspace,
+    rename_workspace,
+    add_study_to_workspace,
+    remove_study_from_workspace,
+    update_workspace_study,
+    create_merge_job,
+    get_merge_job,
+    list_merge_jobs,
+    update_merge_job_status,
+)
+
 from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,
@@ -34,6 +49,8 @@ from .cache import (  # noqa: F401
     update_project_study_data,
     get_study_detail_cache,
     upsert_study_detail_cache,
+    get_biom_sample_cache,
+    upsert_biom_sample_cache,
     pin_study_to_chat,
     unpin_study_from_chat,
     list_pinned_studies,

@@ -47,12 +47,12 @@ def llm_query_to_sql(user_query: str) -> dict:
         keyword_join = " AND "
         search_limit = max(1, min(150, GLOBAL_SEARCH_SQL_LIMIT_NARROW))
 
-    clauses: list = []
-    params:  list = []
+    text_clauses: list = []
+    params:       list = []
 
     if pi_match:
         name = pi_match.group(1)
-        clauses.append("(sp_pi.name ILIKE %s OR sp_pi.affiliation ILIKE %s)")
+        text_clauses.append("(sp_pi.name ILIKE %s OR sp_pi.affiliation ILIKE %s)")
         params += [f"%{name}%", f"%{name}%"]
 
     subclauses = []
@@ -63,11 +63,25 @@ def llm_query_to_sql(user_query: str) -> dict:
         params += [like, like, like, like]
 
     if subclauses:
-        clauses.append("(" + keyword_join.join(subclauses) + ")")
+        text_clauses.append("(" + keyword_join.join(subclauses) + ")")
+
+    text_where = " AND ".join(text_clauses) if text_clauses else ""
+
+    # Numeric tokens → exact study_id match, OR'd with text search
+    numeric_ids = [int(n) for n in re.findall(r'\b\d+\b', user_query)]
+    if numeric_ids and text_where:
+        where_clause = f"({text_where}) OR s.study_id = ANY(%s)"
+        params.append(numeric_ids)
+    elif numeric_ids:
+        where_clause = "s.study_id = ANY(%s)"
+        params.append(numeric_ids)
+    else:
+        where_clause = text_where or "1=1"
 
     return {
-        "where_clause": " AND ".join(clauses) if clauses else "1=1",
+        "where_clause": where_clause,
         "params": params,
         "search_limit": search_limit,
         "match_mode": "broad" if broad else "narrow",
+        "keywords": kw_use,
     }
