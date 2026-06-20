@@ -961,7 +961,7 @@ input, textarea { font-family: var(--sans); }
 .merge-ws-card-header { display: flex; align-items: center; padding: 10px 14px; background: var(--surface); }
 .merge-ws-name { font-weight: 500; font-size: 13px; flex: 1; }
 .merge-ws-studies { padding: 8px 14px 10px; display: flex; flex-direction: column; gap: 4px; }
-.merge-ws-study-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.merge-ws-study-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
 .merge-ws-study-id { color: var(--text-3); min-width: 40px; }
 .merge-ws-study-title { color: var(--text); flex: 1; }
 .merge-ws-no-studies { font-size: 12px; color: var(--text-3); }
