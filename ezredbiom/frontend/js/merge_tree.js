@@ -88,16 +88,18 @@ function TreeNode({ node, byId, childrenMap, selProps, label, isRoot }) {
   }
 
   if (node.artifact_type === 'BIOM') {
-    const { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId } = selProps;
-    const isChosen   = (chosenIds || []).includes(node.artifact_id);
+    const { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, selectable = true } = selProps;
+    const isChosen   = selectable && (chosenIds || []).includes(node.artifact_id);
     const isRec      = node.artifact_id === recommendedId;
     const numSamples = sampleCounts ? sampleCounts[node.artifact_id] : null;
     const filepaths  = node.filepaths || [];
     return (
       <div className="ao-tree-node">
         <label className={`ao-tree-box ao-tree-box-leaf${isChosen ? ' ao-tree-box-chosen' : ''}`}>
-          <input type="checkbox" checked={isChosen}
-            onChange={() => onToggleArtifact(node.artifact_id)} />
+          {selectable && (
+            <input type="checkbox" checked={isChosen}
+              onChange={() => onToggleArtifact(node.artifact_id)} />
+          )}
           <span className="ao-tree-leaf-name">
             {node.name || (node.artifact_type + ' ' + node.artifact_id)}
           </span>
@@ -197,16 +199,18 @@ function IndentNode({ node, byId, childrenMap, selProps, label, isRoot }) {
   }
 
   if (node.artifact_type === 'BIOM') {
-    const { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId } = selProps;
-    const isChosen   = (chosenIds || []).includes(node.artifact_id);
+    const { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, selectable = true } = selProps;
+    const isChosen   = selectable && (chosenIds || []).includes(node.artifact_id);
     const isRec      = node.artifact_id === recommendedId;
     const numSamples = sampleCounts ? sampleCounts[node.artifact_id] : null;
     const filepaths  = node.filepaths || [];
     return (
       <div>
         <label className={`ao-indent-row${isChosen ? ' ao-indent-chosen' : ''}`}>
-          <input type="checkbox" checked={isChosen}
-            onChange={() => onToggleArtifact(node.artifact_id)} />
+          {selectable && (
+            <input type="checkbox" checked={isChosen}
+              onChange={() => onToggleArtifact(node.artifact_id)} />
+          )}
           <span className="ao-tree-leaf-name">
             {node.name || (node.artifact_type + ' ' + node.artifact_id)}
           </span>

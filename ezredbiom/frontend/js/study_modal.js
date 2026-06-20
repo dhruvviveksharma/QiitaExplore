@@ -88,7 +88,7 @@ function AddToProjectBar({ study }) {
 
 // ── Add to merge workspace ─────────────────────────────────────────────────────
 
-function AddToMergeBar({ study, chosenIds }) {
+function AddToMergeBar({ study }) {
   const [workspaces, setWorkspaces] = useState(null);
   const [selected,   setSelected]   = useState('');
   const [newName,    setNewName]    = useState('');
@@ -130,11 +130,6 @@ function AddToMergeBar({ study, chosenIds }) {
         setMsg(err.error || `Error ${addRes.status}`);
         setAdding(false); return;
       }
-      if (chosenIds && chosenIds.length > 0) {
-        await apiPatch(`/merge-workspaces/${wsId}/studies/${study.study_id}`, {
-          chosen_artifact_ids: chosenIds,
-        });
-      }
       setMsg(`Added to "${wsName}"`);
     } catch (e) {
       setMsg('Unexpected error.');
@@ -169,11 +164,11 @@ function AddToMergeBar({ study, chosenIds }) {
   );
 }
 
-function StudyActionBar({ study, chosenIds }) {
+function StudyActionBar({ study }) {
   return (
     <div className="modal-ws-bar">
       <AddToProjectBar study={study} />
-      <AddToMergeBar study={study} chosenIds={chosenIds} />
+      <AddToMergeBar study={study} />
     </div>
   );
 }
@@ -181,7 +176,6 @@ function StudyActionBar({ study, chosenIds }) {
 // ── Study outputs section (tree + workspace bar) ───────────────────────────────
 
 function StudyModalOutputs({ study, detail, loading }) {
-  const [chosenIds,    setChosenIds]    = useState([]);
   const [sampleCounts, setSampleCounts] = useState({});
   const [prepFilter,   setPrepFilter]   = useState('');
 
@@ -195,9 +189,6 @@ function StudyModalOutputs({ study, detail, loading }) {
       .then(r => r.ok ? r.json() : {})
       .then(counts => setSampleCounts(prev => ({ ...prev, ...counts })));
   }, [detail]);
-
-  const onToggleArtifact = id =>
-    setChosenIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
   const graph = detail?.artifact_graph || [];
   const reachable = prepReachableSet(graph);
@@ -224,11 +215,12 @@ function StudyModalOutputs({ study, detail, loading }) {
       )}
       <ArtifactOutputsView
         detail={detail} loading={loading}
-        chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
+        chosenIds={[]} onToggleArtifact={() => {}}
         prepFilter={prepFilter} recommendedId={null}
         sampleCounts={sampleCounts} studyId={study.study_id}
+        selectable={false}
       />
-      <StudyActionBar study={study} chosenIds={chosenIds} />
+      <StudyActionBar study={study} />
     </div>
   );
 }

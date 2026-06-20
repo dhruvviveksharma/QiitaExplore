@@ -162,11 +162,11 @@ function VerticalWorkflowMap({ steps, filepaths, artifactId, studyId }) {
   );
 }
 
-function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId }) {
+function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, selectable = true }) {
   const [expanded, setExpanded] = useState(false);
   const [peekOpen, setPeekOpen] = useState(false);
 
-  const isChosen  = (chosenIds || []).includes(node.artifact_id);
+  const isChosen  = selectable && (chosenIds || []).includes(node.artifact_id);
   const isRec     = node.artifact_id === recommendedId;
   const numSamples = sampleCounts ? sampleCounts[node.artifact_id] : null;
   const steps      = buildPipeline(graph, node);
@@ -176,8 +176,10 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
     <div className={`ao-card${isChosen ? ' ao-card-chosen' : ''}`}>
       <div className="ao-card-header">
         <label className="ao-select-row">
-          <input type="checkbox" checked={isChosen}
-            onChange={() => onToggleArtifact(node.artifact_id)} />
+          {selectable && (
+            <input type="checkbox" checked={isChosen}
+              onChange={() => onToggleArtifact(node.artifact_id)} />
+          )}
           <span className="ao-card-name">
             {node.name || (node.artifact_type + ' ' + node.artifact_id)}
           </span>
@@ -218,7 +220,7 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
 }
 
 
-function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId }) {
+function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId, selectable = true }) {
   if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
   if (!detail) return null;
 
@@ -231,14 +233,14 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
     const chosen = new Set(chosenIds || []);
     return (
       <table className="prep-table">
-        <thead><tr><th>Use</th><th>ID</th><th>Type</th><th>Data Type</th><th>File</th></tr></thead>
+        <thead><tr>{selectable && <th>Use</th>}<th>ID</th><th>Type</th><th>Data Type</th><th>File</th></tr></thead>
         <tbody>
           {arts.slice(0, 20).map(a => (
             <tr key={a.artifact_id}>
-              <td>{a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
+              {selectable && <td>{a.artifact_type === 'BIOM' && (a.full_path || '').endsWith('.biom') && (
                 <input type="checkbox" checked={chosen.has(a.artifact_id)}
                   onChange={() => onToggleArtifact(a.artifact_id)} />
-              )}</td>
+              )}</td>}
               <td>{a.artifact_id}</td><td>{a.artifact_type}</td><td>{a.data_type}</td>
               <td>{(a.full_path || '').split('/').pop()}</td>
             </tr>
@@ -267,7 +269,7 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
   for (const n of bioms) {
     (buildPipeline(filtered, n).length > 0 ? rooted : parentless).push(n);
   }
-  const selProps   = { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId };
+  const selProps   = { chosenIds, onToggleArtifact, recommendedId, sampleCounts, studyId, selectable };
   const forest     = rooted.length > 0 ? provenanceForest(filtered, rooted) : null;
 
   return (
@@ -282,7 +284,7 @@ function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, pre
             <BiomCard key={n.artifact_id} node={n} graph={filtered}
               chosenIds={chosenIds} onToggleArtifact={onToggleArtifact}
               recommendedId={recommendedId} sampleCounts={sampleCounts}
-              studyId={studyId} />
+              studyId={studyId} selectable={selectable} />
           ))}
         </div>
       )}
