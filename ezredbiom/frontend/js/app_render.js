@@ -553,74 +553,8 @@ function renderApp(s) {
 
       {/* ══════════════════ MODAL ══════════════════════ */}
       {modalStudy && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>×</button>
-            <div className="modal-id">Study ID {modalStudy.study_id}</div>
-            <div className="modal-title">{modalStudy.study_title || 'Untitled study'}</div>
-
-            {!modalDetailLoading && modalDetail?.isPrivate ? (
-              <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'3rem 1rem', gap:'1rem', color:'#aaa'}}>
-                <span style={{fontSize:'4rem', lineHeight:1}}>✕</span>
-                <span style={{fontSize:'1rem', fontStyle:'italic', textAlign:'center'}}>This is a private study and its data is not publicly available.</span>
-              </div>
-            ) : (
-              <>
-                {(modalStudy.data_types || modalStudy.num_samples != null || modalStudy.num_preps != null) && (
-                  <div className="modal-stats">
-                    {(modalStudy.data_types || '').split(',').map(t => t.trim()).filter(Boolean).map(t => (
-                      <span key={t} className="dtype-chip">{t}</span>
-                    ))}
-                    {modalStudy.num_samples != null && <span className="modal-stat">{modalStudy.num_samples} samples</span>}
-                    {modalStudy.num_preps   != null && <span className="modal-stat">{modalStudy.num_preps} preps</span>}
-                  </div>
-                )}
-
-                {modalStudy.study_abstract && (
-                  <div className="modal-section"><h4>Abstract</h4><p>{modalStudy.study_abstract}</p></div>
-                )}
-                {modalStudy.pi_name && (
-                  <div className="modal-section">
-                    <h4>Principal Investigator</h4>
-                    <p>{modalStudy.pi_name}{modalStudy.pi_affiliation ? ` — ${modalStudy.pi_affiliation}` : ''}</p>
-                  </div>
-                )}
-                {modalStudy.pi_email && (
-                  <div className="modal-section"><h4>Contact</h4><p>{modalStudy.pi_email}</p></div>
-                )}
-
-                <div className="modal-section">
-                  <h4>Prep Templates</h4>
-                  <PrepsTable detail={modalDetail} loading={modalDetailLoading} />
-                </div>
-
-                {!modalDetailLoading && modalDetail && (
-                  <div className="modal-section">
-                    <h4>Samples{modalDetail.total_samples != null ? ` (${modalDetail.total_samples} total${modalDetail.total_samples > 200 ? ', showing first 200' : ''})` : ''}</h4>
-                    <SamplesBrowser
-                      samples={modalDetail.samples || []}
-                      totalSamples={modalDetail.total_samples}
-                      layout="two-pane"
-                      fetchFields={async (sampleId) => {
-                        const res = await apiFetch(`/studies/${modalStudy.study_id}/samples/${encodeURIComponent(sampleId)}`);
-                        if (!res.ok) return null;
-                        const d = await res.json();
-                        return d.fields || null;
-                      }}
-                    />
-                  </div>
-                )}
-
-                {!modalDetailLoading && modalDetail && (
-                  <div className="modal-section">
-                    <h4>Artifacts</h4>
-                    <ArtifactsTable detail={modalDetail} loading={modalDetailLoading} />
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+        <StudyModal study={modalStudy} detail={modalDetail}
+          loading={modalDetailLoading} onClose={closeModal} />
       )}
       {showMergePanel && (
         <MergeWorkspacePanel

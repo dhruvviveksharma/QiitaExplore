@@ -1170,6 +1170,7 @@ input, textarea { font-family: var(--sans); }
 }
 @keyframes slideUp { from { transform: translateY(10px); opacity:0; } }
 
+.modal-fullscreen { max-width: none; width: 96vw; max-height: 92vh; }
 .modal-close {
   position: absolute; top: 14px; right: 14px;
   width: 26px; height: 26px;
@@ -1181,6 +1182,10 @@ input, textarea { font-family: var(--sans); }
   transition: all var(--t);
 }
 .modal-close:hover { background: var(--border-soft); }
+.modal-expand { position: absolute; top: 14px; right: 46px; width: 26px; height: 26px; border-radius: 50%; background: var(--bg); color: var(--text-2); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: all var(--t); }
+.modal-expand:hover { background: var(--border-soft); }
+.modal-ws-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+.modal-ws-msg { font-size: 0.8rem; color: var(--text-3); }
 .modal-id { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
 .modal-title { font-family: var(--serif); font-size: 19px; line-height: 1.35; margin-bottom: 18px; }
 .modal-section { margin-bottom: 14px; }
