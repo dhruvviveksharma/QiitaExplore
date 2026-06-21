@@ -13,39 +13,9 @@
 
 Several files were set to port 5002 for debug/testing. Master and barnacle production use port 5001 (Gunicorn bind, nginx upstream, frontend `api-base`). Mismatch breaks API calls and nginx proxying.
 
-### Affected Files
+### Resolution
 
-- `ezredbiom/start_barnacle.sh` — Gunicorn bind port
-- `ezredbiom/backend/run.py` — `app.run()` port (direct run only)
-- `ezredbiom/frontend/js/utils.js` — API fallback when `meta api-base` missing
-- `ezredbiom/backend/run_tests.sh` — default `BARNACLE_URL`
-- `ezredbiom/backend/tests/e2e/conftest.py` — default `BARNACLE_URL`
-
-### Already correct (no change)
-
-- `ezredbiom/frontend/index.html` — `api-base` = `http://localhost:5001/api`
-- `ezredbiom/nginx.conf` — upstream `127.0.0.1:5001`
-
-### Plan
-
-- `start_barnacle.sh` → 5001
-- `run.py` → 5001
-- `utils.js` fallback → 5001
-- Confirm `index.html` stays 5001
-- Confirm `nginx.conf` stays 5001
-- Update test defaults to 5001
-- Update INSTALL.md + CLAUDE.md port references
-- Smoke test: `curl http://localhost:5001/api/health` with barnacle running
-
-### Files Changed
-
-- `ezredbiom/start_barnacle.sh`
-- `ezredbiom/backend/run.py`
-- `ezredbiom/frontend/js/utils.js`
-- `ezredbiom/backend/run_tests.sh`
-- `ezredbiom/backend/tests/e2e/conftest.py`
-- `INSTALL.md`
-- `CLAUDE.md`
+All ports reverted to 5001 across `start_barnacle.sh`, `run.py`, `utils.js`, `run_tests.sh`, `tests/e2e/conftest.py`; `index.html` and `nginx.conf` confirmed already 5001. Smoke test: `curl http://localhost:5001/api/health`.
 
 ---
 
@@ -56,198 +26,102 @@ Several files were set to port 5002 for debug/testing. Master and barnacle produ
 
 ### Description
 
-15+ locations use `except Exception: pass` without any logging or user feedback. When failures occur, debugging is extremely difficult as errors are swallowed silently.
+Several `except Exception:` blocks swallow errors with `pass` or a silent fallback return, with no logging. When failures occur, debugging is hard because errors disappear.
 
-### Affected Files
+### Affected Files (verified 2026-06-21)
 
-- `sql_store_crud.py:56` - JSON decode failure returns None silently
-- `sql_store_db.py:44` - TinyDB import errors ignored
-- `sql_store_db.py:157,162,167,173` - Migration ALTER TABLE failures ignored
-- `sql_store_cache.py:115` - Cache TTL parsing failure silently continues
-- `routes/project_routes.py:50,77,168` - Qiita fetch and context failures ignored
-- `helpers/qiita_fetch.py:252,258` - Samples fetch/cache failures ignored
-- `helpers/llm_helpers.py:108` - Unknown location
+- `ezredbiom/backend/routes/project_routes.py:42` — study-detail fetch/cache failure: `except Exception: pass` (user-facing study-add path)
+- `ezredbiom/backend/routes/project_routes.py:69` — sample-context fetch failure: `except Exception: pass`
+- `ezredbiom/backend/store/db.py:45` — bucket parse failure: silent `return []`
+- `ezredbiom/backend/store/db.py:202,207,212,217,222,228` — migration / ALTER TABLE failures swallowed
+- `ezredbiom/backend/store/cache.py:107` — cache parse failure swallowed
+- `ezredbiom/backend/store/crud.py:71` — silent swallow
+- `ezredbiom/backend/store/merge_crud.py:22` — silent swallow
 
 ### Plan
 
-- Add `logger.exception()` or `logger.warning()` to all bare `except: pass` blocks
-- For critical paths (Qiita fetches, study detail): return error response or set fallback values
-- Consider adding a wrapper decorator for API calls that handles common error patterns
-- Prioritize `project_routes.py` first as it handles user-facing operations
-
-### Files Changed
-
-- `ezredbiom/Experiment/backend/sql_store_crud.py`
-- `ezredbiom/Experiment/backend/sql_store_db.py`
-- `ezredbiom/Experiment/backend/sql_store_cache.py`
-- `ezredbiom/Experiment/backend/routes/project_routes.py`
-- `ezredbiom/Experiment/backend/helpers/qiita_fetch.py`
-- `ezredbiom/Experiment/backend/helpers/llm_helpers.py`
-
-### Files Added
-
-- `ezredbiom/Experiment/backend/helpers/api_error_handler.py` (optional - for common patterns)
+- Add `logger.exception()` / `logger.warning()` to each block above
+- For user-facing paths (Qiita fetch in `project_routes.py`), keep the fallback but log so the failure is visible in barnacle logs
+- Prioritize `project_routes.py` (user-facing) first
 
 ---
 
 ## TKT-003: Undefined Variables on Qiita Fetch Failure
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Resolved
 
 ### Description
 
-In `project_routes.py:47-51`, if Qiita fetch fails during study add, the function continues without `preps`/`artifacts` being set. This can cause `NameError` when these variables are used downstream.
+If Qiita fetch failed during study add, `preps`/`artifacts` could be unset, risking `NameError` downstream.
 
-### Affected File
+### Resolution (verified 2026-06-21)
 
-- `ezredbiom/Experiment/backend/routes/project_routes.py:47-51`
-
-### Plan
-
-- Add initialization of `preps = None`, `artifacts = None` before the try block
-- Add null checks before using these variables
-- Log the failure with `logger.warning()` so it's visible in logs
-- Consider returning early with error response or using empty defaults
-
-### Files Changed
-
-- `ezredbiom/Experiment/backend/routes/project_routes.py`
+`preps = []` is now initialized before the try block at `ezredbiom/backend/routes/project_routes.py:34`, and `artifacts` is only used inside the same try (for caching at :41), never downstream. Downstream guards on `if preps:` (:48). NameError risk eliminated. The remaining silent `except Exception: pass` at :42 is tracked under TKT-002.
 
 ---
 
-## TKT-004: Race Condition in SSE Response
+## TKT-004: Race Condition in SSE Response (pin after "done")
 
 **Severity:** Low
 **Status:** Open
 
 ### Description
 
-In `global_chat_routes.py:159` and `chat_routes.py:172`, if `pin_study_to_chat` fails after the SSE "done" message is already yielded, the error only logs but the user sees incorrect pinned study state.
+In the SSE handlers for global and project chat, if `pin_study_to_chat` fails *after* the SSE "done" message is already yielded, the error only logs and the user sees incorrect pinned-study state.
 
 ### Affected Files
 
-- `routes/global_chat_routes.py:159`
-- `routes/chat_routes.py:172`
+- `ezredbiom/backend/routes/global_chat_routes.py` (SSE done handler)
+- `ezredbiom/backend/routes/chat_routes.py` (SSE done handler)
 
 ### Plan
 
-- Move the pin operation before yielding the SSE "done" message
-- Or wrap in a transaction-like pattern: do work first, then respond
-- Add `logger.error()` if pin fails after response is sent, for monitoring
-- Consider implementing a retry mechanism or client-side reconciliation
-
-### Files Changed
-
-- `ezredbiom/Experiment/backend/routes/global_chat_routes.py`
-- `ezredbiom/Experiment/backend/routes/chat_routes.py`
+- Perform the pin operation before yielding the SSE "done" event (do work, then respond)
+- If a pin fails after the response is sent, `logger.error()` for monitoring
+- Consider client-side reconciliation of pinned state
 
 ---
 
-## TKT-005: LLM Chat Loses Conversation Context
+## TKT-005: LLM Chat Context Retention (re-validate under agentic path)
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Open (likely addressed — needs verification)
 
 ### Description
 
-The model does not retain context from previous questions in a chat session. For example, user filters for "wild mouse studies", then follows up with "shotgun studies" - but the model forgets the "mouse" filter and returns all shotgun studies instead of just shotgun studies from mice.
+Originally: the model forgot earlier filters across turns (e.g. "wild mouse studies" then "shotgun studies" dropped the mouse filter). Framed as a Gemma context-window limitation.
 
-This appears to be a conversation history/context window issue, potentially related to Gemma architecture limitations.
+### Update (2026-06-21)
 
-### Affected Files
-
-- Likely: `ezredbiom/Experiment/backend/helpers/llm_helpers.py` (message history handling)
-- Likely: `ezredbiom/Experiment/backend/routes/chat_routes.py` or `global_chat_routes.py` (conversation context)
+This predates the agentic tool-calling loop. Global chat now uses the OpenAI tool-calling path with full conversation history for tool-capable models (`qwen3` is the default; see `helpers/agent.py`, `config.model_supports_tools`). The original Gemma-specific framing is outdated.
 
 ### Plan
 
-- Investigate how message history is passed to the LLM (check if full chat history is included)
-- Verify the conversation context is being appended correctly to each API call
-- Check if there's a message limit causing older messages to be dropped
-- Consider implementing a system prompt that explicitly instructs the model to consider prior conversation context
-- Test with Gemma to determine if this is a model limitation or implementation bug
-- If Gemma limitation: document as known issue, potentially switch to a model with better context retention
-
-### Files Changed
-
-- `ezredbiom/Experiment/backend/helpers/llm_helpers.py` (potentially)
-- `ezredbiom/Experiment/backend/routes/chat_routes.py` (potentially)
-- `ezredbiom/Experiment/backend/routes/global_chat_routes.py` (potentially)
+- Manually re-test the multi-turn filter scenario on the agentic path (`qwen3`)
+- If context is retained, close this ticket
+- If not, investigate history truncation vs `context_budget_chars(model)` in `config.py`
 
 ---
 
 ## TKT-006: Pin Studies in Chat Bar + Enter to Start Global Chat
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Resolved (core flows) — see caveat
 
 ### Description
 
-Users on the **Browse Studies** home view cannot use the bottom chat bar meaningfully today: the composer is muted, Enter does nothing, and pinned studies only appear after opening a global chat via the sidebar. This ticket adds two related flows:
+From the Browse view, let users use the bottom composer: pin studies and press Enter to start a new global chat in one step.
 
-1. **Pin studies in the chat bar (browse + composer)**
-  - Show studies the user has added as context (`ctxStudies`) and/or explicitly pinned in the **composer area** on the home page (not only in the separate `ctx-bar` above the grid).
-  - Allow pinning from browse (study cards, context chips, or composer chips) so selections are visible in the chat bar before a chat exists.
-  - On first message, carry those studies into the new global chat (as `selected_studies` and/or persisted pins).
-2. **Enter → new global chat**
-  - From browse, when the composer has a non-empty message, **Enter** (without Shift) creates a new global chat and sends the message — same outcome as sidebar "+ New Global Chat" + typing + send, in one step.
-  - Reuse existing lazy-create logic in `sendMessage` (`app_state.js` ~366–376) rather than inventing a parallel path.
+### Resolution (verified 2026-06-21)
 
-### Current Behavior
+- Composer is enabled on browse: `canSend = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending` (`ezredbiom/frontend/js/app_state.js:581`); composer no longer muted on browse (`ezredbiom/frontend/js/app_render.js:523`)
+- Enter from browse creates/sends into a global chat: browse branch in `sendMessage` (`ezredbiom/frontend/js/app_state.js:380`)
+- Pinning supported via `/pin <ids>` command → `pin_study_ids` payload (`app_state.js:367`)
 
+### Caveat
 
-| Concept                          | State                                  | Visible on browse                 | Persists       |
-| -------------------------------- | -------------------------------------- | --------------------------------- | -------------- |
-| **Context chips** (`ctxStudies`) | React session state                    | Yes — `ctx-bar` above grid        | No             |
-| **Pinned studies**               | `chatCache[chatId].pinnedStudies` + DB | No — only in active chat composer | Yes (per chat) |
-
-
-Pins today are only created via `/report <study_id>`; there is no `POST` pin endpoint (only `DELETE` unpin). The browse composer is disabled (`disabled={!isChat}`) and Enter is gated on `isChat`.
-
-### UX Notes
-
-- **Context vs pin:** `+ Context` toggles ephemeral `ctxStudies`; DB pins only happen via `/report`. Decide whether browse-bar chips stay as context until send (then optionally persist as pins) or add an explicit pin action separate from context.
-- **Composer on browse:** Either enable the textarea when `view.type === 'browse'` or add `sendFromBrowse()` that switches to `global-chat` then calls `sendMessage`.
-- **Placeholder:** Change from "Open a chat to start messaging" to something like "Ask about studies… (Enter to start chat)" on browse.
-- **Cap:** Respect `PINNED_STUDIES_PER_CHAT_CAP` (10) when persisting pins.
-
-### Affected Files
-
-- `ezredbiom/Experiment/frontend/js/app_render.js` — composer pins row on browse, Enter handler, placeholder
-- `ezredbiom/Experiment/frontend/js/app_state.js` — `canSend` / `isChat` rules, `pinStudy()`, browse→global-chat branch
-- `ezredbiom/Experiment/frontend/style.css` — composer pin chips on muted/browse state (if needed)
-- `ezredbiom/Experiment/backend/routes/global_chat_routes.py` — `POST /api/global-chats/<chat_id>/pinned/<study_id>` (mirror existing DELETE)
-- `ezredbiom/Experiment/backend/sql_store_cache.py` — reuse `pin_study_to_chat`
-
-### Plan
-
-**Pin studies in chat bar**
-
-- Render composer pin/context chips on `browse` view (reuse `ctxStudies` and/or draft pin list)
-- Add pin action on study cards or context chips (not only `/report`)
-- Add `POST .../pinned/<study_id>` for global chats; add `pinStudy(chatId, studyId)` in frontend (mirror `unpinStudy`)
-- Show study titles in pin chips (not only "Study {id}")
-- On first message from browse, pass `ctxStudies` as `selected_studies` and persist pins if applicable
-
-**Enter → new global chat**
-
-- Extend `onKeyDown`: if `view.type === 'browse' && Enter && input.trim()`, run send flow
-- Relax `canSend` / `disabled` for browse (or dedicated handler): `setView({ type: 'global-chat', chatId: null })` then existing `sendMessage` lazy-create
-- Update composer placeholder for browse
-- Manual test: Enter from browse with/without context chips; Shift+Enter still inserts newline
-
-**Related**
-
-- Consider fixing TKT-004 (pin after SSE done) if batch-pin on send is added
-
-### Files Changed
-
-- `ezredbiom/Experiment/frontend/js/app_render.js`
-- `ezredbiom/Experiment/frontend/js/app_state.js`
-- `ezredbiom/Experiment/frontend/style.css`
-- `ezredbiom/Experiment/backend/routes/global_chat_routes.py`
-- `ezredbiom/Experiment/backend/sql_store_cache.py` (reuse only; no schema change)
+The "pin directly from a study card / context chip" UX (vs. the `/pin` command) was not separately verified. If that interaction is still desired, open a focused follow-up ticket; otherwise close fully.
 
 ---
 
@@ -258,126 +132,93 @@ Pins today are only created via `/report <study_id>`; there is no `POST` pin end
 
 ### Description
 
-The live app depends on exactly two files outside `ezredbiom/`:
+The live app depends on two files outside `ezredbiom/`:
 
-- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
+- `qiita_db/sql_connection.py` — the `TRN` PostgreSQL transaction context manager
 - `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
 
-Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
+Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead weight in the repo.
 
-### Plan
+### Affected Files (verified 2026-06-21 — 4 importers, not 3)
 
-- Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
-- Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
-(see commit `ed3fc3d8` for an existing template)
-- Remove `qiita_db` and `qiita_core` imports from those files
-- Verify tests pass and no `ImportError` at startup
-- `git rm -r qiita_db/ qiita_core/`
-
-### Files Changed
-
-- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
-- `qiita_db/` — delete after refactor
-- `qiita_core/` — delete after refactor
-
----
-
-## TKT-009: DuckDB, MIINT
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-The live app depends on exactly two files outside `ezredbiom/`:
-
-- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
-- `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
-
-Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
-
-### Plan
-
-- Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
-- Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
-(see commit `ed3fc3d8` for an existing template)
-- Remove `qiita_db` and `qiita_core` imports from those files
-- Verify tests pass and no `ImportError` at startup
-- `git rm -r qiita_db/ qiita_core/`
-
-### Files Changed
-
-- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
-- `qiita_db/` — delete after refactor
-- `qiita_core/` — delete after refactor
-
----
-
-## TKT-010: BIOM include
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-The live app depends on exactly two files outside `ezredbiom/`:
-
-- `qiita_db/sql_connection.py` — provides the `TRN` PostgreSQL transaction context manager
-- `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
-
-Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead.
-
-### Plan
-
-- Identify the 3 backend files that `from qiita_db.sql_connection import TRN`
-- Replace `TRN` usage with raw `psycopg2` connection or a thin local wrapper
-(see commit `ed3fc3d8` for an existing template)
-- Remove `qiita_db` and `qiita_core` imports from those files
-- Verify tests pass and no `ImportError` at startup
-- `git rm -r qiita_db/ qiita_core/`
-
-### Files Changed
-
-- The 3 ezredbiom backend files using `TRN` (in `routes/` or `helpers/`)
-- `qiita_db/` — delete after refactor
-- `qiita_core/` — delete after refactor
-
----
-
----
-
-## TKT-011: Split oversized files after /pin additions
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-Two files now exceed the 500-line limit (both were already over before the /pin feature was added):
-
-- `ezredbiom/backend/helpers/qiita_fetch.py` — 514 lines
-- `ezredbiom/frontend/js/app_state.js` — 538 lines
-
-### Plan
-
-**qiita_fetch.py** — extract into two modules:
-- `helpers/qiita_samples.py` — sample fetching/caching (`_fetch_full_sample_metadata`, `_get_or_fetch_full_samples`, `_fetch_sample_context_text`, `_build_full_samples_block`, `_build_samples_report_payload`, `_build_pinned_reports_context`)
-- Keep `qiita_fetch.py` for study header / search / detect helpers; re-export for back-compat or update imports
-
-**app_state.js** — extract into two modules:
-- `app_actions.js` — action handlers (sendMessage, unpinStudy, enrichAllStudies, doSearch, modal helpers, chat navigation)
-- Keep `app_state.js` for useState/derived/returned shape
-
-### Files Changed
-
+- `ezredbiom/backend/routes/study_routes.py`
 - `ezredbiom/backend/helpers/qiita_fetch.py`
-- `ezredbiom/backend/helpers/qiita_samples.py` (new)
-- `ezredbiom/frontend/js/app_state.js`
-- `ezredbiom/frontend/js/app_actions.js` (new)
+- `ezredbiom/backend/helpers/sample_search.py`
+- `ezredbiom/backend/services/study_service.py`
+
+### Plan
+
+- Replace `TRN` with a raw `psycopg2` connection or a thin local wrapper (template in commit `ed3fc3d8`)
+- Remove `qiita_db` / `qiita_core` imports from the 4 files
+- Verify tests pass and no `ImportError` at startup
+- `git rm -r qiita_db/ qiita_core/`
 
 ---
 
-## TKT-012: Merge page request fan-outs
+## TKT-009: DuckDB / MIINT
+
+**Severity:** Low
+**Status:** Needs scoping
+
+### Description
+
+⚠️ The original description for this ticket was lost — the body had been accidentally duplicated from TKT-007. Only the title ("DuckDB, MIINT") survives. The real scope (what DuckDB and MIINT are meant to address here) needs to be re-written by the author before this can be actioned.
+
+---
+
+## TKT-010: BIOM Ingestion + Diversity Analysis
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+The chat advertises a `compute_diversity` tool, but it is a hard stub — `ezredbiom/backend/helpers/agent_tools.py:538` returns *"Diversity analysis is not yet available."* This is the analysis payoff of the merge workflow: a user can merge BIOMs but cannot then analyze the result.
+
+### Plan
+
+- Ingest BIOM/OTU tables from a merge result bundle (merge already emits `result.tar.gz`; see `helpers/merge_executor.py`)
+- Implement `_tool_compute_diversity` to compute alpha/beta metrics: Shannon, Faith's PD, Bray-Curtis, UniFrac
+- Emit a `segment_tool_result` with a renderable `ui_payload` (new branch in `ToolResultWidget`, frontend `components.js`)
+- Coordinate with TKT-015 — diversity is only meaningful once the merge execution path is trustworthy
+
+### Files Changed
+
+- `ezredbiom/backend/helpers/agent_tools.py`
+- `ezredbiom/frontend/js/components.js`
+
+---
+
+## TKT-011: Split Oversized Files (500-line cap)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Files over the 500-line `ezredbiom/` cap (verified 2026-06-21):
+
+| File | Lines | Tracked by |
+|------|-------|-----------|
+| `frontend/js/components.js` | 630 | TKT-011 |
+| `frontend/js/app_state.js` | 626 | TKT-011 |
+| `frontend/js/app_render.js` | 570 | TKT-011 |
+| `backend/helpers/agent_tools.py` | 548 | TKT-013 |
+| `backend/helpers/qiita_fetch.py` | 532 | TKT-011 |
+| `backend/routes/merge_routes.py` | 528 | TKT-014 |
+| `backend/store/crud.py` | 515 | TKT-011 |
+
+### Plan (TKT-011 scope)
+
+**qiita_fetch.py** — extract sample fetching/caching into `helpers/qiita_samples.py` (`_fetch_full_sample_metadata`, `_get_or_fetch_full_samples`, `_fetch_sample_context_text`, `_build_full_samples_block`, `_build_samples_report_payload`, `_build_pinned_reports_context`); keep header/search/detect helpers in `qiita_fetch.py`.
+
+**app_state.js** — extract action handlers into `app_actions.js` (sendMessage, unpinStudy, enrichAllStudies, doSearch, modal helpers, chat navigation); keep useState/derived/returned shape in `app_state.js`.
+
+**components.js / app_render.js / crud.js** — split along feature boundaries (TBD per file).
+
+---
+
+## TKT-012: Merge Page Request Fan-outs
 
 **Severity:** Low
 **Status:** Open
@@ -386,16 +227,13 @@ Two files now exceed the 500-line limit (both were already over before the /pin 
 
 Two spots in the merge page fan out parallel requests that could become expensive at scale:
 
-1. **`MergesTab` mount** (`merge_workspace.js`, `MergesTab` component): on load, fetches the full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`. Bounded to the user's workspace count but could add up.
-
-2. **`GlobalBiomSelector` Smart Select** (`merge_artifacts.js`, `GlobalBiomSelector.handleApply`): when study details are missing, fetches all missing study details in parallel — up to 5 studies, but no rate limiting or request cancellation.
+1. **`MergesTab` mount** (`frontend/js/merge_workspace.js`): on load, fetches full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`.
+2. **`GlobalBiomSelector` Smart Select** (`frontend/js/merge_artifacts.js`, `handleApply`): fetches all missing study details in parallel (up to 5), no rate limiting / cancellation.
 
 ### Plan
 
-- Lazy-load workspace detail in `MergesTab` only when the user expands/hovers a card (or batch-fetch on a short delay rather than immediately on mount).
-- In `GlobalBiomSelector`, fetch missing details sequentially or add a concurrency limit (e.g. `p-limit(3)`).
-
----
+- Lazy-load workspace detail in `MergesTab` on expand/hover (or batch on a short delay)
+- In `GlobalBiomSelector`, fetch sequentially or add a concurrency limit
 
 ---
 
@@ -406,18 +244,13 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 
 ### Description
 
-`ezredbiom/backend/helpers/agent_tools.py` is currently 548 lines after the `search_by_sample` tool was added, exceeding the 500-line cap.
+`ezredbiom/backend/helpers/agent_tools.py` is 548 lines (verified 2026-06-21), over the cap.
 
 ### Plan
 
 Extract tool implementations into `helpers/agent_tool_impls.py`:
-- Move `_tool_search_studies`, `_tool_search_by_sample`, `_tool_get_study_report`, `_tool_pin_study`, `_tool_compute_diversity` there
-- Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers (`_collect_terms`) in `agent_tools.py`
-
-### Files Changed
-
-- `ezredbiom/backend/helpers/agent_tools.py`
-- `ezredbiom/backend/helpers/agent_tool_impls.py` (new)
+- Move `_tool_search_studies`, `_tool_search_by_sample`, `_tool_get_study_report`, `_tool_pin_study`, `_tool_compute_diversity`
+- Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers in `agent_tools.py`
 
 ---
 
@@ -428,21 +261,35 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 
 ### Description
 
-`ezredbiom/backend/routes/merge_routes.py` reached 518 lines after the `/api/merge-workspaces/<id>/samples` endpoint was added.
+`ezredbiom/backend/routes/merge_routes.py` is 528 lines (verified 2026-06-21), over the cap.
 
 ### Plan
 
-Extract workspace and job routes into two files:
 - `routes/merge_workspace_routes.py` — workspace CRUD + validate + samples
 - `routes/merge_job_routes.py` — job submit, poll, download
-- Keep shared helpers (`_get_artifacts`, `_type_filtered_artifacts`, `_user_id`, etc.) in a new `helpers/merge_helpers.py`
-
-### Files Changed
-
-- `ezredbiom/backend/routes/merge_routes.py`
-- `ezredbiom/backend/routes/merge_workspace_routes.py` (new)
-- `ezredbiom/backend/routes/merge_job_routes.py` (new)
+- Shared helpers (`_get_artifacts`, `_type_filtered_artifacts`, `_user_id`) → `helpers/merge_helpers.py`
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-06-09*
+## TKT-015: Merge Executor Shipped in Dev-Only Mode
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+`ezredbiom/backend/helpers/merge_executor.py:3` carries a `TODO (before merging to master): replace _run_local with SFTP+SSH pipeline` — but the multi-LLM branch was merged to master with the local path still in place. The executor runs `conda run -n qiita python scripts/remote_merge.py` as a local subprocess (`merge_executor.py:100`), which only works if the serving host has the `qiita` conda env, the script, and local access to the BIOM files. On a real/remote deployment the merge job will fail.
+
+### Plan
+
+Choose one:
+- **Finish the remote pipeline** — implement the paramiko SFTP+SSH path described in the TODO (upload BIOMs → ssh exec → download `result.tar.gz`); keep the same `on_status` interface.
+- **Or gate/document local-only mode** — explicitly require the local `qiita` env and surface a clear error when prerequisites are missing, so master doesn't silently fail.
+
+### Files
+
+- `ezredbiom/backend/helpers/merge_executor.py`
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-06-21*
