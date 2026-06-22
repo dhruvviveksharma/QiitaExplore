@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "qiita-web",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/Users/dhruvsharma/Downloads/Projects/qiita-web/.claude/serve_frontend.py"],
+      "port": 5002
+    }
+  ]
+}

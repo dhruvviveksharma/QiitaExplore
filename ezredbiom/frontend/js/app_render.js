@@ -32,7 +32,7 @@ function renderApp(s) {
       <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>
-            <img src="qiita-mark.png" alt="" className="app-logo-mark" />
+            <img src="qiita-mark-nobg.png" alt="" className="app-logo-mark" />
             <span className="app-logo-text">Qiita<em>Explorer</em></span>
           </div>
         </div>

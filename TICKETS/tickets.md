@@ -293,3 +293,30 @@ Choose one:
 ---
 
 *Generated: 2026-05-19 | Updated: 2026-06-21*
+
+---
+
+## TKT-016: Organic Loader While Awaiting LLM Response
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+When a user sends a message and the LLM begins generating, the chat area shows no visual feedback until the first streamed token arrives. On slow responses this gap can feel like the UI has frozen. An organic/animated loader (e.g. pulsing dots, breathing blob, or morphing shape) should be displayed from the moment the request is sent until the first token renders, giving the user clear confirmation that generation is in progress.
+
+### Plan
+
+1. Track a `waiting` state in the chat component — set to `true` when the request fires, `false` on first streamed token or error.
+2. Render a small organic loader component (CSS-only animation; no extra library) in the message thread while `waiting === true`.
+3. Remove the loader as soon as the first token arrives so it transitions seamlessly into the streaming text.
+4. Ensure the loader is also cleared on error/timeout so it never gets stuck.
+
+### Files
+
+- `ezredbiom/frontend/js/` — chat component where messages are streamed
+- Possibly a new `Loader.js` or inline CSS animation added to the existing stylesheet
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-06-21*
