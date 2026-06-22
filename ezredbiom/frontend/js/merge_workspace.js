@@ -27,6 +27,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   const [error,        setError]        = useState('');
   const [existingWs,   setExistingWs]   = useState(null);
   const [studyDetails, setStudyDetails] = useState(new Map());
+  const [wsLoading,    setWsLoading]    = useState(false);
 
   function handleDetailLoaded(studyId, detail) {
     setStudyDetails(prev => new Map(prev).set(studyId, detail));
@@ -72,8 +73,10 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   }
 
   async function loadWorkspace(wsId) {
+    setWsLoading(true);
     const res = await apiFetch(`/merge-workspaces/${wsId}?user_id=default`);
     if (res.ok) setWorkspace(await res.json());
+    setWsLoading(false);
   }
 
   async function selectExisting(wsId) {
@@ -206,21 +209,27 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
       {/* Study slots */}
       <div className="merge-slots">
-        {studies.map(slot => (
-          <MergeStudySlot
-            key={slot.study_id}
-            slot={slot}
-            validationStudy={validation?.studies?.find(s => s.study_id === slot.study_id)}
-            onRemove={() => handleRemoveStudy(slot.study_id)}
-            onToggleArtifact={(aId) => handleToggleArtifact(slot.study_id, aId)}
-            onDetailLoaded={handleDetailLoaded}
-          />
-        ))}
-        {studies.length === 0 && workspaceId && (
-          <p className="merge-empty">Click "+ Merge" on a study card to add it here.</p>
-        )}
-        {studies.length < 5 && !workspaceId && (
-          <p className="merge-empty">No studies added yet.</p>
+        {wsLoading ? (
+          <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'40px auto'}} />
+        ) : (
+          <>
+            {studies.map(slot => (
+              <MergeStudySlot
+                key={slot.study_id}
+                slot={slot}
+                validationStudy={validation?.studies?.find(s => s.study_id === slot.study_id)}
+                onRemove={() => handleRemoveStudy(slot.study_id)}
+                onToggleArtifact={(aId) => handleToggleArtifact(slot.study_id, aId)}
+                onDetailLoaded={handleDetailLoaded}
+              />
+            ))}
+            {studies.length === 0 && workspaceId && (
+              <p className="merge-empty">Click "+ Merge" on a study card to add it here.</p>
+            )}
+            {studies.length < 5 && !workspaceId && (
+              <p className="merge-empty">No studies added yet.</p>
+            )}
+          </>
         )}
       </div>
 
@@ -384,7 +393,7 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
     if (res.ok) setWorkspaces(list => list.map(w => w.workspace_id === wsId ? { ...w, name: t } : w));
   }
 
-  if (workspaces === null) return <div className="merges-loading">Loading…</div>;
+  if (workspaces === null) return <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'40px auto'}} />;
 
   if (workspaces.length === 0) return (
     <div className="merges-empty">

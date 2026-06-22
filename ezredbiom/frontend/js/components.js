@@ -265,7 +265,7 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
 function PrepsTable({ detail, loading, onMount }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
-  if (loading && !detail) return <div className="modal-detail-loading">Loading…</div>;
+  if (loading && !detail) return <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'20px auto'}} />;
   if (!detail) return null;
   const preps = detail.preps || [];
   if (preps.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No prep templates found.</p>;
@@ -435,7 +435,7 @@ const _META_TYPES = new Set(['Metagenomic', 'Metatranscriptomic', 'WGS', 'Genome
 function InlineStudyCard({ study, isPinned, onPin, onMerge }) {
   const types = (study.data_types || '').split(',').map(t => t.trim()).filter(Boolean);
   return (
-    <div className="inline-study-card" onClick={() => window._openStudyModal?.(study.study_id)}>
+    <div className="inline-study-card" onClick={() => window._openStudyModal?.(study)}>
       <div className="isc-id-row">
         <span className="isc-id">ID {study.study_id}</span>
         {isPinned && <span className="isc-pinned">Pinned</span>}
@@ -473,13 +473,16 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
   if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
       {sqlBlock}
-      <div className="inline-study-cards">
-        {studies.map(s => (
-          <InlineStudyCard key={s.study_id} study={s}
-            isPinned={isPinned?.(s.study_id)}
-            onPin={onPin} onMerge={onMerge} />
-        ))}
-      </div>
+      <details open className="study-results-collapsible">
+        <summary className="study-results-summary">{studies.length} studies</summary>
+        <div className="inline-study-cards">
+          {studies.map(s => (
+            <InlineStudyCard key={s.study_id} study={s}
+              isPinned={isPinned?.(s.study_id)}
+              onPin={onPin} onMerge={onMerge} />
+          ))}
+        </div>
+      </details>
     </React.Fragment>
   );
   return payload.result_summary
@@ -534,7 +537,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
-          <div key={i} className={`msg-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
+          <div key={i} className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
@@ -543,7 +546,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
         ) : null
       )}
       {isStreaming && !(segments || []).length && (
-        <div className="msg-bubble"><div className="typing-dots"><span /><span /><span /></div></div>
+        <div className="msg-bubble"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
       )}
     </div>
   );

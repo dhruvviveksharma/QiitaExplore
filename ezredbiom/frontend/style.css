@@ -383,7 +383,7 @@ input, textarea { font-family: var(--sans); }
 .src-chip.removable::after { content: ' ×'; color: var(--text-3); }
 
 .chat-messages {
-  max-width: 800px;
+  max-width: 700px;
   margin: 0 auto;
   padding: 28px 24px 20px;
   display: flex;
@@ -455,6 +455,17 @@ input, textarea { font-family: var(--sans); }
   padding: 11px 16px;
   max-width: 82%;
 }
+/* Agent text segments: no bubble, full width */
+.msg-row.assistant .msg-bubble.agent-bubble,
+.app.dark .msg-row.assistant .msg-bubble.agent-bubble {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 4px 0;
+  max-width: 100%;
+  width: 100%;
+}
 
 /* Add breathing room when role changes */
 .msg-row.user + .msg-row.assistant,
@@ -491,6 +502,11 @@ input, textarea { font-family: var(--sans); }
   border: 1.5px solid transparent;
   border-top-color: var(--accent);
   animation: spin .7s linear infinite;
+}
+.logo-spinner {
+  width: 32px; height: 32px;
+  animation: spin 1s linear infinite;
+  display: block;
 }
 
 /* ── Agent segments ──────────────────────────────────────────── */
@@ -565,6 +581,22 @@ input, textarea { font-family: var(--sans); }
   transition: background var(--t);
 }
 .btn-isc-merge:hover { background: var(--accent-h); }
+.study-results-collapsible { margin-top: 6px; }
+.study-results-collapsible > .inline-study-cards { margin-top: 8px; }
+.study-results-summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent-h);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.study-results-summary::-webkit-details-marker { display: none; }
+.study-results-summary::before { content: '▾'; font-size: 10px; transition: transform .15s; }
+.study-results-collapsible:not([open]) .study-results-summary::before { transform: rotate(-90deg); }
 
 /* ── Query plan chip ─────────────────────────────────────────── */
 .msg-query-plan {
@@ -695,7 +727,7 @@ input, textarea { font-family: var(--sans); }
 .msg-bubble tr:nth-child(even) td { background: rgba(0,0,0,.02); }
 .msg-bubble tr:last-child td { border-bottom: none; }
 /* Streaming block-cursor via ::after — avoids children conflict with dangerouslySetInnerHTML */
-.msg-bubble.streaming::after { content: '▋'; color: var(--accent); animation: blink 1s steps(1) infinite; }
+.msg-bubble.streaming::after { content: ''; }
 
 /* Waiting-for-first-token dots */
 .typing-dots { display: flex; align-items: center; gap: 5px; padding: 6px 0; }
@@ -717,7 +749,7 @@ input, textarea { font-family: var(--sans); }
   flex-shrink: 0;
 }
 .composer {
-  max-width: 800px;
+  max-width: 700px;
   margin: 0 auto;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -759,10 +791,10 @@ input, textarea { font-family: var(--sans); }
 }
 .composer-send:hover:not(:disabled) { background: var(--accent-h); }
 .composer-send:disabled { opacity: .35; cursor: not-allowed; }
-.composer-error { max-width: 800px; margin: 5px auto 0; font-size: 12px; color: var(--accent); }
+.composer-error { max-width: 700px; margin: 5px auto 0; font-size: 12px; color: var(--accent); }
 
 .composer-model {
-  max-width: 800px;
+  max-width: 700px;
   margin: 6px auto 0;
   display: flex;
   align-items: center;
@@ -915,7 +947,7 @@ input, textarea { font-family: var(--sans); }
 .slash-menu-usage { color: var(--text-3); font-family: monospace; font-size: 12px; flex-shrink: 0; }
 .slash-menu-desc  { color: var(--text-2); font-size: 12px; }
 
-.chat-messages.chat-messages-wide { max-width: 860px; }
+.chat-messages.chat-messages-wide { max-width: 100%; }
 
 /* Inline /report sample browser bubble */
 .samples-report-bubble {

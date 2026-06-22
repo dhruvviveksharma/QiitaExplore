@@ -385,7 +385,7 @@ function renderApp(s) {
 
               <div className={`chat-messages${activeMsgs.some(m => m.ui?.kind === 'samples_report') ? ' chat-messages-wide' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
-                  <div className="state-loading"><div className="spinner" /></div>
+                  <div className="state-loading"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
                 ) : activeMsgs.length === 0 ? (
                   <div className="chat-empty">
                     <div className="chat-empty-title">
@@ -460,14 +460,17 @@ function renderApp(s) {
                             </details>
                           )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
-                            <div className="msg-bubble"><div className="typing-dots"><span/><span/><span/></div></div>
+                            <div className="msg-bubble"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
                           ) : (!m.isStreaming || m.content) ? (
-                            <div
-                              className={`msg-bubble${m.isStreaming ? ' streaming' : ''}`}
-                              dangerouslySetInnerHTML={{
-                                __html: DOMPurify.sanitize(marked.parse(m.content || (!m.isStreaming ? '*No response*' : '')))
-                              }}
-                            />
+                            <>
+                              <div
+                                className={`msg-bubble${m.isStreaming ? ' streaming' : ''}`}
+                                dangerouslySetInnerHTML={{
+                                  __html: DOMPurify.sanitize(marked.parse(m.content || (!m.isStreaming ? '*No response*' : '')))
+                                }}
+                              />
+                              {m.isStreaming && m.content && <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{marginTop:'6px'}} />}
+                            </>
                           ) : null}
                         </>
                       ) : (
