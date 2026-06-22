@@ -430,8 +430,35 @@ function SamplesReportBubble({ ui, messageKey }) {
   );
 }
 
+// ─── InlineStudyCard ──────────────────────────────────────────────────────────
+const _META_TYPES = new Set(['Metagenomic', 'Metatranscriptomic', 'WGS', 'Genome Isolate']);
+function InlineStudyCard({ study, isPinned, onPin, onMerge }) {
+  const types = (study.data_types || '').split(',').map(t => t.trim()).filter(Boolean);
+  return (
+    <div className="inline-study-card" onClick={() => window._openStudyModal?.(study.study_id)}>
+      <div className="isc-id-row">
+        <span className="isc-id">ID {study.study_id}</span>
+        {isPinned && <span className="isc-pinned">Pinned</span>}
+      </div>
+      <div className="isc-title">{study.study_title}</div>
+      {types.length > 0 && (
+        <div className="isc-types">
+          {types.map(t => (
+            <span key={t} className={`isc-dtype ${_META_TYPES.has(t) ? 'meta' : 'amp'}`}>{t}</span>
+          ))}
+        </div>
+      )}
+      <div className="isc-meta">{study.num_samples ?? '—'} samples · {study.pi_name || '—'}</div>
+      <div className="isc-actions">
+        <button className="btn-isc-pin" onClick={e => { e.stopPropagation(); onPin?.(study); }}>Pin</button>
+        <button className="btn-isc-merge" onClick={e => { e.stopPropagation(); onMerge?.(study); }}>Merge →</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── ToolResultWidget ─────────────────────────────────────────────────────────
-function ToolResultWidget({ payload, msgKey }) {
+function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
   if (!payload) return null;
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
@@ -446,19 +473,13 @@ function ToolResultWidget({ payload, msgKey }) {
   if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
       {sqlBlock}
-      <table className="prep-table tool-result-table">
-        <thead><tr><th>ID</th><th>Title</th><th>PI</th><th>Samples</th><th>Types</th>{isSampleSearch && <th>Via</th>}</tr></thead>
-        <tbody>{studies.map(s => (
-          <tr key={s.study_id}>
-            <td>{s.study_id}</td>
-            <td title={s.study_title}>{(s.study_title || '').slice(0, 55)}</td>
-            <td>{(s.pi_name || '').split(' ').slice(-1)[0] || '—'}</td>
-            <td>{s.num_samples ?? '—'}</td>
-            <td>{s.data_types || '—'}</td>
-            {isSampleSearch && <td><span className="via-badge">sample match</span></td>}
-          </tr>
-        ))}</tbody>
-      </table>
+      <div className="inline-study-cards">
+        {studies.map(s => (
+          <InlineStudyCard key={s.study_id} study={s}
+            isPinned={isPinned?.(s.study_id)}
+            onPin={onPin} onMerge={onMerge} />
+        ))}
+      </div>
     </React.Fragment>
   );
   return payload.result_summary
@@ -467,20 +488,26 @@ function ToolResultWidget({ payload, msgKey }) {
 }
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey }) {
-  const [open, setOpen] = useState(false);
+function ToolCallCard({ seg, msgKey, onPin, onMerge, isPinned }) {
+  const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
-  const detail = done ? seg.result?.detail : '';
+  const detail = done ? seg.result?.detail : null;
+  const hasArgs = (seg.args?.keywords?.length > 0) || (seg.args?.field_filters?.length > 0)
+               || (seg.args?.study_id != null) || (seg.args?.study_ids?.length > 0);
   return (
     <div className="tool-call-card">
-      <button className="tool-call-header" onClick={() => setOpen(o => !o)}>
+      <div className="tool-call-banner">
         {done ? <span className="step-dot" /> : <div className="step-spinner" />}
-        <span className="tool-call-label">{label}</span>
-        {detail && <span className="step-detail"> · {detail}</span>}
-        <span className="tool-call-toggle">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
+        <span className="tool-call-banner-label">{label}</span>
+        {detail && <span className="tool-call-banner-meta">{detail}</span>}
+        {done && hasArgs && (
+          <span className="tool-call-view-all" onClick={() => setShowArgs(v => !v)}>
+            {showArgs ? 'Hide ▴' : 'View all →'}
+          </span>
+        )}
+      </div>
+      {showArgs && (
         <div className="tool-call-body">
           {seg.args?.keywords?.length > 0 &&
             <p className="tool-call-args">Keywords: {seg.args.keywords.join(', ')}</p>}
@@ -491,17 +518,18 @@ function ToolCallCard({ seg, msgKey }) {
             <p className="tool-call-args">Study ID: {seg.args.study_id}</p>}
           {seg.args?.study_ids?.length > 0 &&
             <p className="tool-call-args">Studies: {seg.args.study_ids.join(', ')}</p>}
-          {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`} />}
-          {done && !seg.result?.ui_payload && seg.result?.label && (
-            <p className="tool-call-text-result">{seg.result.label}</p>)}
         </div>
       )}
+      {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`}
+                 onPin={onPin} onMerge={onMerge} isPinned={isPinned} />}
+      {done && !seg.result?.ui_payload && seg.result?.label && (
+        <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
   );
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, pinnedStudyIds }) {
   return (
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
@@ -509,7 +537,9 @@ function AgentMessageBubble({ segments, isStreaming, msgKey }) {
           <div key={i} className={`msg-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
         ) : seg.type === 'tool' ? (
-          <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`} />
+          <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
+            onPin={onPinStudy} onMerge={onMergeStudy}
+            isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
         ) : null
       )}
       {isStreaming && !(segments || []).length && (

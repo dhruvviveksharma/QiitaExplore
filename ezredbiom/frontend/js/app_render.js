@@ -23,13 +23,18 @@ function renderApp(s) {
     activeMsgs, slashMatches,
   } = s;
 
+  window._openStudyModal = openStudyModal;
+
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
 
       {/* ══════════════════ SIDEBAR ══════════════════ */}
       <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-header">
-          <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>Qiita<span>Explorer</span></div>
+          <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>
+            <img src="qiita-mark.png" alt="" className="app-logo-mark" />
+            <span className="app-logo-text">Qiita<em>Explorer</em></span>
+          </div>
         </div>
 
         <div className="sidebar-body">
@@ -407,7 +412,10 @@ function renderApp(s) {
                         <AgentMessageBubble
                           segments={m.segments ?? m.ui?.segments ?? []}
                           isStreaming={!!m.isStreaming}
-                          msgKey={`${view.chatId}-${i}`} />
+                          msgKey={`${view.chatId}-${i}`}
+                          onPinStudy={study => sendMessage(`/pin ${study.study_id}`)}
+                          onMergeStudy={study => { setPendingMergeStudy(study); setShowMergePanel(true); }}
+                          pinnedStudyIds={(chatCache[view.chatId]?.pinnedStudies || []).map(s => s.study_id)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
