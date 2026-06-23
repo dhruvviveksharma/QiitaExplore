@@ -45,7 +45,7 @@ function InfinityLoader({ w = 80, h = 50 }) {
     if (!canvas) return;
     const ctx = _setupCanvas(canvas, w, h);
     const cx = w / 2, cy = h / 2;
-    const SX = w * 0.37, SY = h * 0.40, r = w * 0.08, n = 5;
+    const SX = w * 0.37, SY = SX * 0.54, r = SX * 0.22, n = 5;
 
     function figPos(t) { return [cx + SX * Math.sin(t), cy + SY * Math.sin(2 * t)]; }
     function figNorm(t) {
