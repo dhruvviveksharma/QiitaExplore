@@ -582,23 +582,6 @@ input, textarea { font-family: var(--sans); }
   transition: background var(--t);
 }
 .btn-isc-merge:hover { background: var(--accent-h); }
-.study-results-collapsible { margin-top: 6px; }
-.study-results-collapsible > .inline-study-cards { margin-top: 8px; }
-.study-results-summary {
-  cursor: pointer;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--accent-h);
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  user-select: none;
-}
-.study-results-summary::-webkit-details-marker { display: none; }
-.study-results-summary::before { content: '▾'; font-size: 10px; transition: transform .15s; }
-.study-results-collapsible:not([open]) .study-results-summary::before { transform: rotate(-90deg); }
-
 /* ── Query plan chip ─────────────────────────────────────────── */
 .msg-query-plan {
   display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px;

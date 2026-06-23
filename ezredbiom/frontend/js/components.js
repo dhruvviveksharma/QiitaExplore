@@ -473,8 +473,9 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
   if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
       {sqlBlock}
-      <details open className="study-results-collapsible">
-        <summary className="study-results-summary">{studies.length} studies</summary>
+      <CollapsibleSection id={`tool-results-${payload.tool}`}
+        title={`${studies.length} studies`}
+        defaultOpen={true}>
         <div className="inline-study-cards">
           {studies.map(s => (
             <InlineStudyCard key={s.study_id} study={s}
@@ -482,7 +483,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
               onPin={onPin} onMerge={onMerge} />
           ))}
         </div>
-      </details>
+      </CollapsibleSection>
     </React.Fragment>
   );
   return payload.result_summary
