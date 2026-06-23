@@ -1,44 +1,51 @@
-# Plan: Redesign Frontend per Reference Images + Integrate Logo
+# Plan: Unify chat message and composer widths
+
+## Problem
+- Chat messages are constrained to `max-width: 700px` in `.chat-messages`.
+- The composer (text input), model selector, and error message also use `max-width: 700px`.
+- When a message contains a `/report` study card (`m.ui.kind === 'samples_report'`), the message area switches to `max-width: 100%` via `.chat-messages-wide`, while the composer stays at 700px.
+- Result: chats with study reports look full-width, while the input box remains narrow, and the answer section is wider than the text box. No other code path widens `.chat-messages`.
 
 ## Goal
-Update the Qiita Explorer web UI to match the two reference images and integrate the supplied logo into the sidebar, top bar, and app chrome. Keep all existing functionality intact.
-
-## Reference Design Summary
-- **Palette:** near-white page (`#F8F9F9`), light-gray sidebar (`#F8F8F8`), teal primary (`#447C8A`), dark-teal user bubbles (`#1B2F38`), muted text (`#5A5A5A`), borders (`#E8E8E8`).
-- **Typography:** all sans-serif (system/Inter), clean hierarchy, no serif titles.
-- **Shell:** top bar (white, ~56 px) + left sidebar (248 px, light gray) + main content area.
-- **Sidebar:** logo at top, primary nav links (Home / Browse / Chat / Merges / Global Chats), Workspaces section with collapsible projects, active item highlighted with teal left border.
-- **Browse:** white hero card containing title, search bar, filter chips; below it a grid of study cards with teal left accent bar, metadata chips, and action buttons.
-- **Chat:** thread rail on the left inside main (or full-width conversation), user messages as dark rounded bubbles, assistant messages as plain prose with embedded tool-result cards, starter chip row, bottom composer.
-- **Logo:** abstract geometric mark with pale cyan-teal background, dark-teal shapes, lime/medium greens. Use as sidebar/app icon; derive accent colors from it.
+- Widen the text input (composer).
+- Ensure the answering section (message list) is exactly as wide as the composer.
+- Keep the layout consistent for project chats, global chats, and the browse view's pinned-study composer.
 
 ## Files to Change
-1. `ezredbiom/frontend/style.css` — new tokens and restyled components.
-2. `ezredbiom/frontend/js/app_render.js` — restructure sidebar, top bar, browse, chat layout.
-3. `ezredbiom/frontend/index.html` — cache-bust CSS/JS, ensure logo file reference.
-4. `ezredbiom/frontend/logo.png` — replace with supplied logo (already present as new file).
+1. `ezredbiom/frontend/style.css` — update `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, `.model-picker-card`, and `.chat-messages-wide` to share a single width token; add responsive breakpoint.
+2. `ezredbiom/frontend/js/app_render.js` — compute `isWide` once and apply the same width class to `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, and `.model-picker-card`.
 
 ## Approach
-1. Replace CSS tokens with the new palette and spacing.
-2. Rebuild the sidebar into a nav rail with logo, primary links, workspaces list, global chats, and a footer.
-3. Simplify top bar: page title/context centered/left, merge toggle, theme toggle, user avatar placeholder.
-4. Restyle browse: hero card with search and chips, grid cards with left accent bar and cleaner metadata.
-5. Restyle chat: dark user bubbles, clean assistant prose, tool cards with light borders, starter chips.
-6. Integrate logo image as `logo.png` and reference it from sidebar + top bar.
-7. Keep dark-mode support by deriving dark variants of new tokens.
-8. Verify file sizes stay under 500-line cap; if `style.css` grows too much, consider splitting later (ticket TKT-011 already tracks oversized files).
+1. Introduce a CSS custom property `--chat-max-w: 860px` to align with the browse (`860px`) and merge (`860px`) panels.
+2. Replace the `700px` widths in `.chat-messages`, `.composer`, `.composer-model`, `.composer-error` with `var(--chat-max-w)`. Keep `.composer-pins` and `.slash-menu` at `var(--chat-max-w)` too (intentional unification, not a regression from 720px; the 20px offset was incidental).
+3. Leave `.model-picker-card` at its existing `max-width: 800px`; it is a popup/card and should not track the chat column width. Remove it from the shared-width target list.
+4. Reuse the existing `.chat-messages-wide` class on `.chat-messages`. Introduce `.composer-wide` for composer-related elements. Compute `isWide` once in `app_render.js` and use it for both.
+5. Add a responsive media query: below `1040px` viewport width, `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, and `.slash-menu` switch to `max-width: 100%` so the column never overflows.
+6. Leave `.chat-empty` at 520px, `.sources-bar` full-width, and browse/merge layouts untouched. The sources bar remains full-width intentionally; constraining it is out of scope.
+7. Browse view uses the same `.composer` element (line 534); it will widen to 860px along with chat, which is intentional and consistent with the acceptance criteria.
+
+## Acceptance Criteria
+- [ ] Composer text box is visibly wider than before (≈860px default) in both project and global chats.
+- [ ] Message bubbles/answer section aligns to the same width as the composer.
+- [ ] When a `/report` study card is present, both messages and composer expand to full width together.
+- [ ] When no wide content is present, messages and composer remain the same width together.
+- [ ] Browse view composer widens to match the chat composer.
+- [ ] No horizontal overflow at viewport widths ≥ 1040px; at smaller widths the column fills the viewport.
+- [ ] No change to sidebar, top bar, browse grid, merge panels, modal, or model-picker card width.
 
 ## Verification
-- Start backend: `bash ezredbiom/start_barnacle.sh` (currently dev port 5002, do not revert as part of this task).
-- Open browser, test:
-  - Sidebar navigation and active states
-  - Browse search + study cards
-  - Project/global chat list, new chat, send message
-  - Dark/light toggle
-  - Logo visible and crisp
-  - Merge panel opens/closes
+- Start backend: `bash ezredbiom/start_barnacle.sh` (dev port 5002).
+- Open browser and test at 1280px, 1440px, and <1040px viewport widths:
+  - Global chat: send a regular message → composer and messages same width (860px above 1040px, full-width below).
+  - Global chat: send `/report 104` → composer and messages both expand to full width.
+  - Project chat: same behavior.
+  - Browse view: pin/unpin studies; composer is the same width as the chat composer.
+  - Confirm no horizontal overflow.
 
 ## Risks / Notes
-- `app_render.js` and `style.css` will grow; this is a UI redesign so a substantial diff is expected. Existing TKT-011 already covers splitting oversized files later.
-- No backend changes needed.
-- Keep `api-base` at current port; do not touch port TODOs.
+- Widening `.chat-messages` also widens `.msg-bubble` (max-width 82% relative to the column); this is intended.
+- `.chat-empty` remains 520px, so the empty state will look narrower than populated chats; this is pre-existing and acceptable.
+- `.sources-bar` remains full-width; this is pre-existing and out of scope.
+- Only two files touched; changes are surgical.
+- No backend changes.
+- Existing 500-line file cap not impacted.

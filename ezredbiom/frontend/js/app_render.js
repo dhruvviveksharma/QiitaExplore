@@ -23,6 +23,8 @@ function renderApp(s) {
     activeMsgs, slashMatches,
   } = s;
 
+  const isWide = activeMsgs.some(m => m.ui?.kind === 'samples_report');
+
   window._openStudyModal = openStudyModal;
 
   return (
@@ -383,7 +385,7 @@ function renderApp(s) {
                 </div>
               )}
 
-              <div className={`chat-messages${activeMsgs.some(m => m.ui?.kind === 'samples_report') ? ' chat-messages-wide' : ''}`}>
+              <div className={`chat-messages${isWide ? ' chat-messages-wide' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
                   <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
@@ -507,7 +509,7 @@ function renderApp(s) {
             />
           )}
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
-            <div className="composer-pins">
+            <div className={`composer-pins${isWide ? ' composer-wide' : ''}`}>
               <span className="composer-pins-label">Pinned:</span>
               {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => (
                 <span key={sid} className="composer-pin-chip">
@@ -529,9 +531,11 @@ function renderApp(s) {
             <PinnedBar studies={ctxStudies} onRemove={id => setCtxStudies(prev => prev.filter(s => s.study_id !== id))} />
           )}
           {slashMatches.length > 0 && !slashDismissed && (
-            <SlashCommandMenu matches={slashMatches} activeIndex={slashIndex} onPick={completeSlash} />
+            <div className={`slash-menu${isWide ? ' composer-wide' : ''}`}>
+              <SlashCommandMenu matches={slashMatches} activeIndex={slashIndex} onPick={completeSlash} />
+            </div>
           )}
-          <div className={`composer ${!(isChat || view.type === 'browse') ? 'muted' : ''}`}>
+          <div className={`composer${isWide ? ' composer-wide' : ''} ${!(isChat || view.type === 'browse') ? 'muted' : ''}`}>
             <textarea
               ref={taRef}
               className="composer-ta"
@@ -553,12 +557,12 @@ function renderApp(s) {
             />
             <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
           </div>
-          <div className="composer-model" onClick={() => setShowModelPicker(v => !v)}
+          <div className={`composer-model${isWide ? ' composer-wide' : ''}`} onClick={() => setShowModelPicker(v => !v)}
                title="Click or type /model to change" style={{cursor:'pointer'}}>
             <span className="composer-model-label">Model:</span>
             <span className="composer-model-name">{selectedModel}</span>
           </div>
-          {compErr && <div className="composer-error">{compErr}</div>}
+          {compErr && <div className={`composer-error${isWide ? ' composer-wide' : ''}`}>{compErr}</div>}
         </div>}
       </div>
 
