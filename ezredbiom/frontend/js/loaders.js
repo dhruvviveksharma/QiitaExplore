@@ -37,6 +37,16 @@ function _setupCanvas(canvas, w, h) {
   return ctx;
 }
 
+function _drawDuplex(ctx, segs, f1topFn, strand) {
+  for (const [a, b] of segs) {
+    const f1top = f1topFn(a, b);
+    ctx.strokeStyle = f1top ? _lRgba(_LG, 0.75) : _lRgba(_LT, 0.75);
+    strand(a, b, !f1top, 1.5);
+    ctx.strokeStyle = f1top ? _LT : _LG;
+    strand(a, b,  f1top, 2.5);
+  }
+}
+
 // ─── InfinityLoader ───────────────────────────────────────────────────────────
 function InfinityLoader({ w = 80, h = 50 }) {
   const ref = useRef(null);
@@ -87,13 +97,7 @@ function InfinityLoader({ w = 80, h = 50 }) {
         ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
       }
 
-      for (const [tS, tE] of segs) {
-        const f1top = Math.sin(n * (tS + tE) / 2 + ph) > 0;
-        ctx.strokeStyle = f1top ? _lRgba(_LG, 0.75) : _lRgba(_LT, 0.75);
-        strand(tS, tE, !f1top, 1.5);
-        ctx.strokeStyle = f1top ? _LT : _LG;
-        strand(tS, tE,  f1top, 2.5);
-      }
+      _drawDuplex(ctx, segs, (tS, tE) => Math.sin(n * (tS + tE) / 2 + ph) > 0, strand);
       rafId = requestAnimationFrame(frame);
     }
     rafId = requestAnimationFrame(frame);
@@ -144,13 +148,7 @@ function WreathLoader({ size = 32 }) {
         ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
       }
 
-      for (const [tS, tE] of segs) {
-        const f1top = Math.sin(n * (tS + tE) / 2 + ph) > 0;
-        ctx.strokeStyle = f1top ? _lRgba(_LG, 0.75) : _lRgba(_LT, 0.75);
-        strand(tS, tE, !f1top, 1.5);
-        ctx.strokeStyle = f1top ? _LT : _LG;
-        strand(tS, tE,  f1top, 2.5);
-      }
+      _drawDuplex(ctx, segs, (tS, tE) => Math.sin(n * (tS + tE) / 2 + ph) > 0, strand);
       rafId = requestAnimationFrame(frame);
     }
     rafId = requestAnimationFrame(frame);
@@ -208,13 +206,7 @@ function HelixLoader({ w = 160, h = 80 }) {
         ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
       }
 
-      for (const [x0, x1] of segs) {
-        const f1top = Math.sin(f * (x0 + x1) / 2 - ph) > 0;
-        ctx.strokeStyle = f1top ? _lRgba(_LG, 0.75) : _lRgba(_LT, 0.75);
-        strand(x0, x1, !f1top, 1.5);
-        ctx.strokeStyle = f1top ? _LT : _LG;
-        strand(x0, x1,  f1top, 2.5);
-      }
+      _drawDuplex(ctx, segs, (x0, x1) => Math.sin(f * (x0 + x1) / 2 - ph) > 0, strand);
 
       const fade = Math.min(20, w * 0.12);
       const g1 = ctx.createLinearGradient(0, 0, fade, 0);
@@ -229,53 +221,5 @@ function HelixLoader({ w = 160, h = 80 }) {
     rafId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafId);
   }, [w, h]);
-  return <canvas ref={ref} style={{display:'block'}} />;
-}
-
-// ─── PlasmidLoader ────────────────────────────────────────────────────────────
-function PlasmidLoader({ size = 48 }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = _setupCanvas(canvas, size, size);
-    const cx = size / 2, cy = size / 2;
-    const R = size * 0.325, GAP = size * 0.075, N = 40;
-    const dot = size * 0.05;
-
-    let rafId, t0;
-    function frame(ts) {
-      if (!t0) t0 = ts;
-      const time = (ts - t0) / 1000;
-      ctx.clearRect(0, 0, size, size);
-
-      for (let i = 0; i < N; i++) {
-        const angle = (i / N) * Math.PI * 2 - Math.PI / 2;
-        const pulse = 0.5 + 0.5 * Math.sin((i / N) * Math.PI * 4 - time * 3.64);
-        const xi = cx + (R - GAP) * Math.cos(angle), yi = cy + (R - GAP) * Math.sin(angle);
-        const xo = cx + (R + GAP) * Math.cos(angle), yo = cy + (R + GAP) * Math.sin(angle);
-
-        ctx.beginPath();
-        ctx.arc(xi, yi, Math.max(0.8, dot + dot * 0.8 * pulse), 0, Math.PI * 2);
-        ctx.fillStyle = _lRgba(_LT, 0.15 + 0.85 * pulse);
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(xo, yo, Math.max(0.8, dot + dot * 0.8 * (1 - pulse)), 0, Math.PI * 2);
-        ctx.fillStyle = _lRgba(_LG, 0.15 + 0.85 * (1 - pulse));
-        ctx.fill();
-
-        if (i % 3 === 0) {
-          const isHL = (i % 12) === 0;
-          ctx.strokeStyle = isHL ? _lRgba(_LC, 0.5 + 0.5 * pulse) : _lRgba('#9ad8d0', 0.22);
-          ctx.lineWidth   = isHL ? 1.5 : 0.8;
-          ctx.beginPath(); ctx.moveTo(xi, yi); ctx.lineTo(xo, yo); ctx.stroke();
-        }
-      }
-      rafId = requestAnimationFrame(frame);
-    }
-    rafId = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(rafId);
-  }, [size]);
   return <canvas ref={ref} style={{display:'block'}} />;
 }

@@ -26,8 +26,6 @@ function renderApp(s) {
   const lastUiMsg = [...activeMsgs].reverse().find(m => m.ui?.kind != null);
   const isWide = lastUiMsg?.ui?.kind === 'samples_report';
 
-  window._openStudyModal = openStudyModal;
-
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
 
@@ -418,6 +416,7 @@ function renderApp(s) {
                           msgKey={`${view.chatId}-${i}`}
                           onPinStudy={study => sendMessage(`/pin ${study.study_id}`)}
                           onMergeStudy={study => { setPendingMergeStudy(study); setShowMergePanel(true); }}
+                          onOpenStudy={openStudyModal}
                           pinnedStudyIds={(chatCache[view.chatId]?.pinnedStudies || []).map(s => s.study_id)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />

@@ -4,19 +4,6 @@
 
 ---
 
-## TKT-001: Debug Port Not Reverted Before Merge
-
-**Severity:** Critical
-**Status:** Resolved
-
-### Description
-
-Several files were set to port 5002 for debug/testing. Master and barnacle production use port 5001 (Gunicorn bind, nginx upstream, frontend `api-base`). Mismatch breaks API calls and nginx proxying.
-
-### Resolution
-
-All ports reverted to 5001 across `start_barnacle.sh`, `run.py`, `utils.js`, `run_tests.sh`, `tests/e2e/conftest.py`; `index.html` and `nginx.conf` confirmed already 5001. Smoke test: `curl http://localhost:5001/api/health`.
-
 ---
 
 ## TKT-002: Silent Exception Handling Makes Debugging Difficult
@@ -198,15 +185,17 @@ The chat advertises a `compute_diversity` tool, but it is a hard stub — `ezred
 
 Files over the 500-line `ezredbiom/` cap (verified 2026-06-21):
 
-| File | Lines | Tracked by |
-|------|-------|-----------|
-| `frontend/js/components.js` | 630 | TKT-011 |
-| `frontend/js/app_state.js` | 626 | TKT-011 |
-| `frontend/js/app_render.js` | 570 | TKT-011 |
-| `backend/helpers/agent_tools.py` | 548 | TKT-013 |
-| `backend/helpers/qiita_fetch.py` | 532 | TKT-011 |
-| `backend/routes/merge_routes.py` | 528 | TKT-014 |
-| `backend/store/crud.py` | 515 | TKT-011 |
+
+| File                             | Lines | Tracked by |
+| -------------------------------- | ----- | ---------- |
+| `frontend/js/components.js`      | 630   | TKT-011    |
+| `frontend/js/app_state.js`       | 626   | TKT-011    |
+| `frontend/js/app_render.js`      | 570   | TKT-011    |
+| `backend/helpers/agent_tools.py` | 548   | TKT-013    |
+| `backend/helpers/qiita_fetch.py` | 532   | TKT-011    |
+| `backend/routes/merge_routes.py` | 528   | TKT-014    |
+| `backend/store/crud.py`          | 515   | TKT-011    |
+
 
 ### Plan (TKT-011 scope)
 
@@ -227,8 +216,8 @@ Files over the 500-line `ezredbiom/` cap (verified 2026-06-21):
 
 Two spots in the merge page fan out parallel requests that could become expensive at scale:
 
-1. **`MergesTab` mount** (`frontend/js/merge_workspace.js`): on load, fetches full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`.
-2. **`GlobalBiomSelector` Smart Select** (`frontend/js/merge_artifacts.js`, `handleApply`): fetches all missing study details in parallel (up to 5), no rate limiting / cancellation.
+1. `**MergesTab` mount** (`frontend/js/merge_workspace.js`): on load, fetches full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`.
+2. `**GlobalBiomSelector` Smart Select** (`frontend/js/merge_artifacts.js`, `handleApply`): fetches all missing study details in parallel (up to 5), no rate limiting / cancellation.
 
 ### Plan
 
@@ -249,6 +238,7 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 ### Plan
 
 Extract tool implementations into `helpers/agent_tool_impls.py`:
+
 - Move `_tool_search_studies`, `_tool_search_by_sample`, `_tool_get_study_report`, `_tool_pin_study`, `_tool_compute_diversity`
 - Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers in `agent_tools.py`
 
@@ -283,6 +273,7 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 ### Plan
 
 Choose one:
+
 - **Finish the remote pipeline** — implement the paramiko SFTP+SSH path described in the TODO (upload BIOMs → ssh exec → download `result.tar.gz`); keep the same `on_status` interface.
 - **Or gate/document local-only mode** — explicitly require the local `qiita` env and surface a clear error when prerequisites are missing, so master doesn't silently fail.
 
@@ -296,27 +287,3 @@ Choose one:
 
 ---
 
-## TKT-016: Organic Loader While Awaiting LLM Response
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-When a user sends a message and the LLM begins generating, the chat area shows no visual feedback until the first streamed token arrives. On slow responses this gap can feel like the UI has frozen. An organic/animated loader (e.g. pulsing dots, breathing blob, or morphing shape) should be displayed from the moment the request is sent until the first token renders, giving the user clear confirmation that generation is in progress.
-
-### Plan
-
-1. Track a `waiting` state in the chat component — set to `true` when the request fires, `false` on first streamed token or error.
-2. Render a small organic loader component (CSS-only animation; no extra library) in the message thread while `waiting === true`.
-3. Remove the loader as soon as the first token arrives so it transitions seamlessly into the streaming text.
-4. Ensure the loader is also cleared on error/timeout so it never gets stuck.
-
-### Files
-
-- `ezredbiom/frontend/js/` — chat component where messages are streamed
-- Possibly a new `Loader.js` or inline CSS animation added to the existing stylesheet
-
----
-
-*Generated: 2026-05-19 | Updated: 2026-06-21*

@@ -432,10 +432,10 @@ function SamplesReportBubble({ ui, messageKey }) {
 
 // ─── InlineStudyCard ──────────────────────────────────────────────────────────
 const _META_TYPES = new Set(['Metagenomic', 'Metatranscriptomic', 'WGS', 'Genome Isolate']);
-function InlineStudyCard({ study, isPinned, onPin, onMerge }) {
+function InlineStudyCard({ study, isPinned, onPin, onMerge, onOpen }) {
   const types = (study.data_types || '').split(',').map(t => t.trim()).filter(Boolean);
   return (
-    <div className="inline-study-card" onClick={() => window._openStudyModal?.(study)}>
+    <div className="inline-study-card" onClick={() => onOpen?.(study)}>
       <div className="isc-id-row">
         <span className="isc-id">ID {study.study_id}</span>
         {isPinned && <span className="isc-pinned">Pinned</span>}
@@ -458,7 +458,7 @@ function InlineStudyCard({ study, isPinned, onPin, onMerge }) {
 }
 
 // ─── ToolResultWidget ─────────────────────────────────────────────────────────
-function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
+function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned }) {
   if (!payload) return null;
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
@@ -480,7 +480,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
           {studies.map(s => (
             <InlineStudyCard key={s.study_id} study={s}
               isPinned={isPinned?.(s.study_id)}
-              onPin={onPin} onMerge={onMerge} />
+              onPin={onPin} onMerge={onMerge} onOpen={onOpen} />
           ))}
         </div>
       </CollapsibleSection>
@@ -492,7 +492,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, isPinned }) {
 }
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey, onPin, onMerge, isPinned }) {
+function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
@@ -525,7 +525,7 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, isPinned }) {
         </div>
       )}
       {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`}
-                 onPin={onPin} onMerge={onMerge} isPinned={isPinned} />}
+                 onPin={onPin} onMerge={onMerge} onOpen={onOpen} isPinned={isPinned} />}
       {done && !seg.result?.ui_payload && seg.result?.label && (
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
@@ -533,7 +533,7 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, isPinned }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, pinnedStudyIds }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds }) {
   return (
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
@@ -542,7 +542,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
-            onPin={onPinStudy} onMerge={onMergeStudy}
+            onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
             isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
         ) : null
       )}
