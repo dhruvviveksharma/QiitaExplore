@@ -23,7 +23,8 @@ function renderApp(s) {
     activeMsgs, slashMatches,
   } = s;
 
-  const isWide = activeMsgs.some(m => m.ui?.kind === 'samples_report');
+  const lastUiMsg = [...activeMsgs].reverse().find(m => m.ui?.kind != null);
+  const isWide = lastUiMsg?.ui?.kind === 'samples_report';
 
   window._openStudyModal = openStudyModal;
 

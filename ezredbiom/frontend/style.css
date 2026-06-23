@@ -223,10 +223,20 @@ input, textarea { font-family: var(--sans); }
   cursor: pointer;
   transition: background var(--t);
   border-bottom: 1px solid var(--border-soft);
+  position: relative;
 }
 .chat-row:last-child { border-bottom: none; }
 .chat-row:hover { background: var(--border-soft); }
 .chat-row.active { background: rgba(44,125,140,0.06); box-shadow: none; }
+.chat-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: #2c7d8c;
+}
+.app.dark .chat-row.active::before { background: #7ec8e3; }
 .chat-row.flat { border-bottom: 1px solid var(--border-soft); border-radius: var(--radius-s); }
 
 .cr-content { flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 0; }
