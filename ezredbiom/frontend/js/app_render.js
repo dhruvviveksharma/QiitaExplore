@@ -460,7 +460,7 @@ function renderApp(s) {
                             </details>
                           )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
-                            <div className="msg-bubble"><InfinityLoader w={80} h={50} /></div>
+                            <InfinityLoader w={80} h={50} />
                           ) : (!m.isStreaming || m.content) ? (
                             <>
                               <div

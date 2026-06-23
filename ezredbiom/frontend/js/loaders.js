@@ -57,7 +57,7 @@ function InfinityLoader({ w = 80, h = 50 }) {
     let rafId, t0;
     function frame(ts) {
       if (!t0) t0 = ts;
-      const ph = 0.85 * (ts - t0) / 1000;
+      const ph = 1.19 * (ts - t0) / 1000;
       ctx.clearRect(0, 0, w, h);
       const segs = _makeSegs(_ringCrossings(n, ph, 0, Math.PI * 2), 0, Math.PI * 2);
 
@@ -115,7 +115,7 @@ function WreathLoader({ size = 32 }) {
     let rafId, t0;
     function frame(ts) {
       if (!t0) t0 = ts;
-      const ph = 1.1 * (ts - t0) / 1000;
+      const ph = 1.54 * (ts - t0) / 1000;
       ctx.clearRect(0, 0, size, size);
       const segs = _makeSegs(_ringCrossings(n, ph, 0, Math.PI * 2), 0, Math.PI * 2);
 
@@ -166,7 +166,7 @@ function HelixLoader({ w = 160, h = 80 }) {
     const canvas = ref.current;
     if (!canvas) return;
     const ctx = _setupCanvas(canvas, w, h);
-    const cy = h / 2, A = h * 0.27, lam = 64, om = 1.7;
+    const cy = h / 2, A = h * 0.27, lam = 64, om = 2.38;
     const f  = Math.PI * 2 / lam;
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#0c1929';
 
@@ -251,7 +251,7 @@ function PlasmidLoader({ size = 48 }) {
 
       for (let i = 0; i < N; i++) {
         const angle = (i / N) * Math.PI * 2 - Math.PI / 2;
-        const pulse = 0.5 + 0.5 * Math.sin((i / N) * Math.PI * 4 - time * 2.6);
+        const pulse = 0.5 + 0.5 * Math.sin((i / N) * Math.PI * 4 - time * 3.64);
         const xi = cx + (R - GAP) * Math.cos(angle), yi = cy + (R - GAP) * Math.sin(angle);
         const xo = cx + (R + GAP) * Math.cos(angle), yo = cy + (R + GAP) * Math.sin(angle);
 

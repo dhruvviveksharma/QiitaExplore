@@ -546,7 +546,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
         ) : null
       )}
       {isStreaming && !(segments || []).length && (
-        <div className="msg-bubble"><InfinityLoader w={80} h={50} /></div>
+        <InfinityLoader w={80} h={50} />
       )}
     </div>
   );
