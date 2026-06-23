@@ -265,7 +265,7 @@ function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
 function PrepsTable({ detail, loading, onMount }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
-  if (loading && !detail) return <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'20px auto'}} />;
+  if (loading && !detail) return <div style={{margin:'20px auto'}}><InfinityLoader w={80} h={50} /></div>;
   if (!detail) return null;
   const preps = detail.preps || [];
   if (preps.length === 0) return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No prep templates found.</p>;
@@ -501,7 +501,7 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, isPinned }) {
   return (
     <div className="tool-call-card">
       <div className="tool-call-banner">
-        {done ? <span className="step-dot" /> : <div className="step-spinner" />}
+        {done ? <span className="step-dot" /> : <WreathLoader size={28} />}
         <span className="tool-call-banner-label">{label}</span>
         {detail && <span className="tool-call-banner-meta">{detail}</span>}
         {done && hasArgs && (
@@ -546,7 +546,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
         ) : null
       )}
       {isStreaming && !(segments || []).length && (
-        <div className="msg-bubble"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
+        <div className="msg-bubble"><InfinityLoader w={80} h={50} /></div>
       )}
     </div>
   );

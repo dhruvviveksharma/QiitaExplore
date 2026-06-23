@@ -65,7 +65,7 @@ function renderApp(s) {
                 <div className="folder-expanded">
                   {projDetailLoading && !openProject && (
                     <div className="folder-loading">
-                      <div className="typing-dots"><span/><span/><span/></div>
+                      <InfinityLoader w={64} h={40} />
                     </div>
                   )}
                   <button className="folder-new-chat-btn" onClick={() => newProjChat(p.project_id)}>
@@ -290,7 +290,7 @@ function renderApp(s) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><div className="spinner" /><br />{deepSearch ? 'Deep searching sample metadata…' : 'Searching…'}</div>}
+              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /><br />{deepSearch ? 'Deep searching sample metadata…' : 'Searching…'}</div>}
 
               {!searching && (
                 <>
@@ -385,7 +385,7 @@ function renderApp(s) {
 
               <div className={`chat-messages${activeMsgs.some(m => m.ui?.kind === 'samples_report') ? ' chat-messages-wide' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
-                  <div className="state-loading"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
+                  <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
                   <div className="chat-empty">
                     <div className="chat-empty-title">
@@ -460,7 +460,7 @@ function renderApp(s) {
                             </details>
                           )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
-                            <div className="msg-bubble"><img src="qiita-mark-nobg.png" className="logo-spinner" alt="" /></div>
+                            <div className="msg-bubble"><InfinityLoader w={80} h={50} /></div>
                           ) : (!m.isStreaming || m.content) ? (
                             <>
                               <div
@@ -469,7 +469,7 @@ function renderApp(s) {
                                   __html: DOMPurify.sanitize(marked.parse(m.content || (!m.isStreaming ? '*No response*' : '')))
                                 }}
                               />
-                              {m.isStreaming && m.content && <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{marginTop:'6px'}} />}
+                              {m.isStreaming && m.content && <div style={{marginTop:'6px'}}><InfinityLoader w={64} h={40} /></div>}
                             </>
                           ) : null}
                         </>
