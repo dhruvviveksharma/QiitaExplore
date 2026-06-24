@@ -17,7 +17,7 @@ function renderApp(s) {
     taRef, bottomRef,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
     removeCtxStudyFromChat, completeSlash,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,
@@ -403,10 +403,10 @@ function renderApp(s) {
                           segments={m.segments ?? m.ui?.segments ?? []}
                           isStreaming={!!m.isStreaming}
                           msgKey={`${view.chatId}-${i}`}
-                          onPinStudy={study => sendMessage(`/pin ${study.study_id}`)}
+                          onPinStudy={study => pinStudy(view.chatId, study)}
                           onMergeStudy={study => { setPendingMergeStudy(study); setShowMergePanel(true); }}
                           onOpenStudy={openStudyModal}
-                          pinnedStudyIds={(chatCache[view.chatId]?.pinnedStudies || []).map(s => s.study_id)} />
+                          pinnedStudyIds={(chatCache[view.chatId]?.pinnedStudies || [])} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (

@@ -201,6 +201,16 @@ def api_chat_message_stream(project_id, chat_id):
     )
 
 
+@app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
+def api_pin_project_chat_study(project_id, chat_id, study_id):
+    user_id = request.args.get('user_id') or 'default'
+    chat    = get_chat(project_id, user_id, chat_id)
+    if not chat:
+        return jsonify({'error': 'Chat not found'}), 404
+    _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_PROJECT, [study_id])
+    return jsonify({'ok': True, 'pinned_studies': all_pinned})
+
+
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_project_chat_study(project_id, chat_id, study_id):
     user_id = request.args.get('user_id') or 'default'

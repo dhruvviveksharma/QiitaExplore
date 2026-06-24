@@ -287,6 +287,16 @@ def api_global_chat_message_stream(chat_id):
     )
 
 
+@app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
+def api_pin_global_chat_study(chat_id, study_id):
+    user_id = request.args.get('user_id') or 'default'
+    chat    = get_global_chat(user_id, chat_id)
+    if not chat:
+        return jsonify({'error': 'Chat not found'}), 404
+    _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_GLOBAL, [study_id])
+    return jsonify({'ok': True, 'pinned_studies': all_pinned})
+
+
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_global_chat_study(chat_id, study_id):
     user_id = request.args.get('user_id') or 'default'

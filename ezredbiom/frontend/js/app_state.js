@@ -333,6 +333,30 @@ function useAppState() {
     } catch (_) {}
   };
 
+  const pinStudy = async (chatId, study) => {
+    const studyId = study.study_id;
+    setChatCache(prev => {
+      const cur = prev[chatId];
+      if (!cur) return prev;
+      if ((cur.pinnedStudies || []).includes(studyId)) return prev;
+      return { ...prev, [chatId]: { ...cur, pinnedStudies: [...(cur.pinnedStudies || []), studyId] } };
+    });
+    try {
+      let res;
+      if (view.type === 'project-chat' && view.projId) {
+        res = await apiPost(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`, {});
+      } else if (view.type === 'global-chat') {
+        res = await apiPost(`/global-chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`, {});
+      }
+      if (res?.ok) {
+        const data = await res.json();
+        if (data.pinned_studies) {
+          setChatCache(prev => ({ ...prev, [chatId]: { ...(prev[chatId] || {}), pinnedStudies: data.pinned_studies } }));
+        }
+      }
+    } catch (_) {}
+  };
+
   const removeCtxStudyFromChat = (chatId, studyId) => {
     setChatCache(prev => {
       const c = prev[chatId];
@@ -619,7 +643,7 @@ function useAppState() {
     loadProjects, fetchProjectDetail, loadGlobalChats, loadFirstStudies,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
     removeCtxStudyFromChat, completeSlash,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
