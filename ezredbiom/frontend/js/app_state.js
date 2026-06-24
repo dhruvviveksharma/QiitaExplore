@@ -347,10 +347,11 @@ function useAppState() {
   };
 
   // ─── send ─────────────────────────────────────────────────────────────────────
-  const sendMessage = async () => {
-    const msg = input.trim();
+  const sendMessage = async (msgOverride) => {
+    const msg = (typeof msgOverride === 'string' ? msgOverride : input).trim();
     if (!msg || sending) return;
-    setSending(true); setCompErr(''); setInput('');
+    setSending(true); setCompErr('');
+    if (typeof msgOverride !== 'string') setInput('');
 
     abortRef.current?.abort();
     const ctrl = new AbortController();
