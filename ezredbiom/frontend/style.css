@@ -941,13 +941,6 @@ input, textarea { font-family: var(--sans); }
   font-style: italic;
 }
 
-/* Wider chat column when any /report message is present */
-.chat-messages.chat-messages-wide { max-width: 100%; }
-.composer.composer-wide,
-.composer-error.composer-wide,
-.composer-pins.composer-wide,
-.slash-menu.composer-wide { max-width: 100%; }
-
 /* ─── Slash-command autocomplete menu ───────────────────────── */
 .slash-menu {
   max-width: var(--chat-max-w);

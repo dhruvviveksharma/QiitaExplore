@@ -24,7 +24,6 @@ function renderApp(s) {
   } = s;
 
   const lastUiMsg = [...activeMsgs].reverse().find(m => m.ui?.kind != null);
-  const isWide = lastUiMsg?.ui?.kind === 'samples_report';
 
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
@@ -373,7 +372,7 @@ function renderApp(s) {
                 </div>
               )}
 
-              <div className={`chat-messages${isWide ? ' chat-messages-wide' : ''}${ (view.type === 'project-chat' && openProject?.studies?.length > 0) || (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0) ? ' has-sources' : ''}`}>
+              <div className={`chat-messages${ (view.type === 'project-chat' && openProject?.studies?.length > 0) || (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0) ? ' has-sources' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
                   <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
@@ -498,7 +497,7 @@ function renderApp(s) {
             />
           )}
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
-            <div className={`composer-pins${isWide ? ' composer-wide' : ''}`}>
+            <div className="composer-pins">
               <span className="composer-pins-label">Pinned:</span>
               {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => (
                 <span key={sid} className="composer-pin-chip">
@@ -520,11 +519,11 @@ function renderApp(s) {
             <PinnedBar studies={ctxStudies} onRemove={id => setCtxStudies(prev => prev.filter(s => s.study_id !== id))} />
           )}
           {slashMatches.length > 0 && !slashDismissed && (
-            <div className={`slash-menu${isWide ? ' composer-wide' : ''}`}>
+            <div className="slash-menu">
               <SlashCommandMenu matches={slashMatches} activeIndex={slashIndex} onPick={completeSlash} />
             </div>
           )}
-          <div className={`composer${isWide ? ' composer-wide' : ''} ${!(isChat || view.type === 'browse') ? 'muted' : ''}`}>
+          <div className={`composer ${!(isChat || view.type === 'browse') ? 'muted' : ''}`}>
             <textarea
               ref={taRef}
               className="composer-ta"
@@ -577,7 +576,7 @@ function renderApp(s) {
               <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
             </div>
           </div>
-          {compErr && <div className={`composer-error${isWide ? ' composer-wide' : ''}`}>{compErr}</div>}
+          {compErr && <div className="composer-error">{compErr}</div>}
         </div>}
       </div>
 
