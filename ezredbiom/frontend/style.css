@@ -713,8 +713,8 @@ input, textarea { font-family: var(--sans); }
 .composer-wrap::before {
   content: '';
   position: absolute;
-  top: -60px; left: 0; right: 0;
-  height: 60px;
+  top: -48px; left: 0; right: 0;
+  height: 48px;
   background: linear-gradient(to bottom, transparent, var(--bg));
   pointer-events: none;
   z-index: 5;
