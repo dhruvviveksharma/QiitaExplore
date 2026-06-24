@@ -379,7 +379,7 @@ input, textarea { font-family: var(--sans); }
 .src-chip.removable::after { content: ' ×'; color: var(--text-3); }
 
 .chat-messages {
-  max-width: var(--chat-max-w);
+  max-width: calc(var(--chat-max-w) + 40px);
   margin: 0 auto;
   padding: 28px 20px 20px;
   display: flex;
