@@ -373,7 +373,7 @@ function renderApp(s) {
                 </div>
               )}
 
-              <div className={`chat-messages${isWide ? ' chat-messages-wide' : ''}`}>
+              <div className={`chat-messages${isWide ? ' chat-messages-wide' : ''}${ (view.type === 'project-chat' && openProject?.studies?.length > 0) || (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0) ? ' has-sources' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
                   <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
