@@ -240,7 +240,7 @@ input, textarea { font-family: var(--sans); }
 .chat-row.flat { border-bottom: 1px solid var(--border-soft); border-radius: var(--radius-s); }
 
 .cr-content { flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 0; }
-.cr-title { font-family: 'Plus Jakarta Sans', var(--sans); font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #1a1a1a; }
+.cr-title { font-family: 'Plus Jakarta Sans', var(--sans); font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
 .cr-date  { font-family: 'Plus Jakarta Sans', var(--sans); font-size: 12px; font-weight: 400; color: var(--text-3); flex-shrink: 0; margin-left: 4px; }
 
 .cr-del {
@@ -1197,7 +1197,7 @@ input, textarea { font-family: var(--sans); }
 
 .browse-count { font-size: 12px; color: var(--text-3); }
 
-.studies-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.studies-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
 
 .study-card {
   background: var(--surface);
@@ -1405,8 +1405,8 @@ input, textarea { font-family: var(--sans); }
 }
 .collapsible-header:hover { color: var(--accent); }
 .collapsible-chevron {
-  font-size: 10px;
-  color: var(--text-3);
+  font-size: 14px;
+  color: var(--text-2);
   transition: transform 140ms ease;
   display: inline-block;
 }
