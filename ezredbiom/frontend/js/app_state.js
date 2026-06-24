@@ -43,6 +43,7 @@ function useAppState() {
     } catch (_) {}
   };
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
     try { return localStorage.getItem('ui:theme') || 'light'; } catch (_) { return 'light'; }
@@ -365,9 +366,9 @@ function useAppState() {
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
     const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
     const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
-    const deepMatch     = /^\/deepsearch\s+(.+)/is.exec(msg);
-    const deepSearch    = !!deepMatch;
-    const sendMsg       = deepMatch ? deepMatch[1].trim() : msg;
+    const deepMatch    = /^\/deepsearch\s+(.+)/is.exec(msg);
+    const isDeepSearch = deepSearch || !!deepMatch;
+    const sendMsg      = deepMatch ? deepMatch[1].trim() : msg;
     const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
@@ -502,7 +503,7 @@ function useAppState() {
             selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
-            ...(deepSearch              && { deep_search: true }),
+            ...(isDeepSearch            && { deep_search: true }),
           }),
           signal: ctrl.signal,
         });
@@ -601,14 +602,14 @@ function useAppState() {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
-    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
+    setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
-    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
+    slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     // refs

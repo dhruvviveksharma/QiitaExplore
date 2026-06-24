@@ -283,7 +283,159 @@ Choose one:
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-06-21*
+*Generated: 2026-05-19 | Updated: 2026-06-24*
 
 ---
+
+## TKT-016: Parallelize Header Enrichment + Reuse Connection Pool
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+After the parallel sample probes complete, study headers are fetched in a plain sequential loop — `sample_search.py:200` (field-filter path) and `qiita_fetch.py:359` (pin path). Additionally, a fresh `ThreadedConnectionPool` is created on every search call (`sample_search.py:165`, `:229`), adding connection-setup latency to every request.
+
+### Plan
+
+- Fan out `_fetch_study_header` calls using the `ThreadPoolExecutor` already in scope; collect results with `as_completed`.
+- Hoist the `ThreadedConnectionPool` to module scope in `sample_search.py`; size it to `pool_size` (default 16). Destroy + recreate only on connection errors.
+
+### Files
+
+- `ezredbiom/backend/helpers/sample_search.py:165`, `:200`, `:229`
+- `ezredbiom/backend/helpers/qiita_fetch.py:359`
+
+---
+
+## TKT-017: Shared Cross-Worker Study Header Cache
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`_study_header_cache` is an in-process dict (`qiita_fetch.py:271`). Gunicorn spawns 4 workers; each worker cold-starts its own empty cache and re-fetches headers the first time it serves a request. The SQLite `study_detail_cache` table is already shared across workers and restarts.
+
+### Plan
+
+- Promote `_fetch_study_header_cached` to write through to the shared SQLite `study_detail_cache` (add a `header_json` TEXT column or reuse `detail_json`). Keep the in-process dict as an L1 TTL for the current worker.
+- Schema migration required (`db.py` migrations list).
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py:270–285`
+- `ezredbiom/backend/store/db.py` (migration), `store/cache.py`
+
+---
+
+## TKT-018: Stream Sample-Search Results Incrementally
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`search_studies_by_sample_meta` and `field_filter_search` block until all probes finish (or timeout), then return all matches at once. Users see nothing until the full scan completes. The SSE plumbing (`stream_agent` / `_execute_tool_call`) already supports streaming partial results per-event.
+
+### Plan
+
+- Refactor the probe loops to yield matched study IDs as `as_completed` fires them.
+- Emit each batch as a `segment_tool_result_partial` SSE event (or reuse `token` events with a structured payload); frontend accumulates into the existing `InlineStudyCard` grid progressively.
+
+### Files
+
+- `ezredbiom/backend/helpers/sample_search.py:174–205`, `:239–260`
+- `ezredbiom/backend/helpers/agent.py` (`_execute_tool_call`)
+- `ezredbiom/frontend/js/components.js` (`ToolResultWidget`)
+
+---
+
+## TKT-019: Avoid Redundant Agent Synthesis Round
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+When the tool-call loop ends on tool results and `final_had_synthesis` is False, a full extra LLM completion is fired (`agent.py:141–153` for Anthropic path, `:307–317` for OpenAI path). This adds latency on every agentic search. It is often avoidable: if the last tool result already contains enough context for the model to reply inline, we can prompt it to do so within the main loop rather than appending a synthesis pass.
+
+### Plan
+
+- Append a short system nudge before the last tool-result turn: *"Reply directly based on the results above. Do not call another tool."*
+- Detect whether the model synthesized within the loop (`final_had_synthesis = True`) and skip the extra completion.
+- Benchmark: compare round-trip latency with/without the extra pass on 10 representative queries.
+
+### Files
+
+- `ezredbiom/backend/helpers/agent.py:120–153`, `:275–317`
+
+---
+
+## TKT-020: Optional Production JS Precompile
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+~4,000 lines across 10 Babel-type=text/babel script tags are transpiled in the browser on every page load. This is fine for development but adds ~1–2 s to first-paint on cold loads. The no-build dev workflow must be preserved.
+
+### Plan
+
+- Add an optional `build.sh` (or `make prod`) that runs `@babel/cli` over `frontend/js/*.js` into `frontend/js/dist/` and outputs a single `app.bundle.js` with cache-bust hash.
+- `index.html` detects `?prod=1` (or a separate `index.prod.html`) and loads the bundle instead of the individual Babel-annotated scripts.
+- Dev path unchanged: open `index.html` directly.
+
+### Files
+
+- `ezredbiom/frontend/index.html`
+- New: `ezredbiom/frontend/build.sh`
+
+---
+
+## TKT-021: Metadata Cohort Builder + Export
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Users want to filter samples across pinned studies by a shared metadata field (e.g. `host_scientific_name`, `body_site`, `empo_3`) and export the resulting sample set as CSV or a filtered BIOM bundle. This complements the merge workflow but is useful standalone for hypothesis generation.
+
+### Plan
+
+1. New backend route `POST /api/cohort/filter` — accepts `chat_id`, `field`, `values[]`; queries `sample_{study_id}` JSONB across pinned studies in parallel (reuse `field_filter_search` probe pattern); returns matched sample rows.
+2. New backend route `GET /api/cohort/export?chat_id=&format=csv|biom` — streams the CSV/BIOM.
+3. New agent tool `build_cohort` — wraps the filter route; result UI shows a summary + download button.
+4. Frontend: `CohortBubble` component rendered by `ToolResultWidget` when `payload.kind === 'cohort'`.
+
+### Files
+
+- `ezredbiom/backend/routes/` (new `cohort_routes.py`)
+- `ezredbiom/backend/helpers/agent_tools.py` (new tool)
+- `ezredbiom/frontend/js/components.js` (`CohortBubble`)
+
+---
+
+## TKT-022: Cross-Study Metadata Field-Overlap Matrix
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Before merging studies, users need to know which sample metadata fields are shared across them. Currently there is no tool for this. A field-overlap matrix (studies × fields, colored by coverage %) would directly inform merge decisions.
+
+### Plan
+
+1. New agent tool `field_overlap` — accepts `study_ids[]`; queries `information_schema.columns` for `sample_{id}` tables or probes `sample_values` JSONB keys; returns a dict `{field → {study_id → pct_non_null}}`.
+2. Frontend: `FieldOverlapMatrix` component — renders a heatmap-style table; highlights fields present in ≥80% of all studies as merge-ready candidates.
+3. Wire into `InlineStudyCard` "Compare fields" action (or a slash command `/overlap 104 77 101`).
+
+### Files
+
+- `ezredbiom/backend/helpers/agent_tools.py`
+- `ezredbiom/backend/helpers/sample_search.py` or new `helpers/cohort.py`
+- `ezredbiom/frontend/js/components.js` (`FieldOverlapMatrix`)
 

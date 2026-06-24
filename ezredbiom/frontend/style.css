@@ -728,17 +728,16 @@ input, textarea { font-family: var(--sans); }
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 9px 10px 9px 14px;
+  flex-direction: column;
+  padding: 10px 14px 8px;
   box-shadow: 0 1px 4px rgba(0,0,0,.04);
   transition: border-color var(--t), box-shadow var(--t);
+  position: relative;
 }
 .composer:focus-within { border-color: #2c7d8c; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
 .composer.muted { background: var(--sidebar-bg); box-shadow: none; }
 
 .composer-ta {
-  flex: 1;
   border: none;
   outline: none;
   resize: none;
@@ -752,13 +751,60 @@ input, textarea { font-family: var(--sans); }
 .composer-ta::placeholder { color: var(--text-3); }
 .composer-ta:disabled { cursor: not-allowed; }
 
+/* Action bar inside the composer box */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+.composer-plus {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--t), border-color var(--t), color var(--t);
+}
+.composer-plus:hover { background: var(--border-soft); border-color: #2c7d8c; color: #2c7d8c; }
+.composer-mode-pill {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--t);
+}
+.composer-mode-pill:hover { border-color: #2c7d8c; color: #2c7d8c; }
+.composer-mode-pill.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.composer-model-chip {
+  font-size: 11.5px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  padding: 3px 9px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--t), color var(--t);
+}
+.composer-model-chip:hover { border-color: #2c7d8c; color: var(--text); }
 .composer-send {
-  width: 32px; height: 32px;
+  width: 30px; height: 30px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
   display: flex; align-items: center; justify-content: center;
-  font-size: 15px;
+  font-size: 14px;
   flex-shrink: 0;
   transition: background var(--t), opacity var(--t);
 }
@@ -766,31 +812,34 @@ input, textarea { font-family: var(--sans); }
 .composer-send:disabled { opacity: .35; cursor: not-allowed; }
 .composer-error { max-width: var(--chat-max-w); margin: 5px auto 0; font-size: 12px; color: var(--accent); }
 
-.composer-model {
-  max-width: var(--chat-max-w);
-  margin: 6px auto 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-3);
-}
-.composer-model-label { color: var(--text-3); }
-.composer-model-name {
+/* "+" quick-action menu (floats above the composer) */
+.plus-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  color: var(--text);
-  font-size: 12px;
-  padding: 2px 8px;
-  transition: border-color var(--t);
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  padding: 4px;
+  z-index: 50;
+  min-width: 210px;
 }
-.composer-model:hover .composer-model-name { border-color: var(--accent); }
+.plus-menu-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.plus-menu-row:hover { background: var(--accent-soft); }
+.plus-menu-cmd  { font-size: 12px; font-weight: 700; color: var(--accent); flex-shrink: 0; }
+.plus-menu-desc { font-size: 11.5px; color: var(--text-3); }
 
 /* Model picker card */
 .model-picker-card {
-  max-width: 800px;
+  max-width: var(--chat-max-w);
   margin: 0 auto 8px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -897,7 +946,6 @@ input, textarea { font-family: var(--sans); }
 /* Wider chat column when any /report message is present */
 .chat-messages.chat-messages-wide { max-width: 100%; }
 .composer.composer-wide,
-.composer-model.composer-wide,
 .composer-error.composer-wide,
 .composer-pins.composer-wide,
 .slash-menu.composer-wide { max-width: 100%; }
@@ -1524,7 +1572,6 @@ input, textarea { font-family: var(--sans); }
 @media (max-width: 1040px) {
   .chat-messages,
   .composer,
-  .composer-model,
   .composer-error,
   .composer-pins,
   .slash-menu { max-width: 100%; }

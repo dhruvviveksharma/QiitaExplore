@@ -562,6 +562,30 @@ const SLASH_COMMANDS = [
   { cmd: '/deepsearch',insert: '/deepsearch ', usage: '/deepsearch wild mice',  desc: 'Deep search: scans sample metadata across ~500 studies (slower, more comprehensive).' },
 ];
 
+// ─── PlusMenu ─────────────────────────────────────────────────────────────────
+const _PLUS_ACTIONS = [
+  { cmd: '/report', insert: '/report ', desc: 'Load study sample data' },
+  { cmd: '/pin',    insert: '/pin ',    desc: 'Pin studies to context' },
+  { cmd: '/model',  insert: null,       desc: 'Switch LLM model' },
+];
+function PlusMenu({ onClose, onCompleteSlash, onOpenModelPicker }) {
+  return (
+    <div className="plus-menu">
+      {_PLUS_ACTIONS.map(a => (
+        <div key={a.cmd} className="plus-menu-row" onMouseDown={e => {
+          e.preventDefault();
+          if (a.insert === null) { onOpenModelPicker(); }
+          else { onCompleteSlash({ cmd: a.cmd, insert: a.insert }); }
+          onClose();
+        }}>
+          <span className="plus-menu-cmd">{a.cmd}</span>
+          <span className="plus-menu-desc">{a.desc}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── SlashCommandMenu ─────────────────────────────────────────────────────────
 function SlashCommandMenu({ matches, activeIndex, onPick }) {
   if (!matches || matches.length === 0) return null;

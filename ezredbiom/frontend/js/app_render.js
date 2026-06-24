@@ -5,13 +5,13 @@ function renderApp(s) {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
-    setShowModelPicker, setAnthropicKeySet, setSidebarCollapsed,
+    setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
-    slashIndex, slashDismissed, showModelPicker, anthropicKeySet,
+    slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
     taRef, bottomRef,
@@ -540,7 +540,12 @@ function renderApp(s) {
               ref={taRef}
               className="composer-ta"
               rows={1}
-              placeholder={(isChat || view.type === 'browse') ? 'Message…' : 'Open a chat to start messaging'}
+              placeholder={(() => {
+                if (!(isChat || view.type === 'browse')) return 'Open a chat to start messaging';
+                const pinned = (chatCache[view.chatId]?.pinnedStudies || []).length;
+                if (pinned > 0) return `Ask about ${pinned} pinned stud${pinned === 1 ? 'y' : 'ies'}…`;
+                return 'Ask or search…';
+              })()}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => {
@@ -555,12 +560,33 @@ function renderApp(s) {
               }}
               disabled={!(isChat || view.type === 'browse') || sending}
             />
-            <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
-          </div>
-          <div className={`composer-model${isWide ? ' composer-wide' : ''}`} onClick={() => setShowModelPicker(v => !v)}
-               title="Click or type /model to change" style={{cursor:'pointer'}}>
-            <span className="composer-model-label">Model:</span>
-            <span className="composer-model-name">{selectedModel}</span>
+            <div className="composer-actions">
+              <div style={{position:'relative'}}>
+                <button className="composer-plus"
+                        onClick={() => setShowPlusMenu(v => !v)}
+                        title="Quick actions">+</button>
+                {showPlusMenu && (
+                  <PlusMenu
+                    onClose={() => setShowPlusMenu(false)}
+                    onCompleteSlash={cmd => { completeSlash(cmd); setShowPlusMenu(false); }}
+                    onOpenModelPicker={() => { setShowModelPicker(true); setShowPlusMenu(false); }}
+                  />
+                )}
+              </div>
+              <button
+                className={`composer-mode-pill${deepSearch ? ' active' : ''}`}
+                onClick={() => setDeepSearch(v => !v)}
+                title={deepSearch ? 'Switch to normal chat' : 'Enable deep sample-metadata search'}>
+                {deepSearch ? 'Deep search' : 'Chat'}
+              </button>
+              <span style={{flex:1}} />
+              <span className="composer-model-chip"
+                    onClick={() => setShowModelPicker(v => !v)}
+                    title="Click or type /model to change">
+                {selectedModel}
+              </span>
+              <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
+            </div>
           </div>
           {compErr && <div className={`composer-error${isWide ? ' composer-wide' : ''}`}>{compErr}</div>}
         </div>}
