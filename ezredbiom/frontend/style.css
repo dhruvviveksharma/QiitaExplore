@@ -381,7 +381,7 @@ input, textarea { font-family: var(--sans); }
 .chat-messages {
   max-width: var(--chat-max-w);
   margin: 0 auto;
-  padding: 28px 24px 20px;
+  padding: 28px 20px 20px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -453,7 +453,7 @@ input, textarea { font-family: var(--sans); }
   border: none;
   border-radius: var(--radius-m);
   padding: 11px 16px;
-  max-width: 82%;
+  max-width: 100%;
 }
 /* Agent text segments: no bubble, full width */
 .msg-row.assistant .msg-bubble.agent-bubble,
