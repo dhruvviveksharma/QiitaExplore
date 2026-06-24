@@ -166,17 +166,6 @@ function renderApp(s) {
           ))}
         </div>
 
-        <div className="sidebar-footer">
-          <button
-            className={`browse-btn ${view.type === 'browse' ? 'active' : ''}`}
-            onClick={() => setView({ type: 'browse' })}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:6}}>
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            Browse Studies
-          </button>
-        </div>
       </aside>
 
       {/* ══════════════════ MAIN ══════════════════════ */}
