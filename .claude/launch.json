@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "qiita-web",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["/Users/dhruvsharma/Downloads/Projects/qiita-web/.claude/serve_frontend.py"],
-      "port": 5002
+      "name": "frontend",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "/Users/dhruvsharma/Downloads/Projects/qiita-web/ezredbiom/frontend", "--no-clipboard"],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }
