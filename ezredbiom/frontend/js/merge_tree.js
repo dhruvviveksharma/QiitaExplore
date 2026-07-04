@@ -79,7 +79,7 @@ function TreeNode({ node, byId, childrenMap, selProps, label, isRoot }) {
           className={`ao-tree-box${flagsOpen ? ' ao-tree-box-open' : ''}`}
           onClick={() => hasFlags && setFlagsOpen(p => !p)}>
           {label || node.command_name}
-          {hasFlags && <span className="ao-step-caret">{flagsOpen ? '▾' : '▸'}</span>}
+          {hasFlags && <span className="ao-step-caret"><ChevronIcon open={flagsOpen} size={10} /></span>}
         </button>
         {flagsOpen && <FlagList params={node.command_params} />}
         <TreeChildren nodes={children} byId={byId} childrenMap={childrenMap} selProps={selProps} />
@@ -110,7 +110,7 @@ function TreeNode({ node, byId, childrenMap, selProps, label, isRoot }) {
           {filepaths.length > 0 && (
             <button type="button" className="ao-tree-files-toggle"
               onClick={e => { e.stopPropagation(); setFilesOpen(p => !p); }}>
-              {filesOpen ? '▾ files' : '▸ files'}
+              <ChevronIcon open={filesOpen} size={10} /> files
             </button>
           )}
         </label>
@@ -189,7 +189,7 @@ function IndentNode({ node, byId, childrenMap, selProps, label, isRoot }) {
           <button type="button" className="ao-indent-cmd"
             disabled={!hasFlags}
             onClick={() => hasFlags && setFlagsOpen(p => !p)}>
-            {flagsOpen ? '▾' : '▸'} {label || node.command_name}
+            <ChevronIcon open={flagsOpen} size={10} /> {label || node.command_name}
           </button>
         </div>
         {flagsOpen && <FlagList params={node.command_params} />}
@@ -221,7 +221,7 @@ function IndentNode({ node, byId, childrenMap, selProps, label, isRoot }) {
           {filepaths.length > 0 && (
             <button type="button" className="ao-tree-files-toggle"
               onClick={e => { e.stopPropagation(); setFilesOpen(p => !p); }}>
-              {filesOpen ? '▾ files' : '▸ files'}
+              <ChevronIcon open={filesOpen} size={10} /> files
             </button>
           )}
         </label>

@@ -439,3 +439,39 @@ Before merging studies, users need to know which sample metadata fields are shar
 - `ezredbiom/backend/helpers/sample_search.py` or new `helpers/cohort.py`
 - `ezredbiom/frontend/js/components.js` (`FieldOverlapMatrix`)
 
+---
+
+## TKT-023: Merge Autopick Doesn't Check Deprecated / Human-Filtering / Primer Compatibility
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+Inspected real `prep_template` rows and `sample_values` JSONB (2026-07-01). `biom_autopick.py` only
+filters candidate artifacts by `data_type` namespace (e.g. "16S") when auto-picking/validating a
+merge. It does not check:
+
+- `prep_template.deprecated` — a deprecated prep can be silently selected for a merge
+- `prep_template.current_human_filtering` — a human-filtered prep can be merged with an
+  unfiltered one, silently mixing incomparable read sets
+- `target_gene` / `target_subfragment` / `platform` — these live in per-sample `sample_values`
+  JSONB (Qiita duplicates prep-level fields onto every sample row) and are the real fine-grained
+  compatibility signal. Two "16S" preps sequenced with different primers (e.g. V3 vs V4) pass the
+  current namespace-only check but produce a biologically meaningless merged feature table.
+
+### Plan
+
+- Pull `deprecated`, `current_human_filtering`, `target_gene`, `target_subfragment`, `platform`
+  alongside the existing prep/artifact fields in `qiita_fetch._fetch_study_detail_from_qiita`
+- Enforce in `biom_autopick.py`'s compatibility check: exclude `deprecated` preps by default,
+  block mixing `current_human_filtering` states, and treat `target_gene`/`target_subfragment`/
+  `platform` mismatches the same as a `data_type` mismatch
+- Not blocking the MIINT migration — this is a correctness gap in the *current* merge code,
+  independent of whether/when MIINT replaces it
+
+### Files
+
+- `ezredbiom/backend/helpers/biom_autopick.py`
+- `ezredbiom/backend/helpers/qiita_fetch.py` (`_fetch_study_detail_from_qiita`)
+

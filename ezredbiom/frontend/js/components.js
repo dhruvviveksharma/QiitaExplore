@@ -18,7 +18,7 @@ function CollapsibleSection({ id, title, subtitle, children, defaultOpen = false
   return (
     <div className={`collapsible-section ${open ? 'open' : ''}`}>
       <button className="collapsible-header" onClick={toggle}>
-        <span className={`collapsible-chevron ${open ? 'open' : ''}`}>▸</span>
+        <span className={`collapsible-chevron ${open ? 'open' : ''}`}><ChevronIcon /></span>
         <span className="collapsible-title">{title}</span>
         {subtitle ? <span className="collapsible-subtitle">{subtitle}</span> : null}
       </button>

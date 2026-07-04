@@ -166,7 +166,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
     <div className="merge-panel">
       <div className="merge-panel-header">
         {workspaceId && <button className="merge-btn-ghost" onClick={handleBack} title="Back to list">←</button>}
-        <span className="merge-panel-title">⊕ Merge Workspace</span>
+        <span className="merge-panel-title"><MergeIcon /> Merge Workspace</span>
         <span style={{flex:1}} />
         {workspaceId && <button className="merge-btn-ghost" onClick={handleDeleteWorkspace} title="Delete workspace">🗑</button>}
         <button className="merge-btn-ghost" onClick={onClose}>✕</button>
@@ -398,7 +398,7 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   if (workspaces.length === 0) return (
     <div className="merges-empty">
       <p>No merge workspaces yet.</p>
-      <p>Click <strong>⊕ Merge</strong> on any study card to create one.</p>
+      <p>Click <strong><MergeIcon /> Merge</strong> on any study card to create one.</p>
     </div>
   );
 

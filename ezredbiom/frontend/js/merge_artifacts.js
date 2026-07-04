@@ -111,7 +111,7 @@ function PipelineBreadcrumb({ steps }) {
                 className={`ao-step-chip${openIdx === i ? ' ao-step-chip-open' : ''}`}
                 onClick={() => setOpenIdx(openIdx === i ? null : i)}>
                 {s.command_name}
-                {hasFlags && <span className="ao-step-caret">{openIdx === i ? '▾' : '▸'}</span>}
+                {hasFlags && <span className="ao-step-caret"><ChevronIcon open={openIdx === i} size={10} /></span>}
               </button>
             </React.Fragment>
           );
@@ -135,7 +135,7 @@ function WorkflowStep({ step, isLast, filepaths, artifactId, studyId }) {
         <button type="button" disabled={!hasFlags} className="ao-workflow-cmd"
           onClick={() => setOpen(p => !p)}>
           {step.command_name}
-          {hasFlags && <span className="ao-step-caret">{open ? '▾' : '▸'}</span>}
+          {hasFlags && <span className="ao-step-caret"><ChevronIcon open={open} size={10} /></span>}
         </button>
         {open && <FlagList params={step.command_params} />}
         {isLast && filepaths.length > 0 && (

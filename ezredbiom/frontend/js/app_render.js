@@ -51,7 +51,7 @@ function renderApp(s) {
                   else { setOpenProjId(p.project_id); setProjInnerTab('chats'); }
                 }}
               >
-                <span className="folder-caret">{openProjId === p.project_id ? '▾' : '▸'}</span>
+                <span className="folder-caret"><ChevronIcon open={openProjId === p.project_id} /></span>
                 <span className="folder-icon-svg">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
@@ -182,7 +182,7 @@ function renderApp(s) {
                   className="sidebar-toggle-btn"
                   title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                   onClick={() => setSidebarCollapsed(c => !c)}
-                >{sidebarCollapsed ? '▶' : '◀'}</button>
+                ><ChevronIcon dir={sidebarCollapsed ? 'right' : 'left'} /></button>
               )}
             </>
           ) : (
@@ -198,13 +198,13 @@ function renderApp(s) {
             <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
               title="Merge Workspace"
               onClick={() => setShowMergePanel(p => !p)}>
-              ⊕ Merge
+              <MergeIcon /> Merge
             </button>
           )}
           <button className="theme-toggle"
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-            {theme === 'dark' ? '☀' : '☽'}
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
         </div>
 
@@ -254,7 +254,7 @@ function renderApp(s) {
                   className={`btn-deepsearch${deepSearch ? ' active' : ''}`}
                   onClick={() => setDeepSearch(v => !v)}
                   title="Also scan sample metadata (slower)"
-                >⚡ Deep</button>
+                ><BoltIcon /> Deep</button>
                 {searched && (
                   <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); }}>
                     Clear
