@@ -7,7 +7,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from qiita_db.sql_connection import TRN
+from helpers.pg_pool import pooled_fetchall
 
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
 
@@ -56,44 +56,42 @@ def first_studies(limit=20):
         limit = 20
     limit = max(1, min(100, limit))
 
-    with TRN:
-        sql = """
-        SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
-               s.study_alias, s.metadata_complete,
-               sp_pi.name as pi_name, sp_pi.email as pi_email,
-               sp_pi.affiliation as pi_affiliation,
-               sp_lab.name as lab_person_name,
-               (SELECT COUNT(*)
-                FROM qiita.study_sample ss
-                WHERE ss.study_id = s.study_id) AS num_samples,
-               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')
-                FROM qiita.study_prep_template spt2
-                JOIN qiita.prep_template pt2 ON spt2.prep_template_id = pt2.prep_template_id
-                JOIN qiita.data_type dt2 ON pt2.data_type_id = dt2.data_type_id
-                WHERE spt2.study_id = s.study_id) AS data_types,
-               (SELECT COUNT(DISTINCT spt3.prep_template_id)
-                FROM qiita.study_prep_template spt3
-                WHERE spt3.study_id = s.study_id) AS num_preps
-        FROM qiita.study s
-        LEFT JOIN qiita.study_person sp_pi
-            ON s.principal_investigator_id = sp_pi.study_person_id
-        LEFT JOIN qiita.study_person sp_lab
-            ON s.lab_person_id = sp_lab.study_person_id
-        WHERE EXISTS (
-            SELECT 1 FROM qiita.study_artifact sa
-            JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-            JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-            WHERE sa.study_id = s.study_id AND v.visibility = 'public'
-        )
-        AND EXISTS (
-            SELECT 1 FROM qiita.per_study_tags pst
-            WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
-        )
-        ORDER BY s.study_id
-        LIMIT %s
-        """
-        TRN.add(sql, [limit])
-        results = TRN.execute_fetchindex()
+    sql = """
+    SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
+           s.study_alias, s.metadata_complete,
+           sp_pi.name as pi_name, sp_pi.email as pi_email,
+           sp_pi.affiliation as pi_affiliation,
+           sp_lab.name as lab_person_name,
+           (SELECT COUNT(*)
+            FROM qiita.study_sample ss
+            WHERE ss.study_id = s.study_id) AS num_samples,
+           (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')
+            FROM qiita.study_prep_template spt2
+            JOIN qiita.prep_template pt2 ON spt2.prep_template_id = pt2.prep_template_id
+            JOIN qiita.data_type dt2 ON pt2.data_type_id = dt2.data_type_id
+            WHERE spt2.study_id = s.study_id) AS data_types,
+           (SELECT COUNT(DISTINCT spt3.prep_template_id)
+            FROM qiita.study_prep_template spt3
+            WHERE spt3.study_id = s.study_id) AS num_preps
+    FROM qiita.study s
+    LEFT JOIN qiita.study_person sp_pi
+        ON s.principal_investigator_id = sp_pi.study_person_id
+    LEFT JOIN qiita.study_person sp_lab
+        ON s.lab_person_id = sp_lab.study_person_id
+    WHERE EXISTS (
+        SELECT 1 FROM qiita.study_artifact sa
+        JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+        JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+        WHERE sa.study_id = s.study_id AND v.visibility = 'public'
+    )
+    AND EXISTS (
+        SELECT 1 FROM qiita.per_study_tags pst
+        WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
+    )
+    ORDER BY s.study_id
+    LIMIT %s
+    """
+    results = pooled_fetchall(sql, [limit])
 
     if not results:
         return []
@@ -119,11 +117,9 @@ def first_studies(limit=20):
 
 
 def _qiita_fetch(sql, params=(), default=None):
-    """Run a Qiita-DB SELECT inside a TRN; return rows or `default` on error/empty."""
+    """Run a Qiita-DB SELECT on a pooled connection; return rows or `default` on error/empty."""
     try:
-        with TRN:
-            TRN.add(sql, list(params))
-            rows = TRN.execute_fetchindex()
+        rows = pooled_fetchall(sql, list(params))
         return rows if rows else (default if default is not None else [])
     except Exception:
         return default if default is not None else []

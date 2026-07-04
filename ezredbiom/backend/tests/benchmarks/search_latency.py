@@ -67,6 +67,7 @@ def run():
     mn  = min(latencies)
     mx  = max(latencies)
 
+    total = len(latencies) + failures
     print(f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SEARCH LATENCY RESULTS
@@ -80,6 +81,7 @@ SEARCH LATENCY RESULTS
 RESUME LINE (fill in your p50):
   "Delivered sub-{p50:.0f}ms median search latency across 600+ Qiita
    studies by implementing bounded JSONB queries and relevance ranking."
+   ({len(latencies)}/{total} queries succeeded — {failures} failed/timed out)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """)
 

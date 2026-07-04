@@ -475,3 +475,52 @@ merge. It does not check:
 - `ezredbiom/backend/helpers/biom_autopick.py`
 - `ezredbiom/backend/helpers/qiita_fetch.py` (`_fetch_study_detail_from_qiita`)
 
+---
+
+## TKT-024: `/api/search` Latency Variance (86ms–13.5s) — Unindexed Leading-Wildcard ILIKE
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Benchmarked via `ezredbiom/backend/tests/benchmarks/search_latency.py` and `concurrent_bench.py`
+(2026-07-04). Identical/similar queries against `/api/search` range from 86ms to 13.5+ seconds,
+and 3/15 representative queries timed out outright (>10s).
+
+Root cause, confirmed by reading `search_studies_with_sql`
+(`ezredbiom/backend/services/study_service.py:148-244`): the query computes 4 correlated
+subqueries per row (`num_samples` COUNT, `data_types` STRING_AGG via a 2-join, `num_preps` COUNT
+DISTINCT, `is_gold` EXISTS) plus a relevance score, under `SELECT DISTINCT ... ORDER BY relevance
+DESC`, with `LIMIT`/`OFFSET` applied last. Postgres can't push `LIMIT` below a sort on a computed
+column, so it materializes and scores **every** row matching `WHERE` before trimming — latency
+scales with total matching-row count, not the 50-150 row cap.
+
+Compounding this: every text predicate (`_keyword_clause_sql` in `services/llm.py:24-28`,
+`build_relevance_score` in `study_service.py:125-145`) is `col ILIKE '%term%'` — a leading
+wildcard defeats standard B-tree indexes, forcing sequential scans of `qiita.study` joined to
+`qiita.study_person` (twice) on every search. Confirmed via `qiita-db-unpatched.sql:4290-4311`
+that `study_title`/`study_abstract`/`study_alias` and `study_person.name`/`affiliation` have zero
+supporting indexes.
+
+There's already in-repo precedent for the fix: `patches/93.sql:41-54` added
+`CREATE EXTENSION IF NOT EXISTS "pg_trgm"` + `GIN(... gin_trgm_ops)` trigram indexes to solve this
+exact class of problem for a different table (`processing_job.command_parameters`).
+
+### Plan
+
+- New Postgres patch (e.g. `patches/9X.sql`) adding `pg_trgm` GIN trigram indexes on
+  `qiita.study.study_title`, `study_abstract`, `study_alias`, and `qiita.study_person.name`,
+  `affiliation`
+- Re-run `search_latency.py`/`concurrent_bench.py` before/after to confirm the tail latency and
+  timeout rate drop
+- Scoped out of the connection-pooling/cache fixes (TKT-\* around the same benchmarks) since this
+  touches schema on the externally-managed Qiita Postgres DB — needs a deliberate, separate
+  migration rather than an app-code change
+
+### Files
+
+- `ezredbiom/backend/services/study_service.py` (`search_studies_with_sql`, `build_relevance_score`)
+- `ezredbiom/backend/services/llm.py` (`_keyword_clause_sql`)
+- New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
+

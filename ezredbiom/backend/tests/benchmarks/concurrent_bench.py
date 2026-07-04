@@ -96,11 +96,14 @@ CONCURRENT LOAD RESULTS
   At {best['n']} concurrent users:
     p50 latency : {best['p50']:.0f}ms
     p95 latency : {best['p95']:.0f}ms
+    failures    : {best['failures']}/{best['n']}
 
 RESUME LINE:
   "Sustained sub-{best['p95']:.0f}ms p95 search latency under {best['n']}
    concurrent researcher sessions via Gunicorn multi-worker architecture
    and bounded JSONB query design."
+   ({best['n'] - best['failures']}/{best['n']} requests succeeded at this
+    concurrency level — {best['failures']} failed/timed out)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """)
 

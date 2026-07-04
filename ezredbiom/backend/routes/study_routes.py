@@ -63,15 +63,37 @@ def api_study_detail(study_id):
 
     prep_ids = [p.get("prep_template_id") for p in preps if p.get("prep_template_id") is not None]
     if prep_ids:
-        with ThreadPoolExecutor(max_workers=min(len(prep_ids), 8)) as pool:
-            meta_results = list(pool.map(_fetch_prep_metadata_summary, prep_ids))
-        id_to_meta = dict(zip(prep_ids, meta_results))
-        for prep in preps:
-            pid = prep.get("prep_template_id")
-            if pid is not None and pid in id_to_meta:
-                prep.update(id_to_meta[pid])
+        if cache_hit and cached.get("prep_metadata_json"):
+            id_to_meta = json.loads(cached["prep_metadata_json"])
+            for prep in preps:
+                pid = prep.get("prep_template_id")
+                if pid is not None and str(pid) in id_to_meta:
+                    prep.update(id_to_meta[str(pid)])
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(prep_ids), 8)) as pool:
+                meta_results = list(pool.map(_fetch_prep_metadata_summary, prep_ids))
+            id_to_meta = dict(zip(prep_ids, meta_results))
+            for prep in preps:
+                pid = prep.get("prep_template_id")
+                if pid is not None and pid in id_to_meta:
+                    prep.update(id_to_meta[pid])
+            upsert_study_detail_cache(
+                study_id, None, None,
+                prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
+            )
 
-    samples, total_samples = _fetch_study_samples(study_id, limit=200)
+    if cache_hit and cached.get("samples_json") and cached.get("total_samples") is not None:
+        try:
+            samples = json.loads(cached["samples_json"])
+            total_samples = cached["total_samples"]
+        except Exception:
+            samples, total_samples = _fetch_study_samples(study_id, limit=200)
+    else:
+        samples, total_samples = _fetch_study_samples(study_id, limit=200)
+        upsert_study_detail_cache(
+            study_id, None, None,
+            samples_json=json.dumps(samples), total_samples=total_samples,
+        )
 
     if not (cached and cached.get("samples_context")):
         samples_ctx = _fetch_sample_context_text(study_id)

@@ -17,9 +17,14 @@ DEFAULT_STUDY_ID = 10317  # American Gut Project — large public study
 
 def hit(study_id):
     t0 = time.perf_counter()
-    r = requests.get(f"{BASE}/api/studies/{study_id}/detail", timeout=30)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    return elapsed_ms, r.status_code, r.json() if r.status_code == 200 else {}
+    try:
+        r = requests.get(f"{BASE}/api/studies/{study_id}/detail", timeout=30)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return elapsed_ms, r.status_code, r.json() if r.status_code == 200 else {}
+    except requests.exceptions.RequestException as e:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        print(f"    FAILED: {e}")
+        return elapsed_ms, None, {}
 
 
 def run():
@@ -36,11 +41,17 @@ def run():
 
     # Now cached — should be SQLite read
     print("  Pass 2 (warm — SQLite cache hit) ...")
-    warm_ms, _, _ = hit(study_id)
+    warm_ms, warm_status, _ = hit(study_id)
+    if warm_status != 200:
+        print(f"  FAILED: {warm_status}. Backend may have gone down between passes.")
+        return
     print(f"    Warm fetch : {warm_ms:.0f}ms  (SQLite)")
 
     # Third pass to confirm warm is stable
-    warm2_ms, _, _ = hit(study_id)
+    warm2_ms, warm2_status, _ = hit(study_id)
+    if warm2_status != 200:
+        print(f"  FAILED: {warm2_status}. Backend may have gone down between passes.")
+        return
 
     speedup = cold_ms / warm_ms if warm_ms > 0 else 0
     saved_ms = cold_ms - warm_ms

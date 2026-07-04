@@ -28,31 +28,34 @@ SESSION = [
 
 
 def fetch_detail(study_id):
+    """Return (ok, cached) using the endpoint's real 'cached' field — not a guess."""
     try:
         r = requests.get(f"{BASE}/api/studies/{study_id}/detail", timeout=20)
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False, False
+        return True, bool(r.json().get("cached"))
     except Exception:
-        return False
+        return False, False
 
 
 def run():
     total = 0
-    hits = 0   # estimated: any fetch after the first for a given study_id
+    hits = 0   # only fetches that both succeeded AND the server reported cached=True
     seen = {}
 
     print("Simulating researcher session (study detail expansions)...\n")
-    print(f"  {'Study ID':<12} {'Access #':<10} {'Est. Source'}")
+    print(f"  {'Study ID':<12} {'Access #':<10} {'Source (actual)'}")
     print(f"  {'─'*12} {'─'*10} {'─'*15}")
 
     for study_id, times in SESSION:
         for i in range(times):
             seen[study_id] = seen.get(study_id, 0) + 1
             access_n = seen[study_id]
-            source = "SQLite cache" if access_n > 1 else "PostgreSQL"
-            ok = fetch_detail(study_id)
+            ok, cached = fetch_detail(study_id)
             total += 1
-            if access_n > 1:
+            if ok and cached:
                 hits += 1
+            source = "SQLite cache" if (ok and cached) else "PostgreSQL"
             status = "OK" if ok else "FAIL"
             print(f"  {study_id:<12} #{access_n:<9} {source}  [{status}]")
 
@@ -63,12 +66,11 @@ def run():
 CACHE HIT RATE RESULTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Total fetches   : {total}
-  Cache hits (est): {hits}  ({hit_rate:.0f}%)
+  Cache hits      : {hits}  ({hit_rate:.0f}%)   ← from the response's real "cached" field
   PostgreSQL hits : {total - hits}  ({100 - hit_rate:.0f}%)
 
-Note: "cache hit" = any fetch of a study already fetched this session.
-The 6h TTL means repeated lookups within a working session are always
-served from SQLite, not PostgreSQL.
+Note: "cache hit" = the server's own response reported cached=true, verified
+per-request — not assumed from access order.
 
 RESUME LINE:
   "Eliminated {hit_rate:.0f}% of redundant PostgreSQL metadata queries

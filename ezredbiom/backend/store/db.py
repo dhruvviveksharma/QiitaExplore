@@ -218,6 +218,21 @@ def _create_schema(conn):
         pass
 
     try:
+        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN prep_metadata_json TEXT")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN samples_json TEXT")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN total_samples INTEGER")
+    except Exception:
+        pass
+
+    try:
         conn.execute("ALTER TABLE merge_workspace_studies ADD COLUMN chosen_artifact_ids TEXT")
     except Exception:
         pass
