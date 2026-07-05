@@ -287,6 +287,443 @@ Choose one:
 
 ---
 
+## TKT-025: Remove Unused `_qiita_fetch()` Helper
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`helpers/qiita_fetch.py:119-125` defines `_qiita_fetch()` which is never called anywhere in the codebase. It's a utility wrapper that was likely intended for refactoring but never integrated.
+
+### Plan
+
+Remove the function definition:
+```python
+# REMOVE (lines ~119-125):
+def _qiita_fetch(sql, params=(), default=None):
+    """Run a Qiita-DB SELECT on a pooled connection; return rows or `default` on error/empty."""
+```
+
+**Impact:** ~8 lines removed
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-026: Remove Redundant In-Memory Study Header Cache
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`helpers/qiita_fetch.py:266-279` defines `_study_header_cache` (module-level dict) which conflicts with the more sophisticated SQLite-based caching in `store/cache.py`. This creates two separate caching mechanisms that could lead to inconsistency.
+
+### Plan
+
+Remove:
+```python
+# REMOVE (lines ~266-279):
+_STUDY_HEADER_TTL_SECONDS = 3600
+_study_header_cache = {}
+def _fetch_study_header_cached(study_id: int):
+    """TTL-memoized wrapper around _fetch_study_header (hot path for pinned context)."""
+```
+
+Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_cache`).
+
+**Impact:** ~15 lines removed, complexity reduction
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-027: Remove Legacy `test.ipynb`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`ezredbiom/test.ipynb` appears to be a debugging artifact from development. Not part of the current workflow.
+
+### Plan
+
+Delete the file:
+```bash
+rm ezredbiom/test.ipynb
+```
+
+**Impact:** ~99 lines removed, reduced confusion
+
+### Files
+
+- `ezredbiom/test.ipynb`
+
+---
+
+## TKT-028: Clean Up Mid-Module Imports in llm_helpers.py
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`helpers/llm_helpers.py:55-59` has imports placed mid-module (after function definitions) with some unused imports (`get_study_detail_cache`, `upsert_study_detail_cache`).
+
+### Plan
+
+Remove or move the mid-module import block to the top of the file.
+
+**Impact:** ~5 lines removed, improved organization
+
+### Files
+
+- `ezredbiom/backend/helpers/llm_helpers.py`
+
+---
+
+## TKT-029: Consolidate Duplicate Study Header Queries
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`first_studies()` (lines 51-116) and `_fetch_study_header()` (lines 411-459) execute nearly identical SELECT queries with the same JOIN structure, column selections, and WHERE clauses (~40 lines of duplication).
+
+### Plan
+
+Create a shared helper:
+```python
+def _build_study_header_query(where_clause="", params=()):
+    """Shared query builder for study headers."""
+    base = """
+        SELECT s.study_id, s.email, s.principal_investigator_id AS pi,
+               s.metadata_complete, s.number_samples_collected, s.number_samples_promised,
+               ...
+        FROM qiita.study s
+        WHERE 1=1
+    """
+    return base + where_clause, params
+```
+
+**Impact:** ~35-40 lines saved, DRY improvement
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-030: Consolidate Sample Fetch Functions
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`_fetch_study_samples()` (lines 141-173) and `_fetch_full_sample_metadata()` (lines 228-244) have near-identical structure with minor parameter differences.
+
+### Plan
+
+Merge into single function with optional `limit` parameter.
+
+**Impact:** ~20 lines saved
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-031: Extract Shared `request_utils.py`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`chat_routes.py` and `global_chat_routes.py` have ~150 lines of duplicated logic: SSE pin handling, report study handling, study ID parsing, pinned context building, message normalization, user_id extraction.
+
+### Plan
+
+Create `helpers/request_utils.py`:
+```python
+def get_user_id():
+    """Extract user_id from request headers or g."""
+    return request.headers.get('X-User-ID') or g.get('user_id', 'local_user')
+
+def parse_study_ids_from_request():
+    """Parse study_id(s) from request JSON/body."""
+
+def build_full_messages(chat_id, role, content, ui_payload=None):
+    """Normalize message format across routes."""
+```
+
+Import in `chat_routes.py`, `global_chat_routes.py`, `project_routes.py`, `merge_routes.py`.
+
+**Impact:** ~30-40 lines deduplicated across 4 files
+
+### Files
+
+- New: `ezredbiom/backend/helpers/request_utils.py`
+- `ezredbiom/backend/routes/chat_routes.py`
+- `ezredbiom/backend/routes/global_chat_routes.py`
+- `ezredbiom/backend/routes/project_routes.py`
+- `ezredbiom/backend/routes/merge_routes.py`
+
+---
+
+## TKT-032: Consolidate SSE Streaming Patterns
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`_stream_anthropic_agent()` and OpenAI streaming in `agent.py` have ~80+ lines of duplicated control flow: same iteration structure, tool execution pattern, final synthesis logic, SSE yield patterns.
+
+### Plan
+
+Extract base streaming class/function with common loop logic. Provider-specific code stays in subclass/method.
+
+**Impact:** ~40 lines saved, improved maintainability
+
+### Files
+
+- `ezredbiom/backend/helpers/agent.py`
+
+---
+
+## TKT-033: Extract `useModelSelection()` Hook
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Model selection state is spread across `selectedModel`, localStorage (`llm:model`, `model:chat:<id>`), and sync effects in `app_state.js:31-44, 89-98`.
+
+### Plan
+
+Extract to `hooks/useModelSelection.js`:
+```javascript
+export function useModelSelection(chatId, defaultModel) {
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem(`model:chat:${chatId}`) 
+      || localStorage.getItem('llm:model') 
+      || defaultModel
+  );
+  // sync effect...
+  return [selectedModel, setSelectedModel];
+}
+```
+
+**Impact:** ~25 lines removed from app_state.js
+
+### Files
+
+- `ezredbiom/frontend/js/app_state.js`
+- New: `ezredbiom/frontend/js/hooks/useModelSelection.js`
+
+---
+
+## TKT-034: Consolidate Date Formatting
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Same date formatting (`toLocaleDateString('en-US', { month: 'short', day: 'numeric' })`) appears 4 times in `app_render.js`.
+
+### Plan
+
+Add to `utils.js`:
+```javascript
+export function formatDate(dateStr) {
+  return new Date(dateStr).toLocaleDateString('en-US', { 
+    month: 'short', 
+    day: 'numeric' 
+  });
+}
+```
+
+Update all usages.
+
+**Impact:** ~5 lines saved, consistency
+
+### Files
+
+- `ezredbiom/frontend/js/utils.js`
+- `ezredbiom/frontend/js/app_render.js`
+
+---
+
+## TKT-035: Simplify Slash Command Matching
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`useMemo` in `app_state.js:628-632` recomputes on every keystroke unnecessarily.
+
+### Plan
+
+Replace with inline conditional:
+```javascript
+// BEFORE:
+const slashMatches = useMemo(() => {
+  if (!input.startsWith('/')) return [];
+  return SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()));
+}, [input]);
+
+// AFTER:
+const slashMatches = input.startsWith('/')
+  ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()))
+  : [];
+```
+
+**Impact:** ~5 lines saved, minor perf gain
+
+### Files
+
+- `ezredbiom/frontend/js/app_state.js`
+
+---
+
+## TKT-036: Split `app_state.js` (672 → ~300 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`app_state.js` is 672 lines, over the 500-line cap by 172 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `sse_helpers.js` | SSE event handlers, stream transformers | ~150 |
+| `loaders.js` | Expand existing: loadProjectDetail, loadGlobalChats, etc. | ~120 |
+| `search_helpers.js` | doSearch function | ~80 |
+| `chat_actions.js` | newProjChat, deleteProjChat, pinStudy, etc. | ~100 |
+| `app_state.js` | Remaining hook (~200 lines) | ~200 |
+
+### Files
+
+- `ezredbiom/frontend/js/app_state.js`
+- New split files in `ezredbiom/frontend/js/`
+
+---
+
+## TKT-037: Split `app_render.js` (601 → ~200 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`app_render.js` is 601 lines, over the 500-line cap by 101 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `sidebar_renderer.js` | Sidebar with projects/chats | ~170 |
+| `browse_renderer.js` | Browse grid, filters | ~140 |
+| `chat_renderer.js` | Chat messages, segments | ~160 |
+| `composer_renderer.js` | Input composer, pin bar | ~100 |
+| `app_render.js` | Topbar, modals, routing | ~130 |
+
+### Files
+
+- `ezredbiom/frontend/js/app_render.js`
+- New split files in `ezredbiom/frontend/js/`
+
+---
+
+## TKT-038: Split `components.js` (689 → ~250 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`components.js` is 689 lines, over the 500-line cap by 189 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `model_picker.js` | Model selection dropdown | ~100 |
+| `pinned_bar.js` | Pinned studies UI | ~80 |
+| `slash_commands.js` | Command palette | ~120 |
+| `components.js` | Remaining core components (~200 lines) | ~200 |
+
+### Files
+
+- `ezredbiom/frontend/js/components.js`
+- New split files in `ezredbiom/frontend/js/`
+
+---
+
+## TKT-039: Split `agent_tools.py` (548 → ~250 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`agent_tools.py` is 548 lines, over the 500-line cap by 48 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `agent_tool_schemas.py` | TOOL_SCHEMAS, ToolResult dataclass | ~200 |
+| `agent_tool_executors.py` | All _tool_* functions | ~300 |
+| `agent_tools.py` | Re-export layer | ~100 |
+
+### Files
+
+- `ezredbiom/backend/helpers/agent_tools.py`
+- New split files in `ezredbiom/backend/helpers/`
+
+---
+
+## TKT-040: Split `qiita_fetch.py` (535 → ~200 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`qiita_fetch.py` is 535 lines, over the 500-line cap by 35 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `qiita_queries.py` | Raw fetch functions | ~230 |
+| `qiita_study_context.py` | Context builders | ~170 |
+| `qiita_fetch.py` | Re-export layer | ~120 |
+
+### Files
+
+- `ezredbiom/backend/helpers/qiita_fetch.py`
+- New split files in `ezredbiom/backend/helpers/`
+
+---
+
 ## TKT-016: Parallelize Header Enrichment + Reuse Connection Pool
 
 **Severity:** Medium
