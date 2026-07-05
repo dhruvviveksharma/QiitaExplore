@@ -287,25 +287,16 @@ Choose one:
 
 ---
 
-## TKT-025: Remove Unused `_qiita_fetch()` Helper
+## TKT-025: Remove Unused `_qiita_fetch()` Helper — REVISED
 
 **Severity:** Low
-**Status:** Open
+**Status:** Invalid — function IS used
 
-### Description
+### Important Finding (Plan Agent)
 
-`helpers/qiita_fetch.py:119-125` defines `_qiita_fetch()` which is never called anywhere in the codebase. It's a utility wrapper that was likely intended for refactoring but never integrated.
+After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414, 464, 491 **IS actively used** as a thin wrapper around `pooled_fetchall`. It cannot be removed.
 
-### Plan
-
-Remove the function definition:
-```python
-# REMOVE (lines ~119-125):
-def _qiita_fetch(sql, params=(), default=None):
-    """Run a Qiita-DB SELECT on a pooled connection; return rows or `default` on error/empty."""
-```
-
-**Impact:** ~8 lines removed
+**Revised:** Keep `_qiita_fetch()` but the mid-module import cleanup (TKT-028) may reveal opportunities for simplification.
 
 ### Files
 
