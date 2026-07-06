@@ -221,7 +221,7 @@ function BiomCard({ node, graph, chosenIds, onToggleArtifact, recommendedId, sam
 
 
 function ArtifactOutputsView({ detail, loading, chosenIds, onToggleArtifact, prepFilter, recommendedId, sampleCounts, studyId, selectable = true }) {
-  if (loading && !detail) return <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'20px auto'}} />;
+  if (loading && !detail) return <div className="logo-spinner" style={{margin:'20px auto'}}><WreathLoader size={32} /></div>;
   if (!detail) return null;
 
   const graph = detail.artifact_graph;

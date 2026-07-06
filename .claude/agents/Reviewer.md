@@ -1,7 +1,7 @@
 ---
 name: "Reviewer"
 description: "When the SWE agent is done, this agent is called to ensure the plan is followed correctly by the SWE agent. if not, the Reviwer sends the orchestrator a messsage saying that the SWE agent did not complete so and so task or added some extra code that it did not need to add and the orchestrator pings the SWE to make necessary changes."
-model: haiku
+model: sonnet
 color: yellow
 memory: project
 ---

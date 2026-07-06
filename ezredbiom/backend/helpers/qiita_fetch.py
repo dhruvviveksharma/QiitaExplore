@@ -431,6 +431,12 @@ def _fetch_study_header(study_id: int):
         LEFT JOIN qiita.study_person sp_pi ON s.principal_investigator_id = sp_pi.study_person_id
         LEFT JOIN qiita.study_person sp_lab ON s.lab_person_id = sp_lab.study_person_id
         WHERE s.study_id = %s
+          AND EXISTS (
+              SELECT 1 FROM qiita.study_artifact sa
+              JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+              JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+              WHERE sa.study_id = s.study_id AND v.visibility = 'public'
+          )
         """,
         [study_id],
     )

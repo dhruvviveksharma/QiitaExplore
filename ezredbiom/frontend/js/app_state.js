@@ -139,7 +139,11 @@ function useAppState() {
       : await apiFetch(`/global-chats/${chatId}?user_id=${USER_ID}`);
     if (res.ok) {
       const d = await res.json();
-      const messages = (d.messages || []).map(m => m.ui_payload ? { ...m, ui: m.ui_payload } : m);
+      const messages = (d.messages || []).map(m => ({
+        ...m,
+        ...(m.ui_payload && { ui: m.ui_payload }),
+        segments: null,
+      }));
       setChatCache(prev => ({
         ...prev,
         [chatId]: {
@@ -503,7 +507,15 @@ function useAppState() {
               ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
             } : prev);
           },
-          onError: ({ error }) => setCompErr(error || 'Error'),
+          onError: ({ error }) => {
+            setCompErr(error || 'Error');
+            patchLast(chatId, m => ({
+              ...m,
+              isStreaming: false,
+              pendingStep: null,
+              content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
+            }));
+          },
         }, ctrl.signal);
 
       } else if (workView.type === 'global-chat') {
@@ -552,7 +564,15 @@ function useAppState() {
             applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
             setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
           },
-          onError: ({ error }) => setCompErr(error || 'Error'),
+          onError: ({ error }) => {
+            setCompErr(error || 'Error');
+            patchLast(chatId, m => ({
+              ...m,
+              isStreaming: false,
+              pendingStep: null,
+              content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
+            }));
+          },
         }, ctrl.signal);
       }
     } catch (e) {

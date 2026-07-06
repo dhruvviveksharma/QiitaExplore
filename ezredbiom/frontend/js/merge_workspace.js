@@ -210,7 +210,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
       {/* Study slots */}
       <div className="merge-slots">
         {wsLoading ? (
-          <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'40px auto'}} />
+          <div className="logo-spinner" style={{margin:'40px auto'}}><WreathLoader size={32} /></div>
         ) : (
           <>
             {studies.map(slot => (
@@ -393,7 +393,7 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
     if (res.ok) setWorkspaces(list => list.map(w => w.workspace_id === wsId ? { ...w, name: t } : w));
   }
 
-  if (workspaces === null) return <img src="qiita-mark-nobg.png" className="logo-spinner" alt="" style={{margin:'40px auto'}} />;
+  if (workspaces === null) return <div className="logo-spinner" style={{margin:'40px auto'}}><WreathLoader size={32} /></div>;
 
   if (workspaces.length === 0) return (
     <div className="merges-empty">

@@ -107,6 +107,9 @@ function InfinityLoader({ w = 80, h = 50 }) {
 }
 
 // ─── WreathLoader ─────────────────────────────────────────────────────────────
+// Icon-scale rendering (28-32px): a single bold stroke per segment reads far
+// crisper than the demo-scale duplex "woven shadow" trick, which just smears
+// at this size, and fewer/higher-contrast ring ticks avoid a hazy look.
 function WreathLoader({ size = 32 }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -114,7 +117,8 @@ function WreathLoader({ size = 32 }) {
     if (!canvas) return;
     const ctx = _setupCanvas(canvas, size, size);
     const cx = size / 2, cy = size / 2;
-    const R = size * 0.355, r = size * 0.11, n = 8;
+    const R = size * 0.355, r = size * 0.11, n = 5;
+    const pale = _lRgba('#9ad8d0', 0.5);
 
     let rafId, t0;
     function frame(ts) {
@@ -123,13 +127,13 @@ function WreathLoader({ size = 32 }) {
       ctx.clearRect(0, 0, size, size);
       const segs = _makeSegs(_ringCrossings(n, ph, 0, Math.PI * 2), 0, Math.PI * 2);
 
-      const RN = n * 5;
+      const RN = n * 3;
       for (let i = 0; i < RN; i++) {
         const t  = (i / RN) * Math.PI * 2, s = Math.sin(n * t + ph);
         const r1 = R + r * s, r2 = R - r * s;
         const isHL = (i % Math.round(RN / n)) === 0;
-        ctx.strokeStyle = isHL ? _lRgba(_LC, 0.85) : _LP;
-        ctx.lineWidth   = isHL ? 1.5 : 0.8;
+        ctx.strokeStyle = isHL ? _LC : pale;
+        ctx.lineWidth   = isHL ? 2 : 1;
         ctx.beginPath();
         ctx.moveTo(cx + r1 * Math.cos(t), cy + r1 * Math.sin(t));
         ctx.lineTo(cx + r2 * Math.cos(t), cy + r2 * Math.sin(t));
@@ -148,7 +152,13 @@ function WreathLoader({ size = 32 }) {
         ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
       }
 
-      _drawDuplex(ctx, segs, (tS, tE) => Math.sin(n * (tS + tE) / 2 + ph) > 0, strand);
+      for (const [tS, tE] of segs) {
+        const f1top = Math.sin(n * (tS + tE) / 2 + ph) > 0;
+        ctx.strokeStyle = f1top ? _LT : _LG;
+        strand(tS, tE, !f1top, 1.8);
+        ctx.strokeStyle = f1top ? _LG : _LT;
+        strand(tS, tE, f1top, 1.8);
+      }
       rafId = requestAnimationFrame(frame);
     }
     rafId = requestAnimationFrame(frame);

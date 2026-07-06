@@ -1,7 +1,7 @@
 ---
 name: "Tester"
 description: "When the entire reviwer, SWE loop is done, this agent is called to ensure the tests pass. If not, it tells the SWE agent why a test failed and informs the orchestrator of the failed test, which runs the loop again"
-model: haiku
+model: sonnet
 color: purple
 memory: project
 ---

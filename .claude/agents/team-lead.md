@@ -1,7 +1,7 @@
 ---
 name: "team-lead"
 description: "When the user wants to get something done, the orchestrator ensures the entire pipeline is followed"
-model: haiku
+model: sonnet
 color: red
 memory: project
 ---

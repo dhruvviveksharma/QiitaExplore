@@ -41,6 +41,7 @@ def stream_chat(
       step_done_labels    — list of (name, label) tuples from all step_done events
       pinned_studies      — list from the done event's pinned_studies field (or [])
       step_done_details   — dict of {name: detail} from all step_done events
+      tool_ui_payloads    — list of every non-null ui_payload from segment_tool_result events
     """
     body = {"user_id": "parity_test", "message": message}
     if report_study_id is not None:
@@ -66,6 +67,7 @@ def stream_chat(
     pinned_studies = []
     tokens = []
     result_study_ids = set()
+    tool_ui_payloads = []
 
     current_event = None
     for raw_line in r.iter_lines(decode_unicode=True):
@@ -102,7 +104,10 @@ def stream_chat(
                 tokens.append(data.get("token") or "")
             elif current_event == "segment_tool_result":
                 # agentic path: collect study IDs returned by the search tool
-                for s in (data.get("ui_payload") or {}).get("result_studies") or []:
+                tool_payload = data.get("ui_payload")
+                if tool_payload:
+                    tool_ui_payloads.append(tool_payload)
+                for s in (tool_payload or {}).get("result_studies") or []:
                     sid = s.get("study_id")
                     if sid is not None:
                         result_study_ids.add(int(sid))
@@ -125,6 +130,7 @@ def stream_chat(
         "step_done_labels": step_done_labels,
         "step_done_details": step_done_details,
         "pinned_studies": pinned_studies,
+        "tool_ui_payloads": tool_ui_payloads,
     }
 
 

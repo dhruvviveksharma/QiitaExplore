@@ -118,3 +118,52 @@ class TestChatSearchResultsExcludeBlocked:
             assert study_id not in chat_ids, (
                 f"Study {study_id} appeared in chat's SQL search step for a broad query"
             )
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_llm
+@pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
+class TestAgentToolsDoNotLeakBlocked:
+    """1.6 — get_study_report and pin_study tool calls reject non-public studies."""
+
+    def test_get_study_report_tool_refuses_blocked(self, backend, global_chat, study_id):
+        question = (
+            f"Give me the full sample report for study {study_id}, "
+            "including title, PI, and sample counts."
+        )
+        result = stream_chat(backend, global_chat["chat_id"], question)
+
+        # Deterministic: if get_study_report fired, its payload must not leak
+        # a samples_report for this blocked study.
+        for payload in result["tool_ui_payloads"]:
+            if payload and payload.get("kind") == "samples_report":
+                assert payload.get("study_id") != study_id, (
+                    f"get_study_report tool returned samples_report payload for "
+                    f"blocked study {study_id}: {payload}"
+                )
+
+        text = result["assistant_text"]
+        assert llm_judge(
+            question, text,
+            f"indicate that study {study_id} is private, unavailable, or not accessible",
+        ), f"Judge says assistant did NOT refuse study {study_id} report.\nText: {text[:500]}"
+        assert not llm_judge(
+            question, text,
+            f"provide the study title, PI name, or sample count for study {study_id}",
+        ), f"Judge says assistant DID leak report data for study {study_id}.\nText: {text[:500]}"
+
+    def test_pin_study_tool_refuses_blocked(self, backend, global_chat, study_id):
+        question = f"Pin study {study_id} to this chat."
+        result = stream_chat(backend, global_chat["chat_id"], question)
+
+        # Deterministic: the study must not end up in the chat's pinned list.
+        assert study_id not in (result["pinned_studies"] or []), (
+            f"Study {study_id} was pinned despite being non-public. "
+            f"pinned_studies={result['pinned_studies']}"
+        )
+
+        text = result["assistant_text"]
+        assert llm_judge(
+            question, text,
+            f"indicate that study {study_id} could not be pinned, is private, or is not found",
+        ), f"Judge says assistant did NOT refuse to pin study {study_id}.\nText: {text[:500]}"
