@@ -398,7 +398,7 @@ input, textarea { font-family: var(--sans); }
 .chat-messages {
   max-width: calc(var(--chat-max-w) + 40px);
   margin: 0 auto;
-  padding: 28px 20px 20px;
+  padding: 28px 20px 48px;
   display: flex;
   flex-direction: column;
   gap: 2px;
