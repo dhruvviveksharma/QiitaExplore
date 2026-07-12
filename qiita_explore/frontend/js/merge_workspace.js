@@ -51,7 +51,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   // race against the addStudy POST and overwrite the workspace with an empty list.
   useEffect(() => {
     if (workspaceId) loadWorkspace(workspaceId);
-    else apiFetch('/merge-workspaces?user_id=default').then(r => r.ok ? r.json() : []).then(setExistingWs);
+    else apiFetch('/merge-workspaces').then(r => r.ok ? r.json() : []).then(setExistingWs);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-run validation whenever study list or artifact selection changes
@@ -64,7 +64,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
   async function ensureWorkspace() {
     if (workspaceId) return workspaceId;
-    const res = await apiPost('/merge-workspaces', { user_id: 'default', name: wsNameInput });
+    const res = await apiPost('/merge-workspaces', { name: wsNameInput });
     if (!res.ok) { setError('Failed to create workspace'); return null; }
     const ws = await res.json();
     setWorkspaceId(ws.workspace_id);
@@ -74,7 +74,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
   async function loadWorkspace(wsId) {
     setWsLoading(true);
-    const res = await apiFetch(`/merge-workspaces/${wsId}?user_id=default`);
+    const res = await apiFetch(`/merge-workspaces/${wsId}`);
     if (res.ok) setWorkspace(await res.json());
     setWsLoading(false);
   }
@@ -86,7 +86,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
   async function runValidation(wsId) {
     setValidating(true);
-    const res = await apiFetch(`/merge-workspaces/${wsId}/validate?user_id=default`);
+    const res = await apiFetch(`/merge-workspaces/${wsId}/validate`);
     if (res.ok) setValidation(await res.json());
     setValidating(false);
   }
@@ -137,7 +137,7 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
   async function handleMerge() {
     if (!workspaceId || merging) return;
     setMerging(true); setError('');
-    const res = await apiPost(`/merge-workspaces/${workspaceId}/jobs`, { user_id: 'default' });
+    const res = await apiPost(`/merge-workspaces/${workspaceId}/jobs`, {});
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       setError(d.error || 'Failed to start merge');
@@ -151,13 +151,13 @@ function MergeWorkspacePanel({ workspaceId, setWorkspaceId, pendingStudy, clearP
 
   async function handleDeleteWorkspace() {
     if (!workspaceId) return;
-    await apiDel(`/merge-workspaces/${workspaceId}?user_id=default`);
+    await apiDel(`/merge-workspaces/${workspaceId}`);
     setWorkspaceId(null); setWorkspace(null); setValidation(null); setJobId(null);
   }
 
   function handleBack() {
     setWorkspaceId(null); setWorkspace(null); setValidation(null); setJobId(null); setError('');
-    if (!existingWs) apiFetch('/merge-workspaces?user_id=default').then(r => r.ok ? r.json() : []).then(setExistingWs);
+    if (!existingWs) apiFetch('/merge-workspaces').then(r => r.ok ? r.json() : []).then(setExistingWs);
   }
 
   const studies = workspace?.studies || [];
@@ -372,12 +372,12 @@ function MergesTab({ onOpenWorkspace, activeWorkspaceId }) {
   const [editVal,    setEditVal]    = useState('');
 
   useEffect(() => {
-    apiFetch('/merge-workspaces?user_id=default')
+    apiFetch('/merge-workspaces')
       .then(r => r.ok ? r.json() : [])
       .then(async (list) => {
         const detailed = await Promise.all(
           list.map(ws =>
-            apiFetch(`/merge-workspaces/${ws.workspace_id}?user_id=default`)
+            apiFetch(`/merge-workspaces/${ws.workspace_id}`)
               .then(r => r.ok ? r.json() : ws)
           )
         );

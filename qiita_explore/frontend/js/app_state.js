@@ -27,22 +27,7 @@ function useAppState() {
   const [compErr,        setCompErr]        = useState('');
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const _VALID_MODELS = new Set([..._NRP_MODELS, ..._CLAUDE_MODELS].map(m => m[0]));
-  const [selectedModel, setSelectedModelState] = useState(() => {
-    try {
-      const saved = localStorage.getItem('llm:model');
-      return (saved && _VALID_MODELS.has(saved)) ? saved : 'qwen3';
-    } catch (_) { return 'qwen3'; }
-  });
-  const setSelectedModel = (value) => {
-    setSelectedModelState(value);
-    const chatId = view.chatId || null;
-    try {
-      if (chatId) localStorage.setItem(`model:chat:${chatId}`, value);
-      localStorage.setItem('llm:model', value);
-    } catch (_) {}
-  };
-  const [showModelPicker, setShowModelPicker] = useState(false);
+  const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
@@ -83,19 +68,8 @@ function useAppState() {
 
   useEffect(() => {
     loadProjects(); loadGlobalChats(); loadFirstStudies();
-    fetch('/api/settings').then(r => r.json()).then(d => setAnthropicKeySet(d.anthropic_key_set)).catch(() => {});
+    apiFetch('/settings').then(r => r.json()).then(d => setAnthropicKeySet(d.anthropic_key_set)).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    const chatId = view.chatId || null;
-    try {
-      const perChat = chatId ? localStorage.getItem(`model:chat:${chatId}`) : null;
-      const global  = localStorage.getItem('llm:model') || 'qwen3';
-      const effective = (perChat && _VALID_MODELS.has(perChat)) ? perChat
-                      : (_VALID_MODELS.has(global) ? global : 'qwen3');
-      setSelectedModelState(effective);
-    } catch (_) {}
-  }, [view.chatId]);
 
   useEffect(() => {
     if (!openProjId) { setOpenProject(null); return; }
@@ -106,7 +80,7 @@ function useAppState() {
   const loadProjects = async () => {
     setProjLoading(true);
     try {
-      const res = await apiFetch(`/projects?user_id=${USER_ID}`);
+      const res = await apiFetch(`/projects`);
       if (res.ok) { const d = await res.json(); setProjects(d.projects || []); }
     } finally { setProjLoading(false); }
   };
@@ -114,16 +88,16 @@ function useAppState() {
   const fetchProjectDetail = async (pid) => {
     setProjDetailLoading(true);
     try {
-      const res = await apiFetch(`/projects/${pid}?user_id=${USER_ID}`);
+      const res = await apiFetch(`/projects/${pid}`);
       if (res.ok) setOpenProject(await res.json());
-      apiPost(`/projects/${pid}/preload`, { user_id: USER_ID }).catch(() => {});
+      apiPost(`/projects/${pid}/preload`, {}).catch(() => {});
     } finally {
       setProjDetailLoading(false);
     }
   };
 
   const loadGlobalChats = async () => {
-    const res = await apiFetch(`/global-chats?user_id=${USER_ID}`);
+    const res = await apiFetch(`/global-chats`);
     if (res.ok) { const d = await res.json(); setGlobalChats(d.chats || []); }
   };
 
@@ -135,8 +109,8 @@ function useAppState() {
   const hydrateChatCache = async (type, projId, chatId) => {
     if (chatCache[chatId]) return;
     const res = type === 'project-chat'
-      ? await apiFetch(`/projects/${projId}/chats/${chatId}?user_id=${USER_ID}`)
-      : await apiFetch(`/global-chats/${chatId}?user_id=${USER_ID}`);
+      ? await apiFetch(`/projects/${projId}/chats/${chatId}`)
+      : await apiFetch(`/global-chats/${chatId}`);
     if (res.ok) {
       const d = await res.json();
       const messages = (d.messages || []).map(m => ({
@@ -159,7 +133,7 @@ function useAppState() {
   // ─── project actions ──────────────────────────────────────────────────────────
   const createProject = async () => {
     const name = newProjName.trim() || 'Untitled';
-    const res  = await apiPost('/projects', { user_id: USER_ID, name });
+    const res  = await apiPost('/projects', { name });
     if (!res.ok) return;
     const proj = await res.json();
     setNewProjName(''); setShowNewProj(false);
@@ -170,7 +144,7 @@ function useAppState() {
 
   const deleteProject = async (pid) => {
     if (!confirm('Delete this project and all its chats?')) return;
-    await apiDel(`/projects/${pid}?user_id=${USER_ID}`);
+    await apiDel(`/projects/${pid}`);
     if (openProjId === pid) { setOpenProjId(null); setOpenProject(null); }
     if (view.projId === pid) setView({ type: 'browse' });
     loadProjects();
@@ -178,13 +152,13 @@ function useAppState() {
 
   const addStudyToProject = async (study) => {
     if (!openProjId) return;
-    const res = await apiPost(`/projects/${openProjId}/studies`, { user_id: USER_ID, study });
+    const res = await apiPost(`/projects/${openProjId}/studies`, { study });
     if (res.ok) { const updated = await res.json(); setOpenProject(updated); }
   };
 
   const removeStudy = async (studyId) => {
     if (!openProjId) return;
-    const res = await apiDel(`/projects/${openProjId}/studies/${studyId}?user_id=${USER_ID}`);
+    const res = await apiDel(`/projects/${openProjId}/studies/${studyId}`);
     if (res.ok) { const updated = await res.json(); setOpenProject(updated); }
   };
 
@@ -210,7 +184,7 @@ function useAppState() {
   };
 
   const newProjChat = async (projId) => {
-    const res = await apiPost(`/projects/${projId}/chats`, { user_id: USER_ID });
+    const res = await apiPost(`/projects/${projId}/chats`, {});
     if (!res.ok) return;
     const chat = await res.json();
     setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title: 'New chat' } }));
@@ -220,14 +194,14 @@ function useAppState() {
   };
 
   const deleteProjChat = async (projId, chatId) => {
-    await apiDel(`/projects/${projId}/chats/${chatId}?user_id=${USER_ID}`);
+    await apiDel(`/projects/${projId}/chats/${chatId}`);
     setChatCache(prev => { const n = { ...prev }; delete n[chatId]; return n; });
     if (view.chatId === chatId) setView({ type: 'project-chat', projId, chatId: null });
     setOpenProject(prev => prev ? { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) } : prev);
   };
 
   const newGlobChat = async () => {
-    const res = await apiPost('/global-chats', { user_id: USER_ID });
+    const res = await apiPost('/global-chats', {});
     if (!res.ok) return;
     const chat = await res.json();
     setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title: 'New chat' } }));
@@ -237,7 +211,7 @@ function useAppState() {
   };
 
   const deleteGlobChat = async (chatId) => {
-    await apiDel(`/global-chats/${chatId}?user_id=${USER_ID}`);
+    await apiDel(`/global-chats/${chatId}`);
     setChatCache(prev => { const n = { ...prev }; delete n[chatId]; return n; });
     if (view.chatId === chatId) setView({ type: 'global-chat', chatId: null });
     setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
@@ -330,9 +304,9 @@ function useAppState() {
     });
     try {
       if (view.type === 'project-chat' && view.projId) {
-        await apiDel(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`);
+        await apiDel(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}`);
       } else if (view.type === 'global-chat') {
-        await apiDel(`/global-chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`);
+        await apiDel(`/global-chats/${chatId}/pinned/${studyId}`);
       }
     } catch (_) {}
   };
@@ -348,9 +322,9 @@ function useAppState() {
     try {
       let res;
       if (view.type === 'project-chat' && view.projId) {
-        res = await apiPost(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`, {});
+        res = await apiPost(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}`, {});
       } else if (view.type === 'global-chat') {
-        res = await apiPost(`/global-chats/${chatId}/pinned/${studyId}?user_id=${USER_ID}`, {});
+        res = await apiPost(`/global-chats/${chatId}/pinned/${studyId}`, {});
       }
       if (res?.ok) {
         const data = await res.json();
@@ -409,7 +383,7 @@ function useAppState() {
 
       if (view.type === 'browse') {
         const snapCtx = [...ctxStudies];
-        const res = await apiPost('/global-chats', { user_id: USER_ID });
+        const res = await apiPost('/global-chats', {});
         if (!res.ok) throw new Error('Failed to create chat');
         const chat = await res.json();
         setChatCache(prev => ({
@@ -430,7 +404,7 @@ function useAppState() {
           const { projId } = workView;
           chatId = workView.chatId;
           if (!chatId) {
-            const res = await apiPost(`/projects/${projId}/chats`, { user_id: USER_ID });
+            const res = await apiPost(`/projects/${projId}/chats`, {});
             if (!res.ok) throw new Error('Failed to create chat');
             const chat = await res.json();
             chatId = chat.chat_id;
@@ -440,7 +414,7 @@ function useAppState() {
         } else if (workView.type === 'global-chat') {
           chatId = workView.chatId;
           if (!chatId) {
-            const res = await apiPost('/global-chats', { user_id: USER_ID });
+            const res = await apiPost('/global-chats', {});
             if (!res.ok) throw new Error('Failed to create chat');
             const chat = await res.json();
             chatId = chat.chat_id;
@@ -452,7 +426,7 @@ function useAppState() {
         if (!chatId) return;
         optimisticAppend(chatId, '/systems — Model status');
         patchLast(chatId, m => ({ ...m, pendingStep: { name: 'probe', label: 'Probing all models…' } }));
-        const res = await fetch(`${API}/systems`);
+        const res = await apiFetch('/systems');
         if (!res.ok) throw new Error('Systems check failed');
         const models = await res.json();
         patchLast(chatId, m => ({ ...m, ui: { kind: 'systems_status', models }, pendingStep: null, isStreaming: false }));
@@ -463,7 +437,7 @@ function useAppState() {
       if (workView.type === 'project-chat') {
         let { projId, chatId } = workView;
         if (!chatId) {
-          const res = await apiPost(`/projects/${projId}/chats`, { user_id: USER_ID });
+          const res = await apiPost(`/projects/${projId}/chats`, {});
           if (!res.ok) throw new Error('Failed to create chat');
           const chat = await res.json();
           chatId = chat.chat_id;
@@ -479,10 +453,9 @@ function useAppState() {
           setView(v => ({ ...v, chatId }));
         }
         optimisticAppend(chatId, displayMsg);
-        const res = await fetch(`${API}/projects/${projId}/chats/${chatId}/message/stream`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const res = await apiFetch(`/projects/${projId}/chats/${chatId}/message/stream`, {
+          method: 'POST',
           body: JSON.stringify({
-            user_id: USER_ID,
             message: msg,
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
@@ -521,7 +494,7 @@ function useAppState() {
       } else if (workView.type === 'global-chat') {
         let { chatId } = workView;
         if (!chatId) {
-          const res = await apiPost('/global-chats', { user_id: USER_ID });
+          const res = await apiPost('/global-chats', {});
           if (!res.ok) throw new Error('Failed to create chat');
           const chat = await res.json();
           chatId = chat.chat_id;
@@ -531,10 +504,9 @@ function useAppState() {
         }
         optimisticAppend(chatId, displayMsg);
         const ctxToSend = studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || []);
-        const res = await fetch(`${API}/global-chats/${chatId}/message/stream`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const res = await apiFetch(`/global-chats/${chatId}/message/stream`, {
+          method: 'POST',
           body: JSON.stringify({
-            user_id: USER_ID,
             message: sendMsg,
             model: selectedModel,
             selected_studies: ctxToSend,
@@ -604,7 +576,7 @@ function useAppState() {
 
   // ─── misc ─────────────────────────────────────────────────────────────────────
   const enrichAllStudies = async (projId) => {
-    const res = await apiPost(`/projects/${projId}/studies/enrich-all`, { user_id: USER_ID });
+    const res = await apiPost(`/projects/${projId}/studies/enrich-all`, {});
     if (res.ok) { const d = await res.json(); if (d.project) setOpenProject(d.project); }
   };
 
@@ -625,11 +597,9 @@ function useAppState() {
   const displayStudies = searched ? results : firstStudies;
   const isChat         = view.type === 'project-chat' || view.type === 'global-chat';
   const canSend        = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending;
-  const slashMatches   = useMemo(() => {
-    if (!/^\/\S*$/.test(input)) return [];
-    const q = input.toLowerCase();
-    return SLASH_COMMANDS.filter(c => c.cmd.startsWith(q));
-  }, [input]);
+  const slashMatches   = /^\/\S*$/.test(input)
+    ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()))
+    : [];
 
   const topTitle = useMemo(() => {
     if (view.type === 'project-chat') {

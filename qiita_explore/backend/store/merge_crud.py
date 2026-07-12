@@ -85,10 +85,21 @@ def rename_workspace(workspace_id: str, user_id: str, name: str) -> None:
         conn.commit()
 
 
-def add_study_to_workspace(workspace_id: str, study: dict) -> Optional[dict]:
-    """Returns None if workspace already has _MAX_STUDIES studies."""
+def _workspace_owned(conn, workspace_id: str, user_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM merge_workspaces WHERE workspace_id=? AND user_id=?",
+        (workspace_id, user_id),
+    ).fetchone()
+    return row is not None
+
+
+def add_study_to_workspace(workspace_id: str, user_id: str, study: dict):
+    """Returns "not_found" if the workspace doesn't exist or isn't owned by
+    user_id, None if it's already at _MAX_STUDIES, else the studies list."""
     now = _now()
     with _conn() as conn:
+        if not _workspace_owned(conn, workspace_id, user_id):
+            return "not_found"
         count = conn.execute(
             "SELECT COUNT(1) FROM merge_workspace_studies WHERE workspace_id=?",
             (workspace_id,),
@@ -115,9 +126,13 @@ def add_study_to_workspace(workspace_id: str, study: dict) -> Optional[dict]:
     return [_hydrate_study(_as_dict(r)) for r in rows]
 
 
-def remove_study_from_workspace(workspace_id: str, study_id: int) -> list:
+def remove_study_from_workspace(workspace_id: str, user_id: str, study_id: int):
+    """Returns "not_found" if the workspace doesn't exist or isn't owned by
+    user_id, else the remaining studies list."""
     now = _now()
     with _conn() as conn:
+        if not _workspace_owned(conn, workspace_id, user_id):
+            return "not_found"
         conn.execute(
             "DELETE FROM merge_workspace_studies WHERE workspace_id=? AND study_id=?",
             (workspace_id, int(study_id)),
@@ -134,9 +149,11 @@ def remove_study_from_workspace(workspace_id: str, study_id: int) -> list:
     return [_hydrate_study(_as_dict(r)) for r in rows]
 
 
-def update_workspace_study(workspace_id: str, study_id: int, *,
+def update_workspace_study(workspace_id: str, user_id: str, study_id: int, *,
                            chosen_artifact_ids=None, chosen_artifact_id=None,
-                           sample_filter=None) -> list:
+                           sample_filter=None):
+    """Returns "not_found" if the workspace doesn't exist or isn't owned by
+    user_id, else the updated studies list."""
     now = _now()
     sample_filter_str = json.dumps(sample_filter) if isinstance(sample_filter, list) else sample_filter
     # Normalise to list; legacy single-id callers still work
@@ -150,6 +167,8 @@ def update_workspace_study(workspace_id: str, study_id: int, *,
     # Also keep legacy single column in sync for any old readers
     legacy_id = ids_list[0] if ids_list else None
     with _conn() as conn:
+        if not _workspace_owned(conn, workspace_id, user_id):
+            return "not_found"
         conn.execute(
             """UPDATE merge_workspace_studies
                SET chosen_artifact_id=?, chosen_artifact_ids=?, sample_filter=?
@@ -184,17 +203,21 @@ def create_merge_job(workspace_id: str, user_id: str, workspace_snap: list) -> d
             "status": "pending", "created_at": now, "updated_at": now}
 
 
-def get_merge_job(job_id: str) -> Optional[dict]:
+def get_merge_job(job_id: str, user_id: str) -> Optional[dict]:
+    """Owner-scoped: returns None if the job doesn't exist or belongs to a
+    different user (poll/download must never leak another user's job)."""
     with _conn() as conn:
-        row = conn.execute("SELECT * FROM merge_jobs WHERE job_id=?", (job_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM merge_jobs WHERE job_id=? AND user_id=?", (job_id, user_id)
+        ).fetchone()
     return _as_dict(row)
 
 
-def list_merge_jobs(workspace_id: str) -> list:
+def list_merge_jobs(workspace_id: str, user_id: str) -> list:
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM merge_jobs WHERE workspace_id=? ORDER BY created_at DESC",
-            (workspace_id,),
+            "SELECT * FROM merge_jobs WHERE workspace_id=? AND user_id=? ORDER BY created_at DESC",
+            (workspace_id, user_id),
         ).fetchall()
     return [_as_dict(r) for r in rows]
 

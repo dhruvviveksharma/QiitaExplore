@@ -1,13 +1,32 @@
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
 // TODO: revert fallback to port 5001 before committing to master
-const API     = document.querySelector('meta[name="api-base"]')?.content
-              || 'http://localhost:5002/api';
-const USER_ID = 'default';
+// 127.0.0.1, not localhost: the session cookie is host-only, so this must
+// match whichever host the browser used to reach the page.
+const API = document.querySelector('meta[name="api-base"]')?.content
+          || 'http://127.0.0.1:5002/api';
+
+const formatDate = (dateStr) =>
+  new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────────────
-const apiFetch = (path, opts = {}) =>
-  fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json' }, ...opts });
+// Identity now comes from the session cookie (set by POST /auth/connect), not
+// a client-supplied user_id. auth.js calls setCsrfToken() once /auth/me or
+// /auth/connect resolves; every state-changing request below picks it up
+// automatically — no per-call-site wiring needed.
+const _STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+let _csrfToken = null;
+const setCsrfToken   = (token) => { _csrfToken = token || null; };
+const clearCsrfToken = () => { _csrfToken = null; };
+
+const apiFetch = (path, opts = {}) => {
+  const method  = (opts.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (_csrfToken && _STATE_CHANGING_METHODS.has(method)) {
+    headers['X-CSRF-Token'] = _csrfToken;
+  }
+  return fetch(`${API}${path}`, { ...opts, headers, credentials: 'include' });
+};
 const apiPost  = (path, body) => apiFetch(path, { method: 'POST',   body: JSON.stringify(body) });
 const apiPatch = (path, body) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body) });
 const apiDel   = (path)       => apiFetch(path, { method: 'DELETE' });

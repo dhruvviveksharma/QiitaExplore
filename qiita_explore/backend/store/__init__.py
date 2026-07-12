@@ -17,6 +17,9 @@ from .crud import (  # noqa: F401
     create_chat,
     append_chat_messages,
     delete_chat,
+)
+
+from .global_chat_crud import (  # noqa: F401
     list_global_chats,
     get_global_chat,
     create_global_chat,

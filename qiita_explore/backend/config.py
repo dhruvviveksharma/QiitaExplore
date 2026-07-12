@@ -72,6 +72,36 @@ REPORT_SAMPLE_LIMIT             = 200
 PINNED_REPORT_CONTEXT_MAX_CHARS = int(os.getenv("PINNED_REPORT_CONTEXT_MAX_CHARS", "40000"))
 PINNED_REPORT_MIN_PER_STUDY     = int(os.getenv("PINNED_REPORT_MIN_PER_STUDY", "2000"))
 
+# ── Qiita PAT authentication ────────────────────────────────────────────────
+SESSION_COOKIE_NAME = "qe_sid"
+
+QIITA_CONTROL_PLANE_URL = os.getenv("QIITA_CONTROL_PLANE_URL", "http://127.0.0.1:8080").rstrip("/")
+QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "5"))
+
+# Fernet key encrypting PATs at rest in auth_sessions.pat_encrypted. Required —
+# there is no insecure fallback; helpers/pat_crypto.py raises loudly if unset.
+# Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+PAT_ENCRYPTION_KEY = os.getenv("QIITA_EXPLORE_PAT_ENCRYPTION_KEY")
+
+AUTH_PAT_REVERIFY_INTERVAL_SECONDS = int(os.getenv("AUTH_PAT_REVERIFY_INTERVAL_SECONDS", str(15 * 60)))
+AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SECONDS", str(30 * 24 * 3600)))
+AUTH_SESSION_IDLE_TTL_SECONDS      = int(os.getenv("AUTH_SESSION_IDLE_TTL_SECONDS", str(7 * 24 * 3600)))
+
+# Comma-separated exact origins allowed for credentialed cross-origin dev
+# requests (e.g. frontend on a different port than the backend). Leave unset
+# in production — same-origin deployments behind the proxy need no CORS.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("QIITA_EXPLORE_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+# Cookie Secure flag. Defaults to True; set to "false" only for plain-HTTP
+# loopback development (e.g. http://127.0.0.1 with no TLS).
+SESSION_COOKIE_SECURE = os.getenv("QIITA_EXPLORE_COOKIE_SECURE", "true").strip().lower() not in ("false", "0", "no")
+
+# If set, only this Qiita principal_idx may claim the legacy 'default'-owned
+# data via POST /api/auth/claim-default. Unset (default) = claiming disabled.
+_claimant_raw = os.getenv("QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", "").strip()
+QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = int(_claimant_raw) if _claimant_raw.isdigit() else None
+
 CHAT_SYSTEM_PROMPT = """You are a helpful assistant for researchers using the Qiita microbiome database.
 
 Your primary goals:

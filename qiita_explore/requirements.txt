@@ -19,5 +19,9 @@ redis
 biom-format
 qiita-files @ https://github.com/qiita-spots/qiita-files/archive/master.zip
 
+# Qiita PAT authentication (sync HTTP client + PAT-at-rest encryption)
+httpx>=0.25,<1.0
+cryptography>=41.0
+
 # Production WSGI server
 gunicorn>=21.0,<22.0

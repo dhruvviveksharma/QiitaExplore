@@ -56,37 +56,37 @@ class TestProjectChats:
 class TestGlobalChats:
     """Test global chat functionality."""
 
-    def test_create_global_chat(self, crud, sample_user_id):
+    def test_create_global_chat(self, global_chat_crud, sample_user_id):
         """Create a new global chat."""
-        chat = crud.create_global_chat(sample_user_id)
+        chat = global_chat_crud.create_global_chat(sample_user_id)
         assert chat is not None
         assert "chat_id" in chat
 
-    def test_list_global_chats(self, crud, sample_user_id):
+    def test_list_global_chats(self, global_chat_crud, sample_user_id):
         """List global chats for user."""
-        crud.create_global_chat(sample_user_id)
-        crud.create_global_chat(sample_user_id)
+        global_chat_crud.create_global_chat(sample_user_id)
+        global_chat_crud.create_global_chat(sample_user_id)
 
-        chats = crud.list_global_chats(sample_user_id)
+        chats = global_chat_crud.list_global_chats(sample_user_id)
         assert len(chats) == 2
 
-    def test_delete_global_chat(self, crud, sample_user_id):
+    def test_delete_global_chat(self, global_chat_crud, sample_user_id):
         """Delete a global chat."""
-        chat = crud.create_global_chat(sample_user_id)
+        chat = global_chat_crud.create_global_chat(sample_user_id)
         chat_id = chat["chat_id"]
 
-        crud.delete_global_chat(sample_user_id, chat_id)
+        global_chat_crud.delete_global_chat(sample_user_id, chat_id)
 
         # Verify deleted
-        chats = crud.list_global_chats(sample_user_id)
+        chats = global_chat_crud.list_global_chats(sample_user_id)
         assert len(chats) == 0
 
-    def test_global_chats_isolated_by_user(self, crud, sample_user_id):
+    def test_global_chats_isolated_by_user(self, global_chat_crud, sample_user_id):
         """Global chats are isolated by user."""
-        crud.create_global_chat(sample_user_id)
-        crud.create_global_chat("other_user")
+        global_chat_crud.create_global_chat(sample_user_id)
+        global_chat_crud.create_global_chat("other_user")
 
-        chats = crud.list_global_chats(sample_user_id)
+        chats = global_chat_crud.list_global_chats(sample_user_id)
         assert len(chats) == 1
 
 

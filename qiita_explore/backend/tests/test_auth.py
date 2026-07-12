@@ -1,0 +1,489 @@
+"""Tests for the paste-PAT Qiita authentication system: crypto, sessions,
+legacy-claim, and full Flask route behavior with a mocked Qiita whoami (no
+network dependency — see test_auth_smoke.py for the real-control-plane check).
+"""
+import importlib.metadata
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+
+import pytest
+from cryptography.fernet import Fernet
+
+# ── module-scoped Flask app wired to its own isolated SQLite file ───────────
+
+_FAKE_QIITA_DB_STUBBED = False
+
+
+def _stub_qiita_db_and_core():
+    """qiita_db/qiita_core are vendored classic-Qiita packages this sandbox
+    can't resolve (unrelated to auth — see qiita_fetch.py's TRN usage). Stub
+    them so `import run` succeeds; auth tests never touch these code paths."""
+    global _FAKE_QIITA_DB_STUBBED
+    if _FAKE_QIITA_DB_STUBBED:
+        return
+    import types
+
+    class _FakeTRN:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def add(self, *a, **k): pass
+        def execute_fetchindex(self): return []
+
+    fake_sql_connection = types.ModuleType("qiita_db.sql_connection")
+    fake_sql_connection.TRN = _FakeTRN()
+    fake_qiita_db = types.ModuleType("qiita_db")
+    fake_qiita_db.sql_connection = fake_sql_connection
+    sys.modules["qiita_db"] = fake_qiita_db
+    sys.modules["qiita_db.sql_connection"] = fake_sql_connection
+
+    class _FakeConfig:
+        pass
+
+    fake_qiita_settings = types.ModuleType("qiita_core.qiita_settings")
+    fake_qiita_settings.qiita_config = _FakeConfig()
+    fake_qiita_core = types.ModuleType("qiita_core")
+    fake_qiita_core.qiita_settings = fake_qiita_settings
+    sys.modules["qiita_core"] = fake_qiita_core
+    sys.modules["qiita_core.qiita_settings"] = fake_qiita_settings
+
+    # Flask 2.2.5's test client reads werkzeug.__version__, removed upstream.
+    import werkzeug
+    if not hasattr(werkzeug, "__version__"):
+        werkzeug.__version__ = importlib.metadata.version("werkzeug")
+
+    _FAKE_QIITA_DB_STUBBED = True
+
+
+@pytest.fixture(scope="module")
+def _app(tmp_path_factory):
+    """Import run.app once per test module — expensive (imports every route
+    module) and safe to share, since the Flask app itself holds no per-test
+    state. Per-test isolation comes from api_client's fresh cookie jar below."""
+    db_path = str(tmp_path_factory.mktemp("auth_test") / "test.db")
+    os.environ["QIITA_EXPERIMENT_DB_PATH"] = db_path
+
+    # Purge any previously-imported instance so this module gets a clean,
+    # deterministic bind to db_path regardless of test execution order.
+    for name in list(sys.modules):
+        if name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.") or "sql_store" in name:
+            del sys.modules[name]
+
+    _stub_qiita_db_and_core()
+
+    import run
+    # config.py freezes these at first import of config, which may have
+    # already happened (by another test file, before this fixture set the
+    # env var) — set the attributes directly so this module's app is
+    # correctly configured regardless of import order.
+    import config
+    config.PAT_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    config.SESSION_COOKIE_SECURE = False
+    config.QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = None
+    return run.app
+
+
+@pytest.fixture
+def api_client(_app):
+    """Fresh test client (empty cookie jar) per test — the shared _app import
+    must never leak a session cookie from one test into the next."""
+    return _app.test_client()
+
+
+@pytest.fixture
+def mock_whoami(monkeypatch):
+    """Patch routes.auth_routes.whoami (and helpers.auth_middleware.whoami,
+    used for periodic reverification) to a controllable fake, keyed by token
+    string -> WhoAmIResult, with no network call."""
+    import routes.auth_routes as auth_routes
+    import helpers.auth_middleware as auth_middleware
+    from helpers.qiita_client import WhoAmIResult
+
+    responses = {}
+
+    def _fake_whoami(pat):
+        if pat in responses:
+            return responses[pat]
+        return WhoAmIResult(ok=False, transient_error=False)
+
+    monkeypatch.setattr(auth_routes, "whoami", _fake_whoami)
+    monkeypatch.setattr(auth_middleware, "whoami", _fake_whoami)
+
+    def register(pat, result):
+        responses[pat] = result
+
+    register.WhoAmIResult = WhoAmIResult
+    return register
+
+
+def _human(principal_idx, email="user@test.local", scopes=None, profile_complete=True):
+    from helpers.qiita_client import WhoAmIResult
+    return WhoAmIResult(ok=True, identity={
+        "kind": "human",
+        "principal_idx": principal_idx,
+        "email": email,
+        "system_role": "user",
+        "scopes": scopes or [],
+        "profile_complete": profile_complete,
+    })
+
+
+def _connect(api_client, mock_whoami, token, principal_idx, **kwargs):
+    """Connect a fresh session for a synthetic principal; returns (headers, user_id)."""
+    mock_whoami(token, _human(principal_idx, **kwargs))
+    resp = api_client.post("/api/auth/connect", json={"token": token})
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    return {"X-CSRF-Token": body["csrf_token"]}, body["user_id"]
+
+
+# ── Unit: qiita_client.whoami (mocks httpx, no network) ──────────────────────
+
+class _FakeHttpxResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+class TestQiitaClientWhoami:
+    def test_human_kind_accepted(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(200, {"kind": "human", "principal_idx": 1}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is True
+        assert result.identity["principal_idx"] == 1
+
+    def test_service_kind_rejected(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(200, {"kind": "service", "principal_idx": 7}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is False
+
+    def test_anonymous_kind_rejected(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(200, {"kind": "anonymous"}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is False
+
+    def test_401_is_not_transient(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(401, {}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is False
+
+    def test_5xx_is_transient(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(503, {}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is True
+
+    def test_connection_error_is_transient(self, monkeypatch):
+        import httpx
+        from helpers import qiita_client
+
+        def _raise(*a, **k):
+            raise httpx.ConnectError("refused")
+
+        monkeypatch.setattr(httpx, "get", _raise)
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is True
+
+
+# ── Unit: pat_crypto ─────────────────────────────────────────────────────────
+
+class TestPatCrypto:
+    def test_roundtrip(self, monkeypatch):
+        import config
+        from helpers.pat_crypto import encrypt_pat, decrypt_pat
+        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
+        ct = encrypt_pat("qk_secret")
+        assert decrypt_pat(ct) == "qk_secret"
+
+    def test_missing_key_raises(self, monkeypatch):
+        import config
+        from helpers import pat_crypto
+        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", None)
+        with pytest.raises(pat_crypto.PatCryptoError):
+            pat_crypto.encrypt_pat("qk_x")
+
+    def test_wrong_key_fails_to_decrypt(self, monkeypatch):
+        import config
+        from helpers import pat_crypto
+        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
+        ct = pat_crypto.encrypt_pat("qk_x")
+        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
+        with pytest.raises(pat_crypto.PatCryptoError):
+            pat_crypto.decrypt_pat(ct)
+
+
+# ── Unit: auth_store sessions ────────────────────────────────────────────────
+
+class TestAuthStore:
+    def test_session_create_and_lookup(self, fresh_db):
+        from store.auth_store import upsert_user, create_session, get_session_by_token
+        uid = upsert_user(principal_idx=1, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, csrf = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        sess = get_session_by_token(raw)
+        assert sess is not None
+        assert sess["user_id"] == uid
+        assert sess["csrf_token"] == csrf
+
+    def test_unknown_token_returns_none(self, fresh_db):
+        from store.auth_store import get_session_by_token
+        assert get_session_by_token("nonexistent") is None
+
+    def test_revoked_session_rejected(self, fresh_db):
+        from store.auth_store import upsert_user, create_session, get_session_by_token, revoke_session
+        uid = upsert_user(principal_idx=2, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        sess = get_session_by_token(raw)
+        revoke_session(sess["session_hash"])
+        assert get_session_by_token(raw) is None
+
+    def test_absolute_expiry_enforced(self, fresh_db, monkeypatch):
+        import config
+        from store.auth_store import upsert_user, create_session, get_session_by_token
+        monkeypatch.setattr(config, "AUTH_SESSION_ABSOLUTE_TTL_SECONDS", 1)
+        uid = upsert_user(principal_idx=3, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        assert get_session_by_token(raw) is not None
+        time.sleep(1.2)
+        assert get_session_by_token(raw) is None
+
+    def test_idle_expiry_enforced(self, fresh_db, monkeypatch):
+        import config
+        from store.auth_store import upsert_user, create_session, get_session_by_token
+        from store.db import _conn
+        monkeypatch.setattr(config, "AUTH_SESSION_IDLE_TTL_SECONDS", 1)
+        uid = upsert_user(principal_idx=4, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        sess = get_session_by_token(raw)
+        # Simulate last_seen_at 2s in the past without waiting in real time.
+        stale = (datetime.utcnow() - timedelta(seconds=2)).isoformat() + "Z"
+        with _conn() as conn:
+            conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE session_hash = ?",
+                         (stale, sess["session_hash"]))
+            conn.commit()
+        assert get_session_by_token(raw) is None
+
+    def test_touch_does_not_extend_absolute_expiry(self, fresh_db, monkeypatch):
+        import config
+        from store.auth_store import upsert_user, create_session, get_session_by_token, touch_session
+        monkeypatch.setattr(config, "AUTH_SESSION_ABSOLUTE_TTL_SECONDS", 1)
+        uid = upsert_user(principal_idx=5, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        sess = get_session_by_token(raw)
+        touch_session(sess["session_hash"])
+        time.sleep(1.2)
+        assert get_session_by_token(raw) is None  # touch must not push past absolute expiry
+
+
+# ── Unit: legacy_claim ───────────────────────────────────────────────────────
+
+class TestLegacyClaim:
+    def test_disabled_when_unset(self, fresh_db, monkeypatch):
+        import config
+        from store.legacy_claim import claim_eligible
+        monkeypatch.setattr(config, "QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", None)
+        assert claim_eligible("42") is False
+
+    def test_disabled_for_non_claimant(self, fresh_db, monkeypatch):
+        import config
+        from store.legacy_claim import claim_eligible
+        monkeypatch.setattr(config, "QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", 42)
+        assert claim_eligible("99") is False
+
+    def test_claim_reassigns_and_marks_meta(self, fresh_db, monkeypatch, crud):
+        import config
+        from store.legacy_claim import claim_eligible, claim_legacy_default, legacy_default_counts
+        monkeypatch.setattr(config, "QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", 42)
+        crud.create_project("default", "Legacy Proj")
+        assert claim_eligible("42") is True
+        counts = legacy_default_counts()
+        assert counts["projects"] == 1
+        result = claim_legacy_default("42")
+        assert result["projects"] == 1
+        assert claim_eligible("42") is False  # already claimed
+
+    def test_second_claim_conflicts(self, fresh_db, monkeypatch, crud):
+        import config
+        from store.legacy_claim import claim_legacy_default, LegacyClaimConflict
+        monkeypatch.setattr(config, "QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", 42)
+        crud.create_project("default", "Legacy Proj")
+        claim_legacy_default("42")
+        with pytest.raises(ValueError):
+            claim_legacy_default("42")  # claim_eligible() now False -> ValueError, not the DB race path
+
+
+# ── Periodic PAT reverification ──────────────────────────────────────────────
+
+class TestPeriodicReverify:
+    def test_still_valid_pat_survives_reverify(self, api_client, mock_whoami, monkeypatch):
+        import config
+        headers, user_id = _connect(api_client, mock_whoami, "qk_reverify_ok", 301)
+        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
+        resp = api_client.get("/api/auth/me")
+        assert resp.get_json()["user_id"] == user_id
+
+    def test_revoked_pat_invalidates_session(self, api_client, mock_whoami, monkeypatch):
+        import config
+        from helpers.qiita_client import WhoAmIResult
+        headers, _ = _connect(api_client, mock_whoami, "qk_reverify_revoke", 302)
+        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
+        mock_whoami("qk_reverify_revoke", WhoAmIResult(ok=False, transient_error=False))
+        resp = api_client.get("/api/auth/me")
+        assert resp.get_json() == {"anonymous": True}
+        assert api_client.get("/api/projects").status_code == 401
+
+    def test_transient_failure_503_without_deleting_session(self, api_client, mock_whoami, monkeypatch):
+        import config
+        from helpers.qiita_client import WhoAmIResult
+        headers, user_id = _connect(api_client, mock_whoami, "qk_reverify_flaky", 303)
+        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
+        mock_whoami("qk_reverify_flaky", WhoAmIResult(ok=False, transient_error=True))
+        during_outage = api_client.get("/api/auth/me")
+        assert during_outage.status_code == 503
+        # Qiita recovers: the session must still be usable, no re-login needed.
+        mock_whoami("qk_reverify_flaky", _human(303))
+        recovered = api_client.get("/api/auth/me")
+        assert recovered.get_json()["user_id"] == user_id
+
+    def test_principal_mismatch_invalidates_session(self, api_client, mock_whoami, monkeypatch):
+        import config
+        headers, _ = _connect(api_client, mock_whoami, "qk_reverify_mismatch", 304)
+        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
+        # Same token now resolves to a DIFFERENT principal_idx (e.g. rotated upstream).
+        mock_whoami("qk_reverify_mismatch", _human(999))
+        resp = api_client.get("/api/auth/me")
+        assert resp.get_json() == {"anonymous": True}
+
+
+# ── Route: connect / me / logout ─────────────────────────────────────────────
+
+class TestAuthRoutes:
+    def test_login_url(self, api_client):
+        resp = api_client.get("/api/auth/login-url")
+        assert resp.status_code == 200
+        assert resp.get_json()["url"].endswith("/api/v1/auth/login")
+
+    def test_me_anonymous(self, api_client):
+        resp = api_client.get("/api/auth/me")
+        assert resp.get_json() == {"anonymous": True}
+
+    def test_connect_missing_token(self, api_client):
+        resp = api_client.post("/api/auth/connect", json={})
+        assert resp.status_code == 400
+
+    def test_connect_invalid_token(self, api_client, mock_whoami):
+        resp = api_client.post("/api/auth/connect", json={"token": "qk_bad"})
+        assert resp.status_code == 401
+
+    def test_connect_rejects_service_principal(self, api_client, mock_whoami):
+        # qiita_client.whoami() itself is the enforcement point for non-human
+        # kinds (see TestQiitaClientWhoami.test_service_kind_rejected below) —
+        # here we just confirm the route correctly surfaces ok=False as 401.
+        from helpers.qiita_client import WhoAmIResult
+        mock_whoami("qk_service", WhoAmIResult(ok=False, transient_error=False))
+        resp = api_client.post("/api/auth/connect", json={"token": "qk_service"})
+        assert resp.status_code == 401
+
+    def test_connect_transient_upstream_failure(self, api_client, mock_whoami):
+        from helpers.qiita_client import WhoAmIResult
+        mock_whoami("qk_flaky", WhoAmIResult(ok=False, transient_error=True))
+        resp = api_client.post("/api/auth/connect", json={"token": "qk_flaky"})
+        assert resp.status_code == 503
+
+    def test_connect_success_sets_cookie_and_me_persists(self, api_client, mock_whoami):
+        headers, user_id = _connect(api_client, mock_whoami, "qk_good_1", 101)
+        me = api_client.get("/api/auth/me")
+        assert me.get_json()["user_id"] == user_id
+        assert me.get_json()["csrf_token"] == headers["X-CSRF-Token"]
+
+    def test_protected_route_requires_auth(self, api_client):
+        resp = api_client.get("/api/projects")
+        assert resp.status_code == 401
+
+    def test_public_route_still_works_unauthenticated(self, api_client):
+        # /api/auth/* bootstrap endpoints are the only public ones; confirm
+        # the guard doesn't accidentally block them.
+        resp = api_client.get("/api/auth/login-url")
+        assert resp.status_code == 200
+
+    def test_csrf_required_for_state_changing_requests(self, api_client, mock_whoami):
+        headers, _ = _connect(api_client, mock_whoami, "qk_good_2", 102)
+        no_csrf = api_client.post("/api/projects", json={"name": "x"})
+        assert no_csrf.status_code == 403
+        wrong_csrf = api_client.post("/api/projects", json={"name": "x"}, headers={"X-CSRF-Token": "nope"})
+        assert wrong_csrf.status_code == 403
+        ok = api_client.post("/api/projects", json={"name": "x"}, headers=headers)
+        assert ok.status_code == 200
+
+    def test_logout_clears_session(self, api_client, mock_whoami):
+        headers, _ = _connect(api_client, mock_whoami, "qk_good_3", 103)
+        resp = api_client.post("/api/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert api_client.get("/api/auth/me").get_json() == {"anonymous": True}
+        assert api_client.get("/api/projects").status_code == 401
+
+
+# ── Cross-user isolation (the core security goal) ────────────────────────────
+
+class TestCrossUserIsolation:
+    def test_projects_isolated(self, api_client, mock_whoami):
+        h_a, uid_a = _connect(api_client, mock_whoami, "qk_iso_a1", 201)
+        resp = api_client.post("/api/projects", json={"name": "A's project"}, headers=h_a)
+        proj = resp.get_json()
+        assert proj["user_id"] == uid_a
+
+        h_b, _ = _connect(api_client, mock_whoami, "qk_iso_b1", 202)
+        assert api_client.get(f"/api/projects/{proj['project_id']}", headers=h_b).status_code == 404
+        assert api_client.get("/api/projects", headers=h_b).get_json()["projects"] == []
+        # B cannot delete A's project either
+        api_client.delete(f"/api/projects/{proj['project_id']}", headers=h_b)
+        h_a2, _ = _connect(api_client, mock_whoami, "qk_iso_a1", 201)
+        assert api_client.get(f"/api/projects/{proj['project_id']}", headers=h_a2).status_code == 200
+
+    def test_global_chats_isolated(self, api_client, mock_whoami):
+        h_a, _ = _connect(api_client, mock_whoami, "qk_iso_a2", 203)
+        chat = api_client.post("/api/global-chats", json={"title": "A chat"}, headers=h_a).get_json()
+
+        h_b, _ = _connect(api_client, mock_whoami, "qk_iso_b2", 204)
+        assert api_client.get(f"/api/global-chats/{chat['chat_id']}", headers=h_b).status_code == 404
+
+    def test_merge_workspace_study_mutations_owner_scoped(self, api_client, mock_whoami):
+        h_a, _ = _connect(api_client, mock_whoami, "qk_iso_a3", 205)
+        ws = api_client.post("/api/merge-workspaces", json={"name": "WS A"}, headers=h_a).get_json()
+
+        h_b, _ = _connect(api_client, mock_whoami, "qk_iso_b3", 206)
+        add = api_client.post(f"/api/merge-workspaces/{ws['workspace_id']}/studies",
+                               json={"study_id": 111}, headers=h_b)
+        assert add.status_code == 404
+        rm = api_client.delete(f"/api/merge-workspaces/{ws['workspace_id']}/studies/111", headers=h_b)
+        assert rm.status_code == 404
+        upd = api_client.patch(f"/api/merge-workspaces/{ws['workspace_id']}/studies/111",
+                                json={"chosen_artifact_ids": [1]}, headers=h_b)
+        assert upd.status_code == 404
+        jobs = api_client.get(f"/api/merge-workspaces/{ws['workspace_id']}/jobs", headers=h_b)
+        assert jobs.get_json() == []  # not an error, just correctly empty for B
+
+    def test_user_id_spoofing_ignored(self, api_client, mock_whoami):
+        """A client-supplied user_id must never override the session identity."""
+        h_a, uid_a = _connect(api_client, mock_whoami, "qk_iso_a4", 207)
+        h_b, uid_b = _connect(api_client, mock_whoami, "qk_iso_b4", 208)
+        # B tries to create a project claiming to be A via a spoofed body field.
+        resp = api_client.post(f"/api/projects?user_id={uid_a}", json={"name": "spoof", "user_id": uid_a}, headers=h_b)
+        assert resp.get_json()["user_id"] == uid_b  # server derives identity from session only

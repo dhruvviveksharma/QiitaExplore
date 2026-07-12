@@ -42,6 +42,14 @@ def crud():
 
 
 @pytest.fixture
+def global_chat_crud():
+    """Global-chat CRUD lives in its own module (split out of store/crud.py
+    to keep it under the 500-line cap)."""
+    import store.global_chat_crud as sql_store_global_chat_crud
+    return sql_store_global_chat_crud
+
+
+@pytest.fixture
 def sample_user_id():
     return "test_user_001"
 

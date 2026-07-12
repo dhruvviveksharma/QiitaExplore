@@ -1,6 +1,6 @@
 import logging
 
-from flask import Response, jsonify, request, stream_with_context
+from flask import Response, g, jsonify, request, stream_with_context
 
 from run import app
 from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars, model_supports_tools
@@ -29,22 +29,21 @@ from helpers.qiita_fetch import (
     _build_samples_report_payload,
     _pin_studies_validated,
 )
+from helpers.pin_flow import stream_pin_flow
 
 logger = logging.getLogger(__name__)
 
 
 @app.route('/api/global-chats', methods=['GET'])
 def api_list_global_chats():
-    user_id = request.args.get('user_id') or 'default'
-    return jsonify({'chats': list_global_chats(user_id)})
+    return jsonify({'chats': list_global_chats(g.user_id)})
 
 
 @app.route('/api/global-chats', methods=['POST'])
 def api_create_global_chat():
-    data    = request.get_json() or {}
-    user_id = (data.get('user_id') or 'default').strip() or 'default'
-    title   = data.get('title')
-    chat    = create_global_chat(user_id, title=title)
+    data  = request.get_json() or {}
+    title = data.get('title')
+    chat  = create_global_chat(g.user_id, title=title)
     if not chat:
         return jsonify({'error': 'Failed to create global chat'}), 500
     return jsonify(chat)
@@ -52,8 +51,7 @@ def api_create_global_chat():
 
 @app.route('/api/global-chats/<chat_id>', methods=['GET'])
 def api_get_global_chat(chat_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_global_chat(user_id, chat_id)
+    chat = get_global_chat(g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     return jsonify(chat)
@@ -61,15 +59,14 @@ def api_get_global_chat(chat_id):
 
 @app.route('/api/global-chats/<chat_id>', methods=['DELETE'])
 def api_delete_global_chat(chat_id):
-    user_id = request.args.get('user_id') or 'default'
-    delete_global_chat(user_id, chat_id)
+    delete_global_chat(g.user_id, chat_id)
     return jsonify({'ok': True})
 
 
 @app.route('/api/global-chats/<chat_id>/message/stream', methods=['POST'])
 def api_global_chat_message_stream(chat_id):
     data             = request.get_json() or {}
-    user_id          = (data.get('user_id') or 'default').strip() or 'default'
+    user_id          = g.user_id
     user_content     = (data.get('message') or data.get('content') or '').strip()
     model            = data.get('model')
     deep_search      = bool(data.get("deep_search"))
@@ -103,41 +100,15 @@ def api_global_chat_message_stream(chat_id):
         try:
             yield ': keepalive\n\n'
             if pin_study_ids is not None:
-                yield _sse("step_start", {"name": "pin_studies", "label": f"Pinning {len(pin_study_ids)} {'study' if len(pin_study_ids) == 1 else 'studies'}…"})
-                pinned_now, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, SCOPE_GLOBAL, pin_study_ids)
-                detail_parts = []
-                if pinned_now:
-                    detail_parts.append(f"{len(pinned_now)} pinned")
-                if invalid:
-                    detail_parts.append(f"{len(invalid)} not found")
-                if rejected:
-                    detail_parts.append(f"{len(rejected)} over cap")
-                yield _sse("step_done", {"name": "pin_studies", "label": "Studies pinned", "detail": " · ".join(detail_parts) or "none added"})
-                deep_ctx = None
-                if all_pinned:
-                    yield _sse("step_start", {"name": "deep_context", "label": "Loading pinned study data…"})
-                    deep_ctx = _build_pinned_reports_context(all_pinned)
-                    yield _sse("step_done", {"name": "deep_context", "label": "Pinned reports ready", "detail": f"{len(all_pinned)} studies"})
-                    yield ': keepalive\n\n'
-                ack_lines = []
-                if pinned_now:
-                    ack_lines.append(f"Newly pinned: {', '.join(str(s) for s in pinned_now)}.")
-                if invalid:
-                    ack_lines.append(f"Not found / private (skipped): {', '.join(str(s) for s in invalid)}.")
-                if rejected:
-                    ack_lines.append(f"Could not pin (10-study cap reached): {', '.join(str(s) for s in rejected)}.")
-                ack_instruction = (
-                    " ".join(ack_lines) +
-                    " Using the STUDY CONTEXT provided, give a one-sentence summary of each newly-pinned study "
-                    "(data type, sample count, topic). Be concise."
+                all_pinned = yield from stream_pin_flow(
+                    pin_study_ids=pin_study_ids,
+                    chat_id=chat_id,
+                    scope=SCOPE_GLOBAL,
+                    full_msgs=full_msgs,
+                    model=model,
+                    system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
+                    persist=lambda ac: append_global_chat_messages(user_id, chat_id, user_content, ac),
                 )
-                llm_msgs = full_msgs[:-1] + [{"role": "user", "content": ack_instruction}]
-                yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                for token in llm_chat_stream(llm_msgs, study_context_text=deep_ctx, system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, model=model):
-                    assistant_parts.append(token)
-                    yield _sse("token", {"token": token})
-                assistant_content = "".join(assistant_parts).strip()
-                append_global_chat_messages(user_id, chat_id, user_content, assistant_content)
                 yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
                 return
             if report_study_id is not None:
@@ -289,8 +260,7 @@ def api_global_chat_message_stream(chat_id):
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_global_chat_study(chat_id, study_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_global_chat(user_id, chat_id)
+    chat = get_global_chat(g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_GLOBAL, [study_id])
@@ -299,8 +269,7 @@ def api_pin_global_chat_study(chat_id, study_id):
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_global_chat_study(chat_id, study_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_global_chat(user_id, chat_id)
+    chat = get_global_chat(g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     unpin_study_from_chat(chat_id, SCOPE_GLOBAL, study_id)

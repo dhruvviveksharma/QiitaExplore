@@ -189,6 +189,36 @@ def _create_schema(conn):
             sample_ids_json TEXT,
             cached_at       TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS users (
+            user_id          TEXT PRIMARY KEY,
+            principal_idx    INTEGER NOT NULL,
+            email            TEXT,
+            system_role      TEXT,
+            scopes           TEXT,
+            profile_complete INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT,
+            updated_at       TEXT,
+            last_login_at    TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            session_hash        TEXT PRIMARY KEY,
+            user_id             TEXT NOT NULL,
+            pat_encrypted       TEXT NOT NULL,
+            token_idx           TEXT,
+            source              TEXT NOT NULL DEFAULT 'paste',
+            pat_expires_at      TEXT,
+            csrf_token          TEXT NOT NULL,
+            created_at          TEXT,
+            last_seen_at        TEXT,
+            last_verified_at    TEXT,
+            absolute_expires_at TEXT NOT NULL,
+            revoked_at          TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(absolute_expires_at);
         """
     )
     for col, definition in [

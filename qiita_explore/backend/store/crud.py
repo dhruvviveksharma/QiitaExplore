@@ -132,24 +132,14 @@ def create_project(user_id: str, name: str):
     return get_project(project_id, user_id)
 
 
-def get_project(project_id: str, user_id: str = None):
+def get_project(project_id: str, user_id: str):
+    """Return the project only if it is owned by user_id — no cross-user fallback."""
+    resolved_user = (user_id or "").strip() or "default"
     with _conn() as conn:
-        if user_id is not None:
-            resolved_user = (user_id or "").strip() or "default"
-            row = conn.execute(
-                "SELECT project_id, user_id, name, created_at, updated_at FROM projects WHERE project_id = ? AND user_id = ?",
-                (project_id, resolved_user),
-            ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT project_id, user_id, name, created_at, updated_at FROM projects WHERE project_id = ?",
-                    (project_id,),
-                ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT project_id, user_id, name, created_at, updated_at FROM projects WHERE project_id = ?",
-                (project_id,),
-            ).fetchone()
+        row = conn.execute(
+            "SELECT project_id, user_id, name, created_at, updated_at FROM projects WHERE project_id = ? AND user_id = ?",
+            (project_id, resolved_user),
+        ).fetchone()
         if row is None:
             return None
         project = _as_dict(row)
@@ -417,99 +407,6 @@ def delete_chat(project_id: str, user_id: str, chat_id: str):
     return get_project(project_id, resolved_user)
 
 
-def list_global_chats(user_id: str, limit: int = 200):
-    resolved_user = (user_id or "").strip() or "default"
-    limit = max(1, min(500, int(limit)))
-    with _conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT gc.chat_id, gc.title, gc.created_at, gc.updated_at,
-                   (SELECT COUNT(1) FROM global_chat_messages m WHERE m.chat_id = gc.chat_id) AS messages_count
-            FROM global_chats gc
-            WHERE gc.user_id = ?
-            ORDER BY gc.updated_at DESC, gc.created_at DESC
-            LIMIT ?
-            """,
-            (resolved_user, limit),
-        ).fetchall()
-    return [_as_dict(r) for r in rows]
-
-
-def _load_global_messages(conn, chat_id):
-    rows = conn.execute(
-        "SELECT role, content, ui_payload, created_at FROM global_chat_messages WHERE chat_id = ? ORDER BY id ASC",
-        (chat_id,),
-    ).fetchall()
-    return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
-
-
-def get_global_chat(user_id: str, chat_id: str):
-    from store.cache import SCOPE_GLOBAL, _load_pinned_studies
-    resolved_user = (user_id or "").strip() or "default"
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT chat_id, title, created_at, updated_at FROM global_chats WHERE user_id = ? AND chat_id = ?",
-            (resolved_user, chat_id),
-        ).fetchone()
-        if row is None:
-            return None
-        chat = _as_dict(row)
-        chat["messages"] = _load_global_messages(conn, chat_id)
-        chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_GLOBAL)
-        return chat
-
-
-def create_global_chat(user_id: str, title: str = None):
-    resolved_user = (user_id or "").strip() or "default"
-    chat_id = str(uuid.uuid4())[:8]
-    now = _now()
-    resolved_title = (title or "New chat")[:60].strip() or "New chat"
-    with _conn() as conn:
-        conn.execute(
-            "INSERT INTO global_chats(chat_id, user_id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
-            (chat_id, resolved_user, resolved_title, now, now),
-        )
-        conn.commit()
-    return get_global_chat(resolved_user, chat_id)
-
-
-def append_global_chat_messages(
-    user_id: str,
-    chat_id: str,
-    user_content: str,
-    assistant_content: str,
-    assistant_ui_payload: dict = None,
-):
-    resolved_user = (user_id or "").strip() or "default"
-    with _conn() as conn:
-        row = conn.execute(
-            "SELECT title FROM global_chats WHERE user_id = ? AND chat_id = ?",
-            (resolved_user, chat_id),
-        ).fetchone()
-        if row is None:
-            return None
-
-        now = _now()
-        _insert_chat_message_pair(
-            conn, "global_chat_messages", chat_id,
-            user_content, assistant_content, assistant_ui_payload, now,
-        )
-        title = _resolved_chat_title(row["title"], user_content)
-        conn.execute(
-            "UPDATE global_chats SET title = ?, updated_at = ? WHERE user_id = ? AND chat_id = ?",
-            (title, now, resolved_user, chat_id),
-        )
-        conn.commit()
-
-    return get_global_chat(resolved_user, chat_id)
-
-
-def delete_global_chat(user_id: str, chat_id: str):
-    resolved_user = (user_id or "").strip() or "default"
-    with _conn() as conn:
-        conn.execute(
-            "DELETE FROM global_chats WHERE user_id = ? AND chat_id = ?",
-            (resolved_user, chat_id),
-        )
-        conn.commit()
-    return {"ok": True}
+# list_global_chats, get_global_chat, create_global_chat,
+# append_global_chat_messages, delete_global_chat moved to
+# store/global_chat_crud.py to keep this file under the 500-line cap.

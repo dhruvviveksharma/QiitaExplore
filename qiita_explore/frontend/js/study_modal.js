@@ -14,7 +14,7 @@ function AddToProjectBar({ study }) {
   const [msg,        setMsg]        = useState('');
 
   useEffect(() => {
-    apiFetch('/projects?user_id=default')
+    apiFetch('/projects')
       .then(r => r.ok ? r.json() : { projects: [] })
       .then(d => {
         const list = d.projects || [];
@@ -30,7 +30,7 @@ function AddToProjectBar({ study }) {
       let projName = '';
       if (!projId) {
         const name = newName.trim() || 'New Project';
-        const res = await apiPost('/projects', { user_id: 'default', name });
+        const res = await apiPost('/projects', { name });
         if (!res.ok) { setMsg('Failed to create project.'); setAdding(false); return; }
         const p = await res.json();
         projId = p.project_id;
@@ -39,7 +39,6 @@ function AddToProjectBar({ study }) {
         projName = projects.find(p => p.project_id === projId)?.name || projId;
       }
       const addRes = await apiPost(`/projects/${projId}/studies`, {
-        user_id: 'default',
         study: {
           study_id: study.study_id,
           study_title: study.study_title,
@@ -96,7 +95,7 @@ function AddToMergeBar({ study }) {
   const [msg,        setMsg]        = useState('');
 
   useEffect(() => {
-    apiFetch('/merge-workspaces?user_id=default')
+    apiFetch('/merge-workspaces')
       .then(r => r.ok ? r.json() : [])
       .then(list => {
         setWorkspaces(list);
@@ -111,7 +110,7 @@ function AddToMergeBar({ study }) {
       let wsName = '';
       if (!wsId) {
         const name = newName.trim() || 'New Merge';
-        const res = await apiPost('/merge-workspaces', { user_id: 'default', name });
+        const res = await apiPost('/merge-workspaces', { name });
         if (!res.ok) { setMsg('Failed to create merge.'); setAdding(false); return; }
         const ws = await res.json();
         wsId = ws.workspace_id;

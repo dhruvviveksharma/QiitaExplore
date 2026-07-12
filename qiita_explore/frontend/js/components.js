@@ -629,11 +629,7 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
   const saveKey = async () => {
     if (!apiKeyInput.trim()) return;
     setSaving(true);
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ anthropic_api_key: apiKeyInput.trim() }),
-    });
+    await apiPost('/settings', { anthropic_api_key: apiKeyInput.trim() });
     setSaving(false);
     onPick(pendingClaude, true);
   };

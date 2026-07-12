@@ -1,6 +1,6 @@
 import json
 
-from flask import jsonify, request
+from flask import g, jsonify, request
 
 from run import app, _bg_executor
 from store import (
@@ -72,16 +72,14 @@ def _enrich_study_in_project(project_id: str, study_id: int):
 
 @app.route('/api/projects', methods=['GET'])
 def api_list_projects():
-    user_id = request.args.get('user_id') or 'default'
-    return jsonify({'projects': list_projects(user_id)})
+    return jsonify({'projects': list_projects(g.user_id)})
 
 
 @app.route('/api/projects', methods=['POST'])
 def api_create_project():
-    data    = request.get_json() or {}
-    user_id = (data.get('user_id') or 'default').strip() or 'default'
-    name    = (data.get('name') or 'Untitled').strip() or 'Untitled'
-    proj    = create_project(user_id, name)
+    data = request.get_json() or {}
+    name = (data.get('name') or 'Untitled').strip() or 'Untitled'
+    proj = create_project(g.user_id, name)
     if not proj:
         return jsonify({'error': 'Failed to create project'}), 500
     return jsonify(proj)
@@ -89,8 +87,7 @@ def api_create_project():
 
 @app.route('/api/projects/<project_id>', methods=['GET'])
 def api_get_project(project_id):
-    user_id = request.args.get('user_id') or 'default'
-    proj    = get_project(project_id, user_id)
+    proj = get_project(project_id, g.user_id)
     if not proj:
         return jsonify({'error': 'Project not found'}), 404
     return jsonify(proj)
@@ -98,19 +95,14 @@ def api_get_project(project_id):
 
 @app.route('/api/projects/<project_id>', methods=['DELETE'])
 def api_delete_project(project_id):
-    user_id = (
-        request.args.get('user_id')
-        or (request.get_json(silent=True) or {}).get('user_id')
-        or 'default'
-    )
-    delete_project(project_id, user_id)
+    delete_project(project_id, g.user_id)
     return jsonify({'ok': True})
 
 
 @app.route('/api/projects/<project_id>/studies', methods=['POST'])
 def api_add_study(project_id):
     data    = request.get_json() or {}
-    user_id = (data.get('user_id') or 'default').strip() or 'default'
+    user_id = g.user_id
     study   = data.get('study')
     if not study or study.get('study_id') is None:
         return jsonify({'error': 'study with study_id required'}), 400
@@ -130,9 +122,7 @@ def api_add_study(project_id):
 @app.route('/api/projects/<project_id>/studies/enrich-all', methods=['POST'])
 def api_enrich_all_studies(project_id):
     """Re-fetch enriched data for all studies in a project."""
-    data    = request.get_json(silent=True) or {}
-    user_id = (data.get('user_id') or 'default').strip() or 'default'
-    proj    = get_project(project_id, user_id)
+    proj = get_project(project_id, g.user_id)
     if not proj:
         return jsonify({'error': 'Project not found'}), 404
 
@@ -149,14 +139,13 @@ def api_enrich_all_studies(project_id):
         except Exception:
             pass
 
-    updated = get_project(project_id, user_id)
+    updated = get_project(project_id, g.user_id)
     return jsonify({'ok': True, 'updated': len(futures), 'project': updated})
 
 
 @app.route('/api/projects/<project_id>/studies/<int:study_id>', methods=['DELETE'])
 def api_remove_study(project_id, study_id):
-    user_id = request.args.get('user_id') or 'default'
-    proj    = remove_study_from_project(project_id, user_id, study_id)
+    proj = remove_study_from_project(project_id, g.user_id, study_id)
     if proj is None:
         return jsonify({'error': 'Project not found'}), 404
     return jsonify(proj)
@@ -165,9 +154,7 @@ def api_remove_study(project_id, study_id):
 @app.route('/api/projects/<project_id>/preload', methods=['POST'])
 def api_project_preload(project_id):
     """Warm study_detail_cache.full_samples_json for every study in the project."""
-    data    = request.get_json(silent=True) or {}
-    user_id = (data.get('user_id') or request.args.get('user_id') or 'default').strip() or 'default'
-    proj    = get_project(project_id, user_id)
+    proj = get_project(project_id, g.user_id)
     if not proj:
         return jsonify({'error': 'Project not found'}), 404
     queued = []

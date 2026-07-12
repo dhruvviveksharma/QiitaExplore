@@ -1,6 +1,6 @@
 import logging
 
-from flask import Response, jsonify, request, stream_with_context
+from flask import Response, g, jsonify, request, stream_with_context
 
 from run import app
 from config import context_budget_chars
@@ -29,21 +29,21 @@ from helpers.qiita_fetch import (
     _detect_mentioned_study_ids,
     _pin_studies_validated,
 )
+from helpers.pin_flow import stream_pin_flow
 
 logger = logging.getLogger(__name__)
 
 
 @app.route('/api/projects/<project_id>/chats', methods=['GET'])
 def api_list_chats(project_id):
-    user_id = request.args.get('user_id') or 'default'
-    chats   = list_chats(project_id, user_id)
+    chats = list_chats(project_id, g.user_id)
     return jsonify({'chats': chats})
 
 
 @app.route('/api/projects/<project_id>/chats', methods=['POST'])
 def api_create_chat(project_id):
     data          = request.get_json() or {}
-    user_id       = (data.get('user_id') or 'default').strip() or 'default'
+    user_id       = g.user_id
     proj          = get_project(project_id, user_id)
     if not proj:
         return jsonify({'error': 'Project not found'}), 404
@@ -60,8 +60,7 @@ def api_create_chat(project_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>', methods=['GET'])
 def api_get_chat(project_id, chat_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_chat(project_id, user_id, chat_id)
+    chat = get_chat(project_id, g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     return jsonify(chat)
@@ -69,15 +68,14 @@ def api_get_chat(project_id, chat_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>', methods=['DELETE'])
 def api_delete_chat(project_id, chat_id):
-    user_id = request.args.get('user_id') or 'default'
-    delete_chat(project_id, user_id, chat_id)
+    delete_chat(project_id, g.user_id, chat_id)
     return jsonify({'ok': True})
 
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/message/stream', methods=['POST'])
 def api_chat_message_stream(project_id, chat_id):
     data            = request.get_json() or {}
-    user_id         = (data.get('user_id') or 'default').strip() or 'default'
+    user_id         = g.user_id
     user_content    = (data.get('message') or data.get('content') or '').strip()
     model           = data.get('model')
     report_study_id = data.get("report_study_id")
@@ -110,41 +108,14 @@ def api_chat_message_stream(project_id, chat_id):
         ui_payload      = None
         try:
             if pin_study_ids is not None:
-                yield _sse("step_start", {"name": "pin_studies", "label": f"Pinning {len(pin_study_ids)} {'study' if len(pin_study_ids) == 1 else 'studies'}…"})
-                pinned_now, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, SCOPE_PROJECT, pin_study_ids)
-                detail_parts = []
-                if pinned_now:
-                    detail_parts.append(f"{len(pinned_now)} pinned")
-                if invalid:
-                    detail_parts.append(f"{len(invalid)} not found")
-                if rejected:
-                    detail_parts.append(f"{len(rejected)} over cap")
-                yield _sse("step_done", {"name": "pin_studies", "label": "Studies pinned", "detail": " · ".join(detail_parts) or "none added"})
-                deep_ctx = None
-                if all_pinned:
-                    yield _sse("step_start", {"name": "deep_context", "label": "Loading pinned study data…"})
-                    deep_ctx = _build_pinned_reports_context(all_pinned)
-                    yield _sse("step_done", {"name": "deep_context", "label": "Pinned reports ready", "detail": f"{len(all_pinned)} studies"})
-                    yield ': keepalive\n\n'
-                ack_lines = []
-                if pinned_now:
-                    ack_lines.append(f"Newly pinned: {', '.join(str(s) for s in pinned_now)}.")
-                if invalid:
-                    ack_lines.append(f"Not found / private (skipped): {', '.join(str(s) for s in invalid)}.")
-                if rejected:
-                    ack_lines.append(f"Could not pin (10-study cap reached): {', '.join(str(s) for s in rejected)}.")
-                ack_instruction = (
-                    " ".join(ack_lines) +
-                    " Using the STUDY CONTEXT provided, give a one-sentence summary of each newly-pinned study "
-                    "(data type, sample count, topic). Be concise."
+                all_pinned = yield from stream_pin_flow(
+                    pin_study_ids=pin_study_ids,
+                    chat_id=chat_id,
+                    scope=SCOPE_PROJECT,
+                    full_msgs=full_msgs,
+                    model=model,
+                    persist=lambda ac: append_chat_messages(project_id, user_id, chat_id, user_content, ac),
                 )
-                llm_msgs = full_msgs[:-1] + [{"role": "user", "content": ack_instruction}]
-                yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                for token in llm_chat_stream(llm_msgs, study_context_text=deep_ctx, model=model):
-                    assistant_parts.append(token)
-                    yield _sse("token", {"token": token})
-                assistant_content = "".join(assistant_parts).strip()
-                append_chat_messages(project_id, user_id, chat_id, user_content, assistant_content)
                 yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
                 return
             if report_study_id is not None:
@@ -203,8 +174,7 @@ def api_chat_message_stream(project_id, chat_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_project_chat_study(project_id, chat_id, study_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_chat(project_id, user_id, chat_id)
+    chat = get_chat(project_id, g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_PROJECT, [study_id])
@@ -213,8 +183,7 @@ def api_pin_project_chat_study(project_id, chat_id, study_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_project_chat_study(project_id, chat_id, study_id):
-    user_id = request.args.get('user_id') or 'default'
-    chat    = get_chat(project_id, user_id, chat_id)
+    chat = get_chat(project_id, g.user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     unpin_study_from_chat(chat_id, SCOPE_PROJECT, study_id)

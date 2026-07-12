@@ -119,6 +119,8 @@ def api_study_detail(study_id):
 @app.route('/api/studies/<int:study_id>/samples/<path:sample_id>', methods=['GET'])
 def api_sample_detail(study_id, sample_id):
     """Return all metadata fields for a single sample."""
+    if not is_study_public(study_id):
+        return jsonify({'error': 'Study not found or not public'}), 404
     try:
         with TRN:
             TRN.add(

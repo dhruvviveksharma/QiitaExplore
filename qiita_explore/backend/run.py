@@ -20,8 +20,12 @@ from flask import Flask
 from flask_cors import CORS
 from concurrent.futures import ThreadPoolExecutor
 
+import config
+from helpers.auth_middleware import register_auth_middleware
+
 app = Flask(__name__)
-CORS(app)
+CORS(app, supports_credentials=True, origins=config.ALLOWED_ORIGINS)
+register_auth_middleware(app)
 
 _bg_executor = ThreadPoolExecutor(max_workers=4)
 
@@ -32,11 +36,13 @@ sys.modules.setdefault('run', sys.modules[__name__])
 
 # Import route modules to register their @app.route decorators.
 # These must come AFTER app and _bg_executor are defined.
+import routes.auth_routes         # noqa: F401, E402
 import routes.study_routes        # noqa: F401, E402
 import routes.project_routes      # noqa: F401, E402
 import routes.chat_routes         # noqa: F401, E402
 import routes.global_chat_routes  # noqa: F401, E402
 import routes.merge_routes        # noqa: F401, E402
+import routes.artifact_routes     # noqa: F401, E402 (split out of merge_routes)
 
 if __name__ == '__main__':
     print("QIITA SEARCH API -- http://localhost:5001 (DEBUG MODE)")

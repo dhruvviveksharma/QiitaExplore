@@ -1,7 +1,6 @@
 import json
-import os
 
-from flask import jsonify, request, send_file
+from flask import g, jsonify, request
 
 from run import app, _bg_executor
 from store import (
@@ -20,52 +19,13 @@ from store import (
     get_study_detail_cache,
     upsert_study_detail_cache,
 )
-from helpers.qiita_fetch import _fetch_study_detail_from_qiita, _qiita_fetch
-from helpers.artifact_graph import fetch_artifact_graph
+from helpers.qiita_fetch import _fetch_study_detail_from_qiita
 from helpers.biom_autopick import (autopick_artifact, autopick_reason,
                                    check_namespace_compatibility,
                                    studies_type_intersection, _namespace)
 from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
 from helpers.merge_samples import build_sample_page
 from helpers.merge_executor import run_merge_job, MERGE_RESULTS_DIR
-
-_DEFAULT_USER = "default"
-
-_FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
-
-
-def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
-    """Return (real_path, filename) for a file within an artifact, with safety checks."""
-    cached = get_study_detail_cache(study_id)
-    graph = None
-    if cached and cached.get("artifact_graph_json"):
-        try:
-            graph = json.loads(cached["artifact_graph_json"])
-        except Exception:
-            pass
-    if not graph:
-        graph = fetch_artifact_graph(study_id)
-    node = next((n for n in graph if n.get("kind") == "artifact" and n.get("artifact_id") == artifact_id), None)
-    if not node:
-        raise ValueError(f"Artifact {artifact_id} not in study {study_id}")
-    fp_entry = next((f for f in (node.get("filepaths") or []) if f.get("filepath_id") == filepath_id), None)
-    if not fp_entry:
-        raise ValueError(f"File {filepath_id} not in artifact {artifact_id}")
-    full_path = fp_entry.get("full_path") or ""
-    if not full_path:
-        raise ValueError("No path for this file")
-    real = os.path.realpath(full_path)
-    if not os.path.isfile(real):
-        raise ValueError("File not found on disk")
-    if any(real.startswith(r) for r in _FORBIDDEN_ROOTS):
-        raise ValueError("Path not in allowed directory")
-    return real, fp_entry.get("filename") or os.path.basename(real)
-
-
-def _user_id():
-    return (request.args.get("user_id") or
-            (request.get_json(silent=True) or {}).get("user_id") or
-            _DEFAULT_USER)
 
 
 def _get_artifacts(study_id: int) -> list:
@@ -112,23 +72,20 @@ def _get_sample_ids(study_id: int):
 
 @app.route("/api/merge-workspaces", methods=["GET"])
 def list_merge_workspaces():
-    user_id = _user_id()
-    return jsonify(list_workspaces(user_id))
+    return jsonify(list_workspaces(g.user_id))
 
 
 @app.route("/api/merge-workspaces", methods=["POST"])
 def create_merge_workspace():
     body = request.json or {}
     name = (body.get("name") or "").strip() or "Untitled Merge"
-    user_id = (body.get("user_id") or _DEFAULT_USER).strip() or _DEFAULT_USER
-    ws = create_workspace(user_id, name)
+    ws = create_workspace(g.user_id, name)
     return jsonify(ws), 201
 
 
 @app.route("/api/merge-workspaces/<workspace_id>", methods=["GET"])
 def get_merge_workspace(workspace_id):
-    user_id = _user_id()
-    ws = get_workspace(workspace_id, user_id)
+    ws = get_workspace(workspace_id, g.user_id)
     if ws is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify(ws)
@@ -136,8 +93,7 @@ def get_merge_workspace(workspace_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>", methods=["DELETE"])
 def delete_merge_workspace(workspace_id):
-    user_id = _user_id()
-    ok = delete_workspace(workspace_id, user_id)
+    ok = delete_workspace(workspace_id, g.user_id)
     if not ok:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"deleted": workspace_id})
@@ -145,11 +101,10 @@ def delete_merge_workspace(workspace_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>", methods=["PATCH"])
 def patch_merge_workspace(workspace_id):
-    user_id = _user_id()
     name = ((request.json or {}).get("name") or "").strip()
     if not name:
         return jsonify({"error": "name required"}), 400
-    rename_workspace(workspace_id, user_id, name)
+    rename_workspace(workspace_id, g.user_id, name)
     return jsonify({"workspace_id": workspace_id, "name": name})
 
 
@@ -166,7 +121,9 @@ def add_study_to_merge_workspace(workspace_id):
     }
     if not study["study_id"]:
         return jsonify({"error": "study_id required"}), 400
-    studies = add_study_to_workspace(workspace_id, study)
+    studies = add_study_to_workspace(workspace_id, g.user_id, study)
+    if studies == "not_found":
+        return jsonify({"error": "Not found"}), 404
     if studies is None:
         return jsonify({"error": "Workspace already has 5 studies (maximum)"}), 400
     return jsonify({"studies": studies}), 201
@@ -174,7 +131,9 @@ def add_study_to_merge_workspace(workspace_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>/studies/<int:study_id>", methods=["DELETE"])
 def remove_study_from_merge_workspace(workspace_id, study_id):
-    studies = remove_study_from_workspace(workspace_id, study_id)
+    studies = remove_study_from_workspace(workspace_id, g.user_id, study_id)
+    if studies == "not_found":
+        return jsonify({"error": "Not found"}), 404
     return jsonify({"studies": studies})
 
 
@@ -184,10 +143,13 @@ def update_merge_workspace_study(workspace_id, study_id):
     chosen = body.get("chosen_artifact_ids") or body.get("chosen_artifact_id")
     studies = update_workspace_study(
         workspace_id,
+        g.user_id,
         study_id,
         chosen_artifact_ids=chosen if isinstance(chosen, list) else ([chosen] if chosen else []),
         sample_filter=body.get("sample_filter"),
     )
+    if studies == "not_found":
+        return jsonify({"error": "Not found"}), 404
     return jsonify({"studies": studies})
 
 
@@ -195,8 +157,7 @@ def update_merge_workspace_study(workspace_id, study_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>/validate", methods=["GET"])
 def validate_merge_workspace(workspace_id):
-    user_id = _user_id()
-    ws = get_workspace(workspace_id, user_id)
+    ws = get_workspace(workspace_id, g.user_id)
     if ws is None:
         return jsonify({"error": "Not found"}), 404
 
@@ -285,8 +246,7 @@ def validate_merge_workspace(workspace_id):
 @app.route("/api/merge-workspaces/<workspace_id>/samples", methods=["GET"])
 def get_workspace_samples(workspace_id):
     """Return skeleton (study_id, study_title, total BIOM sample count) for each study."""
-    user_id = _user_id()
-    ws = get_workspace(workspace_id, user_id)
+    ws = get_workspace(workspace_id, g.user_id)
     if ws is None:
         return jsonify({"error": "Not found"}), 404
 
@@ -310,8 +270,7 @@ def get_workspace_samples(workspace_id):
 @app.route("/api/merge-workspaces/<workspace_id>/studies/<int:study_id>/samples", methods=["GET"])
 def get_workspace_study_samples(workspace_id, study_id):
     """Return a page of samples with metadata for one study in a workspace."""
-    user_id = _user_id()
-    ws = get_workspace(workspace_id, user_id)
+    ws = get_workspace(workspace_id, g.user_id)
     if ws is None:
         return jsonify({"error": "Not found"}), 404
 
@@ -342,7 +301,7 @@ def get_workspace_study_samples(workspace_id, study_id):
 @app.route("/api/merge-workspaces/<workspace_id>/jobs", methods=["POST"])
 def submit_merge_job(workspace_id):
     body = request.json or {}
-    user_id = (body.get("user_id") or _DEFAULT_USER).strip() or _DEFAULT_USER
+    user_id = g.user_id
 
     ws = get_workspace(workspace_id, user_id)
     if ws is None:
@@ -425,104 +384,18 @@ def submit_merge_job(workspace_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>/jobs", methods=["GET"])
 def get_workspace_jobs(workspace_id):
-    return jsonify(list_merge_jobs(workspace_id))
+    return jsonify(list_merge_jobs(workspace_id, g.user_id))
 
 
 @app.route("/api/merge-jobs/<job_id>", methods=["GET"])
 def poll_merge_job(job_id):
-    job = get_merge_job(job_id)
+    job = get_merge_job(job_id, g.user_id)
     if job is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify(job)
 
 
-# ── Per-artifact sample endpoints ─────────────────────────────────────────────
-
-@app.route("/api/artifacts/<int:artifact_id>/samples", methods=["GET"])
-def get_artifact_samples(artifact_id):
-    """Return sample IDs (+ a few metadata fields) for a BIOM artifact."""
-    study_id = request.args.get("study_id", type=int)
-    limit = min(request.args.get("limit", 50, type=int), 500)
-    if not study_id:
-        return jsonify({"error": "study_id required"}), 400
-
-    artifacts = _get_artifacts(study_id)
-    art = next((a for a in artifacts if a.get("artifact_id") == artifact_id), None)
-    if not art or not art.get("full_path"):
-        return jsonify({"error": "Artifact not found or has no file path"}), 404
-
-    try:
-        sample_ids = get_biom_sample_ids(artifact_id, art["full_path"])
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-    target_ids = sample_ids[:limit]
-    meta_rows = _qiita_fetch(
-        f"""
-        SELECT sample_id, sample_values
-        FROM qiita.sample_{study_id}
-        WHERE sample_id = ANY(%s)
-          AND sample_id <> 'qiita_sample_column_names'
-        """,
-        [target_ids],
-    )
-    meta_by_id = {r[0]: dict(r[1]) for r in meta_rows}
-
-    rows = [{"sample_id": sid, "fields": meta_by_id.get(sid, {})} for sid in target_ids]
-    return jsonify(rows)
-
-
-@app.route("/api/artifacts/sample-counts", methods=["POST"])
-def get_artifact_sample_counts():
-    """Return {artifact_id: num_samples} for a batch of artifact IDs from one study."""
-    body = request.json or {}
-    study_id = body.get("study_id")
-    artifact_ids = body.get("artifact_ids") or []
-    if not study_id or not artifact_ids:
-        return jsonify({"error": "study_id and artifact_ids required"}), 400
-
-    artifacts = _get_artifacts(int(study_id))
-    art_by_id = {a["artifact_id"]: a for a in artifacts}
-
-    counts = {}
-    for aid in artifact_ids:
-        art = art_by_id.get(aid)
-        if not art or not art.get("full_path"):
-            continue
-        try:
-            ids = get_biom_sample_ids(aid, art["full_path"])
-            counts[aid] = len(ids)
-        except Exception:
-            pass
-
-    return jsonify(counts)
-
-
-@app.route("/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download", methods=["GET"])
-def download_artifact_file(artifact_id, filepath_id):
-    study_id = request.args.get("study_id", type=int)
-    if not study_id:
-        return jsonify({"error": "study_id required"}), 400
-    try:
-        real_path, filename = _resolve_artifact_file(study_id, artifact_id, filepath_id)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 403
-    return send_file(real_path, as_attachment=True, download_name=filename)
-
-
-@app.route("/api/merge-jobs/<job_id>/download", methods=["GET"])
-def download_merge_result(job_id):
-    job = get_merge_job(job_id)
-    if job is None:
-        return jsonify({"error": "Not found"}), 404
-    if job.get("status") != "done":
-        return jsonify({"error": f"Job is {job.get('status')}, not done"}), 400
-    result_path = job.get("result_path")
-    if not result_path or not os.path.exists(result_path):
-        return jsonify({"error": "Result file not found"}), 404
-    return send_file(
-        result_path,
-        as_attachment=True,
-        download_name=f"merge_{job_id}.tar.gz",
-        mimetype="application/gzip",
-    )
+# Per-artifact sample endpoints and file downloads
+# (get_artifact_samples, get_artifact_sample_counts, download_artifact_file,
+# download_merge_result) moved to routes/artifact_routes.py to keep this file
+# under the 500-line cap.
