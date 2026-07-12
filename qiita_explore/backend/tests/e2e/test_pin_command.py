@@ -7,7 +7,7 @@ The /pin flow differs from /report:
   - No `ui` SSE event (no inline browser)
   - done event carries pinned_studies: [...] (full list after operation)
 
-Requires a running barnacle backend: bash ezredbiom/start_barnacle.sh
+Requires a running barnacle backend: bash qiita_explore/start_barnacle.sh
 """
 import pytest
 import requests

@@ -1,6 +1,6 @@
 """Fixtures for e2e parity tests.
 
-Requires a running barnacle backend: bash ezredbiom/start_barnacle.sh
+Requires a running barnacle backend: bash qiita_explore/start_barnacle.sh
 Set BARNACLE_URL env var to override the default http://localhost:5001.
 
 Helper functions (search_ids, stream_chat, etc.) live in helpers.py.
@@ -32,7 +32,7 @@ def backend():
     try:
         r = requests.get(f"{BASE}/api/global-chats", params={"user_id": "healthcheck"}, timeout=5)
     except requests.exceptions.RequestException:
-        pytest.skip("barnacle backend not running — start with: bash ezredbiom/start_barnacle.sh")
+        pytest.skip("barnacle backend not running — start with: bash qiita_explore/start_barnacle.sh")
     if r.status_code != 200:
         pytest.skip(f"barnacle backend unhealthy: {r.status_code}")
     return BASE

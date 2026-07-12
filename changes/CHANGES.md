@@ -1,6 +1,6 @@
 # Changes — Qiita Explorer UI (March 2026)
 
-All changes were made to `ezredbiom/Experiment/` during this session.
+All changes were made to `qiita_explore/` during this session.
 
 ---
 
@@ -11,7 +11,7 @@ Study preview cards and the LLM only had basic metadata (title, abstract, PI). N
 
 ### Files Changed
 
-#### `ezredbiom/Experiment/backend/services/study_service.py`
+#### `qiita_explore/backend/services/study_service.py`
 - Rewrote `search_studies_with_sql()` SELECT to include three correlated subqueries:
   - `num_samples` — `COUNT(*)` from `qiita.study_sample`
   - `data_types` — `STRING_AGG(DISTINCT ...)` from `qiita.study_prep_template → data_type`
@@ -19,7 +19,7 @@ Study preview cards and the LLM only had basic metadata (title, abstract, PI). N
 - Also adds `study_alias` and `metadata_complete` from `qiita.study`
 - Caps search results at `LIMIT 50`
 
-#### `ezredbiom/Experiment/backend/run.py`
+#### `qiita_explore/backend/run.py`
 
 **`first_studies()`**
 - Same enriched correlated subqueries added as `search_studies_with_sql()` above
@@ -38,7 +38,7 @@ Study preview cards and the LLM only had basic metadata (title, abstract, PI). N
 - Preps + artifacts are cached in SQLite for 6 hours (TTL) to avoid repeated Qiita queries
 - Each prep object is enriched with platform, target_gene, instrument_model from prep metadata
 
-#### `ezredbiom/Experiment/backend/sql_store.py`
+#### `qiita_explore/backend/sql_store.py`
 - Added `study_detail_cache` table: `(study_id INTEGER PK, preps_json TEXT, artifacts_json TEXT, cached_at TEXT)`
 - Added schema migration: `ALTER TABLE project_studies ADD COLUMN data_types TEXT / num_samples INTEGER / num_preps INTEGER / preps_json TEXT` (safe — no-ops if columns already exist)
 - Updated `add_study_to_project()` INSERT to include the four new columns
@@ -47,7 +47,7 @@ Study preview cards and the LLM only had basic metadata (title, abstract, PI). N
 - Added `upsert_study_detail_cache(study_id, preps_json, artifacts_json)`
 - Added `update_project_study_data(project_id, study_id, *, data_types, num_samples, num_preps, preps_json)` — updates enriched columns for an existing project study using `COALESCE` (only fills NULLs)
 
-#### `ezredbiom/Experiment/backend/store.py`
+#### `qiita_explore/backend/store.py`
 - Re-exports `get_study_detail_cache`, `upsert_study_detail_cache`, `update_project_study_data`
 
 ---
@@ -59,7 +59,7 @@ Study preview cards and the LLM only had basic metadata (title, abstract, PI). N
 
 ### Files Changed
 
-#### `ezredbiom/Experiment/backend/run.py`
+#### `qiita_explore/backend/run.py`
 
 **Refactored `api_add_study()`**
 - Now inserts the study into `project_studies` immediately and returns the updated project to the frontend
@@ -85,7 +85,7 @@ Several actions caused unnecessary full re-fetches of the project or global chat
 
 ### Files Changed
 
-#### `ezredbiom/Experiment/frontend/app.js`
+#### `qiita_explore/frontend/app.js`
 
 | Function | Before | After |
 |---|---|---|
@@ -107,7 +107,7 @@ The study modal only showed title, abstract, and PI info. No prep templates, sam
 
 ### Files Changed
 
-#### `ezredbiom/Experiment/frontend/app.js`
+#### `qiita_explore/frontend/app.js`
 
 **`openStudyModal()` rewrite**
 - Now uses `AbortController` — if the modal is closed before the detail fetch resolves, the fetch is cancelled and no spurious state update fires
@@ -132,7 +132,7 @@ The study modal only showed title, abstract, and PI info. No prep templates, sam
 **Sources tab**
 - Added **↻ Refresh Data** button that triggers `enrichAllStudies()` for the current project
 
-#### `ezredbiom/Experiment/frontend/style.css`
+#### `qiita_explore/frontend/style.css`
 - `.dtype-chip` — orange pill badge for data type labels on cards and modal
 - `.modal-stats` — quick stats row in modal header
 - `.prep-table` — shared table style for preps, samples, artifacts
@@ -172,7 +172,7 @@ _build_project_study_context() → _study_detail_block()
 ### Server Restart Required
 All Python changes require restarting the Flask backend:
 ```bash
-cd ezredbiom/Experiment/backend
+cd qiita_explore/backend
 python run.py
 ```
 After restart, click **↻ Refresh Data** in the Sources tab of any project to populate enriched data for previously-added studies.

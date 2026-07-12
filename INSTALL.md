@@ -16,12 +16,12 @@ conda create -n qiita-web python=3.9
 conda activate qiita-web
 
 # Install all dependencies
-pip install -r ezredbiom/requirements.txt
+pip install -r qiita_explore/requirements.txt
 ```
 
 ## Frontend setup
 
-No build step required. The frontend uses React via Babel standalone loaded from CDN. Just serve the `ezredbiom/frontend/` directory — the Flask dev server does this automatically when you run locally.
+No build step required. The frontend uses React via Babel standalone loaded from CDN. Just serve the `qiita_explore/frontend/` directory — the Flask dev server does this automatically when you run locally.
 
 ## Configuration
 
@@ -43,7 +43,7 @@ export API_KEY="your-nrp-nautilus-key"
 
 ### 3. (Optional) SQLite database path
 
-By default the local SQLite store lives at `ezredbiom/backend/data/projects.db`. Override with:
+By default the local SQLite store lives at `qiita_explore/backend/data/projects.db`. Override with:
 
 ```bash
 export QIITA_EXPERIMENT_DB_PATH="/path/to/projects.db"
@@ -52,18 +52,18 @@ export QIITA_EXPERIMENT_DB_PATH="/path/to/projects.db"
 ## Running (development)
 
 ```bash
-python ezredbiom/backend/run.py
+python qiita_explore/backend/run.py
 # Starts Flask on http://localhost:5001
 ```
 
 ## Running (production / barnacle)
 
 ```bash
-bash ezredbiom/start_barnacle.sh
+bash qiita_explore/start_barnacle.sh
 # Starts gunicorn on port 5001, 4 workers, 2 threads each
 ```
 
-For nginx proxying, update the `root` path in `ezredbiom/nginx.conf` to your absolute path to `ezredbiom/frontend/`.
+For nginx proxying, update the `root` path in `qiita_explore/nginx.conf` to your absolute path to `qiita_explore/frontend/`.
 
 ## Port conventions
 

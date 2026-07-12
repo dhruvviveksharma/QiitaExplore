@@ -1,6 +1,6 @@
 """E2E tests for the /deepsearch command.
 
-Requires a running barnacle backend: bash ezredbiom/start_barnacle.sh
+Requires a running barnacle backend: bash qiita_explore/start_barnacle.sh
 
 Test 1 (AGP): single-turn deepsearch for the American Gut Project.
   Expected studies 10317, 10395, 10768 must surface via the tool backend.

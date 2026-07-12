@@ -1,11 +1,11 @@
-# ezredbiom Test Suite
+# qiita_explore Test Suite
 
 Tests core CRUD operations, data integrity, and schema correctness.
 
 ## Run Tests
 
 ```bash
-cd ezredbiom/Experiment/backend
+cd qiita_explore/backend
 pip install -r tests/requirements.txt
 python -m pytest tests/ -v
 ```

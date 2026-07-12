@@ -1,7 +1,7 @@
 # Simplification Plan (revised)
 
 **Date:** 2026-07-05
-**Goal:** Reduce dead code, reuse logic, apply simpler logic where applicable. Enforce the 500-line cap on all `ezredbiom/` files. **No code changes in this pass — planning only.**
+**Goal:** Reduce dead code, reuse logic, apply simpler logic where applicable. Enforce the 500-line cap on all `qiita_explore/` files. **No code changes in this pass — planning only.**
 
 **Source documents**
 - `TICKETS/tickets.md` — source of truth (TKT-002 .. TKT-040, reconciled 2026-06-21)
@@ -59,11 +59,11 @@ These look like simplification but would break behavior:
 
 | ID | Title | Ticket | Files | Δ Lines | Agent | Risk |
 |----|-------|--------|-------|---------|-------|------|
-| **S-1** | Delete legacy `test.ipynb` | TKT-027 | `ezredbiom/test.ipynb` | -79 | Explore→SWE | Low |
+| **S-1** | Delete legacy `test.ipynb` | TKT-027 | `qiita_explore/test.ipynb` | -79 | Explore→SWE | Low |
 | **S-2** | Move mid-module imports to top of `llm_helpers.py` | TKT-028 | `backend/helpers/llm_helpers.py:55-59` | 0 net | Explore→SWE | Low |
 
 **Acceptance criteria**
-- S-1: `ls ezredbiom/test.ipynb` → "No such file"; `git status` shows deletion only.
+- S-1: `ls qiita_explore/test.ipynb` → "No such file"; `git status` shows deletion only.
 - S-2: `grep -n "^from store" llm_helpers.py` returns line < 10; `python -c "from helpers import llm_helpers"` succeeds; all referenced symbols (`get_project_context_summary`, `get_study_detail_cache`, `upsert_study_detail_cache`) remain used at lines 217, 224, 267.
 
 ---
@@ -227,7 +227,7 @@ The prior `simplification-plan.md` (2026-07-05) made several claims that this re
 
 ## SUCCESS CRITERIA
 
-- [ ] No file in `ezredbiom/` exceeds 500 lines (`find ezredbiom -name "*.py" -o -name "*.js" | xargs wc -l | sort -rn`).
+- [ ] No file in `qiita_explore/` exceeds 500 lines (`find qiita_explore -name "*.py" -o -name "*.js" | xargs wc -l | sort -rn`).
 - [ ] `_qiita_fetch` preserved (grep confirms 10 call sites).
 - [ ] `_study_header_cache` write-through to SQLite (S-9); L1 dict retained.
 - [ ] No duplicated study-header SELECTs (single `_build_study_header_query`).

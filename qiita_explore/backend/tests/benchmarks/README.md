@@ -1,11 +1,11 @@
 # Benchmarks
 
-Run these with the backend live (`bash ezredbiom/start_barnacle.sh`) to get real numbers for your resume.
+Run these with the backend live (`bash qiita_explore/start_barnacle.sh`) to get real numbers for your resume.
 
 ## Quick start
 
 ```bash
-cd ezredbiom/backend/tests/benchmarks
+cd qiita_explore/backend/tests/benchmarks
 pip install requests   # only dependency
 
 python search_latency.py     # p50/p95 search latency

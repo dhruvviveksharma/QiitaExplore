@@ -27,13 +27,13 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 | Layer      | Tech                                     | Location |
 |------------|------------------------------------------|----------|
-| Backend    | Gunicorn (`start_barnacle.sh`), port 5001 | `ezredbiom/start_barnacle.sh` → `ezredbiom/backend/run.py` (`run:app`) |
-| Frontend   | React (Babel standalone, no build step)  | `ezredbiom/frontend/js/` |
-| Local DB   | SQLite                                   | `ezredbiom/backend/store/` |
+| Backend    | Gunicorn (`start_barnacle.sh`), port 5001 | `qiita_explore/start_barnacle.sh` → `qiita_explore/backend/run.py` (`run:app`) |
+| Frontend   | React (Babel standalone, no build step)  | `qiita_explore/frontend/js/` |
+| Local DB   | SQLite                                   | `qiita_explore/backend/store/` |
 | Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
-| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `ezredbiom/backend/helpers/llm_helpers.py` |
+| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `qiita_explore/backend/helpers/llm_helpers.py` |
 
-**Backend runtime:** We do not run `python run.py` or Flask’s dev server. Start and test the API only with `bash ezredbiom/start_barnacle.sh` (Gunicorn, 4 workers, 2 threads, `gthread`).
+**Backend runtime:** We do not run `python run.py` or Flask’s dev server. Start and test the API only with `bash qiita_explore/start_barnacle.sh` (Gunicorn, 4 workers, 2 threads, `gthread`).
 
 ---
 
@@ -41,13 +41,13 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 - **No-refresh sidebar**: After add/remove/create/delete, update local React state from the response body — never re-fetch. Use `setOpenProject`, patch `openProject.chats`, etc.
 - **Lazy detail fetching**: Study detail (preps, artifacts) only fetched on modal open or study add — never on page load. Uses `study_detail_cache` (6h TTL).
-- **LLM context**: Built via helpers in `ezredbiom/backend/helpers/` (e.g. `_study_detail_block()` in `qiita_fetch.py`) — includes `data_types`, `num_samples`, `num_preps`, and prep metadata where applicable.
+- **LLM context**: Built via helpers in `qiita_explore/backend/helpers/` (e.g. `_study_detail_block()` in `qiita_fetch.py`) — includes `data_types`, `num_samples`, `num_preps`, and prep metadata where applicable.
 
 ---
 
 # Dev Workflow
 
-- **Start backend**: `bash ezredbiom/start_barnacle.sh` only (Gunicorn on port 5001; frontend `api-base` must match)
+- **Start backend**: `bash qiita_explore/start_barnacle.sh` only (Gunicorn on port 5001; frontend `api-base` must match)
 - **Verify UI changes**: Run barnacle, open browser, test golden path before marking done
 - **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
 
@@ -55,7 +55,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 # Hard Constraints
 
-- No file in `ezredbiom/` may exceed 500 lines. If approaching limit, split and ticket it.
+- No file in `qiita_explore/` may exceed 500 lines. If approaching limit, split and ticket it.
 - Unplanned work → `TICKETS/tickets.md`, not speculative code.
 
 ---

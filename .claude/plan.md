@@ -12,8 +12,8 @@
 - Keep the layout consistent for project chats, global chats, and the browse view's pinned-study composer.
 
 ## Files to Change
-1. `ezredbiom/frontend/style.css` — update `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, `.model-picker-card`, and `.chat-messages-wide` to share a single width token; add responsive breakpoint.
-2. `ezredbiom/frontend/js/app_render.js` — compute `isWide` once and apply the same width class to `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, and `.model-picker-card`.
+1. `qiita_explore/frontend/style.css` — update `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, `.model-picker-card`, and `.chat-messages-wide` to share a single width token; add responsive breakpoint.
+2. `qiita_explore/frontend/js/app_render.js` — compute `isWide` once and apply the same width class to `.chat-messages`, `.composer`, `.composer-model`, `.composer-error`, `.composer-pins`, `.slash-menu`, and `.model-picker-card`.
 
 ## Approach
 1. Introduce a CSS custom property `--chat-max-w: 860px` to align with the browse (`860px`) and merge (`860px`) panels.
@@ -34,7 +34,7 @@
 - [ ] No change to sidebar, top bar, browse grid, merge panels, modal, or model-picker card width.
 
 ## Verification
-- Start backend: `bash ezredbiom/start_barnacle.sh` (dev port 5002).
+- Start backend: `bash qiita_explore/start_barnacle.sh` (dev port 5002).
 - Open browser and test at 1280px, 1440px, and <1040px viewport widths:
   - Global chat: send a regular message → composer and messages same width (860px above 1040px, full-width below).
   - Global chat: send `/report 104` → composer and messages both expand to full width.

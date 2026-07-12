@@ -28,7 +28,7 @@ fail() { echo -e "${RED}✘ $*${NC}"; exit 1; }
 if [[ "$MODE" != "--unit" ]]; then
     echo "Checking barnacle backend at $BARNACLE_URL ..."
     if ! curl -sf "$BARNACLE_URL/api/systems" -o /dev/null --max-time 5; then
-        fail "Backend not reachable at $BARNACLE_URL. Start it with: bash ezredbiom/start_barnacle.sh"
+        fail "Backend not reachable at $BARNACLE_URL. Start it with: bash qiita_explore/start_barnacle.sh"
     fi
     pass "Backend is up"
 fi

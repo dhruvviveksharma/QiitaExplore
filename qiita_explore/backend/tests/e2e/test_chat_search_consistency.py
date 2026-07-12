@@ -5,7 +5,7 @@ search results that share the same visibility contract. All assertions go
 through /api/search or /api/studies/<id>/detail so no direct service imports
 are needed (and no QIITA_CONFIG_FP env var is required in the test process).
 
-Requires: running barnacle backend (bash ezredbiom/start_barnacle.sh).
+Requires: running barnacle backend (bash qiita_explore/start_barnacle.sh).
 """
 import pytest
 import requests

@@ -1,4 +1,4 @@
-"""Pytest fixtures for ezredbiom tests."""
+"""Pytest fixtures for qiita_explore tests."""
 import pytest
 import sys
 import os

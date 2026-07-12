@@ -17,13 +17,13 @@ Several `except Exception:` blocks swallow errors with `pass` or a silent fallba
 
 ### Affected Files (verified 2026-06-21)
 
-- `ezredbiom/backend/routes/project_routes.py:42` — study-detail fetch/cache failure: `except Exception: pass` (user-facing study-add path)
-- `ezredbiom/backend/routes/project_routes.py:69` — sample-context fetch failure: `except Exception: pass`
-- `ezredbiom/backend/store/db.py:45` — bucket parse failure: silent `return []`
-- `ezredbiom/backend/store/db.py:202,207,212,217,222,228` — migration / ALTER TABLE failures swallowed
-- `ezredbiom/backend/store/cache.py:107` — cache parse failure swallowed
-- `ezredbiom/backend/store/crud.py:71` — silent swallow
-- `ezredbiom/backend/store/merge_crud.py:22` — silent swallow
+- `qiita_explore/backend/routes/project_routes.py:42` — study-detail fetch/cache failure: `except Exception: pass` (user-facing study-add path)
+- `qiita_explore/backend/routes/project_routes.py:69` — sample-context fetch failure: `except Exception: pass`
+- `qiita_explore/backend/store/db.py:45` — bucket parse failure: silent `return []`
+- `qiita_explore/backend/store/db.py:202,207,212,217,222,228` — migration / ALTER TABLE failures swallowed
+- `qiita_explore/backend/store/cache.py:107` — cache parse failure swallowed
+- `qiita_explore/backend/store/crud.py:71` — silent swallow
+- `qiita_explore/backend/store/merge_crud.py:22` — silent swallow
 
 ### Plan
 
@@ -44,7 +44,7 @@ If Qiita fetch failed during study add, `preps`/`artifacts` could be unset, risk
 
 ### Resolution (verified 2026-06-21)
 
-`preps = []` is now initialized before the try block at `ezredbiom/backend/routes/project_routes.py:34`, and `artifacts` is only used inside the same try (for caching at :41), never downstream. Downstream guards on `if preps:` (:48). NameError risk eliminated. The remaining silent `except Exception: pass` at :42 is tracked under TKT-002.
+`preps = []` is now initialized before the try block at `qiita_explore/backend/routes/project_routes.py:34`, and `artifacts` is only used inside the same try (for caching at :41), never downstream. Downstream guards on `if preps:` (:48). NameError risk eliminated. The remaining silent `except Exception: pass` at :42 is tracked under TKT-002.
 
 ---
 
@@ -59,8 +59,8 @@ In the SSE handlers for global and project chat, if `pin_study_to_chat` fails *a
 
 ### Affected Files
 
-- `ezredbiom/backend/routes/global_chat_routes.py` (SSE done handler)
-- `ezredbiom/backend/routes/chat_routes.py` (SSE done handler)
+- `qiita_explore/backend/routes/global_chat_routes.py` (SSE done handler)
+- `qiita_explore/backend/routes/chat_routes.py` (SSE done handler)
 
 ### Plan
 
@@ -102,8 +102,8 @@ From the Browse view, let users use the bottom composer: pin studies and press E
 
 ### Resolution (verified 2026-06-21)
 
-- Composer is enabled on browse: `canSend = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending` (`ezredbiom/frontend/js/app_state.js:581`); composer no longer muted on browse (`ezredbiom/frontend/js/app_render.js:523`)
-- Enter from browse creates/sends into a global chat: browse branch in `sendMessage` (`ezredbiom/frontend/js/app_state.js:380`)
+- Composer is enabled on browse: `canSend = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending` (`qiita_explore/frontend/js/app_state.js:581`); composer no longer muted on browse (`qiita_explore/frontend/js/app_render.js:523`)
+- Enter from browse creates/sends into a global chat: browse branch in `sendMessage` (`qiita_explore/frontend/js/app_state.js:380`)
 - Pinning supported via `/pin <ids>` command → `pin_study_ids` payload (`app_state.js:367`)
 
 ### Caveat
@@ -119,7 +119,7 @@ The "pin directly from a study card / context chip" UX (vs. the `/pin` command) 
 
 ### Description
 
-The live app depends on two files outside `ezredbiom/`:
+The live app depends on two files outside `qiita_explore/`:
 
 - `qiita_db/sql_connection.py` — the `TRN` PostgreSQL transaction context manager
 - `qiita_core/configuration_manager.py` — pulled in transitively by `sql_connection.py`
@@ -128,10 +128,10 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead w
 
 ### Affected Files (verified 2026-06-21 — 4 importers, not 3)
 
-- `ezredbiom/backend/routes/study_routes.py`
-- `ezredbiom/backend/helpers/qiita_fetch.py`
-- `ezredbiom/backend/helpers/sample_search.py`
-- `ezredbiom/backend/services/study_service.py`
+- `qiita_explore/backend/routes/study_routes.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/sample_search.py`
+- `qiita_explore/backend/services/study_service.py`
 
 ### Plan
 
@@ -160,7 +160,7 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead w
 
 ### Description
 
-The chat advertises a `compute_diversity` tool, but it is a hard stub — `ezredbiom/backend/helpers/agent_tools.py:538` returns *"Diversity analysis is not yet available."* This is the analysis payoff of the merge workflow: a user can merge BIOMs but cannot then analyze the result.
+The chat advertises a `compute_diversity` tool, but it is a hard stub — `qiita_explore/backend/helpers/agent_tools.py:538` returns *"Diversity analysis is not yet available."* This is the analysis payoff of the merge workflow: a user can merge BIOMs but cannot then analyze the result.
 
 ### Plan
 
@@ -171,8 +171,8 @@ The chat advertises a `compute_diversity` tool, but it is a hard stub — `ezred
 
 ### Files Changed
 
-- `ezredbiom/backend/helpers/agent_tools.py`
-- `ezredbiom/frontend/js/components.js`
+- `qiita_explore/backend/helpers/agent_tools.py`
+- `qiita_explore/frontend/js/components.js`
 
 ---
 
@@ -183,7 +183,7 @@ The chat advertises a `compute_diversity` tool, but it is a hard stub — `ezred
 
 ### Description
 
-Files over the 500-line `ezredbiom/` cap (verified 2026-06-21):
+Files over the 500-line `qiita_explore/` cap (verified 2026-06-21):
 
 
 | File                             | Lines | Tracked by |
@@ -233,7 +233,7 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 
 ### Description
 
-`ezredbiom/backend/helpers/agent_tools.py` is 548 lines (verified 2026-06-21), over the cap.
+`qiita_explore/backend/helpers/agent_tools.py` is 548 lines (verified 2026-06-21), over the cap.
 
 ### Plan
 
@@ -251,7 +251,7 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 
 ### Description
 
-`ezredbiom/backend/routes/merge_routes.py` is 528 lines (verified 2026-06-21), over the cap.
+`qiita_explore/backend/routes/merge_routes.py` is 528 lines (verified 2026-06-21), over the cap.
 
 ### Plan
 
@@ -268,7 +268,7 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 
 ### Description
 
-`ezredbiom/backend/helpers/merge_executor.py:3` carries a `TODO (before merging to master): replace _run_local with SFTP+SSH pipeline` — but the multi-LLM branch was merged to master with the local path still in place. The executor runs `conda run -n qiita python scripts/remote_merge.py` as a local subprocess (`merge_executor.py:100`), which only works if the serving host has the `qiita` conda env, the script, and local access to the BIOM files. On a real/remote deployment the merge job will fail.
+`qiita_explore/backend/helpers/merge_executor.py:3` carries a `TODO (before merging to master): replace _run_local with SFTP+SSH pipeline` — but the multi-LLM branch was merged to master with the local path still in place. The executor runs `conda run -n qiita python scripts/remote_merge.py` as a local subprocess (`merge_executor.py:100`), which only works if the serving host has the `qiita` conda env, the script, and local access to the BIOM files. On a real/remote deployment the merge job will fail.
 
 ### Plan
 
@@ -279,7 +279,7 @@ Choose one:
 
 ### Files
 
-- `ezredbiom/backend/helpers/merge_executor.py`
+- `qiita_explore/backend/helpers/merge_executor.py`
 
 ---
 
@@ -300,7 +300,7 @@ After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
 
@@ -330,7 +330,7 @@ Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
 
@@ -341,20 +341,20 @@ Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_
 
 ### Description
 
-`ezredbiom/test.ipynb` appears to be a debugging artifact from development. Not part of the current workflow.
+`qiita_explore/test.ipynb` appears to be a debugging artifact from development. Not part of the current workflow.
 
 ### Plan
 
 Delete the file:
 ```bash
-rm ezredbiom/test.ipynb
+rm qiita_explore/test.ipynb
 ```
 
 **Impact:** ~99 lines removed, reduced confusion
 
 ### Files
 
-- `ezredbiom/test.ipynb`
+- `qiita_explore/test.ipynb`
 
 ---
 
@@ -375,7 +375,7 @@ Remove or move the mid-module import block to the top of the file.
 
 ### Files
 
-- `ezredbiom/backend/helpers/llm_helpers.py`
+- `qiita_explore/backend/helpers/llm_helpers.py`
 
 ---
 
@@ -408,7 +408,7 @@ def _build_study_header_query(where_clause="", params=()):
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
 
@@ -429,7 +429,7 @@ Merge into single function with optional `limit` parameter.
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
 
@@ -463,11 +463,11 @@ Import in `chat_routes.py`, `global_chat_routes.py`, `project_routes.py`, `merge
 
 ### Files
 
-- New: `ezredbiom/backend/helpers/request_utils.py`
-- `ezredbiom/backend/routes/chat_routes.py`
-- `ezredbiom/backend/routes/global_chat_routes.py`
-- `ezredbiom/backend/routes/project_routes.py`
-- `ezredbiom/backend/routes/merge_routes.py`
+- New: `qiita_explore/backend/helpers/request_utils.py`
+- `qiita_explore/backend/routes/chat_routes.py`
+- `qiita_explore/backend/routes/global_chat_routes.py`
+- `qiita_explore/backend/routes/project_routes.py`
+- `qiita_explore/backend/routes/merge_routes.py`
 
 ---
 
@@ -488,7 +488,7 @@ Extract base streaming class/function with common loop logic. Provider-specific 
 
 ### Files
 
-- `ezredbiom/backend/helpers/agent.py`
+- `qiita_explore/backend/helpers/agent.py`
 
 ---
 
@@ -520,8 +520,8 @@ export function useModelSelection(chatId, defaultModel) {
 
 ### Files
 
-- `ezredbiom/frontend/js/app_state.js`
-- New: `ezredbiom/frontend/js/hooks/useModelSelection.js`
+- `qiita_explore/frontend/js/app_state.js`
+- New: `qiita_explore/frontend/js/hooks/useModelSelection.js`
 
 ---
 
@@ -552,8 +552,8 @@ Update all usages.
 
 ### Files
 
-- `ezredbiom/frontend/js/utils.js`
-- `ezredbiom/frontend/js/app_render.js`
+- `qiita_explore/frontend/js/utils.js`
+- `qiita_explore/frontend/js/app_render.js`
 
 ---
 
@@ -586,7 +586,7 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/frontend/js/app_state.js`
+- `qiita_explore/frontend/js/app_state.js`
 
 ---
 
@@ -611,8 +611,8 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/frontend/js/app_state.js`
-- New split files in `ezredbiom/frontend/js/`
+- `qiita_explore/frontend/js/app_state.js`
+- New split files in `qiita_explore/frontend/js/`
 
 ---
 
@@ -637,8 +637,8 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/frontend/js/app_render.js`
-- New split files in `ezredbiom/frontend/js/`
+- `qiita_explore/frontend/js/app_render.js`
+- New split files in `qiita_explore/frontend/js/`
 
 ---
 
@@ -662,8 +662,8 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/frontend/js/components.js`
-- New split files in `ezredbiom/frontend/js/`
+- `qiita_explore/frontend/js/components.js`
+- New split files in `qiita_explore/frontend/js/`
 
 ---
 
@@ -686,8 +686,8 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/backend/helpers/agent_tools.py`
-- New split files in `ezredbiom/backend/helpers/`
+- `qiita_explore/backend/helpers/agent_tools.py`
+- New split files in `qiita_explore/backend/helpers/`
 
 ---
 
@@ -710,8 +710,8 @@ const slashMatches = input.startsWith('/')
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py`
-- New split files in `ezredbiom/backend/helpers/`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+- New split files in `qiita_explore/backend/helpers/`
 
 ---
 
@@ -731,8 +731,8 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 
 ### Files
 
-- `ezredbiom/backend/helpers/sample_search.py:165`, `:200`, `:229`
-- `ezredbiom/backend/helpers/qiita_fetch.py:359`
+- `qiita_explore/backend/helpers/sample_search.py:165`, `:200`, `:229`
+- `qiita_explore/backend/helpers/qiita_fetch.py:359`
 
 ---
 
@@ -752,8 +752,8 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 
 ### Files
 
-- `ezredbiom/backend/helpers/qiita_fetch.py:270–285`
-- `ezredbiom/backend/store/db.py` (migration), `store/cache.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py:270–285`
+- `qiita_explore/backend/store/db.py` (migration), `store/cache.py`
 
 ---
 
@@ -773,9 +773,9 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 
 ### Files
 
-- `ezredbiom/backend/helpers/sample_search.py:174–205`, `:239–260`
-- `ezredbiom/backend/helpers/agent.py` (`_execute_tool_call`)
-- `ezredbiom/frontend/js/components.js` (`ToolResultWidget`)
+- `qiita_explore/backend/helpers/sample_search.py:174–205`, `:239–260`
+- `qiita_explore/backend/helpers/agent.py` (`_execute_tool_call`)
+- `qiita_explore/frontend/js/components.js` (`ToolResultWidget`)
 
 ---
 
@@ -796,7 +796,7 @@ When the tool-call loop ends on tool results and `final_had_synthesis` is False,
 
 ### Files
 
-- `ezredbiom/backend/helpers/agent.py:120–153`, `:275–317`
+- `qiita_explore/backend/helpers/agent.py:120–153`, `:275–317`
 
 ---
 
@@ -817,8 +817,8 @@ When the tool-call loop ends on tool results and `final_had_synthesis` is False,
 
 ### Files
 
-- `ezredbiom/frontend/index.html`
-- New: `ezredbiom/frontend/build.sh`
+- `qiita_explore/frontend/index.html`
+- New: `qiita_explore/frontend/build.sh`
 
 ---
 
@@ -840,9 +840,9 @@ Users want to filter samples across pinned studies by a shared metadata field (e
 
 ### Files
 
-- `ezredbiom/backend/routes/` (new `cohort_routes.py`)
-- `ezredbiom/backend/helpers/agent_tools.py` (new tool)
-- `ezredbiom/frontend/js/components.js` (`CohortBubble`)
+- `qiita_explore/backend/routes/` (new `cohort_routes.py`)
+- `qiita_explore/backend/helpers/agent_tools.py` (new tool)
+- `qiita_explore/frontend/js/components.js` (`CohortBubble`)
 
 ---
 
@@ -863,9 +863,9 @@ Before merging studies, users need to know which sample metadata fields are shar
 
 ### Files
 
-- `ezredbiom/backend/helpers/agent_tools.py`
-- `ezredbiom/backend/helpers/sample_search.py` or new `helpers/cohort.py`
-- `ezredbiom/frontend/js/components.js` (`FieldOverlapMatrix`)
+- `qiita_explore/backend/helpers/agent_tools.py`
+- `qiita_explore/backend/helpers/sample_search.py` or new `helpers/cohort.py`
+- `qiita_explore/frontend/js/components.js` (`FieldOverlapMatrix`)
 
 ---
 
@@ -900,8 +900,8 @@ merge. It does not check:
 
 ### Files
 
-- `ezredbiom/backend/helpers/biom_autopick.py`
-- `ezredbiom/backend/helpers/qiita_fetch.py` (`_fetch_study_detail_from_qiita`)
+- `qiita_explore/backend/helpers/biom_autopick.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py` (`_fetch_study_detail_from_qiita`)
 
 ---
 
@@ -912,12 +912,12 @@ merge. It does not check:
 
 ### Description
 
-Benchmarked via `ezredbiom/backend/tests/benchmarks/search_latency.py` and `concurrent_bench.py`
+Benchmarked via `qiita_explore/backend/tests/benchmarks/search_latency.py` and `concurrent_bench.py`
 (2026-07-04). Identical/similar queries against `/api/search` range from 86ms to 13.5+ seconds,
 and 3/15 representative queries timed out outright (>10s).
 
 Root cause, confirmed by reading `search_studies_with_sql`
-(`ezredbiom/backend/services/study_service.py:148-244`): the query computes 4 correlated
+(`qiita_explore/backend/services/study_service.py:148-244`): the query computes 4 correlated
 subqueries per row (`num_samples` COUNT, `data_types` STRING_AGG via a 2-join, `num_preps` COUNT
 DISTINCT, `is_gold` EXISTS) plus a relevance score, under `SELECT DISTINCT ... ORDER BY relevance
 DESC`, with `LIMIT`/`OFFSET` applied last. Postgres can't push `LIMIT` below a sort on a computed
@@ -948,7 +948,7 @@ exact class of problem for a different table (`processing_job.command_parameters
 
 ### Files
 
-- `ezredbiom/backend/services/study_service.py` (`search_studies_with_sql`, `build_relevance_score`)
-- `ezredbiom/backend/services/llm.py` (`_keyword_clause_sql`)
+- `qiita_explore/backend/services/study_service.py` (`search_studies_with_sql`, `build_relevance_score`)
+- `qiita_explore/backend/services/llm.py` (`_keyword_clause_sql`)
 - New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
 

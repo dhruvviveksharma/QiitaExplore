@@ -36,7 +36,7 @@ nosetests.xml
 
 # Config files (local secrets; track the Experiment app module explicitly)
 config.py
-!ezredbiom/Experiment/backend/config.py
+!qiita_explore/backend/config.py
 
 # OSX files
 .DS_Store

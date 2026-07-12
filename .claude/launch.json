@@ -4,7 +4,7 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "/Users/dhruvsharma/Downloads/Projects/qiita-web/ezredbiom/frontend", "--no-clipboard"],
+      "runtimeArgs": ["serve", "/Users/dhruvsharma/Downloads/Projects/qiita-web/qiita_explore/frontend", "--no-clipboard"],
       "port": 3000,
       "autoPort": true
     }

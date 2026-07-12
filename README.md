@@ -63,7 +63,7 @@ cd qiita-explore
 ```bash
 conda create -n qiita-explore python=3.9
 conda activate qiita-explore
-pip install -r ezredbiom/requirements.txt
+pip install -r qiita_explore/requirements.txt
 ```
 
 ### Configure environment
@@ -87,13 +87,13 @@ QIITA_EXPERIMENT_DB_PATH=/path/to/projects.db
 
 ```bash
 # Development (Flask dev server, http://localhost:5001)
-python ezredbiom/backend/run.py
+python qiita_explore/backend/run.py
 
 # Production-style (Gunicorn, 4 workers, 2 threads each)
-bash ezredbiom/start_barnacle.sh
+bash qiita_explore/start_barnacle.sh
 ```
 
-The frontend needs no build step — Gunicorn/Flask serves `ezredbiom/frontend/` directly, and React is transpiled at runtime via Babel standalone.
+The frontend needs no build step — Gunicorn/Flask serves `qiita_explore/frontend/` directly, and React is transpiled at runtime via Babel standalone.
 
 ## Architecture / How It Works
 
@@ -123,7 +123,7 @@ flowchart LR
 ```
 
 ```
-ezredbiom/
+qiita_explore/
   backend/
     routes/       REST + SSE endpoints (studies, projects, chats, merges)
     helpers/      Agent loop, tool definitions, search, BIOM merge logic
