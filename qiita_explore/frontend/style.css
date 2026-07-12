@@ -1253,9 +1253,10 @@ input, textarea { font-family: var(--sans); }
   border-radius: 6px; padding: 4px 9px;
   border: 1px solid var(--border);
   color: var(--text-2);
-  transition: all var(--t);
+  box-shadow: 0 3px 8px rgba(0,0,0,.10);
+  transition: background var(--t);
 }
-.btn-card-ctx:hover { background: var(--border-soft); transform: translateY(-4px); box-shadow: 0 6px 14px rgba(0,0,0,.10); }
+.btn-card-ctx:hover { background: var(--border-soft); }
 .btn-card-ctx.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
 .study-card-title { font-size: 13px; font-weight: 600; margin-bottom: 5px; line-height: 1.4; }
