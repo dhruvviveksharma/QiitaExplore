@@ -41,17 +41,27 @@ restart command. Files in this directory:
 
 ---
 
-## The AuthRocket "logout-first" fix (optional)
+## The AuthRocket "logout-first" fix (ON by default)
 
-Preserved copy of a fix to the **Qiita control plane**
-(`/Users/dhruvsharma/Downloads/Projects/Qiita`), kept here because the Qiita repo
-is kept pristine at `master`. **Caveat:** it prevents the "Need a login" hijack
-only when you already have an AuthRocket session; a fully logged-OUT first login
-can fail to mint a token until a retry (AuthRocket's `/logout` drops the handoff
-redirect when there is no session). The QiitaExplore-side variant does **not**
-work at all — LoginRocket refuses to forward `/logout` to an external URL. So this
-is optional; `start_qiita_stack.sh` runs the plain master control plane by default
-(set `PATCHED=1` to use the fix).
+`start_qiita_stack.sh` runs the control plane with this fix by default
+(`PATCHED=1`). It makes "Log in with Qiita" route through LoginRocket `/logout`
+first, clearing any cached AuthRocket session, so **"Need a login" always lands on
+the signup page** instead of handing back the previously-logged-in account's
+token. Verified live: after logout-first, the signup link goes to
+`…loginrocket.com/signup` with the handoff redirect preserved in `sessionStorage`.
+
+It's applied at runtime (`run_patched_control_plane.py` monkeypatches
+`build_authrocket_login_url`), so the Qiita repo stays pristine at `master` — the
+patch/copied files here are just for reference/reapplication.
+
+Notes:
+- The QiitaExplore-side variant of this (wrapping the URL in QiitaExplore instead
+  of the control plane) does **not** work — LoginRocket refuses to forward
+  `/logout` to an external control-plane URL. It has to be the control plane.
+- Edge case: a browser with *no* AuthRocket session at all can, in some cases,
+  have the handoff redirect dropped by `/logout` (login then needs a retry). In
+  normal use you always have a session when this matters, so it doesn't bite; set
+  `PATCHED=0` if you ever need the plain build for debugging.
 
 ## What it fixes
 

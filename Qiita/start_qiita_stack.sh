@@ -25,11 +25,14 @@ WEB_DIR="/Users/dhruvsharma/Downloads/Projects/qiita-web"
 BARNACLE="d4sharma@barnacle2.ucsd.edu"
 CP_LOG="/tmp/qiita-control-plane.log"
 
-# Set to 1 to run the anti-hijack "logout-first" control plane instead of master.
-# CAVEAT: fixes "Need a login" hijack when you already have an AuthRocket session,
-# but a fully logged-OUT first login can fail to mint a token until a retry
-# (AuthRocket's /logout drops the handoff redirect when there's no session).
-PATCHED="${PATCHED:-0}"
+# Control plane build:
+#   PATCHED=1 (default) -> logout-first fix: "Log in with Qiita" clears any cached
+#     AuthRocket session first, so "Need a login" ALWAYS lands on the signup page
+#     (never hijacks to the previously-logged-in account's token). This is the
+#     behavior you want.
+#   PATCHED=0 -> plain master control plane (no session clear; "Need a login" will
+#     hijack to a cached session's account). Only for debugging.
+PATCHED="${PATCHED:-1}"
 
 log(){ printf '  %s\n' "$*"; }
 up(){ curl -s -o /dev/null -m 2 "$1" 2>/dev/null; }
