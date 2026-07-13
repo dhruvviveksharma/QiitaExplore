@@ -46,7 +46,56 @@ def _parse_tinydb_docs(path):
         return []
 
 
+def _reconcile_legacy_users_table(conn):
+    """Migrate a stale pre-auth `users` table left behind by an older,
+    pre-authentication version of this app.
+
+    That old version's `users` table had an unrelated shape (username +
+    password_hash based, no `principal_idx`). `CREATE TABLE IF NOT EXISTS`
+    in the executescript below can't upgrade it in place — it just leaves
+    the stale table untouched. The current auth code
+    (store/auth_store.py:upsert_user) inserts rows keyed by `principal_idx`,
+    a column the legacy table lacks, so it fails with
+    `sqlite3.OperationalError: table users has no column named
+    principal_idx` on every POST /api/auth/connect. Simply ALTERing columns
+    in wouldn't fix it either: the legacy `username`/`password_hash` columns
+    are NOT NULL and would reject the new principal-keyed INSERTs.
+
+    The legacy rows are dead fake seed data from the old app — no real
+    session ever referenced them, since upsert_user always failed before a
+    session could be created. We preserve them non-destructively by
+    renaming the table aside to `users_legacy_pre_auth` (rather than
+    dropping it) so the executescript below can then CREATE the correct
+    `users`/`auth_sessions` tables fresh.
+    """
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone()
+    if existing is None:
+        return  # fresh DB; the executescript's CREATE TABLE handles it
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "principal_idx" in cols:
+        return  # already current schema; no-op on every normal boot
+
+    # Legacy shape detected. auth_sessions FKs to users(user_id); a legacy
+    # users table means upsert_user never succeeded, so no session was ever
+    # created. Guard defensively anyway before touching anything.
+    sessions_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='auth_sessions'"
+    ).fetchone()
+    if sessions_table is not None:
+        count = conn.execute("SELECT COUNT(1) AS c FROM auth_sessions").fetchone()["c"]
+        if count > 0:
+            return  # impossible in practice, but leave it to a human if it happens
+
+    conn.execute("DROP TABLE IF EXISTS auth_sessions")
+    conn.execute("DROP TABLE IF EXISTS users_legacy_pre_auth")
+    conn.execute("ALTER TABLE users RENAME TO users_legacy_pre_auth")
+
+
 def _create_schema(conn):
+    _reconcile_legacy_users_table(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS meta (

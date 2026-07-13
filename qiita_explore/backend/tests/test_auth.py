@@ -487,3 +487,73 @@ class TestCrossUserIsolation:
         # B tries to create a project claiming to be A via a spoofed body field.
         resp = api_client.post(f"/api/projects?user_id={uid_a}", json={"name": "spoof", "user_id": uid_a}, headers=h_b)
         assert resp.get_json()["user_id"] == uid_b  # server derives identity from session only
+
+
+# ── Legacy pre-auth `users` table migration ──────────────────────────────────
+
+class TestLegacyUsersMigration:
+    def test_legacy_users_table_is_migrated_on_bootstrap(self, tmp_path, monkeypatch):
+        """A deployed DB can carry a stale pre-auth `users` table (see
+        db.py:_reconcile_legacy_users_table). Bootstrapping against it must
+        rename the old table aside and create the current-shape `users`
+        table, without losing the legacy rows or breaking upsert_user."""
+        import sqlite3
+
+        db_path = str(tmp_path / "legacy.db")
+        seed_conn = sqlite3.connect(db_path)
+        seed_conn.execute(
+            """
+            CREATE TABLE users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT
+            )
+            """
+        )
+        seed_conn.execute(
+            "INSERT INTO users(user_id, username, email, password_hash, role, created_at) "
+            "VALUES(?, ?, ?, ?, ?, ?)",
+            ("uuid-x", "admin", None, "hash", "admin", "t"),
+        )
+        seed_conn.commit()
+        seed_conn.close()
+
+        monkeypatch.setenv("QIITA_EXPERIMENT_DB_PATH", db_path)
+        for mod_name in list(sys.modules.keys()):
+            if "sql_store" in mod_name or "store" in mod_name:
+                del sys.modules[mod_name]
+
+        import store.db as sql_store_db  # noqa: F401 — import runs _bootstrap()
+
+        with sql_store_db._conn() as conn:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            assert "principal_idx" in cols
+
+            legacy_row = conn.execute(
+                "SELECT username FROM users_legacy_pre_auth"
+            ).fetchone()
+            assert legacy_row["username"] == "admin"
+
+        from store.auth_store import upsert_user
+        user_id = upsert_user(
+            principal_idx=5, email="a@b", system_role="user", scopes=[], profile_complete=True
+        )
+        assert user_id == "5"
+
+    def test_fresh_db_bootstrap_is_a_noop_migration(self, fresh_db):
+        """On a brand-new DB there's no legacy table to reconcile — `users`
+        must be created directly with `principal_idx`, and no
+        `users_legacy_pre_auth` aside table should ever appear."""
+        import store.db as sql_store_db
+
+        with sql_store_db._conn() as conn:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            assert "principal_idx" in cols
+
+            legacy_table = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users_legacy_pre_auth'"
+            ).fetchone()
+            assert legacy_table is None
