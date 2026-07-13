@@ -86,6 +86,13 @@ QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "
 # QIITA_CONTROL_PLANE_URL for the common case where both paths coincide.
 QIITA_PUBLIC_LOGIN_URL = os.getenv("QIITA_PUBLIC_LOGIN_URL", "").rstrip("/") or QIITA_CONTROL_PLANE_URL
 
+# AuthRocket LoginRocket realm base (e.g. https://<realm>.e2.loginrocket.com).
+# When set, /api/auth/login-url routes the browser through LoginRocket /logout
+# first, so a cached AuthRocket session can't hijack the login / "Need a login"
+# entry into completing login as the previously-cached user. Empty = disabled
+# (login goes straight to the control plane, exactly as before).
+QIITA_LOGINROCKET_URL = os.getenv("QIITA_LOGINROCKET_URL", "").rstrip("/")
+
 # Fernet key encrypting PATs at rest in auth_sessions.pat_encrypted. Required —
 # there is no insecure fallback; helpers/pat_crypto.py raises loudly if unset.
 # Generate with:

@@ -1,5 +1,6 @@
 import json
 import logging
+from urllib.parse import quote
 
 from flask import g, jsonify, request
 
@@ -58,7 +59,18 @@ def _identity_payload(user_row: dict) -> dict:
 
 @app.route("/api/auth/login-url", methods=["GET"])
 def api_auth_login_url():
-    return jsonify({"url": f"{config.QIITA_PUBLIC_LOGIN_URL}/api/v1/auth/login"})
+    # Default: send the browser straight to the control plane's login entry.
+    # When QIITA_LOGINROCKET_URL is configured, wrap that in a LoginRocket
+    # /logout first so a cached AuthRocket session can't hijack the login /
+    # "Need a login" entry into completing login as the previously-cached user.
+    # The control plane's /api/v1/auth/login still runs on the next hop (it sets
+    # the signed login-state cookie), so this only prepends a session clear.
+    control_plane_login = f"{config.QIITA_PUBLIC_LOGIN_URL}/api/v1/auth/login"
+    if config.QIITA_LOGINROCKET_URL:
+        url = f"{config.QIITA_LOGINROCKET_URL}/logout?redirect_uri={quote(control_plane_login, safe='')}"
+    else:
+        url = control_plane_login
+    return jsonify({"url": url})
 
 
 @app.route("/api/auth/connect", methods=["POST"])

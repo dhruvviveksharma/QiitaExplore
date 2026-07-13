@@ -380,6 +380,22 @@ class TestAuthRoutes:
         assert resp.status_code == 200
         assert resp.get_json()["url"].endswith("/api/v1/auth/login")
 
+    def test_login_url_wraps_in_logout_when_loginrocket_set(self, api_client, monkeypatch):
+        # With QIITA_LOGINROCKET_URL set, the entry routes through LoginRocket
+        # /logout first (clears a cached AuthRocket session), with the control-
+        # plane login carried as the (single-encoded) redirect_uri.
+        import config
+        from urllib.parse import parse_qs, urlparse
+
+        monkeypatch.setattr(config, "QIITA_LOGINROCKET_URL", "https://realm.e2.loginrocket.com")
+        resp = api_client.get("/api/auth/login-url")
+        assert resp.status_code == 200
+        url = resp.get_json()["url"]
+        assert url.startswith("https://realm.e2.loginrocket.com/logout?redirect_uri=")
+        assert url.count("?") == 1  # the inner login URL's query is encoded away
+        inner = parse_qs(urlparse(url).query)["redirect_uri"][0]
+        assert inner.endswith("/api/v1/auth/login")
+
     def test_me_anonymous(self, api_client):
         resp = api_client.get("/api/auth/me")
         assert resp.get_json() == {"anonymous": True}
