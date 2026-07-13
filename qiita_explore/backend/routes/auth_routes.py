@@ -58,7 +58,7 @@ def _identity_payload(user_row: dict) -> dict:
 
 @app.route("/api/auth/login-url", methods=["GET"])
 def api_auth_login_url():
-    return jsonify({"url": f"{config.QIITA_CONTROL_PLANE_URL}/api/v1/auth/login"})
+    return jsonify({"url": f"{config.QIITA_PUBLIC_LOGIN_URL}/api/v1/auth/login"})
 
 
 @app.route("/api/auth/connect", methods=["POST"])

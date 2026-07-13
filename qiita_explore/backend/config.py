@@ -78,6 +78,14 @@ SESSION_COOKIE_NAME = "qe_sid"
 QIITA_CONTROL_PLANE_URL = os.getenv("QIITA_CONTROL_PLANE_URL", "http://127.0.0.1:8080").rstrip("/")
 QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "5"))
 
+# Qiita URL the user's BROWSER is redirected to for login. Deliberately
+# separate from QIITA_CONTROL_PLANE_URL (used only for backend-to-Qiita
+# server calls like whoami): in a split-tunnel deployment — backend reaches
+# Qiita via a reverse SSH tunnel on one port, the browser reaches it directly
+# on another — these are not the same address. Defaults to
+# QIITA_CONTROL_PLANE_URL for the common case where both paths coincide.
+QIITA_PUBLIC_LOGIN_URL = os.getenv("QIITA_PUBLIC_LOGIN_URL", "").rstrip("/") or QIITA_CONTROL_PLANE_URL
+
 # Fernet key encrypting PATs at rest in auth_sessions.pat_encrypted. Required —
 # there is no insecure fallback; helpers/pat_crypto.py raises loudly if unset.
 # Generate with:
