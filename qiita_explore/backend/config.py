@@ -110,6 +110,12 @@ SESSION_COOKIE_SECURE = os.getenv("QIITA_EXPLORE_COOKIE_SECURE", "true").strip()
 _claimant_raw = os.getenv("QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", "").strip()
 QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = int(_claimant_raw) if _claimant_raw.isdigit() else None
 
+# Temporary debugging aid: when true, an unexpected exception in
+# POST /auth/connect includes the exception type/message in the JSON
+# response, not just the server log. Off by default — only enable while
+# actively diagnosing a deployment issue, never leave on in real use.
+DEBUG_ERROR_DETAIL = os.getenv("QIITA_EXPLORE_DEBUG_ERRORS", "false").strip().lower() in ("1", "true", "yes")
+
 CHAT_SYSTEM_PROMPT = """You are a helpful assistant for researchers using the Qiita microbiome database.
 
 Your primary goals:

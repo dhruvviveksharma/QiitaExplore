@@ -84,27 +84,31 @@ def api_auth_connect():
     if principal_idx is None:
         return jsonify({"error": "unexpected identity response from Qiita"}), 502
 
-    user_id = upsert_user(
-        principal_idx=principal_idx,
-        email=identity.get("email"),
-        system_role=identity.get("system_role"),
-        scopes=identity.get("scopes") or [],
-        profile_complete=identity.get("profile_complete", False),
-    )
-
     try:
+        user_id = upsert_user(
+            principal_idx=principal_idx,
+            email=identity.get("email"),
+            system_role=identity.get("system_role"),
+            scopes=identity.get("scopes") or [],
+            profile_complete=identity.get("profile_complete", False),
+        )
         pat_encrypted = encrypt_pat(pat)
+        raw_token, csrf_token = create_session(
+            user_id=user_id,
+            pat_encrypted=pat_encrypted,
+            source="paste",
+        )
+        user_row = get_user(user_id)
     except PatCryptoError:
         logger.exception("PAT encryption failed — QIITA_EXPLORE_PAT_ENCRYPTION_KEY misconfigured")
         return jsonify({"error": "server misconfiguration"}), 500
+    except Exception as exc:
+        logger.exception("unexpected error establishing session for principal_idx=%s", principal_idx)
+        body = {"error": "unexpected error establishing session"}
+        if config.DEBUG_ERROR_DETAIL:
+            body["detail"] = f"{type(exc).__name__}: {exc}"
+        return jsonify(body), 500
 
-    raw_token, csrf_token = create_session(
-        user_id=user_id,
-        pat_encrypted=pat_encrypted,
-        source="paste",
-    )
-
-    user_row = get_user(user_id)
     resp = jsonify({**_identity_payload(user_row), "csrf_token": csrf_token})
     _set_session_cookie(resp, raw_token)
     return resp
