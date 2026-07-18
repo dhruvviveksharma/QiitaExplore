@@ -342,6 +342,8 @@ Nothing on this list is automated. All four items grow without bound.
 **Orphaned merge jobs.** Related to the above and worth a periodic query: rows in `merge_jobs` with `status='running'` and an `updated_at` older than the merge subprocess timeout (600 s) plus a margin are almost certainly orphaned by a worker restart and will never change state on their own. A job's states are `pending` (written by `create_merge_job` at submission), then `running`, then `done` or `failed` — all four written through the single `_on_status` callback in `backend/routes/merge_routes.py :: submit_merge_job`. Nothing else transitions them.
 
 **`.env` backups accumulate, and they hold secrets.** `Qiita/barnacle_backend_env.sh` runs `cp "${ENV_FILE}" "${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"` on **every** invocation, and never prunes. Each backup is a full copy of the backend's `.env`, which on a correctly configured host contains the LLM API key and the Fernet PAT-encryption key in plaintext. The script is safe to re-run — that is the point of it — but re-running it leaves a growing set of timestamped secret files beside the live one. Prune them, and keep the directory's permissions in mind when you do.
+>
+> Tracked as **TKT-045**. Note that `helpers/pat_crypto.py` keeps the Fernet key out of SQLite specifically so a leaked database file does not also leak PATs — plaintext copies beside the database partly defeat that, so this is worth treating as a live exposure rather than housekeeping.
 
 **None of this is scheduled.** There is no cron entry, no APScheduler, and no startup hook in the repo that performs any of the above. If these tasks are running on a host, they were added out-of-band and are not described by anything checked in.
 

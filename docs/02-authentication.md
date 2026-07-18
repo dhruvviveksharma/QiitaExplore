@@ -121,7 +121,7 @@ if request.method in _STATE_CHANGING_METHODS:               # POST/PUT/PATCH/DEL
 
 **The allowlist matches exact Flask endpoint names, never path prefixes.** It contains exactly three entries: `api_auth_login_url`, `api_auth_connect`, `api_auth_me`. The code comment is explicit that prefix matching is the hole this guard exists to close — a prefix like `/api/auth/` would silently make every future route under that path public, including ones nobody intended to expose. With exact names, **a newly added route is denied by default**, and making it public requires a deliberate edit to this set.
 
-Of 53 endpoints, 3 are public and 50 require a session.
+Of 52 endpoints, 3 are public and 49 require a session.
 
 CSRF uses `hmac.compare_digest` rather than `==`, so the comparison is constant-time. The token travels in the connect response *body* (not a second cookie) into a JavaScript module-scope variable, and is attached as `X-CSRF-Token` by the shared fetch wrapper on state-changing methods only. A cross-site attacker can cause the browser to send the `SameSite=Lax` cookie on a top-level POST but cannot read the response body of the connect call, so cannot obtain the token.
 
@@ -172,11 +172,11 @@ Two caveats to be aware of:
 
 ### Two places where tenancy does not hold
 
-The guarantee above describes the *curational* surface — projects, chats, workspaces, jobs. Two endpoints fall outside it. Both were verified against the code while writing this document; neither had an existing ticket.
+The guarantee above describes the *curational* surface — projects, chats, workspaces, jobs. Two endpoints fall outside it. Both were verified against the code while writing this document, and are now tracked as **TKT-042** and **TKT-043**.
 
-> **Settings are global, not per-user.** `GET`/`POST /api/settings` route through `backend/store/crud.py :: get_setting` / `set_setting`, which read and write the shared `meta` table and **take no `user_id`**. Any authenticated user who saves an Anthropic API key overwrites the key for every other user, and the key is then used to bill that user's requests. This is pre-authentication code that was not re-scoped when multi-user auth landed. A per-user settings table, or a `user_id`-keyed `meta`, is the fix.
+> **TKT-042 — settings are global, not per-user.** `GET`/`POST /api/settings` route through `backend/store/crud.py :: get_setting` / `set_setting`, which read and write the shared `meta` table and **take no `user_id`**. Any authenticated user who saves an Anthropic API key overwrites the key for every other user, and the key is then used to bill that user's requests. This is pre-authentication code that was not re-scoped when multi-user auth landed. A per-user settings table, or a `user_id`-keyed `meta`, is the fix.
 
-> **Artifact file download performs no study-level authorization.** `backend/routes/artifact_routes.py :: download_artifact_file` requires a session, then takes `study_id`, `artifact_id`, and `filepath_id` from the request and streams the resolved file. It does **not** call `is_study_public`, unlike `api_study_detail`, which gates on exactly that — and it has no ownership check, because artifacts are not owned by QiitaExplore users. Any authenticated user can therefore download any file reachable through any study's artifact graph, including studies that are not public.
+> **TKT-043 — artifact file download performs no study-level authorization.** `backend/routes/artifact_routes.py :: download_artifact_file` requires a session, then takes `study_id`, `artifact_id`, and `filepath_id` from the request and streams the resolved file. It does **not** call `is_study_public`, unlike `api_study_detail`, which gates on exactly that — and it has no ownership check, because artifacts are not owned by QiitaExplore users. Any authenticated user can therefore download any file reachable through any study's artifact graph, including studies that are not public.
 >
 > Its path safety is real but narrow: `_resolve_artifact_file` resolves paths from the artifact graph rather than from user input, calls `os.path.realpath`, and rejects a **blocklist** of roots (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`). That prevents directory traversal out of the data tree. It does not, and is not intended to, decide *which studies this user may read* — that check is simply absent. An allowlist of permitted data roots plus an `is_study_public` gate would close it.
 

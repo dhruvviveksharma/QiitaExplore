@@ -158,7 +158,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | [`09-operations.md`](09-operations.md) | Running it, and how failures present |
 | [`10-testing.md`](10-testing.md) | Test tiers and coverage gaps |
 | [`11-roadmap.md`](11-roadmap.md) | Platform migration, blockers, known debt |
-| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 53 endpoints |
+| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 52 endpoints |
 | [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) | All 16 tables and 11 indexes |
 | [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) | Tool schemas and the SSE event vocabulary |
 | [`appendix-d-configuration.md`](appendix-d-configuration.md) | Every environment variable and tunable |

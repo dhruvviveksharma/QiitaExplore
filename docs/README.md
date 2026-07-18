@@ -47,7 +47,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 
 | File | Covers |
 |---|---|
-| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 53 endpoints |
+| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 52 endpoints |
 | [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) | All 16 tables · 11 indexes · migrations |
 | [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) | 5 tool schemas · 10 SSE events · the `ui_payload` shape |
 | [`appendix-d-configuration.md`](appendix-d-configuration.md) | Every environment variable · model roster · tunables |
@@ -94,7 +94,7 @@ The claims most likely to rot, and how to check them:
 
 | Claim | Check |
 |---|---|
-| 53 endpoints, split by module | `grep -c "@app.route" backend/routes/*.py` |
+| 52 endpoints, split by module | `grep -c "@app.route" backend/routes/*.py` |
 | 16 tables, 11 indexes | `CREATE TABLE` / `CREATE INDEX` in `backend/store/db.py` |
 | 5 tools, 10 SSE events | `TOOL_SCHEMAS` in `agent_tools.py`; `_sse(` call sites vs. `parseSSE`'s dispatch table |
 | 11 models | `ALLOWED_MODELS` in `config.py` |

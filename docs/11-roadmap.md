@@ -190,21 +190,25 @@ Ticket bodies live in [`TICKETS/tickets.md`](../TICKETS/tickets.md); this table 
 
 ### Found while writing these documents
 
-Not previously ticketed. Each is described in full in the chapter linked.
+None of these were previously ticketed. The four most serious were filed as **TKT-042 – TKT-045**; the remainder are documented in place and still need tickets.
 
-| Finding | Severity | Chapter |
-|---|---|---|
-| `/api/settings` is **global, not per-user** — any user overwrites everyone's Anthropic API key | **High** | [`02`](02-authentication.md) |
-| Artifact download performs **no study-level authorization** — any authenticated user can fetch files from non-public studies | **High** | [`02`](02-authentication.md) |
-| Merge silently falls back to autopick when an explicitly chosen artifact is absent from the prep-joined list — **merges a different artifact than the one selected** | **High** | [`07`](07-merge-and-biom.md) |
-| `purge_expired_sessions()` is defined but **never called** — session rows accumulate forever | Low | [`02`](02-authentication.md) |
-| `study_detail_cache.cached_at` is per-row while payload columns COALESCE — one fresh column resets the TTL for all nine | Medium | [`03`](03-data-access-and-caching.md) |
-| Cache TTL check **fails open** on an unparseable timestamp; the auth path fails closed | Low | [`03`](03-data-access-and-caching.md) |
-| `reasoning` tokens are generated and **silently dropped** on the web path | Low | [`05`](05-agent.md), [`06`](06-streaming-and-chat.md) |
-| `get_study_report`'s auto-pin swallows cap rejection — the study is silently not pinned | Low | [`05`](05-agent.md) |
-| Aborting a stream leaves the message spinning until reload | Medium | [`06`](06-streaming-and-chat.md) |
-| Pin/unpin cap enforcement is **non-atomic** — concurrent requests can exceed the cap | Low | [`appendix-b`](appendix-b-sqlite-schema.md) |
-| No test guards the dual-authored segment contract | Medium | [`06`](06-streaming-and-chat.md), [`10`](10-testing.md) |
+| Finding | Ticket | Severity | Chapter |
+|---|---|---|---|
+| `/api/settings` is **global, not per-user** — any user overwrites everyone's Anthropic API key | **TKT-042** | **High** | [`02`](02-authentication.md) |
+| Artifact download performs **no study-level authorization** — any authenticated user can fetch files from non-public studies | **TKT-043** | **High** | [`02`](02-authentication.md) |
+| Merge silently falls back to autopick when an explicitly chosen artifact is absent from the prep-joined list — **merges a different artifact than the one selected** | **TKT-044** | **High** | [`07`](07-merge-and-biom.md) |
+| `.env.bak.*` files accumulate on the deployment host containing the LLM key and the **PAT encryption key** in plaintext | **TKT-045** | **High** | [`09`](09-operations.md) |
+| No test guards the dual-authored segment contract | — | Medium | [`06`](06-streaming-and-chat.md), [`10`](10-testing.md) |
+| `study_detail_cache.cached_at` is per-row while payload columns COALESCE — one fresh column resets the TTL for all nine | — | Medium | [`03`](03-data-access-and-caching.md) |
+| Aborting a stream leaves the message spinning until reload | — | Medium | [`06`](06-streaming-and-chat.md) |
+| e2e tier and `run_tests.sh` preflight both hit protected endpoints unauthenticated — **the whole tier skips** | — | Medium | [`10`](10-testing.md) |
+| SQLite opened with no `busy_timeout` — `database is locked` surfaces as a 500 under write contention | — | Medium | [`09`](09-operations.md) |
+| `purge_expired_sessions()` is defined but **never called** — session rows accumulate forever | — | Low | [`02`](02-authentication.md) |
+| Cache TTL check **fails open** on an unparseable timestamp; the auth path fails closed | — | Low | [`03`](03-data-access-and-caching.md) |
+| `reasoning` tokens are generated and **silently dropped** on the web path | — | Low | [`05`](05-agent.md), [`06`](06-streaming-and-chat.md) |
+| `get_study_report`'s auto-pin swallows cap rejection — the study is silently not pinned | — | Low | [`05`](05-agent.md) |
+| Pin/unpin cap enforcement is **non-atomic** — concurrent requests can exceed the cap | — | Low | [`appendix-b`](appendix-b-sqlite-schema.md) |
+| Merge result tarballs in `MERGE_RESULTS_DIR` are **never cleaned up** | — | Low | [`09`](09-operations.md) |
 
 ---
 
@@ -212,7 +216,7 @@ Not previously ticketed. Each is described in full in the chapter linked.
 
 Ordered by value per unit of effort, not by ticket number.
 
-1. **The two access-control defects** — settings tenancy and artifact download authorization. Small, contained, and currently wrong.
+1. **The three access-control defects** — TKT-042 (settings tenancy), TKT-043 (artifact download authorization), TKT-045 (plaintext key backups). Small, contained, and currently wrong. TKT-045 first if the barnacle host has accumulated `.env.bak.*` files, since exposure continues until they are removed.
 2. **Remove `compute_diversity` from the live schema.** One line; stops wasting agent iterations today.
 3. **The segment-contract parity test.** The contract is correct *now*; a test is what keeps it correct.
 4. **TKT-023's compatibility checks.** Scientifically the most consequential item on this list — a silently wrong merge is worse than a failed one.

@@ -137,7 +137,7 @@ This is a real source of confusion, so state it plainly. There are **two** indep
 
 Both are cached in `study_detail_cache`, in different columns (`artifact_graph_json` and `artifacts_json`). The user selects from the first; the backend resolves from the second.
 
-> **Consequence worth knowing.** If a BIOM appears in the graph but not in the flat list, an explicit user selection of it is silently discarded. `merge_helpers.py :: _resolve_artifact` and the submit handler both do `chosen = [a for a in artifacts if a["artifact_id"] in chosen_ids]`, and on an empty result fall through to `autopick_artifact(...)` with no warning. The merge then runs on a *different* artifact than the one the user ticked. Not observed in practice — the two lists largely coincide — but the fallback is silent by construction, and worth a ticket.
+> **Consequence worth knowing.** If a BIOM appears in the graph but not in the flat list, an explicit user selection of it is silently discarded. `merge_helpers.py :: _resolve_artifact` and the submit handler both do `chosen = [a for a in artifacts if a["artifact_id"] in chosen_ids]`, and on an empty result fall through to `autopick_artifact(...)` with no warning. The merge then runs on a *different* artifact than the one the user ticked. Not observed in practice — the two lists largely coincide — but the fallback is silent by construction. Tracked as **TKT-044**, together with three related issues in the same area (unconditional `error_message`/`result_path` overwrite, validate and submit disagreeing on `explicit_only`, and the BIOM-read fallback that overstates the overlap preview).
 
 ---
 

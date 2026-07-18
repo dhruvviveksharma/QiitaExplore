@@ -89,7 +89,7 @@ Three things here are non-obvious:
 
 **`sys.path` is forced.** The backend directory is inserted at position 0 before any local import, because the vendored Qiita environment manipulates `sys.path` and would otherwise shadow local modules named `config` or `store`.
 
-**What this design costs.** No `url_prefix`, so every route repeats `/api/` in its path. No per-blueprint middleware, so all cross-cutting concerns live in the two global `before_request` hooks. No lazy route loading. At 53 endpoints across 7 modules this is manageable; the seam to introduce blueprints, if it is ever wanted, is the existing one-module-per-domain split.
+**What this design costs.** No `url_prefix`, so every route repeats `/api/` in its path. No per-blueprint middleware, so all cross-cutting concerns live in the two global `before_request` hooks. No lazy route loading. At 52 endpoints across 7 modules this is manageable; the seam to introduce blueprints, if it is ever wanted, is the existing one-module-per-domain split.
 
 ---
 
@@ -167,7 +167,7 @@ backend/
   config.py         env loading, LLM clients, model roster, prompts, auth config
   agent_harness.py  offline CLI driver for the agent loop
 
-  routes/     7 modules, 53 endpoints — thin; parse, authorize, delegate, serialize
+  routes/     7 modules, 52 endpoints — thin; parse, authorize, delegate, serialize
   helpers/    subsystem logic — the agent loop, tools, search, BIOM, auth, SSE
   services/   study_service.py (SQL builders), llm.py (regex query planner)
   store/      SQLite access, one module per domain + a flat re-export facade

@@ -179,7 +179,7 @@ The chat advertises a `compute_diversity` tool, but it is a hard stub — `qiita
 ## TKT-011: Split Oversized Files (500-line cap)
 
 **Severity:** Low
-**Status:** Open
+**Status:** Partially resolved
 
 ### Description
 
@@ -196,14 +196,16 @@ Files over the 500-line `qiita_explore/` cap (verified 2026-06-21):
 | `backend/routes/merge_routes.py` | 528   | TKT-014    |
 | `backend/store/crud.py`          | 515   | TKT-011    |
 
+### Resolution (verified 2026-07-14)
 
-### Plan (TKT-011 scope)
+- `qiita_fetch.py`: 532 → 486 via query consolidation (TKT-029/030), **under cap**, no split needed (closes as TKT-040).
+- `crud.py`: 515 → 412 via `global_chat_crud.py` extraction (TKT-015 predates this pass), **under cap**.
+- `merge_routes.py`: 528 → 364 via `helpers/merge_helpers.py` extraction (this pass, see TKT-014), **under cap**.
+- `components.js` (684), `app_state.js` (633), `app_render.js` (601), `agent_tools.py` (548) **remain over cap** — see TKT-038, TKT-036, TKT-037, TKT-013 respectively. The `app_actions.js` split proposed below for `app_state.js` was not done as a file split, but a chunk of its duplication was removed in-place (`streamChat`/`createProjChatAndSeed`/`createGlobalChatAndSeed`, see TKT-036).
 
-**qiita_fetch.py** — extract sample fetching/caching into `helpers/qiita_samples.py` (`_fetch_full_sample_metadata`, `_get_or_fetch_full_samples`, `_fetch_sample_context_text`, `_build_full_samples_block`, `_build_samples_report_payload`, `_build_pinned_reports_context`); keep header/search/detect helpers in `qiita_fetch.py`.
+### Plan (TKT-011 scope, remaining files only)
 
-**app_state.js** — extract action handlers into `app_actions.js` (sendMessage, unpinStudy, enrichAllStudies, doSearch, modal helpers, chat navigation); keep useState/derived/returned shape in `app_state.js`.
-
-**components.js / app_render.js / crud.js** — split along feature boundaries (TBD per file).
+**components.js / app_render.js / agent_tools.py** — split along feature boundaries (TBD per file; see TKT-038, TKT-037, TKT-013).
 
 ---
 
@@ -247,17 +249,21 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 ## TKT-014: Split merge_routes.py (over 500-line cap)
 
 **Severity:** Low
-**Status:** Open
+**Status:** Resolved (via helper extraction, not the route split)
 
 ### Description
 
 `qiita_explore/backend/routes/merge_routes.py` is 528 lines (verified 2026-06-21), over the cap.
 
-### Plan
+### Resolution (verified 2026-07-14)
 
-- `routes/merge_workspace_routes.py` — workspace CRUD + validate + samples
-- `routes/merge_job_routes.py` — job submit, poll, download
-- Shared helpers (`_get_artifacts`, `_type_filtered_artifacts`, `_user_id`) → `helpers/merge_helpers.py`
+Extracted the shared, pure (no-Flask) helpers `_get_artifacts`, `_type_filtered_artifacts`, `_resolve_artifact`, `_get_sample_ids` into new `helpers/merge_helpers.py`, imported by both `merge_routes.py` and `artifact_routes.py` — this also fixed a route-module-importing-from-route-module coupling (`artifact_routes.py` previously did `from routes.merge_routes import _get_artifacts`). This dropped `merge_routes.py` to 364 lines, **under the 500-line cap**, so the originally-proposed `merge_workspace_routes.py`/`merge_job_routes.py` route split is no longer needed.
+
+### Files
+
+- New: `qiita_explore/backend/helpers/merge_helpers.py`
+- `qiita_explore/backend/routes/merge_routes.py`
+- `qiita_explore/backend/routes/artifact_routes.py`
 
 ---
 
@@ -280,438 +286,6 @@ Choose one:
 ### Files
 
 - `qiita_explore/backend/helpers/merge_executor.py`
-
----
-
-*Generated: 2026-05-19 | Updated: 2026-06-24*
-
----
-
-## TKT-025: Remove Unused `_qiita_fetch()` Helper — REVISED
-
-**Severity:** Low
-**Status:** Invalid — function IS used
-
-### Important Finding (Plan Agent)
-
-After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414, 464, 491 **IS actively used** as a thin wrapper around `pooled_fetchall`. It cannot be removed.
-
-**Revised:** Keep `_qiita_fetch()` but the mid-module import cleanup (TKT-028) may reveal opportunities for simplification.
-
-### Files
-
-- `qiita_explore/backend/helpers/qiita_fetch.py`
-
----
-
-## TKT-026: Remove Redundant In-Memory Study Header Cache
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`helpers/qiita_fetch.py:266-279` defines `_study_header_cache` (module-level dict) which conflicts with the more sophisticated SQLite-based caching in `store/cache.py`. This creates two separate caching mechanisms that could lead to inconsistency.
-
-### Plan
-
-Remove:
-```python
-# REMOVE (lines ~266-279):
-_STUDY_HEADER_TTL_SECONDS = 3600
-_study_header_cache = {}
-def _fetch_study_header_cached(study_id: int):
-    """TTL-memoized wrapper around _fetch_study_header (hot path for pinned context)."""
-```
-
-Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_cache`).
-
-**Impact:** ~15 lines removed, complexity reduction
-
-### Files
-
-- `qiita_explore/backend/helpers/qiita_fetch.py`
-
----
-
-## TKT-027: Remove Legacy `test.ipynb`
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`qiita_explore/test.ipynb` appears to be a debugging artifact from development. Not part of the current workflow.
-
-### Plan
-
-Delete the file:
-```bash
-rm qiita_explore/test.ipynb
-```
-
-**Impact:** ~99 lines removed, reduced confusion
-
-### Files
-
-- `qiita_explore/test.ipynb`
-
----
-
-## TKT-028: Clean Up Mid-Module Imports in llm_helpers.py
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`helpers/llm_helpers.py:55-59` has imports placed mid-module (after function definitions) with some unused imports (`get_study_detail_cache`, `upsert_study_detail_cache`).
-
-### Plan
-
-Remove or move the mid-module import block to the top of the file.
-
-**Impact:** ~5 lines removed, improved organization
-
-### Files
-
-- `qiita_explore/backend/helpers/llm_helpers.py`
-
----
-
-## TKT-029: Consolidate Duplicate Study Header Queries
-
-**Severity:** Medium
-**Status:** Open
-
-### Description
-
-`first_studies()` (lines 51-116) and `_fetch_study_header()` (lines 411-459) execute nearly identical SELECT queries with the same JOIN structure, column selections, and WHERE clauses (~40 lines of duplication).
-
-### Plan
-
-Create a shared helper:
-```python
-def _build_study_header_query(where_clause="", params=()):
-    """Shared query builder for study headers."""
-    base = """
-        SELECT s.study_id, s.email, s.principal_investigator_id AS pi,
-               s.metadata_complete, s.number_samples_collected, s.number_samples_promised,
-               ...
-        FROM qiita.study s
-        WHERE 1=1
-    """
-    return base + where_clause, params
-```
-
-**Impact:** ~35-40 lines saved, DRY improvement
-
-### Files
-
-- `qiita_explore/backend/helpers/qiita_fetch.py`
-
----
-
-## TKT-030: Consolidate Sample Fetch Functions
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`_fetch_study_samples()` (lines 141-173) and `_fetch_full_sample_metadata()` (lines 228-244) have near-identical structure with minor parameter differences.
-
-### Plan
-
-Merge into single function with optional `limit` parameter.
-
-**Impact:** ~20 lines saved
-
-### Files
-
-- `qiita_explore/backend/helpers/qiita_fetch.py`
-
----
-
-## TKT-031: Extract Shared `request_utils.py`
-
-**Severity:** Medium
-**Status:** Open
-
-### Description
-
-`chat_routes.py` and `global_chat_routes.py` have ~150 lines of duplicated logic: SSE pin handling, report study handling, study ID parsing, pinned context building, message normalization, user_id extraction.
-
-### Plan
-
-Create `helpers/request_utils.py`:
-```python
-def get_user_id():
-    """Extract user_id from request headers or g."""
-    return request.headers.get('X-User-ID') or g.get('user_id', 'local_user')
-
-def parse_study_ids_from_request():
-    """Parse study_id(s) from request JSON/body."""
-
-def build_full_messages(chat_id, role, content, ui_payload=None):
-    """Normalize message format across routes."""
-```
-
-Import in `chat_routes.py`, `global_chat_routes.py`, `project_routes.py`, `merge_routes.py`.
-
-**Impact:** ~30-40 lines deduplicated across 4 files
-
-### Files
-
-- New: `qiita_explore/backend/helpers/request_utils.py`
-- `qiita_explore/backend/routes/chat_routes.py`
-- `qiita_explore/backend/routes/global_chat_routes.py`
-- `qiita_explore/backend/routes/project_routes.py`
-- `qiita_explore/backend/routes/merge_routes.py`
-
----
-
-## TKT-032: Consolidate SSE Streaming Patterns
-
-**Severity:** Medium
-**Status:** Open
-
-### Description
-
-`_stream_anthropic_agent()` and OpenAI streaming in `agent.py` have ~80+ lines of duplicated control flow: same iteration structure, tool execution pattern, final synthesis logic, SSE yield patterns.
-
-### Plan
-
-Extract base streaming class/function with common loop logic. Provider-specific code stays in subclass/method.
-
-**Impact:** ~40 lines saved, improved maintainability
-
-### Files
-
-- `qiita_explore/backend/helpers/agent.py`
-
----
-
-## TKT-033: Extract `useModelSelection()` Hook
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-Model selection state is spread across `selectedModel`, localStorage (`llm:model`, `model:chat:<id>`), and sync effects in `app_state.js:31-44, 89-98`.
-
-### Plan
-
-Extract to `hooks/useModelSelection.js`:
-```javascript
-export function useModelSelection(chatId, defaultModel) {
-  const [selectedModel, setSelectedModel] = useState(
-    () => localStorage.getItem(`model:chat:${chatId}`) 
-      || localStorage.getItem('llm:model') 
-      || defaultModel
-  );
-  // sync effect...
-  return [selectedModel, setSelectedModel];
-}
-```
-
-**Impact:** ~25 lines removed from app_state.js
-
-### Files
-
-- `qiita_explore/frontend/js/app_state.js`
-- New: `qiita_explore/frontend/js/hooks/useModelSelection.js`
-
----
-
-## TKT-034: Consolidate Date Formatting
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-Same date formatting (`toLocaleDateString('en-US', { month: 'short', day: 'numeric' })`) appears 4 times in `app_render.js`.
-
-### Plan
-
-Add to `utils.js`:
-```javascript
-export function formatDate(dateStr) {
-  return new Date(dateStr).toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric' 
-  });
-}
-```
-
-Update all usages.
-
-**Impact:** ~5 lines saved, consistency
-
-### Files
-
-- `qiita_explore/frontend/js/utils.js`
-- `qiita_explore/frontend/js/app_render.js`
-
----
-
-## TKT-035: Simplify Slash Command Matching
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`useMemo` in `app_state.js:628-632` recomputes on every keystroke unnecessarily.
-
-### Plan
-
-Replace with inline conditional:
-```javascript
-// BEFORE:
-const slashMatches = useMemo(() => {
-  if (!input.startsWith('/')) return [];
-  return SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()));
-}, [input]);
-
-// AFTER:
-const slashMatches = input.startsWith('/')
-  ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()))
-  : [];
-```
-
-**Impact:** ~5 lines saved, minor perf gain
-
-### Files
-
-- `qiita_explore/frontend/js/app_state.js`
-
----
-
-## TKT-036: Split `app_state.js` (672 → ~300 lines)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`app_state.js` is 672 lines, over the 500-line cap by 172 lines.
-
-### Plan
-
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `sse_helpers.js` | SSE event handlers, stream transformers | ~150 |
-| `loaders.js` | Expand existing: loadProjectDetail, loadGlobalChats, etc. | ~120 |
-| `search_helpers.js` | doSearch function | ~80 |
-| `chat_actions.js` | newProjChat, deleteProjChat, pinStudy, etc. | ~100 |
-| `app_state.js` | Remaining hook (~200 lines) | ~200 |
-
-### Files
-
-- `qiita_explore/frontend/js/app_state.js`
-- New split files in `qiita_explore/frontend/js/`
-
----
-
-## TKT-037: Split `app_render.js` (601 → ~200 lines)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`app_render.js` is 601 lines, over the 500-line cap by 101 lines.
-
-### Plan
-
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `sidebar_renderer.js` | Sidebar with projects/chats | ~170 |
-| `browse_renderer.js` | Browse grid, filters | ~140 |
-| `chat_renderer.js` | Chat messages, segments | ~160 |
-| `composer_renderer.js` | Input composer, pin bar | ~100 |
-| `app_render.js` | Topbar, modals, routing | ~130 |
-
-### Files
-
-- `qiita_explore/frontend/js/app_render.js`
-- New split files in `qiita_explore/frontend/js/`
-
----
-
-## TKT-038: Split `components.js` (689 → ~250 lines)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`components.js` is 689 lines, over the 500-line cap by 189 lines.
-
-### Plan
-
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `model_picker.js` | Model selection dropdown | ~100 |
-| `pinned_bar.js` | Pinned studies UI | ~80 |
-| `slash_commands.js` | Command palette | ~120 |
-| `components.js` | Remaining core components (~200 lines) | ~200 |
-
-### Files
-
-- `qiita_explore/frontend/js/components.js`
-- New split files in `qiita_explore/frontend/js/`
-
----
-
-## TKT-039: Split `agent_tools.py` (548 → ~250 lines)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`agent_tools.py` is 548 lines, over the 500-line cap by 48 lines.
-
-### Plan
-
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `agent_tool_schemas.py` | TOOL_SCHEMAS, ToolResult dataclass | ~200 |
-| `agent_tool_executors.py` | All _tool_* functions | ~300 |
-| `agent_tools.py` | Re-export layer | ~100 |
-
-### Files
-
-- `qiita_explore/backend/helpers/agent_tools.py`
-- New split files in `qiita_explore/backend/helpers/`
-
----
-
-## TKT-040: Split `qiita_fetch.py` (535 → ~200 lines)
-
-**Severity:** Low
-**Status:** Open
-
-### Description
-
-`qiita_fetch.py` is 535 lines, over the 500-line cap by 35 lines.
-
-### Plan
-
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `qiita_queries.py` | Raw fetch functions | ~230 |
-| `qiita_study_context.py` | Context builders | ~170 |
-| `qiita_fetch.py` | Re-export layer | ~120 |
-
-### Files
-
-- `qiita_explore/backend/helpers/qiita_fetch.py`
-- New split files in `qiita_explore/backend/helpers/`
 
 ---
 
@@ -952,3 +526,616 @@ exact class of problem for a different table (`processing_job.command_parameters
 - `qiita_explore/backend/services/llm.py` (`_keyword_clause_sql`)
 - New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
 
+---
+
+## TKT-025: Remove Unused `_qiita_fetch()` Helper — REVISED
+
+**Severity:** Low
+**Status:** Invalid — function IS used
+
+### Important Finding (Plan Agent)
+
+After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414, 464, 491 **IS actively used** as a thin wrapper around `pooled_fetchall`. It cannot be removed.
+
+**Revised:** Keep `_qiita_fetch()` but the mid-module import cleanup (TKT-028) may reveal opportunities for simplification.
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-026: Remove Redundant In-Memory Study Header Cache
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`helpers/qiita_fetch.py:266-279` defines `_study_header_cache` (module-level dict) which conflicts with the more sophisticated SQLite-based caching in `store/cache.py`. This creates two separate caching mechanisms that could lead to inconsistency.
+
+### Plan
+
+Remove:
+```python
+# REMOVE (lines ~266-279):
+_STUDY_HEADER_TTL_SECONDS = 3600
+_study_header_cache = {}
+def _fetch_study_header_cached(study_id: int):
+    """TTL-memoized wrapper around _fetch_study_header (hot path for pinned context)."""
+```
+
+Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_cache`).
+
+**Impact:** ~15 lines removed, complexity reduction
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-027: Remove Legacy `test.ipynb`
+
+**Severity:** Low
+**Status:** Resolved
+
+### Description
+
+`qiita_explore/test.ipynb` appears to be a debugging artifact from development. Not part of the current workflow.
+
+### Resolution (verified 2026-07-14)
+
+Deleted (along with other stale `ezredbiom/` leftovers from the directory rename: `DNA Loaders.html`, `logo.png`, `qiita-mark-nobg.png`, `qiita-mark.png` — confirmed unreferenced).
+
+### Files
+
+- `qiita_explore/test.ipynb`
+
+---
+
+## TKT-028: Clean Up Mid-Module Imports in llm_helpers.py
+
+**Severity:** Low
+**Status:** Resolved
+
+### Description
+
+`helpers/llm_helpers.py:55-59` has imports placed mid-module (after function definitions) with some unused imports (`get_study_detail_cache`, `upsert_study_detail_cache`).
+
+### Resolution (verified 2026-07-14)
+
+Moved to the top import block. The same issue was found in `helpers/qiita_fetch.py` (a `from store import (...)` and `from helpers.llm_helpers import _truncate` sitting after a module-level assignment) and fixed the same way — confirmed no circular-import breakage (`llm_helpers.py` only imports `qiita_fetch` function-locally, at call time, to avoid a cycle).
+
+### Files
+
+- `qiita_explore/backend/helpers/llm_helpers.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-029: Consolidate Duplicate Study Header Queries
+
+**Severity:** Medium
+**Status:** Resolved
+
+### Description
+
+`first_studies()` (lines 51-116) and `_fetch_study_header()` (lines 411-459) execute nearly identical SELECT queries with the same JOIN structure, column selections, and WHERE clauses (~40 lines of duplication).
+
+### Resolution (verified 2026-07-14, done prior to this pass)
+
+`_build_study_header_query()` + `_row_to_study_header()` now shared by both call sites; `qiita_fetch.py` dropped from 534 to 486 lines as a result (closes TKT-040 as unnecessary — see below).
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-030: Consolidate Sample Fetch Functions
+
+**Severity:** Low
+**Status:** Partially resolved
+
+### Description
+
+`_fetch_study_samples()` (lines 141-173) and `_fetch_full_sample_metadata()` (lines 228-244) have near-identical structure with minor parameter differences.
+
+### Resolution (verified 2026-07-14)
+
+`_fetch_sample_context_text` now delegates to `_fetch_full_sample_metadata` (dedup done). `_fetch_study_samples` and `_fetch_full_sample_metadata` were **not** merged — they return different shapes (3 named JSON keys vs. full `sample_values`); forcing a merge would change behavior at call sites for no real benefit. Closing the "merge into one function" part as won't-do; the actual duplication (the sample-context path) is deduplicated.
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-031: Extract Shared `request_utils.py`
+
+**Severity:** Medium
+**Status:** Partially resolved
+
+### Description
+
+`chat_routes.py` and `global_chat_routes.py` have ~150 lines of duplicated logic: SSE pin handling, report study handling, study ID parsing, pinned context building, message normalization, user_id extraction.
+
+### Resolution (verified 2026-07-14)
+
+Created `helpers/request_utils.py` with `parse_chat_stream_body()` (message/model/report_study_id/pin_study_ids parsing + validation), `build_full_msgs()`, `sse_response()` (the shared `Response(..., mimetype='text/event-stream', ...)` tail), and `stream_samples_report()` (the shared "load_samples" SSE step, using the `yield from ...; return (a, b)` idiom already established by `helpers/pin_flow.py`). Wired into both `chat_routes.py` and `global_chat_routes.py`, removing the now-unused `Response`/`stream_with_context` imports from both. **Not** wired into `project_routes.py`/`merge_routes.py` — checked and neither has the same duplicated shape (they don't handle chat-stream bodies or SSE `report_study_id`/`pin_study_ids`), so extending the import list there would just be dead imports.
+
+### Files
+
+- New: `qiita_explore/backend/helpers/request_utils.py`
+- `qiita_explore/backend/routes/chat_routes.py`
+- `qiita_explore/backend/routes/global_chat_routes.py`
+
+---
+
+## TKT-032: Consolidate SSE Streaming Patterns
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`_stream_anthropic_agent()` and OpenAI streaming in `agent.py` have ~80+ lines of duplicated control flow: same iteration structure, tool execution pattern, final synthesis logic, SSE yield patterns.
+
+### Plan
+
+Extract base streaming class/function with common loop logic. Provider-specific code stays in subclass/method.
+
+**Impact:** ~40 lines saved, improved maintainability
+
+### Files
+
+- `qiita_explore/backend/helpers/agent.py`
+
+---
+
+## TKT-033: Extract `useModelSelection()` Hook
+
+**Severity:** Low
+**Status:** Resolved
+
+### Description
+
+Model selection state is spread across `selectedModel`, localStorage (`llm:model`, `model:chat:<id>`), and sync effects in `app_state.js:31-44, 89-98`.
+
+### Resolution (verified 2026-07-14, done prior to this pass)
+
+Extracted to `hooks/useModelSelection.js`; `app_state.js` consumes it via `useModelSelection(view.chatId)`. No leftover inline model-selection state in `app_state.js`.
+
+### Files
+
+- `qiita_explore/frontend/js/app_state.js`
+- New: `qiita_explore/frontend/js/hooks/useModelSelection.js`
+
+---
+
+## TKT-034: Consolidate Date Formatting
+
+**Severity:** Low
+**Status:** Resolved
+
+### Description
+
+Same date formatting (`toLocaleDateString('en-US', { month: 'short', day: 'numeric' })`) appears 4 times in `app_render.js`.
+
+### Resolution (verified 2026-07-14, done prior to this pass)
+
+`formatDate()` added to `utils.js`; `app_render.js` calls it at both usage sites. Zero remaining inline `toLocaleDateString` calls on dates in `app_render.js`/`components.js`.
+
+### Files
+
+- `qiita_explore/frontend/js/utils.js`
+- `qiita_explore/frontend/js/app_render.js`
+
+---
+
+## TKT-035: Simplify Slash Command Matching
+
+**Severity:** Low
+**Status:** Resolved
+
+### Description
+
+`useMemo` in `app_state.js:628-632` recomputes on every keystroke unnecessarily.
+
+### Resolution (verified 2026-07-14, done prior to this pass)
+
+Replaced with a plain inline conditional; `useMemo` removed.
+
+### Files
+
+- `qiita_explore/frontend/js/app_state.js`
+
+---
+
+## TKT-036: Split `app_state.js` (672 → ~300 lines)
+
+**Severity:** Low
+**Status:** Open (dedup done, split still pending)
+
+### Description
+
+`app_state.js` is 672 lines, over the 500-line cap by 172 lines. As of 2026-07-14: 633 lines (after TKT-033/035 plus a new `streamChat()` + `createProjChatAndSeed()`/`createGlobalChatAndSeed()` extraction that deduplicated the project-chat vs. global-chat `sendMessage` branches). Still over cap — the file split below is unstarted.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `sse_helpers.js` | SSE event handlers, stream transformers | ~150 |
+| `loaders.js` | Expand existing: loadProjectDetail, loadGlobalChats, etc. | ~120 |
+| `search_helpers.js` | doSearch function | ~80 |
+| `chat_actions.js` | newProjChat, deleteProjChat, pinStudy, etc. | ~100 |
+| `app_state.js` | Remaining hook (~200 lines) | ~200 |
+
+### Files
+
+- `qiita_explore/frontend/js/app_state.js`
+- New split files in `qiita_explore/frontend/js/`
+
+---
+
+## TKT-037: Split `app_render.js` (601 → ~200 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`app_render.js` is 601 lines, over the 500-line cap by 101 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `sidebar_renderer.js` | Sidebar with projects/chats | ~170 |
+| `browse_renderer.js` | Browse grid, filters | ~140 |
+| `chat_renderer.js` | Chat messages, segments | ~160 |
+| `composer_renderer.js` | Input composer, pin bar | ~100 |
+| `app_render.js` | Topbar, modals, routing | ~130 |
+
+### Files
+
+- `qiita_explore/frontend/js/app_render.js`
+- New split files in `qiita_explore/frontend/js/`
+
+---
+
+## TKT-038: Split `components.js` (689 → ~250 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`components.js` is 689 lines, over the 500-line cap by 189 lines. As of 2026-07-14: 684 lines — still over cap, split unstarted.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `model_picker.js` | Model selection dropdown | ~100 |
+| `pinned_bar.js` | Pinned studies UI | ~80 |
+| `slash_commands.js` | Command palette | ~120 |
+| `components.js` | Remaining core components (~200 lines) | ~200 |
+
+### Files
+
+- `qiita_explore/frontend/js/components.js`
+- New split files in `qiita_explore/frontend/js/`
+
+---
+
+## TKT-039: Split `agent_tools.py` (548 → ~250 lines)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`agent_tools.py` is 548 lines, over the 500-line cap by 48 lines.
+
+### Plan
+
+| New File | Contents | Est. Lines |
+|----------|----------|------------|
+| `agent_tool_schemas.py` | TOOL_SCHEMAS, ToolResult dataclass | ~200 |
+| `agent_tool_executors.py` | All _tool_* functions | ~300 |
+| `agent_tools.py` | Re-export layer | ~100 |
+
+### Files
+
+- `qiita_explore/backend/helpers/agent_tools.py`
+- New split files in `qiita_explore/backend/helpers/`
+
+---
+
+## TKT-040: Split `qiita_fetch.py` (535 → ~200 lines)
+
+**Severity:** Low
+**Status:** Closed — not needed
+
+### Description
+
+`qiita_fetch.py` is 535 lines, over the 500-line cap by 35 lines.
+
+### Resolution (verified 2026-07-14)
+
+TKT-029's query consolidation (plus the TKT-028 import hoist) dropped the file to 486 lines — under the 500-line cap without any file split. No further action needed.
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+
+---
+
+## TKT-041: `fresh_db` Test Fixture Doesn't Isolate Route-Level Tests From the Real Local DB
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`tests/conftest.py`'s `fresh_db` fixture (autouse=True) is meant to give every test an isolated
+SQLite DB: it sets `QIITA_EXPERIMENT_DB_PATH` to a `tmp_path`, deletes every `sys.modules` entry
+whose name contains `'store'`, and reimports `store.db` so `DB_PATH` rebinds to the temp path.
+
+That reimport only fixes modules matched by the `'store' in mod_name` filter. Any module that
+imported specific names out of `store` at its own (one-time, collection-time) import —
+e.g. `routes/chat_routes.py`: `from store import get_study_detail_cache, upsert_study_detail_cache,
+pin_study_to_chat, ...` — keeps a direct reference to the *original* function objects bound to
+the *original* `DB_PATH` (the real default `qiita_explore/backend/data/projects.db`, not the fixture's
+tmp_path). Route modules are never deleted from `sys.modules` because `'routes.chat_routes'`
+doesn't match the `'store'` substring filter.
+
+Practical effect: tests that go through `crud`/`db_conn` fixtures (which freshly `import store.crud`
+per-test) are correctly isolated. Tests that exercise real routes via `app.test_client()` (e.g.
+`test_api.py`, `test_chats.py`) route through already-imported `routes.*`/`run` modules and can
+read/write the real local `projects.db` instead of the intended tmp_path.
+
+Confirmed 2026-07-06: running `pytest tests/ --ignore=tests/e2e` applied a pending
+`study_detail_cache` schema migration (`ALTER TABLE ... ADD COLUMN prep_metadata_json/
+samples_json/total_samples`, already coded in `store/db.py:221-231`) against the real
+`qiita_explore/backend/data/projects.db` rather than an isolated fixture DB. In that instance it was
+harmless (additive migration, no row data changed — confirmed via full `sqlite3 .dump` diff), but
+the same gap could let a test **write** fixture data into the user's real local project DB.
+
+### Plan
+
+- Either: reload every already-imported module that holds direct `from store import X` bindings
+  (not just modules matching `'store' in mod_name`), or
+- Simpler: don't rely on deleting `sys.modules` at all — have `store/db.py` read `DB_PATH` lazily
+  (a function call, not a module-level constant) so `monkeypatch.setenv` is sufficient on its own
+- Add a regression test: assert a route-level test (via `app.test_client()`) writing to the DB
+  does not appear in the real `qiita_explore/backend/data/projects.db` after the test session
+
+### Files
+
+- `qiita_explore/backend/tests/conftest.py` (`fresh_db` fixture)
+- `qiita_explore/backend/store/db.py:12` (`DB_PATH` module-level constant)
+
+---
+
+## TKT-042: `/api/settings` Is Global, Not Per-User
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+The settings endpoints are not scoped per user. Any authenticated user who saves an Anthropic
+API key overwrites the key for **every other user**, and subsequent Anthropic requests are then
+billed against whichever key was written last.
+
+`routes/study_routes.py :: api_get_settings` and `api_post_settings` call
+`store/crud.py :: get_setting` / `set_setting`, which read and write the shared `meta` table
+(`SELECT value FROM meta WHERE key = ?` / `INSERT INTO meta(key,value) ... ON CONFLICT DO UPDATE`).
+Neither function takes a `user_id` parameter. `config.py :: get_client` then resolves the Anthropic
+key via `get_setting('anthropic_api_key')` with no user context.
+
+This is pre-authentication code that was not re-scoped when multi-user auth landed (`6ddc3890`,
+Jul 2026). Every other ownership-scoped query in the app filters on `g.user_id` in the WHERE clause
+(`get_project`, `get_global_chat`, `get_workspace`, `get_merge_job`); settings were missed.
+
+Verified 2026-07-18 by reading `crud.py` and both route handlers.
+
+### Plan
+
+- Preferred: add a `user_settings(user_id, key, value)` table with PK `(user_id, key)`, and give
+  `get_setting`/`set_setting` a required `user_id` argument
+- Keep the existing `meta` table for genuinely global markers — it also stores `tinydb_imported`
+  and the legacy-claim marker (`store/legacy_claim.py`), so do **not** blanket-add a `user_id`
+  column to it
+- Thread the caller's `user_id` into `config.py :: get_client`, or change how it resolves the key
+- Note: `meta.anthropic_api_key` is currently stored in **plaintext**, in the same database whose
+  `auth_sessions.pat_encrypted` column is Fernet-encrypted. Worth encrypting as part of this work
+- Add a test: user A sets a key; user B's `GET /api/settings` does not report it set; B setting a
+  key does not disturb A's
+
+### Files
+
+- `qiita_explore/backend/routes/study_routes.py` (`api_get_settings`, `api_post_settings`)
+- `qiita_explore/backend/store/crud.py` (`get_setting`, `set_setting`)
+- `qiita_explore/backend/config.py` (`get_client`)
+- `qiita_explore/backend/store/db.py` (`meta` table DDL)
+- Documented in `docs/02-authentication.md` § "Two places where tenancy does not hold"
+
+---
+
+## TKT-043: Artifact File Download Performs No Study-Level Authorization
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+`routes/artifact_routes.py :: download_artifact_file` (`GET /api/artifacts/<artifact_id>/files/
+<filepath_id>/download?study_id=<id>`) requires a session, then takes `study_id`, `artifact_id`,
+and `filepath_id` straight from the request, resolves a path via `_resolve_artifact_file`, and
+`send_file`s it.
+
+It never calls `is_study_public(study_id)`. Compare `routes/study_routes.py :: api_study_detail`,
+which gates on exactly that before returning study detail. There is also no ownership check —
+artifacts are not owned by QiitaExplore users — so nothing constrains which study a caller may
+read from.
+
+Practical effect: any authenticated user can enumerate study/artifact/filepath id triples and
+download files belonging to studies that are **not public**.
+
+What the existing check does and does not do: `_resolve_artifact_file` resolves paths from the
+artifact graph rather than from raw user input, calls `os.path.realpath`, verifies
+`os.path.isfile`, and rejects a blocklist of roots (`_FORBIDDEN_ROOTS = ('/etc/', '/proc/',
+'/sys/', '/dev/', '/root/')`). That is a reasonable directory-traversal defense. It is not an
+access-control check, and was not intended as one.
+
+Verified 2026-07-18 by reading the handler and comparing against `api_study_detail`.
+
+### Plan
+
+- Add an `is_study_public(study_id)` gate at the top of the handler, returning **404** (not 403 —
+  do not leak existence) when it fails. `is_study_public` already exists in `helpers/qiita_fetch.py`
+- Replace the `_FORBIDDEN_ROOTS` blocklist with an **allowlist**: resolve the realpath and require
+  it to sit under `QIITA_BASE_DATA_DIR`. A blocklist of five system directories does not enumerate
+  everything that should be off-limits
+- Check whether `get_artifact_samples` and `get_artifact_sample_counts` in the same module need the
+  same gate
+- Minor, same file: the "File not found on disk" case currently returns 403 via the `ValueError`
+  handler; 404 is the correct status
+- Add tests: a non-public study's artifact returns 404 for an authenticated user; a path escaping
+  the data root is rejected; a legitimate public-study download still succeeds
+
+### Files
+
+- `qiita_explore/backend/routes/artifact_routes.py` (`download_artifact_file`,
+  `_resolve_artifact_file`, `_FORBIDDEN_ROOTS`)
+- `qiita_explore/backend/helpers/qiita_fetch.py` (`is_study_public`)
+- Documented in `docs/02-authentication.md` § "Two places where tenancy does not hold"
+
+---
+
+## TKT-044: Merge Can Silently Substitute a Different Artifact Than the One Selected
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+An explicit user artifact selection can be silently discarded and replaced by autopick, so a merge
+runs on a different artifact than the one the user ticked — and reports success.
+
+**Root cause: there are two artifact lists**, built by different queries and cached in different
+columns.
+
+- `helpers/artifact_graph.py :: fetch_artifact_graph` → cached as `artifact_graph_json`. Covers all
+  of `qiita.study_artifact`, with parent edges, job nodes, per-file lists, and BFS-propagated
+  `data_type`. This is what the **tree UI renders** and what the user selects BIOMs from.
+- `helpers/qiita_fetch.py :: _fetch_study_detail_from_qiita` → cached as `artifacts_json`, reached
+  via `helpers/merge_helpers.py :: _get_artifacts`. Prep-joined, `LIMIT 500`, `data_type` read
+  straight off the prep with no propagation. This is what **autopick, validate and submit** resolve
+  against.
+
+In both `helpers/merge_helpers.py :: _resolve_artifact` and the submit handler in
+`routes/merge_routes.py`, the pattern is:
+
+```python
+chosen = [a for a in artifacts if a["artifact_id"] in chosen_ids]
+```
+
+When `chosen` comes back empty it falls through to `autopick_artifact(...)` with no warning
+returned to the caller. A BIOM present in the graph but absent from the prep-joined list — beyond
+`LIMIT 500`, or not reachable through a prep join — means the user's explicit selection is dropped
+and a different artifact is merged.
+
+Given TKT-023 (autopick ignores primer/deprecation compatibility), the substituted artifact may not
+even be biologically comparable.
+
+Verified 2026-07-18 while documenting the merge subsystem.
+
+### Plan
+
+- Make an unresolvable explicit selection a **hard error**, not a silent fallback. If `chosen_ids`
+  is non-empty and resolves to nothing, return 4xx from validate/submit naming the artifact ids
+  that could not be resolved. Autopick should apply only when the user has chosen nothing
+- Longer term, reconcile the two lists so the UI and the resolver agree on what exists. The graph is
+  the more complete source; consider resolving explicit selections against `artifact_graph_json` and
+  keeping the prep-joined list only for autopick's `data_type` reasoning
+- Add a test: a workspace whose `chosen_artifact_ids` names an artifact absent from the prep-joined
+  list must fail loudly rather than merging an autopicked substitute
+
+### Related issues found in the same area
+
+- `store/merge_crud.py :: update_merge_job_status` overwrites `error_message` and `result_path`
+  unconditionally, including with `None`. Harmless under current call ordering; a future
+  intermediate status omitting `result_path` would erase it
+- `validate` calls `check_namespace_compatibility(..., explicit_only=True)` while `submit` calls it
+  without the flag — a workspace can validate green and then be rejected at submit
+- In `validate_merge_workspace`, a `get_biom_sample_ids` failure falls back to the study-level
+  sample list, which is a **superset** of actual BIOM membership — silently overstating the merge
+  overlap preview with no warning surfaced
+
+### Files
+
+- `qiita_explore/backend/helpers/merge_helpers.py` (`_resolve_artifact`, `_get_artifacts`)
+- `qiita_explore/backend/routes/merge_routes.py` (`validate_merge_workspace`, `submit_merge_job`)
+- `qiita_explore/backend/helpers/artifact_graph.py` (`fetch_artifact_graph`)
+- `qiita_explore/backend/store/merge_crud.py` (`update_merge_job_status`)
+- Documented in `docs/07-merge-and-biom.md` § "Two artifact lists, not one"
+
+---
+
+## TKT-045: `barnacle_backend_env.sh` Leaks Secrets Into Unpruned `.env.bak` Files
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+`Qiita/barnacle_backend_env.sh` writes a full timestamped backup of the backend `.env`
+(`.env.bak.<timestamp>`) on every invocation, and nothing ever prunes them. Those backups contain
+secrets in plaintext:
+
+- `OPENAI_API_KEY` / `API_KEY` (the NRP-Nautilus LLM key)
+- `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` (the Fernet key protecting every stored Qiita PAT)
+
+The Fernet key is the serious one. `helpers/pat_crypto.py` deliberately keeps that key **out of
+SQLite** so a leaked database file or backup does not also leak long-lived Qiita bearer
+credentials — its module docstring says exactly this. Scattering plaintext copies of the key across
+timestamped files on the deployment host partly defeats that design: an attacker holding the SQLite
+file plus any one `.env.bak.*` has both halves.
+
+Note: `Qiita/barnacle_backend_env.sh` is tracked in git but currently **deleted from the working
+tree** (` D` in `git status`). Read it with `git show HEAD:Qiita/barnacle_backend_env.sh`.
+
+Found 2026-07-18 while documenting operations.
+
+### Plan
+
+- Decide first whether the script should be restored or is intentionally gone. If gone for good, the
+  remaining task is cleaning up `.env.bak.*` files already on the barnacle host
+- Stop taking full-file backups. The script's purpose is idempotently pinning a few keys
+  (`QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, and deleting `QIITA_LOGINROCKET_URL`) — an
+  in-place edit, or a backup of only the changed lines, is sufficient
+- If a backup is genuinely wanted, keep exactly one (`.env.bak`, overwritten) and `chmod 600` it
+- Audit the barnacle host for existing `.env.bak.*` files and remove them. Confirm `.gitignore`
+  covers `.env.bak.*`, not just `.env`
+- Consider rotating `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` given unknown exposure duration. Rotation
+  invalidates every stored PAT ciphertext; `store/auth_store.py` has no re-encryption path, and
+  `helpers/auth_middleware.py` revokes sessions whose PAT fails to decrypt — so rotation degrades
+  gracefully into "everyone logs in again" rather than breaking
+
+### Files
+
+- `Qiita/barnacle_backend_env.sh` (tracked, deleted from working tree)
+- `qiita_explore/backend/helpers/pat_crypto.py` (the design this undermines)
+- `.gitignore`
+- Documented in `docs/09-operations.md` § routine maintenance
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-07-18*
+
+---

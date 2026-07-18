@@ -1,6 +1,6 @@
 # Appendix A — API Reference
 
-Complete reference for the QiitaExplore HTTP surface: 53 endpoints, all under `/api/`.
+Complete reference for the QiitaExplore HTTP surface: 52 endpoints, all under `/api/`.
 
 This appendix is the single source of truth for the HTTP surface. It is derived directly from the seven route modules in `backend/routes/` plus the auth guard in `backend/helpers/auth_middleware.py`. If an endpoint is not listed here, it does not exist; if the behavior described here disagrees with the code, the code is right and this file needs updating.
 
@@ -107,11 +107,10 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | DELETE | `/api/projects/<project_id>/studies/<int:study_id>` | `api_remove_study` | session | Remove a study from a project |
 | POST | `/api/projects/<project_id>/preload` | `api_project_preload` | session | Warm the full-samples cache |
 
-### Project chats — `backend/routes/chat_routes.py` (7)
+### Project chats — `backend/routes/chat_routes.py` (6)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
-| GET | `/api/projects/<project_id>/chats` | `api_list_chats` | session | List chats in a project |
 | POST | `/api/projects/<project_id>/chats` | `api_create_chat` | session | Create a chat, optionally answering a first message |
 | GET | `/api/projects/<project_id>/chats/<chat_id>` | `api_get_chat` | session | One chat with messages |
 | DELETE | `/api/projects/<project_id>/chats/<chat_id>` | `api_delete_chat` | session | Delete a chat |
@@ -407,9 +406,7 @@ Response:
 
 ## Project Chats
 
-### api_list_chats
-
-`GET /api/projects/<project_id>/chats` — session. Returns `{"chats": [...]}`. An unknown or unowned project yields an empty list rather than a 404. (`backend/routes/chat_routes.py :: api_list_chats`)
+> **There is no list-chats endpoint for project chats**, unlike global chats which have `GET /api/global-chats`. A project's chats are returned inline by `GET /api/projects/<project_id>` — see `backend/store/crud.py :: get_project`, which attaches them. The frontend relies on that and never requests a separate list.
 
 ### api_create_chat
 
@@ -693,7 +690,7 @@ Sends the merge result tarball as `merge_<job_id>.tar.gz` with mimetype `applica
 Behaviors that are easy to misread from the route names alone:
 
 - **Silent-success mutations.** `api_delete_project`, `api_delete_chat`, `api_delete_global_chat`, and `patch_merge_workspace` return success regardless of whether anything was affected. Clients cannot distinguish "deleted" from "never existed".
-- **Empty-list-instead-of-404.** `api_list_chats` and `get_workspace_jobs` return empty collections for unknown parents.
+- **Empty-list-instead-of-404.** `get_workspace_jobs` returns an empty collection for an unknown parent.
 - **Settings are global, not per-user.** `api_get_settings` / `api_post_settings` read and write the shared `meta` table through `get_setting` / `set_setting`, which take no `user_id`. Any authenticated user reads the same flag and overwrites the same stored Anthropic key.
 - **Artifact downloads are not study-scoped.** `download_artifact_file` requires a session but performs no `is_study_public` check (unlike `api_study_detail`) and no ownership check. Its path safety is a blocklist of forbidden roots rather than an allowlist of permitted ones.
 - **Validate and submit disagree.** `validate_merge_workspace` runs `check_namespace_compatibility(..., explicit_only=True)`; `submit_merge_job` runs it without that flag. A green validate does not guarantee a successful submit.
