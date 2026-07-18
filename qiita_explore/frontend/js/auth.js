@@ -170,10 +170,35 @@ function LegacyClaimBanner({ csrfToken, onDone }) {
 }
 
 function AccountBar({ identity, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const label = identity.email || identity.user_id;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = e => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    const onKey  = e => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
   return (
-    <div className="auth-account-bar">
-      <span className="auth-account-email" title={identity.user_id}>{identity.email || identity.user_id}</span>
-      <button className="merge-btn-ghost" onClick={onLogout}>Log out</button>
+    <div className="auth-account-bar" ref={rootRef}>
+      <button className="auth-avatar" onClick={() => setOpen(v => !v)} title={label}>
+        {label.charAt(0).toUpperCase()}
+      </button>
+      {open && (
+        <div className="auth-account-menu">
+          <div className="auth-account-menu-id">
+            <span className="auth-account-email">{label}</span>
+          </div>
+          <button className="auth-account-menu-out" onClick={onLogout}>Log out</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -534,7 +534,7 @@ function renderApp(s) {
                 if (!(isChat || view.type === 'browse')) return 'Open a chat to start messaging';
                 const pinned = (chatCache[view.chatId]?.pinnedStudies || []).length;
                 if (pinned > 0) return `Ask about ${pinned} pinned stud${pinned === 1 ? 'y' : 'ies'}…`;
-                return 'Ask or search…';
+                return 'use "/" for commands, ask or search for studies';
               })()}
               value={input}
               onChange={e => setInput(e.target.value)}
