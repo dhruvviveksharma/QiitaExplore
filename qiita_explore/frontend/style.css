@@ -397,6 +397,11 @@ input, textarea { font-family: var(--sans); }
 
 .chat-messages {
   max-width: calc(var(--chat-max-w) + 40px);
+  /* Explicit width is load-bearing: this is a flex item of .content with auto
+     side margins, and per Flexbox §9.6 such items are never cross-axis
+     stretched — without it the column shrink-wraps and user messages
+     right-align to a collapsed edge instead of the composer's. */
+  width: 100%;
   margin: 0 auto;
   padding: 28px 20px 48px;
   display: flex;
@@ -1060,6 +1065,7 @@ input, textarea { font-family: var(--sans); }
 /* ── Browse panel ────────────────────────────────────────────── */
 .browse-panel {
   max-width: 860px;
+  width: 100%;  /* same auto-margin flex-item caveat as .chat-messages */
   margin: 0 auto;
   padding: 28px 24px;
   display: flex;
