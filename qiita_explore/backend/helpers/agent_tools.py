@@ -117,7 +117,7 @@ TOOL_SCHEMAS = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max studies to return (1–20, default 8).",
+                        "description": "Max studies to return (1–20, default 10).",
                     },
                 },
                 "required": [],
@@ -130,8 +130,7 @@ TOOL_SCHEMAS = [
             "name": "get_study_report",
             "description": (
                 "Load full sample-level metadata for a specific Qiita study. "
-                "Shows all samples with their metadata fields. "
-                "Also pins the study to this chat so it stays in context."
+                "Shows all samples with their metadata fields."
             ),
             "parameters": {
                 "type": "object",
@@ -217,31 +216,6 @@ TOOL_SCHEMAS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "compute_diversity",
-            "description": (
-                "Compute alpha/beta diversity metrics from study OTU tables. "
-                "Currently unavailable — BIOM ingestion is pending (TKT-010)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "study_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "Study IDs to compute diversity for.",
-                    },
-                    "metric": {
-                        "type": "string",
-                        "description": "Diversity metric (e.g. 'shannon', 'bray_curtis').",
-                    },
-                },
-                "required": ["study_ids"],
-            },
-        },
-    },
 ]
 
 
@@ -251,6 +225,31 @@ class ToolResult:
     label: str                         # Shown in step_done UI
     detail: str = ""                   # Shown as sub-label in step_done UI
     ui_payload: Optional[dict] = None  # If set, emitted as a `ui` SSE event
+
+
+def _result_studies(studies, via=None):
+    """Flatten study dicts into the {study_id, study_title, pi_name, num_samples,
+    data_types, via} shape used in tool-call ui_payloads. `via` overrides the
+    per-study origin tag when the caller already knows it (e.g. all results came
+    from the sample-metadata search); otherwise falls back to each study's own."""
+    return [
+        {
+            "study_id":    s.get("study_id"),
+            "study_title": s.get("study_title"),
+            "pi_name":     s.get("pi_name"),
+            "num_samples": s.get("num_samples"),
+            "data_types":  s.get("data_types"),
+            "via":         via or s.get("via", "text"),
+        }
+        for s in studies
+    ]
+
+
+def _empty_input_result(tool, text, label, detail, args=None):
+    """Shared shape for the 'no search criteria provided' early-return ToolResult."""
+    return ToolResult(text=text, label=label, detail=detail, ui_payload={
+        "kind": "tool_call", "tool": tool, "args": args or {}, "result_summary": detail,
+    })
 
 
 def _collect_terms(args: dict) -> tuple:
@@ -291,8 +290,6 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
         return _tool_pin_study(args, scope=scope, chat_id=chat_id)
     if name == "search_by_sample":
         return _tool_search_by_sample(args)
-    if name == "compute_diversity":
-        return _tool_compute_diversity(args)
     return ToolResult(
         text=f"Unknown tool: {name}",
         label=f"Tool error ({name})",
@@ -302,7 +299,7 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
 
 def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult:
     raw_kws, detect_kws = _collect_terms(args)
-    limit          = max(1, min(20, int(args.get("limit") or 8)))
+    limit          = max(1, min(20, int(args.get("limit") or 10)))
     explicit_types = [t.strip() for t in (args.get("data_types") or []) if t]
     explicit_inv   = [t.strip() for t in (args.get("investigation_types") or []) if t]
 
@@ -314,12 +311,8 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
         logger.debug("[search_studies] raw_kws=%s", raw_kws)
 
     if not raw_kws:
-        return ToolResult(
-            text="No keywords provided — cannot search.",
-            label="Search studies", detail="no keywords",
-            ui_payload={"kind": "tool_call", "tool": "search_studies",
-                        "args": {"keywords": []}, "result_summary": "no keywords"},
-        )
+        return _empty_input_result("search_studies", "No keywords provided — cannot search.",
+                                    "Search studies", "no keywords", args={"keywords": []})
 
     # Expand morphological variants (mouse → also mice)
     kws = expand_keyword_variants(raw_kws)
@@ -385,7 +378,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
         text = "No matching public studies found for those keywords."
     else:
         header = f"search_studies returned the top {len(merged)} studies:"
-        text   = _format_discovery_study_list(merged, header, 8_000)
+        text   = _format_discovery_study_list(merged, header, 24_000)
 
     label = "Deep-searched Qiita database" if deep_search else "Searched Qiita database"
     detail_suffix = (
@@ -403,17 +396,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
             "sql_query":      sql_str,
             "result_summary": f"{len(merged)} studies" if merged else "no matches",
-            "result_studies": [
-                {
-                    "study_id":    s.get("study_id"),
-                    "study_title": s.get("study_title"),
-                    "pi_name":     s.get("pi_name"),
-                    "num_samples": s.get("num_samples"),
-                    "data_types":  s.get("data_types"),
-                    "via":         s.get("via", "text"),
-                }
-                for s in merged
-            ],
+            "result_studies": _result_studies(merged),
         },
     )
 
@@ -424,10 +407,6 @@ def _tool_get_study_report(args: dict, *, scope: str, chat_id: str) -> ToolResul
         ui_payload  = _build_samples_report_payload(study_id)
         num_samples = (ui_payload.get("header") or {}).get("num_samples") or len(ui_payload.get("samples") or [])
         text_block  = _build_full_samples_block(study_id, budget_chars=4_000)
-        try:
-            _pin_studies_validated(chat_id, scope, [study_id])
-        except Exception:
-            pass
         return ToolResult(
             text=f"Full sample report for study {study_id} ({num_samples} samples):\n{text_block}",
             label=f"Loaded study {study_id} report",
@@ -488,12 +467,9 @@ def _tool_search_by_sample(args: dict) -> ToolResult:
     )
 
     if not field_filters and not keywords:
-        return ToolResult(
-            text="No field filters or keywords provided — cannot search sample metadata.",
-            label="Sample metadata search",
-            detail="no criteria",
-            ui_payload={"kind": "tool_call", "tool": "search_by_sample",
-                        "args": {}, "result_summary": "no criteria"},
+        return _empty_input_result(
+            "search_by_sample", "No field filters or keywords provided — cannot search sample metadata.",
+            "Sample metadata search", "no criteria",
         )
 
     results = search_studies_by_field_filters(
@@ -509,7 +485,7 @@ def _tool_search_by_sample(args: dict) -> ToolResult:
         text = "No studies found with samples matching those metadata criteria."
     else:
         header = f"search_by_sample returned {len(results)} studies with matching samples:"
-        text   = _format_discovery_study_list(results, header, 8_000)
+        text   = _format_discovery_study_list(results, header, 24_000)
 
     return ToolResult(
         text=text,
@@ -520,29 +496,7 @@ def _tool_search_by_sample(args: dict) -> ToolResult:
             "tool":           "search_by_sample",
             "args":           {"field_filters": field_filters, "keywords": keywords, "data_types": data_types},
             "result_summary": f"{len(results)} studies" if results else "no matches",
-            "result_studies": [
-                {
-                    "study_id":    s.get("study_id"),
-                    "study_title": s.get("study_title"),
-                    "pi_name":     s.get("pi_name"),
-                    "num_samples": s.get("num_samples"),
-                    "data_types":  s.get("data_types"),
-                    "via":         "sample_metadata",
-                }
-                for s in results
-            ],
+            "result_studies": _result_studies(results, via="sample_metadata"),
         },
     )
 
-
-def _tool_compute_diversity(_args: dict) -> ToolResult:
-    return ToolResult(
-        text=(
-            "Diversity analysis is not yet available. "
-            "BIOM/OTU ingestion is pending (TKT-010). "
-            "Once implemented, this tool will compute Shannon, Faith's PD, "
-            "Bray-Curtis, and UniFrac metrics from study OTU tables."
-        ),
-        label="Diversity (unavailable)",
-        detail="pending TKT-010",
-    )

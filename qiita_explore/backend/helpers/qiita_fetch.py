@@ -8,18 +8,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from helpers.pg_pool import pooled_fetchall
+from helpers.llm_helpers import _truncate
 
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
-
-_QIITA_BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
 from store import (
-    PINNED_STUDIES_PER_CHAT_CAP,
     get_study_detail_cache,
     upsert_study_detail_cache,
     pin_study_to_chat,
     list_pinned_studies,
 )
-from helpers.llm_helpers import _truncate
+
+_QIITA_BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +47,10 @@ def _build_samples_context_text(samples_with_values: list, total: int, max_chars
     return text
 
 
-def first_studies(limit=20):
-    """Return deterministic first studies by study_id from PostgreSQL."""
-    try:
-        limit = int(limit)
-    except (TypeError, ValueError):
-        limit = 20
-    limit = max(1, min(100, limit))
-
-    sql = """
-    SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
-           s.study_alias, s.metadata_complete,
-           sp_pi.name as pi_name, sp_pi.email as pi_email,
-           sp_pi.affiliation as pi_affiliation,
-           sp_lab.name as lab_person_name,
-           (SELECT COUNT(*)
+# Shared by qiita_fetch._build_study_header_query and
+# services.study_service.search_studies_with_sql — both SELECT the same
+# per-study aggregate columns, just under different WHERE/visibility logic.
+_STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             FROM qiita.study_sample ss
             WHERE ss.study_id = s.study_id) AS num_samples,
            (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')
@@ -72,7 +60,18 @@ def first_studies(limit=20):
             WHERE spt2.study_id = s.study_id) AS data_types,
            (SELECT COUNT(DISTINCT spt3.prep_template_id)
             FROM qiita.study_prep_template spt3
-            WHERE spt3.study_id = s.study_id) AS num_preps
+            WHERE spt3.study_id = s.study_id) AS num_preps"""
+
+
+def _build_study_header_query(distinct=False):
+    """Shared SELECT/FROM/JOIN for study-header rows. Caller appends its own WHERE/ORDER/LIMIT."""
+    return f"""
+    SELECT {"DISTINCT " if distinct else ""}s.study_id, s.study_title, s.study_abstract,
+           s.study_alias, s.metadata_complete,
+           sp_pi.name as pi_name, sp_pi.email as pi_email,
+           sp_pi.affiliation as pi_affiliation,
+           sp_lab.name as lab_person_name,
+           {_STUDY_COUNT_COLUMNS}
     FROM qiita.study s
     LEFT JOIN qiita.study_person sp_pi
         ON s.principal_investigator_id = sp_pi.study_person_id
@@ -84,6 +83,35 @@ def first_studies(limit=20):
         JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
         WHERE sa.study_id = s.study_id AND v.visibility = 'public'
     )
+    """
+
+
+def _row_to_study_header(row):
+    return {
+        "study_id":        row[0],
+        "study_title":     row[1],
+        "study_abstract":  row[2],
+        "study_alias":     row[3],
+        "metadata_complete": row[4],
+        "pi_name":         row[5],
+        "pi_email":        row[6],
+        "pi_affiliation":  row[7],
+        "lab_person_name": row[8],
+        "num_samples":     row[9],
+        "data_types":      row[10],
+        "num_preps":       row[11],
+    }
+
+
+def first_studies(limit=20):
+    """Return deterministic first studies by study_id from PostgreSQL."""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(100, limit))
+
+    sql = _build_study_header_query(distinct=True) + """
     AND EXISTS (
         SELECT 1 FROM qiita.per_study_tags pst
         WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD'
@@ -96,24 +124,7 @@ def first_studies(limit=20):
     if not results:
         return []
 
-    return [
-        {
-            "study_id":        row[0],
-            "study_title":     row[1],
-            "study_abstract":  row[2],
-            "study_alias":     row[3],
-            "metadata_complete": row[4],
-            "pi_name":         row[5],
-            "pi_email":        row[6],
-            "pi_affiliation":  row[7],
-            "lab_person_name": row[8],
-            "num_samples":     row[9],
-            "data_types":      row[10],
-            "num_preps":       row[11],
-            "is_gold":         True,
-        }
-        for row in results
-    ]
+    return [{**_row_to_study_header(row), "is_gold": True} for row in results]
 
 
 def _qiita_fetch(sql, params=(), default=None):
@@ -200,31 +211,6 @@ def _fetch_prep_metadata_summary(prep_template_id: int):
     }
 
 
-def _fetch_sample_context_text(study_id: int, max_chars: int = 3500) -> str:
-    """Fetch all sample metadata fields from Qiita and return compact context text."""
-    study_id = int(study_id)
-    cnt      = _qiita_fetch(
-        "SELECT COUNT(*) FROM qiita.study_sample WHERE study_id = %s",
-        [study_id],
-    )
-    total = cnt[0][0] if cnt else 0
-
-    rows = _qiita_fetch(
-        f"""
-        SELECT ss.sample_id, sm.sample_values
-        FROM qiita.study_sample ss
-        JOIN qiita.sample_{study_id} sm ON ss.sample_id = sm.sample_id
-        WHERE ss.study_id = %s
-          AND ss.sample_id <> 'qiita_sample_column_names'
-        ORDER BY ss.sample_id
-        LIMIT 200
-        """,
-        [study_id],
-    )
-    samples = [{"sample_id": r[0], "fields": dict(r[1])} for r in rows]
-    return _build_samples_context_text(samples, total, max_chars=max_chars)
-
-
 def _fetch_full_sample_metadata(study_id: int, limit: int = REPORT_SAMPLE_LIMIT):
     """Return sample metadata rows as [{sample_id, fields}] capped to limit."""
     study_id = int(study_id)
@@ -242,6 +228,18 @@ def _fetch_full_sample_metadata(study_id: int, limit: int = REPORT_SAMPLE_LIMIT)
         [study_id, limit],
     )
     return [{"sample_id": r[0], "fields": dict(r[1])} for r in rows]
+
+
+def _fetch_sample_context_text(study_id: int, max_chars: int = 3500) -> str:
+    """Fetch all sample metadata fields from Qiita and return compact context text."""
+    study_id = int(study_id)
+    cnt      = _qiita_fetch(
+        "SELECT COUNT(*) FROM qiita.study_sample WHERE study_id = %s",
+        [study_id],
+    )
+    total   = cnt[0][0] if cnt else 0
+    samples = _fetch_full_sample_metadata(study_id, limit=200)
+    return _build_samples_context_text(samples, total, max_chars=max_chars)
 
 
 def _get_or_fetch_full_samples(study_id: int, limit: int = REPORT_SAMPLE_LIMIT):
@@ -411,52 +409,11 @@ def _detect_mentioned_study_ids(user_content: str, proj) -> list:
 def _fetch_study_header(study_id: int):
     """Fetch one study header row for deterministic study report output."""
     study_id = int(study_id)
-    rows     = _qiita_fetch(
-        """
-        SELECT s.study_id, s.study_title, s.study_abstract,
-               s.study_alias, s.metadata_complete,
-               sp_pi.name AS pi_name, sp_pi.email AS pi_email,
-               sp_pi.affiliation AS pi_affiliation,
-               sp_lab.name AS lab_person_name,
-               (SELECT COUNT(*) FROM qiita.study_sample ss WHERE ss.study_id = s.study_id) AS num_samples,
-               (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')
-                FROM qiita.study_prep_template spt2
-                JOIN qiita.prep_template pt2 ON spt2.prep_template_id = pt2.prep_template_id
-                JOIN qiita.data_type dt2 ON pt2.data_type_id = dt2.data_type_id
-                WHERE spt2.study_id = s.study_id) AS data_types,
-               (SELECT COUNT(DISTINCT spt3.prep_template_id)
-                FROM qiita.study_prep_template spt3
-                WHERE spt3.study_id = s.study_id) AS num_preps
-        FROM qiita.study s
-        LEFT JOIN qiita.study_person sp_pi ON s.principal_investigator_id = sp_pi.study_person_id
-        LEFT JOIN qiita.study_person sp_lab ON s.lab_person_id = sp_lab.study_person_id
-        WHERE s.study_id = %s
-          AND EXISTS (
-              SELECT 1 FROM qiita.study_artifact sa
-              JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-              JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-              WHERE sa.study_id = s.study_id AND v.visibility = 'public'
-          )
-        """,
-        [study_id],
-    )
+    sql = _build_study_header_query() + " AND s.study_id = %s"
+    rows = _qiita_fetch(sql, [study_id])
     if not rows:
         return None
-    r = rows[0]
-    return {
-        "study_id":        r[0],
-        "study_title":     r[1],
-        "study_abstract":  r[2],
-        "study_alias":     r[3],
-        "metadata_complete": r[4],
-        "pi_name":         r[5],
-        "pi_email":        r[6],
-        "pi_affiliation":  r[7],
-        "lab_person_name": r[8],
-        "num_samples":     r[9],
-        "data_types":      r[10],
-        "num_preps":       r[11],
-    }
+    return _row_to_study_header(rows[0])
 
 
 def _fetch_study_detail_from_qiita(study_id: int):

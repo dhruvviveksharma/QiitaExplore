@@ -25,6 +25,8 @@ Several `except Exception:` blocks swallow errors with `pass` or a silent fallba
 - `qiita_explore/backend/store/crud.py:71` — silent swallow
 - `qiita_explore/backend/store/merge_crud.py:22` — silent swallow
 
+
+
 ### Plan
 
 - Add `logger.exception()` / `logger.warning()` to each block above
@@ -32,6 +34,8 @@ Several `except Exception:` blocks swallow errors with `pass` or a silent fallba
 - Prioritize `project_routes.py` (user-facing) first
 
 ---
+
+
 
 ## TKT-003: Undefined Variables on Qiita Fetch Failure
 
@@ -48,6 +52,8 @@ If Qiita fetch failed during study add, `preps`/`artifacts` could be unset, risk
 
 ---
 
+
+
 ## TKT-004: Race Condition in SSE Response (pin after "done")
 
 **Severity:** Low
@@ -62,6 +68,8 @@ In the SSE handlers for global and project chat, if `pin_study_to_chat` fails *a
 - `qiita_explore/backend/routes/global_chat_routes.py` (SSE done handler)
 - `qiita_explore/backend/routes/chat_routes.py` (SSE done handler)
 
+
+
 ### Plan
 
 - Perform the pin operation before yielding the SSE "done" event (do work, then respond)
@@ -69,6 +77,8 @@ In the SSE handlers for global and project chat, if `pin_study_to_chat` fails *a
 - Consider client-side reconciliation of pinned state
 
 ---
+
+
 
 ## TKT-005: LLM Chat Context Retention (re-validate under agentic path)
 
@@ -91,6 +101,8 @@ This predates the agentic tool-calling loop. Global chat now uses the OpenAI too
 
 ---
 
+
+
 ## TKT-006: Pin Studies in Chat Bar + Enter to Start Global Chat
 
 **Severity:** Medium
@@ -106,11 +118,15 @@ From the Browse view, let users use the bottom composer: pin studies and press E
 - Enter from browse creates/sends into a global chat: browse branch in `sendMessage` (`qiita_explore/frontend/js/app_state.js:380`)
 - Pinning supported via `/pin <ids>` command → `pin_study_ids` payload (`app_state.js:367`)
 
+
+
 ### Caveat
 
 The "pin directly from a study card / context chip" UX (vs. the `/pin` command) was not separately verified. If that interaction is still desired, open a focused follow-up ticket; otherwise close fully.
 
 ---
+
+
 
 ## TKT-007: Refactor Away from qiita_db.TRN / qiita_core (then delete both packages)
 
@@ -133,6 +149,8 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead w
 - `qiita_explore/backend/helpers/sample_search.py`
 - `qiita_explore/backend/services/study_service.py`
 
+
+
 ### Plan
 
 - Replace `TRN` with a raw `psycopg2` connection or a thin local wrapper (template in commit `ed3fc3d8`)
@@ -141,6 +159,8 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead w
 - `git rm -r qiita_db/ qiita_core/`
 
 ---
+
+
 
 ## TKT-009: DuckDB / MIINT
 
@@ -153,28 +173,40 @@ Everything else in `qiita_db/` (~15 MB, 80+ modules) and `qiita_core/` is dead w
 
 ---
 
+
+
 ## TKT-010: BIOM Ingestion + Diversity Analysis
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Open (stub removed 2026-07-15 — see note)
 
 ### Description
 
-The chat advertises a `compute_diversity` tool, but it is a hard stub — `qiita_explore/backend/helpers/agent_tools.py:538` returns *"Diversity analysis is not yet available."* This is the analysis payoff of the merge workflow: a user can merge BIOMs but cannot then analyze the result.
+The chat used to advertise a `compute_diversity` tool that was a hard stub, always returning *"Diversity analysis is not yet available."* This is the analysis payoff of the merge workflow: a user can merge BIOMs but cannot then analyze the result.
+
+### Note (2026-07-15)
+
+The stub (schema, dispatch branch, `_tool_compute_diversity`, its `_tool_label` entry, and its `GLOBAL_CHAT_SYSTEM_PROMPT` line) was removed as dead weight in a simplification pass — advertising a tool that always fails is worse UX than the model not knowing about it at all. The tool no longer exists; this ticket is now a from-scratch build, not a "finish the stub" task.
 
 ### Plan
 
 - Ingest BIOM/OTU tables from a merge result bundle (merge already emits `result.tar.gz`; see `helpers/merge_executor.py`)
-- Implement `_tool_compute_diversity` to compute alpha/beta metrics: Shannon, Faith's PD, Bray-Curtis, UniFrac
+- Add a `compute_diversity` tool (schema in `agent_tools.py::TOOL_SCHEMAS`, dispatch in `execute_tool`, implementation as `_tool_compute_diversity`) to compute alpha/beta metrics: Shannon, Faith's PD, Bray-Curtis, UniFrac
 - Emit a `segment_tool_result` with a renderable `ui_payload` (new branch in `ToolResultWidget`, frontend `components.js`)
 - Coordinate with TKT-015 — diversity is only meaningful once the merge execution path is trustworthy
+
+
 
 ### Files Changed
 
 - `qiita_explore/backend/helpers/agent_tools.py`
+- `qiita_explore/backend/helpers/agent.py` (`_tool_label`)
+- `qiita_explore/backend/config.py` (`GLOBAL_CHAT_SYSTEM_PROMPT`)
 - `qiita_explore/frontend/js/components.js`
 
 ---
+
+
 
 ## TKT-011: Split Oversized Files (500-line cap)
 
@@ -196,6 +228,9 @@ Files over the 500-line `qiita_explore/` cap (verified 2026-06-21):
 | `backend/routes/merge_routes.py` | 528   | TKT-014    |
 | `backend/store/crud.py`          | 515   | TKT-011    |
 
+
+
+
 ### Resolution (verified 2026-07-14)
 
 - `qiita_fetch.py`: 532 → 486 via query consolidation (TKT-029/030), **under cap**, no split needed (closes as TKT-040).
@@ -203,11 +238,15 @@ Files over the 500-line `qiita_explore/` cap (verified 2026-06-21):
 - `merge_routes.py`: 528 → 364 via `helpers/merge_helpers.py` extraction (this pass, see TKT-014), **under cap**.
 - `components.js` (684), `app_state.js` (633), `app_render.js` (601), `agent_tools.py` (548) **remain over cap** — see TKT-038, TKT-036, TKT-037, TKT-013 respectively. The `app_actions.js` split proposed below for `app_state.js` was not done as a file split, but a chunk of its duplication was removed in-place (`streamChat`/`createProjChatAndSeed`/`createGlobalChatAndSeed`, see TKT-036).
 
+
+
 ### Plan (TKT-011 scope, remaining files only)
 
 **components.js / app_render.js / agent_tools.py** — split along feature boundaries (TBD per file; see TKT-038, TKT-037, TKT-013).
 
 ---
+
+
 
 ## TKT-012: Merge Page Request Fan-outs
 
@@ -221,12 +260,16 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 1. `**MergesTab` mount** (`frontend/js/merge_workspace.js`): on load, fetches full workspace detail for every workspace in parallel via `Promise.all(list.map(...))`.
 2. `**GlobalBiomSelector` Smart Select** (`frontend/js/merge_artifacts.js`, `handleApply`): fetches all missing study details in parallel (up to 5), no rate limiting / cancellation.
 
+
+
 ### Plan
 
 - Lazy-load workspace detail in `MergesTab` on expand/hover (or batch on a short delay)
 - In `GlobalBiomSelector`, fetch sequentially or add a concurrency limit
 
 ---
+
+
 
 ## TKT-013: Split agent_tools.py (over 500-line cap)
 
@@ -245,6 +288,8 @@ Extract tool implementations into `helpers/agent_tool_impls.py`:
 - Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers in `agent_tools.py`
 
 ---
+
+
 
 ## TKT-014: Split merge_routes.py (over 500-line cap)
 
@@ -267,6 +312,8 @@ Extracted the shared, pure (no-Flask) helpers `_get_artifacts`, `_type_filtered_
 
 ---
 
+
+
 ## TKT-015: Merge Executor Shipped in Dev-Only Mode
 
 **Severity:** High
@@ -283,11 +330,15 @@ Choose one:
 - **Finish the remote pipeline** — implement the paramiko SFTP+SSH path described in the TODO (upload BIOMs → ssh exec → download `result.tar.gz`); keep the same `on_status` interface.
 - **Or gate/document local-only mode** — explicitly require the local `qiita` env and surface a clear error when prerequisites are missing, so master doesn't silently fail.
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/merge_executor.py`
 
 ---
+
+
 
 ## TKT-016: Parallelize Header Enrichment + Reuse Connection Pool
 
@@ -303,12 +354,16 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 - Fan out `_fetch_study_header` calls using the `ThreadPoolExecutor` already in scope; collect results with `as_completed`.
 - Hoist the `ThreadedConnectionPool` to module scope in `sample_search.py`; size it to `pool_size` (default 16). Destroy + recreate only on connection errors.
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/sample_search.py:165`, `:200`, `:229`
 - `qiita_explore/backend/helpers/qiita_fetch.py:359`
 
 ---
+
+
 
 ## TKT-017: Shared Cross-Worker Study Header Cache
 
@@ -324,12 +379,16 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 - Promote `_fetch_study_header_cached` to write through to the shared SQLite `study_detail_cache` (add a `header_json` TEXT column or reuse `detail_json`). Keep the in-process dict as an L1 TTL for the current worker.
 - Schema migration required (`db.py` migrations list).
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/qiita_fetch.py:270–285`
 - `qiita_explore/backend/store/db.py` (migration), `store/cache.py`
 
 ---
+
+
 
 ## TKT-018: Stream Sample-Search Results Incrementally
 
@@ -345,6 +404,8 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 - Refactor the probe loops to yield matched study IDs as `as_completed` fires them.
 - Emit each batch as a `segment_tool_result_partial` SSE event (or reuse `token` events with a structured payload); frontend accumulates into the existing `InlineStudyCard` grid progressively.
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/sample_search.py:174–205`, `:239–260`
@@ -352,6 +413,8 @@ After the parallel sample probes complete, study headers are fetched in a plain 
 - `qiita_explore/frontend/js/components.js` (`ToolResultWidget`)
 
 ---
+
+
 
 ## TKT-019: Avoid Redundant Agent Synthesis Round
 
@@ -368,11 +431,15 @@ When the tool-call loop ends on tool results and `final_had_synthesis` is False,
 - Detect whether the model synthesized within the loop (`final_had_synthesis = True`) and skip the extra completion.
 - Benchmark: compare round-trip latency with/without the extra pass on 10 representative queries.
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/agent.py:120–153`, `:275–317`
 
 ---
+
+
 
 ## TKT-020: Optional Production JS Precompile
 
@@ -389,12 +456,16 @@ When the tool-call loop ends on tool results and `final_had_synthesis` is False,
 - `index.html` detects `?prod=1` (or a separate `index.prod.html`) and loads the bundle instead of the individual Babel-annotated scripts.
 - Dev path unchanged: open `index.html` directly.
 
+
+
 ### Files
 
 - `qiita_explore/frontend/index.html`
 - New: `qiita_explore/frontend/build.sh`
 
 ---
+
+
 
 ## TKT-021: Metadata Cohort Builder + Export
 
@@ -412,6 +483,8 @@ Users want to filter samples across pinned studies by a shared metadata field (e
 3. New agent tool `build_cohort` — wraps the filter route; result UI shows a summary + download button.
 4. Frontend: `CohortBubble` component rendered by `ToolResultWidget` when `payload.kind === 'cohort'`.
 
+
+
 ### Files
 
 - `qiita_explore/backend/routes/` (new `cohort_routes.py`)
@@ -419,6 +492,8 @@ Users want to filter samples across pinned studies by a shared metadata field (e
 - `qiita_explore/frontend/js/components.js` (`CohortBubble`)
 
 ---
+
+
 
 ## TKT-022: Cross-Study Metadata Field-Overlap Matrix
 
@@ -435,6 +510,8 @@ Before merging studies, users need to know which sample metadata fields are shar
 2. Frontend: `FieldOverlapMatrix` component — renders a heatmap-style table; highlights fields present in ≥80% of all studies as merge-ready candidates.
 3. Wire into `InlineStudyCard` "Compare fields" action (or a slash command `/overlap 104 77 101`).
 
+
+
 ### Files
 
 - `qiita_explore/backend/helpers/agent_tools.py`
@@ -442,6 +519,8 @@ Before merging studies, users need to know which sample metadata fields are shar
 - `qiita_explore/frontend/js/components.js` (`FieldOverlapMatrix`)
 
 ---
+
+
 
 ## TKT-023: Merge Autopick Doesn't Check Deprecated / Human-Filtering / Primer Compatibility
 
@@ -456,21 +535,25 @@ merge. It does not check:
 
 - `prep_template.deprecated` — a deprecated prep can be silently selected for a merge
 - `prep_template.current_human_filtering` — a human-filtered prep can be merged with an
-  unfiltered one, silently mixing incomparable read sets
+unfiltered one, silently mixing incomparable read sets
 - `target_gene` / `target_subfragment` / `platform` — these live in per-sample `sample_values`
-  JSONB (Qiita duplicates prep-level fields onto every sample row) and are the real fine-grained
-  compatibility signal. Two "16S" preps sequenced with different primers (e.g. V3 vs V4) pass the
-  current namespace-only check but produce a biologically meaningless merged feature table.
+JSONB (Qiita duplicates prep-level fields onto every sample row) and are the real fine-grained
+compatibility signal. Two "16S" preps sequenced with different primers (e.g. V3 vs V4) pass the
+current namespace-only check but produce a biologically meaningless merged feature table.
+
+
 
 ### Plan
 
 - Pull `deprecated`, `current_human_filtering`, `target_gene`, `target_subfragment`, `platform`
-  alongside the existing prep/artifact fields in `qiita_fetch._fetch_study_detail_from_qiita`
+alongside the existing prep/artifact fields in `qiita_fetch._fetch_study_detail_from_qiita`
 - Enforce in `biom_autopick.py`'s compatibility check: exclude `deprecated` preps by default,
-  block mixing `current_human_filtering` states, and treat `target_gene`/`target_subfragment`/
-  `platform` mismatches the same as a `data_type` mismatch
+block mixing `current_human_filtering` states, and treat `target_gene`/`target_subfragment`/
+`platform` mismatches the same as a `data_type` mismatch
 - Not blocking the MIINT migration — this is a correctness gap in the *current* merge code,
-  independent of whether/when MIINT replaces it
+independent of whether/when MIINT replaces it
+
+
 
 ### Files
 
@@ -478,6 +561,8 @@ merge. It does not check:
 - `qiita_explore/backend/helpers/qiita_fetch.py` (`_fetch_study_detail_from_qiita`)
 
 ---
+
+
 
 ## TKT-024: `/api/search` Latency Variance (86ms–13.5s) — Unindexed Leading-Wildcard ILIKE
 
@@ -493,8 +578,7 @@ and 3/15 representative queries timed out outright (>10s).
 Root cause, confirmed by reading `search_studies_with_sql`
 (`qiita_explore/backend/services/study_service.py:148-244`): the query computes 4 correlated
 subqueries per row (`num_samples` COUNT, `data_types` STRING_AGG via a 2-join, `num_preps` COUNT
-DISTINCT, `is_gold` EXISTS) plus a relevance score, under `SELECT DISTINCT ... ORDER BY relevance
-DESC`, with `LIMIT`/`OFFSET` applied last. Postgres can't push `LIMIT` below a sort on a computed
+DISTINCT, `is_gold` EXISTS) plus a relevance score, under `SELECT DISTINCT ... ORDER BY relevance DESC`, with `LIMIT`/`OFFSET` applied last. Postgres can't push `LIMIT` below a sort on a computed
 column, so it materializes and scores **every** row matching `WHERE` before trimming — latency
 scales with total matching-row count, not the 50-150 row cap.
 
@@ -512,13 +596,15 @@ exact class of problem for a different table (`processing_job.command_parameters
 ### Plan
 
 - New Postgres patch (e.g. `patches/9X.sql`) adding `pg_trgm` GIN trigram indexes on
-  `qiita.study.study_title`, `study_abstract`, `study_alias`, and `qiita.study_person.name`,
-  `affiliation`
+`qiita.study.study_title`, `study_abstract`, `study_alias`, and `qiita.study_person.name`,
+`affiliation`
 - Re-run `search_latency.py`/`concurrent_bench.py` before/after to confirm the tail latency and
-  timeout rate drop
-- Scoped out of the connection-pooling/cache fixes (TKT-\* around the same benchmarks) since this
-  touches schema on the externally-managed Qiita Postgres DB — needs a deliberate, separate
-  migration rather than an app-code change
+timeout rate drop
+- Scoped out of the connection-pooling/cache fixes (TKT- around the same benchmarks) since this
+touches schema on the externally-managed Qiita Postgres DB — needs a deliberate, separate
+migration rather than an app-code change
+
+
 
 ### Files
 
@@ -527,6 +613,8 @@ exact class of problem for a different table (`processing_job.command_parameters
 - New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
 
 ---
+
+
 
 ## TKT-025: Remove Unused `_qiita_fetch()` Helper — REVISED
 
@@ -545,6 +633,8 @@ After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414
 
 ---
 
+
+
 ## TKT-026: Remove Redundant In-Memory Study Header Cache
 
 **Severity:** Low
@@ -557,6 +647,7 @@ After deeper code review, `_qiita_fetch()` at lines 130, 144, 179, 207, 232, 414
 ### Plan
 
 Remove:
+
 ```python
 # REMOVE (lines ~266-279):
 _STUDY_HEADER_TTL_SECONDS = 3600
@@ -574,6 +665,8 @@ Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_
 - `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
+
+
 
 ## TKT-027: Remove Legacy `test.ipynb`
 
@@ -593,6 +686,8 @@ Deleted (along with other stale `ezredbiom/` leftovers from the directory rename
 - `qiita_explore/test.ipynb`
 
 ---
+
+
 
 ## TKT-028: Clean Up Mid-Module Imports in llm_helpers.py
 
@@ -614,6 +709,8 @@ Moved to the top import block. The same issue was found in `helpers/qiita_fetch.
 
 ---
 
+
+
 ## TKT-029: Consolidate Duplicate Study Header Queries
 
 **Severity:** Medium
@@ -633,6 +730,8 @@ Moved to the top import block. The same issue was found in `helpers/qiita_fetch.
 
 ---
 
+
+
 ## TKT-030: Consolidate Sample Fetch Functions
 
 **Severity:** Low
@@ -651,6 +750,8 @@ Moved to the top import block. The same issue was found in `helpers/qiita_fetch.
 - `qiita_explore/backend/helpers/qiita_fetch.py`
 
 ---
+
+
 
 ## TKT-031: Extract Shared `request_utils.py`
 
@@ -673,6 +774,8 @@ Created `helpers/request_utils.py` with `parse_chat_stream_body()` (message/mode
 
 ---
 
+
+
 ## TKT-032: Consolidate SSE Streaming Patterns
 
 **Severity:** Medium
@@ -694,6 +797,8 @@ Extract base streaming class/function with common loop logic. Provider-specific 
 
 ---
 
+
+
 ## TKT-033: Extract `useModelSelection()` Hook
 
 **Severity:** Low
@@ -713,6 +818,8 @@ Extracted to `hooks/useModelSelection.js`; `app_state.js` consumes it via `useMo
 - New: `qiita_explore/frontend/js/hooks/useModelSelection.js`
 
 ---
+
+
 
 ## TKT-034: Consolidate Date Formatting
 
@@ -734,6 +841,8 @@ Same date formatting (`toLocaleDateString('en-US', { month: 'short', day: 'numer
 
 ---
 
+
+
 ## TKT-035: Simplify Slash Command Matching
 
 **Severity:** Low
@@ -753,6 +862,8 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 ---
 
+
+
 ## TKT-036: Split `app_state.js` (672 → ~300 lines)
 
 **Severity:** Low
@@ -764,13 +875,17 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 ### Plan
 
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `sse_helpers.js` | SSE event handlers, stream transformers | ~150 |
-| `loaders.js` | Expand existing: loadProjectDetail, loadGlobalChats, etc. | ~120 |
-| `search_helpers.js` | doSearch function | ~80 |
-| `chat_actions.js` | newProjChat, deleteProjChat, pinStudy, etc. | ~100 |
-| `app_state.js` | Remaining hook (~200 lines) | ~200 |
+
+| New File            | Contents                                                  | Est. Lines |
+| ------------------- | --------------------------------------------------------- | ---------- |
+| `sse_helpers.js`    | SSE event handlers, stream transformers                   | ~150       |
+| `loaders.js`        | Expand existing: loadProjectDetail, loadGlobalChats, etc. | ~120       |
+| `search_helpers.js` | doSearch function                                         | ~80        |
+| `chat_actions.js`   | newProjChat, deleteProjChat, pinStudy, etc.               | ~100       |
+| `app_state.js`      | Remaining hook (~200 lines)                               | ~200       |
+
+
+
 
 ### Files
 
@@ -778,6 +893,8 @@ Replaced with a plain inline conditional; `useMemo` removed.
 - New split files in `qiita_explore/frontend/js/`
 
 ---
+
+
 
 ## TKT-037: Split `app_render.js` (601 → ~200 lines)
 
@@ -790,13 +907,17 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 ### Plan
 
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `sidebar_renderer.js` | Sidebar with projects/chats | ~170 |
-| `browse_renderer.js` | Browse grid, filters | ~140 |
-| `chat_renderer.js` | Chat messages, segments | ~160 |
-| `composer_renderer.js` | Input composer, pin bar | ~100 |
-| `app_render.js` | Topbar, modals, routing | ~130 |
+
+| New File               | Contents                    | Est. Lines |
+| ---------------------- | --------------------------- | ---------- |
+| `sidebar_renderer.js`  | Sidebar with projects/chats | ~170       |
+| `browse_renderer.js`   | Browse grid, filters        | ~140       |
+| `chat_renderer.js`     | Chat messages, segments     | ~160       |
+| `composer_renderer.js` | Input composer, pin bar     | ~100       |
+| `app_render.js`        | Topbar, modals, routing     | ~130       |
+
+
+
 
 ### Files
 
@@ -804,6 +925,8 @@ Replaced with a plain inline conditional; `useMemo` removed.
 - New split files in `qiita_explore/frontend/js/`
 
 ---
+
+
 
 ## TKT-038: Split `components.js` (689 → ~250 lines)
 
@@ -816,12 +939,16 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 ### Plan
 
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `model_picker.js` | Model selection dropdown | ~100 |
-| `pinned_bar.js` | Pinned studies UI | ~80 |
-| `slash_commands.js` | Command palette | ~120 |
-| `components.js` | Remaining core components (~200 lines) | ~200 |
+
+| New File            | Contents                               | Est. Lines |
+| ------------------- | -------------------------------------- | ---------- |
+| `model_picker.js`   | Model selection dropdown               | ~100       |
+| `pinned_bar.js`     | Pinned studies UI                      | ~80        |
+| `slash_commands.js` | Command palette                        | ~120       |
+| `components.js`     | Remaining core components (~200 lines) | ~200       |
+
+
+
 
 ### Files
 
@@ -829,6 +956,8 @@ Replaced with a plain inline conditional; `useMemo` removed.
 - New split files in `qiita_explore/frontend/js/`
 
 ---
+
+
 
 ## TKT-039: Split `agent_tools.py` (548 → ~250 lines)
 
@@ -841,11 +970,15 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 ### Plan
 
-| New File | Contents | Est. Lines |
-|----------|----------|------------|
-| `agent_tool_schemas.py` | TOOL_SCHEMAS, ToolResult dataclass | ~200 |
-| `agent_tool_executors.py` | All _tool_* functions | ~300 |
-| `agent_tools.py` | Re-export layer | ~100 |
+
+| New File                  | Contents                           | Est. Lines |
+| ------------------------- | ---------------------------------- | ---------- |
+| `agent_tool_schemas.py`   | TOOL_SCHEMAS, ToolResult dataclass | ~200       |
+| `agent_tool_executors.py` | All *tool** functions              | ~300       |
+| `agent_tools.py`          | Re-export layer                    | ~100       |
+
+
+
 
 ### Files
 
@@ -853,6 +986,8 @@ Replaced with a plain inline conditional; `useMemo` removed.
 - New split files in `qiita_explore/backend/helpers/`
 
 ---
+
+
 
 ## TKT-040: Split `qiita_fetch.py` (535 → ~200 lines)
 
@@ -873,6 +1008,8 @@ TKT-029's query consolidation (plus the TKT-028 import hoist) dropped the file t
 
 ---
 
+
+
 ## TKT-041: `fresh_db` Test Fixture Doesn't Isolate Route-Level Tests From the Real Local DB
 
 **Severity:** Medium
@@ -886,8 +1023,7 @@ whose name contains `'store'`, and reimports `store.db` so `DB_PATH` rebinds to 
 
 That reimport only fixes modules matched by the `'store' in mod_name` filter. Any module that
 imported specific names out of `store` at its own (one-time, collection-time) import —
-e.g. `routes/chat_routes.py`: `from store import get_study_detail_cache, upsert_study_detail_cache,
-pin_study_to_chat, ...` — keeps a direct reference to the *original* function objects bound to
+e.g. `routes/chat_routes.py`: `from store import get_study_detail_cache, upsert_study_detail_cache, pin_study_to_chat, ...` — keeps a direct reference to the *original* function objects bound to
 the *original* `DB_PATH` (the real default `qiita_explore/backend/data/projects.db`, not the fixture's
 tmp_path). Route modules are never deleted from `sys.modules` because `'routes.chat_routes'`
 doesn't match the `'store'` substring filter.
@@ -898,8 +1034,7 @@ per-test) are correctly isolated. Tests that exercise real routes via `app.test_
 read/write the real local `projects.db` instead of the intended tmp_path.
 
 Confirmed 2026-07-06: running `pytest tests/ --ignore=tests/e2e` applied a pending
-`study_detail_cache` schema migration (`ALTER TABLE ... ADD COLUMN prep_metadata_json/
-samples_json/total_samples`, already coded in `store/db.py:221-231`) against the real
+`study_detail_cache` schema migration (`ALTER TABLE ... ADD COLUMN prep_metadata_json/ samples_json/total_samples`, already coded in `store/db.py:221-231`) against the real
 `qiita_explore/backend/data/projects.db` rather than an isolated fixture DB. In that instance it was
 harmless (additive migration, no row data changed — confirmed via full `sqlite3 .dump` diff), but
 the same gap could let a test **write** fixture data into the user's real local project DB.
@@ -907,11 +1042,13 @@ the same gap could let a test **write** fixture data into the user's real local 
 ### Plan
 
 - Either: reload every already-imported module that holds direct `from store import X` bindings
-  (not just modules matching `'store' in mod_name`), or
+(not just modules matching `'store' in mod_name`), or
 - Simpler: don't rely on deleting `sys.modules` at all — have `store/db.py` read `DB_PATH` lazily
-  (a function call, not a module-level constant) so `monkeypatch.setenv` is sufficient on its own
+(a function call, not a module-level constant) so `monkeypatch.setenv` is sufficient on its own
 - Add a regression test: assert a route-level test (via `app.test_client()`) writing to the DB
-  does not appear in the real `qiita_explore/backend/data/projects.db` after the test session
+does not appear in the real `qiita_explore/backend/data/projects.db` after the test session
+
+
 
 ### Files
 
@@ -919,6 +1056,8 @@ the same gap could let a test **write** fixture data into the user's real local 
 - `qiita_explore/backend/store/db.py:12` (`DB_PATH` module-level constant)
 
 ---
+
+
 
 ## TKT-042: `/api/settings` Is Global, Not Per-User
 
@@ -946,15 +1085,17 @@ Verified 2026-07-18 by reading `crud.py` and both route handlers.
 ### Plan
 
 - Preferred: add a `user_settings(user_id, key, value)` table with PK `(user_id, key)`, and give
-  `get_setting`/`set_setting` a required `user_id` argument
+`get_setting`/`set_setting` a required `user_id` argument
 - Keep the existing `meta` table for genuinely global markers — it also stores `tinydb_imported`
-  and the legacy-claim marker (`store/legacy_claim.py`), so do **not** blanket-add a `user_id`
-  column to it
+and the legacy-claim marker (`store/legacy_claim.py`), so do **not** blanket-add a `user_id`
+column to it
 - Thread the caller's `user_id` into `config.py :: get_client`, or change how it resolves the key
 - Note: `meta.anthropic_api_key` is currently stored in **plaintext**, in the same database whose
-  `auth_sessions.pat_encrypted` column is Fernet-encrypted. Worth encrypting as part of this work
+`auth_sessions.pat_encrypted` column is Fernet-encrypted. Worth encrypting as part of this work
 - Add a test: user A sets a key; user B's `GET /api/settings` does not report it set; B setting a
-  key does not disturb A's
+key does not disturb A's
+
+
 
 ### Files
 
@@ -966,6 +1107,8 @@ Verified 2026-07-18 by reading `crud.py` and both route handlers.
 
 ---
 
+
+
 ## TKT-043: Artifact File Download Performs No Study-Level Authorization
 
 **Severity:** High
@@ -973,8 +1116,7 @@ Verified 2026-07-18 by reading `crud.py` and both route handlers.
 
 ### Description
 
-`routes/artifact_routes.py :: download_artifact_file` (`GET /api/artifacts/<artifact_id>/files/
-<filepath_id>/download?study_id=<id>`) requires a session, then takes `study_id`, `artifact_id`,
+`routes/artifact_routes.py :: download_artifact_file` (`GET /api/artifacts/<artifact_id>/files/ <filepath_id>/download?study_id=<id>`) requires a session, then takes `study_id`, `artifact_id`,
 and `filepath_id` straight from the request, resolves a path via `_resolve_artifact_file`, and
 `send_file`s it.
 
@@ -988,8 +1130,7 @@ download files belonging to studies that are **not public**.
 
 What the existing check does and does not do: `_resolve_artifact_file` resolves paths from the
 artifact graph rather than from raw user input, calls `os.path.realpath`, verifies
-`os.path.isfile`, and rejects a blocklist of roots (`_FORBIDDEN_ROOTS = ('/etc/', '/proc/',
-'/sys/', '/dev/', '/root/')`). That is a reasonable directory-traversal defense. It is not an
+`os.path.isfile`, and rejects a blocklist of roots (`_FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')`). That is a reasonable directory-traversal defense. It is not an
 access-control check, and was not intended as one.
 
 Verified 2026-07-18 by reading the handler and comparing against `api_study_detail`.
@@ -997,25 +1138,29 @@ Verified 2026-07-18 by reading the handler and comparing against `api_study_deta
 ### Plan
 
 - Add an `is_study_public(study_id)` gate at the top of the handler, returning **404** (not 403 —
-  do not leak existence) when it fails. `is_study_public` already exists in `helpers/qiita_fetch.py`
+do not leak existence) when it fails. `is_study_public` already exists in `helpers/qiita_fetch.py`
 - Replace the `_FORBIDDEN_ROOTS` blocklist with an **allowlist**: resolve the realpath and require
-  it to sit under `QIITA_BASE_DATA_DIR`. A blocklist of five system directories does not enumerate
-  everything that should be off-limits
+it to sit under `QIITA_BASE_DATA_DIR`. A blocklist of five system directories does not enumerate
+everything that should be off-limits
 - Check whether `get_artifact_samples` and `get_artifact_sample_counts` in the same module need the
-  same gate
+same gate
 - Minor, same file: the "File not found on disk" case currently returns 403 via the `ValueError`
-  handler; 404 is the correct status
+handler; 404 is the correct status
 - Add tests: a non-public study's artifact returns 404 for an authenticated user; a path escaping
-  the data root is rejected; a legitimate public-study download still succeeds
+the data root is rejected; a legitimate public-study download still succeeds
+
+
 
 ### Files
 
 - `qiita_explore/backend/routes/artifact_routes.py` (`download_artifact_file`,
-  `_resolve_artifact_file`, `_FORBIDDEN_ROOTS`)
+`_resolve_artifact_file`, `_FORBIDDEN_ROOTS`)
 - `qiita_explore/backend/helpers/qiita_fetch.py` (`is_study_public`)
 - Documented in `docs/02-authentication.md` § "Two places where tenancy does not hold"
 
 ---
+
+
 
 ## TKT-044: Merge Can Silently Substitute a Different Artifact Than the One Selected
 
@@ -1031,12 +1176,12 @@ runs on a different artifact than the one the user ticked — and reports succes
 columns.
 
 - `helpers/artifact_graph.py :: fetch_artifact_graph` → cached as `artifact_graph_json`. Covers all
-  of `qiita.study_artifact`, with parent edges, job nodes, per-file lists, and BFS-propagated
-  `data_type`. This is what the **tree UI renders** and what the user selects BIOMs from.
+of `qiita.study_artifact`, with parent edges, job nodes, per-file lists, and BFS-propagated
+`data_type`. This is what the **tree UI renders** and what the user selects BIOMs from.
 - `helpers/qiita_fetch.py :: _fetch_study_detail_from_qiita` → cached as `artifacts_json`, reached
-  via `helpers/merge_helpers.py :: _get_artifacts`. Prep-joined, `LIMIT 500`, `data_type` read
-  straight off the prep with no propagation. This is what **autopick, validate and submit** resolve
-  against.
+via `helpers/merge_helpers.py :: _get_artifacts`. Prep-joined, `LIMIT 500`, `data_type` read
+straight off the prep with no propagation. This is what **autopick, validate and submit** resolve
+against.
 
 In both `helpers/merge_helpers.py :: _resolve_artifact` and the submit handler in
 `routes/merge_routes.py`, the pattern is:
@@ -1058,24 +1203,28 @@ Verified 2026-07-18 while documenting the merge subsystem.
 ### Plan
 
 - Make an unresolvable explicit selection a **hard error**, not a silent fallback. If `chosen_ids`
-  is non-empty and resolves to nothing, return 4xx from validate/submit naming the artifact ids
-  that could not be resolved. Autopick should apply only when the user has chosen nothing
+is non-empty and resolves to nothing, return 4xx from validate/submit naming the artifact ids
+that could not be resolved. Autopick should apply only when the user has chosen nothing
 - Longer term, reconcile the two lists so the UI and the resolver agree on what exists. The graph is
-  the more complete source; consider resolving explicit selections against `artifact_graph_json` and
-  keeping the prep-joined list only for autopick's `data_type` reasoning
+the more complete source; consider resolving explicit selections against `artifact_graph_json` and
+keeping the prep-joined list only for autopick's `data_type` reasoning
 - Add a test: a workspace whose `chosen_artifact_ids` names an artifact absent from the prep-joined
-  list must fail loudly rather than merging an autopicked substitute
+list must fail loudly rather than merging an autopicked substitute
+
+
 
 ### Related issues found in the same area
 
 - `store/merge_crud.py :: update_merge_job_status` overwrites `error_message` and `result_path`
-  unconditionally, including with `None`. Harmless under current call ordering; a future
-  intermediate status omitting `result_path` would erase it
+unconditionally, including with `None`. Harmless under current call ordering; a future
+intermediate status omitting `result_path` would erase it
 - `validate` calls `check_namespace_compatibility(..., explicit_only=True)` while `submit` calls it
-  without the flag — a workspace can validate green and then be rejected at submit
+without the flag — a workspace can validate green and then be rejected at submit
 - In `validate_merge_workspace`, a `get_biom_sample_ids` failure falls back to the study-level
-  sample list, which is a **superset** of actual BIOM membership — silently overstating the merge
-  overlap preview with no warning surfaced
+sample list, which is a **superset** of actual BIOM membership — silently overstating the merge
+overlap preview with no warning surfaced
+
+
 
 ### Files
 
@@ -1086,6 +1235,8 @@ Verified 2026-07-18 while documenting the merge subsystem.
 - Documented in `docs/07-merge-and-biom.md` § "Two artifact lists, not one"
 
 ---
+
+
 
 ## TKT-045: `barnacle_backend_env.sh` Leaks Secrets Into Unpruned `.env.bak` Files
 
@@ -1108,24 +1259,82 @@ timestamped files on the deployment host partly defeats that design: an attacker
 file plus any one `.env.bak.*` has both halves.
 
 Note: `Qiita/barnacle_backend_env.sh` is tracked in git but currently **deleted from the working
-tree** (` D` in `git status`). Read it with `git show HEAD:Qiita/barnacle_backend_env.sh`.
+tree** ( `D` in `git status`). Read it with `git show HEAD:Qiita/barnacle_backend_env.sh`.
 
 Found 2026-07-18 while documenting operations.
 
 ### Plan
 
 - Decide first whether the script should be restored or is intentionally gone. If gone for good, the
-  remaining task is cleaning up `.env.bak.*` files already on the barnacle host
+remaining task is cleaning up `.env.bak.*` files already on the barnacle host
 - Stop taking full-file backups. The script's purpose is idempotently pinning a few keys
-  (`QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, and deleting `QIITA_LOGINROCKET_URL`) — an
-  in-place edit, or a backup of only the changed lines, is sufficient
+(`QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, and deleting `QIITA_LOGINROCKET_URL`) — an
+in-place edit, or a backup of only the changed lines, is sufficient
 - If a backup is genuinely wanted, keep exactly one (`.env.bak`, overwritten) and `chmod 600` it
 - Audit the barnacle host for existing `.env.bak.*` files and remove them. Confirm `.gitignore`
-  covers `.env.bak.*`, not just `.env`
+covers `.env.bak.*`, not just `.env`
 - Consider rotating `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` given unknown exposure duration. Rotation
-  invalidates every stored PAT ciphertext; `store/auth_store.py` has no re-encryption path, and
-  `helpers/auth_middleware.py` revokes sessions whose PAT fails to decrypt — so rotation degrades
-  gracefully into "everyone logs in again" rather than breaking
+invalidates every stored PAT ciphertext; `store/auth_store.py` has no re-encryption path, and
+`helpers/auth_middleware.py` revokes sessions whose PAT fails to decrypt — so rotation degrades
+gracefully into "everyone logs in again" rather than breaking
+
+---
+
+
+
+## TKT-046: e2e Test Suite and Benchmarks Are Dormant Under the New Auth Middleware
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-07-15 while auditing test/benchmark coverage during a simplification pass. Since the
+paste-PAT auth middleware landed (`helpers/auth_middleware.py`, default-deny + CSRF on
+state-changing requests), several pieces of test/ops tooling that talk to a live backend over bare
+HTTP have gone quietly dark instead of failing loudly:
+
+- `run_tests.sh:29` preflights with `curl -sf "$BARNACLE_URL/api/systems"` — a protected endpoint —
+and hard-fails with "Backend not reachable" before running anything except `--unit`, even when the
+backend is actually up.
+- `tests/e2e/conftest.py:33` health-checks `requests.get(f"{BASE}/api/global-chats")` with no
+session cookie → 401 → every e2e test in the module skips via `pytest.skip("barnacle backend unhealthy: 401")`. This reads as "backend down," not "backend requires auth."
+- `tests/e2e/parity_helpers.py`'s `stream_chat`/`search_ids` helpers (used by 6 of 7 e2e test files)
+have no cookie/CSRF handling, so even if the preflight were fixed, the actual requests would still
+401/403.
+- `tests/benchmarks/{search_latency,concurrent_bench}.py` POST to `/api/search` and
+`cache_bench.py`/`cache_hit_rate.py` GET `/api/studies/<id>/detail` — same problem, same result
+(401, or a wrong 0%-hit-rate reading in `cache_hit_rate.py` since it swallows the error instead of
+failing).
+
+Net effect: the e2e suite has likely been passing-by-skipping (or failing at the wrong step) for as
+long as auth has been live, and nobody would notice from CI output alone. TKT-024's plan to
+"re-run `search_latency.py`/`concurrent_bench.py` before/after" to confirm a latency fix is currently
+not actionable as written.
+
+### Plan
+
+- Give `tests/e2e/conftest.py` and the 4 benchmark scripts a way to obtain a session: either mint a
+test PAT session directly against `store/auth_store.create_session(...)` (bypassing the real Qiita
+OIDC round-trip, similar to what `tests/test_auth.py` does for unit tests) or perform a real
+`/auth/connect` with a test token if one is configured for the target environment.
+- Thread the resulting session cookie + `csrf_token` through `requests.Session()` in
+`parity_helpers.py` and each benchmark script's request calls.
+- Fix `run_tests.sh`'s preflight to hit a genuinely public endpoint (`/api/auth/login-url` or
+`/api/auth/me`, both in `auth_middleware.PUBLIC_ENDPOINTS`) instead of `/api/systems`.
+- Once re-armed, re-run the e2e suite once to confirm it actually exercises real assertions again,
+not just green-via-skip.
+
+
+
+### Files
+
+- `qiita_explore/backend/run_tests.sh`
+- `qiita_explore/backend/tests/e2e/conftest.py`
+- `qiita_explore/backend/tests/e2e/parity_helpers.py`
+- `qiita_explore/backend/tests/benchmarks/{search_latency,concurrent_bench,cache_bench,cache_hit_rate}.py`
+
+
 
 ### Files
 
@@ -1139,3 +1348,4 @@ Found 2026-07-18 while documenting operations.
 *Generated: 2026-05-19 | Updated: 2026-07-18*
 
 ---
+

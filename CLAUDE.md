@@ -51,6 +51,8 @@ Whenever we are interacting with the chatbot, I must see status of what function
 - **Verify UI changes**: Run barnacle, open browser, test golden path before marking done
 - **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
 
+
+
 ---
 
 # Hard Constraints

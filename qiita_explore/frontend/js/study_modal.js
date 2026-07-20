@@ -250,7 +250,7 @@ function StudyModal({ study, detail, loading, onClose }) {
           <>
             {(study.data_types || study.num_samples != null || study.num_preps != null) && (
               <div className="modal-stats">
-                {(study.data_types || '').split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                {splitTypes(study.data_types).map(t => (
                   <span key={t} className="dtype-chip">{t}</span>
                 ))}
                 {study.num_samples != null && <span className="modal-stat">{study.num_samples} samples</span>}
@@ -281,7 +281,6 @@ function StudyModal({ study, detail, loading, onClose }) {
                 <h4>Samples{detail.total_samples != null ? ` (${detail.total_samples} total${detail.total_samples > 200 ? ', showing first 200' : ''})` : ''}</h4>
                 <SamplesBrowser
                   samples={detail.samples || []}
-                  totalSamples={detail.total_samples}
                   layout="two-pane"
                   fetchFields={async (sampleId) => {
                     const res = await apiFetch(`/studies/${study.study_id}/samples/${encodeURIComponent(sampleId)}`);

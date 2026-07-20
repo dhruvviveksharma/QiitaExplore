@@ -1,6 +1,6 @@
 import logging
 
-from flask import Response, g, jsonify, request, stream_with_context
+from flask import g, jsonify, request
 
 from run import app
 from config import context_budget_chars
@@ -12,7 +12,6 @@ from store import (
     get_chat,
     get_project,
     get_project_studies_only,
-    list_chats,
     list_pinned_studies,
     unpin_study_from_chat,
 )
@@ -25,19 +24,13 @@ from helpers.llm_helpers import (
 )
 from helpers.qiita_fetch import (
     _build_pinned_reports_context,
-    _build_samples_report_payload,
     _detect_mentioned_study_ids,
     _pin_studies_validated,
 )
 from helpers.pin_flow import stream_pin_flow
+from helpers.request_utils import parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report
 
 logger = logging.getLogger(__name__)
-
-
-@app.route('/api/projects/<project_id>/chats', methods=['GET'])
-def api_list_chats(project_id):
-    chats = list_chats(project_id, g.user_id)
-    return jsonify({'chats': chats})
 
 
 @app.route('/api/projects/<project_id>/chats', methods=['POST'])
@@ -74,33 +67,18 @@ def api_delete_chat(project_id, chat_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/message/stream', methods=['POST'])
 def api_chat_message_stream(project_id, chat_id):
-    data            = request.get_json() or {}
-    user_id         = g.user_id
-    user_content    = (data.get('message') or data.get('content') or '').strip()
-    model           = data.get('model')
-    report_study_id = data.get("report_study_id")
-    pin_study_ids   = data.get("pin_study_ids")
-    if report_study_id is not None:
-        try:
-            report_study_id = int(report_study_id)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'report_study_id must be an integer'}), 400
-    if pin_study_ids is not None:
-        try:
-            pin_study_ids = [int(x) for x in pin_study_ids]
-        except (TypeError, ValueError):
-            return jsonify({'error': 'pin_study_ids must be a list of integers'}), 400
-    if not user_content:
-        return jsonify({'error': 'message required'}), 400
+    data    = request.get_json() or {}
+    user_id = g.user_id
+    user_content, model, report_study_id, pin_study_ids, err_response = parse_chat_stream_body(data)
+    if err_response is not None:
+        return err_response
 
     chat = get_chat(project_id, user_id, chat_id)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
 
     proj      = get_project_studies_only(project_id)
-    messages  = chat.get('messages') or []
-    full_msgs = [{"role": m.get("role"), "content": m.get("content")} for m in messages]
-    full_msgs.append({"role": "user", "content": user_content})
+    full_msgs = build_full_msgs(chat.get('messages'), user_content)
 
     def generate():
         yield ': keepalive\n\n'
@@ -119,17 +97,7 @@ def api_chat_message_stream(project_id, chat_id):
                 yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
                 return
             if report_study_id is not None:
-                yield _sse("step_start", {"name": "load_samples", "label": f"Loading sample data for study {report_study_id}…"})
-                try:
-                    ui_payload  = _build_samples_report_payload(report_study_id)
-                    num_samples = (ui_payload.get("header") or {}).get("num_samples") or len(ui_payload.get("samples") or [])
-                    assistant_parts = [f"Loaded full sample metadata for study {report_study_id} ({num_samples} samples). See inline browser."]
-                    yield _sse("step_done", {"name": "load_samples", "label": "Sample data loaded", "detail": f"{num_samples} samples"})
-                    yield _sse("ui", ui_payload)
-                except ValueError:
-                    assistant_parts = [f"Study {report_study_id} is private or has no accessible sample data in Qiita."]
-                    yield _sse("step_done", {"name": "load_samples", "label": f"Study {report_study_id} is private — no accessible data"})
-                    ui_payload = None
+                assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
             else:
                 num_proj_studies = len((proj or {}).get("studies") or [])
                 yield _sse("step_start", {"name": "build_context", "label": "Loading study context…"})
@@ -165,11 +133,7 @@ def api_chat_message_stream(project_id, chat_id):
             logger.exception("stream error in project chat %s", chat_id)
             yield _sse("error", {"error": friendly_llm_error(e, model)})
 
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return sse_response(generate)
 
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])

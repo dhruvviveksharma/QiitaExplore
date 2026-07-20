@@ -6,18 +6,13 @@ python-dotenv>=1.0.0
 # LLM client
 openai>=1.40,<3.0
 
-# SQLite migration helper (reads legacy TinyDB JSON format)
-tinydb>=4.8,<5.0
-
-# Data stack
-pandas>=1.5,<2.0
+# Data stack (transitive dependency of biom-format)
 numpy<2.0
 
 # Qiita DB layer (qiita_db/sql_connection.py → TRN)
 psycopg2-binary
 redis
 biom-format
-qiita-files @ https://github.com/qiita-spots/qiita-files/archive/master.zip
 
 # Qiita PAT authentication (sync HTTP client + PAT-at-rest encryption)
 httpx>=0.25,<1.0

@@ -12,6 +12,11 @@ from config import (
     DEFAULT_MODEL,
     ALLOWED_MODELS,
 )
+from store import (
+    get_project_context_summary,
+    get_study_detail_cache,
+    upsert_study_detail_cache,
+)
 
 
 def _resolve_model(model):
@@ -52,11 +57,6 @@ def _extract_system_and_messages(api_msgs):
         else:
             msgs.append(m)
     return system, msgs
-from store import (
-    get_project_context_summary,
-    get_study_detail_cache,
-    upsert_study_detail_cache,
-)
 
 
 def _sse(event: str, payload: dict):
@@ -165,7 +165,7 @@ def _study_discovery_compact_block(study: dict) -> str:
         pi_line = f"{pi} ({aff})" if pi != "N/A" else aff
     else:
         pi_line = pi
-    abstract = _truncate((study.get("study_abstract") or "").strip() or "Not available", 240)
+    abstract = _truncate((study.get("study_abstract") or "").strip() or "Not available", 600)
     dt       = _truncate((study.get("data_types") or "").strip(), 80)
     ns       = study.get("num_samples")
     np       = study.get("num_preps")

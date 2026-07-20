@@ -3,12 +3,12 @@ to keep crud.py under the 500-line cap."""
 
 import uuid
 
-from .db import _conn, _as_dict, _now
+from .db import _conn, _as_dict, _now, _resolve_user, _chat_title
 from .crud import _decode_ui, _insert_chat_message_pair, _resolved_chat_title
 
 
 def list_global_chats(user_id: str, limit: int = 200):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     limit = max(1, min(500, int(limit)))
     with _conn() as conn:
         rows = conn.execute(
@@ -35,7 +35,7 @@ def _load_global_messages(conn, chat_id):
 
 def get_global_chat(user_id: str, chat_id: str):
     from store.cache import SCOPE_GLOBAL, _load_pinned_studies
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
             "SELECT chat_id, title, created_at, updated_at FROM global_chats WHERE user_id = ? AND chat_id = ?",
@@ -50,10 +50,10 @@ def get_global_chat(user_id: str, chat_id: str):
 
 
 def create_global_chat(user_id: str, title: str = None):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     chat_id = str(uuid.uuid4())[:8]
     now = _now()
-    resolved_title = (title or "New chat")[:60].strip() or "New chat"
+    resolved_title = _chat_title(title)
     with _conn() as conn:
         conn.execute(
             "INSERT INTO global_chats(chat_id, user_id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
@@ -70,7 +70,7 @@ def append_global_chat_messages(
     assistant_content: str,
     assistant_ui_payload: dict = None,
 ):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
             "SELECT title FROM global_chats WHERE user_id = ? AND chat_id = ?",
@@ -95,7 +95,7 @@ def append_global_chat_messages(
 
 
 def delete_global_chat(user_id: str, chat_id: str):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         conn.execute(
             "DELETE FROM global_chats WHERE user_id = ? AND chat_id = ?",

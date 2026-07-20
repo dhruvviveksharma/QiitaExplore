@@ -3,6 +3,53 @@
 **Date:** 2026-07-05
 **Goal:** Reduce dead code, reuse logic, apply simpler logic where applicable. Enforce the 500-line cap on all `qiita_explore/` files. **No code changes in this pass — planning only.**
 
+## STATUS UPDATE (2026-07-14 execution pass)
+
+S-1 through S-9 and S-15 are **DONE**. S-4 is partially done (see note). S-10 through S-13 and S-16 remain **PENDING** — deferred to keep this pass to dead-code/dedup, not structural file splits. See the updated Phase 3 table below for current line counts.
+
+Additionally, out of the original S-list scope but done in the same pass:
+- Store-layer `resolved_user = (user_id or "").strip() or "default"` (20 sites across `crud.py`, `cache.py`, `global_chat_crud.py`) consolidated into `store/db.py::_resolve_user()`.
+- Dead migration removed: `store/db.py` `ALTER TABLE study_detail_cache ADD COLUMN samples_context` (already declared in the `CREATE TABLE`, guaranteed no-op).
+- `helpers/merge_helpers.py` created (`_get_artifacts`, `_type_filtered_artifacts`, `_resolve_artifact`, `_get_sample_ids`) — completes the S-14 file-split's "extract shared merge helpers" half without doing the full route-file split.
+- Frontend: `streamChat()` + `createProjChatAndSeed()`/`createGlobalChatAndSeed()` helpers extracted in `app_state.js`; dead `reportStudyId` param removed from `applyStreamDone`; `auth.js` now uses `apiPost` (drops manual CSRF header threading through `app.js` → `LegacyClaimBanner`).
+- Repo hygiene: `ezredbiom/` leftovers deleted, tracked DB/log/tarball junk untracked + `.gitignore` updated, orphaned `wreath-loader.html` / `.claude/serve_frontend.py` deleted.
+
+## STATUS UPDATE (2026-07-15 execution pass — "how much more can go")
+
+A second pass, scoped to safe-mechanical dedup only (no structural component rewrites), plus two explicitly-authorized behavior changes. Verified with `bash run_tests.sh --unit` (95 passed) and a Flask route-registration check (53 routes, down from 54) after every phase, plus a Babel/browser load check for the frontend.
+
+**Deleted outright (zero references, confirmed by repo-wide grep):**
+- `qiita_explore/scripts/qiita_fastq_prep.py` (248 lines) — untouched since the `ezredbiom→qiita_explore` rename, QIIME2 prep isn't an app feature.
+- Orphaned route `GET /api/projects/<project_id>/chats` (`routes/chat_routes.py`) — frontend only ever POSTs there; the chat list comes embedded in `GET /api/projects/<id>`. Kept `store/crud.list_chats` (used by `test_chats.py`).
+- `qiita_explore/logs/` directory (nothing tracked, self-recreating).
+- Unused deps `tinydb` and `qiita-files` from both `requirements.txt`/`requirements.prod.txt` (their only reason for being there — a stale "referenced by sql_store migration code" comment — was itself wrong); `pandas` dropped too since its only importer was the deleted `qiita_fastq_prep.py`.
+- `TICKETS/done.md`, `TICKETS/staging.md`, `TASKS.md` — unfilled templates / stale premise (`test_data_studies/` doesn't exist).
+
+**Backend dedup (safe-mechanical):**
+- `helpers/sample_search.py` 274 → 240: extracted `_probe_pool`, `_probe_exists`, `_parallel_probe`, `_hydrate_headers` — the two search functions shared ~92 lines of pool/executor/timeout/hydration boilerplate around genuinely different SQL probes. Also dropped a pre-existing unused `import psycopg2`.
+- `store/db.py`: the 6 hand-written `try: ALTER TABLE … except: pass` blocks folded into the `(table, col, definition)` loop that already existed for the `project_studies` columns.
+- `services/study_service.py` 272 → 246: reused `qiita_fetch._row_to_study_header` for the row→dict mapping and hoisted the shared correlated-subquery column block (`num_samples`/`data_types`/`num_preps`) into `qiita_fetch._STUDY_COUNT_COLUMNS`, imported into both. The *different* visibility-filter WHERE logic was left untouched in each function — only the byte-identical parts moved.
+- `helpers/agent_tools.py`: added `_result_studies()` (the duplicated `result_studies` list-shape) and `_empty_input_result()` (the duplicated "no search criteria" `ToolResult` shape).
+- `store/merge_crud.py` 235 → 228: `_ws_studies()`/`_touch()` replace 4 copies of the re-select-studies query and 3 copies of the `updated_at` touch.
+- 6 confirmed-unused imports removed (`cache.py`, `agent.py`, `qiita_fetch.py`, `merge_routes.py`, `biom_autopick.py`); 2 dead `config.py` constants removed (`anthropic_client` — an eagerly-constructed, never-read Anthropic client; `PROJECT_SUMMARY_GEN_LIMIT`); `_chat_title()` helper in `db.py` for the remaining title-normalization duplication.
+- **Skipped as not worth it on closer inspection:** the `_str_list`/tool-dispatch-dict ideas from the initial sweep — the "5 identical" list-comprehensions actually have 3 different filter behaviors (some cast to `str()` before the truthiness check, one doesn't), so unifying them would silently change edge-case behavior on malformed LLM tool-call args; and the `llm_chat`/`llm_chat_stream` shared preamble is a net line *increase* once the helper's own def line is counted.
+
+**Authorized behavior changes:**
+- Removed the ~150-line dead TinyDB→SQLite migration path from `store/db.py` (465 → 288 lines after both changes): `_parse_tinydb_docs`, `_insert_project_doc`, `_insert_global_bucket`, `_migrate_from_tinydb`, `_should_migrate`, `_mark_migration`, plus the `TINYDB_*_PATH` constants. No `projects.json` exists anywhere; fresh-DB bootstrap and the *separate* `_reconcile_legacy_users_table` migration (a live, different migration for a stale pre-auth `users` table) were left untouched and both re-verified passing via `TestLegacyUsersMigration`.
+- Removed the `compute_diversity` stub (schema, dispatch, `_tool_compute_diversity`, its `_tool_label` entry, its `GLOBAL_CHAT_SYSTEM_PROMPT` line) — it only ever returned "not yet available." TKT-010 updated to reflect the tool no longer exists (was a stub to finish; is now a from-scratch build).
+- **Honest result:** `agent_tools.py` landed at **507 lines**, not fully under the 500 cap as hoped — the safe dedups within the file are exhausted; the remaining ~7 lines would need either a signature-mangling dispatch-table refactor (net quality loss — 3 of 4 tool functions would gain unused params) or the already-ticketed file split (TKT-013/TKT-039, left open).
+
+**Frontend dedup (safe-mechanical):**
+- `style.css` 1885 → 1815 (−70): removed 8 fully-dead rule blocks (`.typing-caret`+`@keyframes blink`, `.tool-result-table`, `.main-tabs`/`.main-tab*`, `.merge-artifacts-use-col`/`.merge-biom-check`, `.ctx-*` family, `.via-badge`, the old `<select>`-based merge-slot UI, `.merge-actions`), a byte-identical duplicate `.msg-bubble` rule, and 2 no-op `font-family: var(--undefined)` declarations. Every removed selector was grep-verified against all JS + `index.html` (substring match, so dynamic `className` construction was accounted for). Stopped short of the smaller comma-merge opportunities (2–9 lines each) — they require moving rules across large distances in the file, which is harder to visually re-verify without a live backend for pixel-level regression checking.
+- `app_state.js` 633 → 611: added `patchChat()` (whole-entry sibling to `patchLast`, used by `unpinStudy`/`pinStudy`/`removeCtxStudyFromChat`), `chatScopeUrl()` (project-vs-global URL prefix, used by hydration/pin/unpin/stream), `ensureChatId()` (the 3 repeated create-chat-if-missing blocks in `sendMessage`), `dropChat()` (shared cache eviction); merged `openProjChat`/`openGlobChat` into one internal `openChat()` (external call signatures unchanged — no other files touched); `newProjChat`/`newGlobChat` now reuse `createProjChatAndSeed`/`createGlobalChatAndSeed`; removed 6 dead returned values (`loadProjects`/`fetchProjectDetail`/`loadGlobalChats`/`loadFirstStudies`/`lastContent`/`firstStudies` — none destructured outside the hook).
+- `app_render.js`: removed dead `lastUiMsg` (zero references, also re-computed+reversed the message array every render); replaced a re-inlined copy of the `hasSourcesBar` expression with the variable; dropped the now-unreferenced `firstStudies` destructure entry.
+- Cross-file: added `splitTypes()` to `utils.js` for the `(x.data_types||'').split(',')…` idiom repeated in `components.js`, `app_render.js`, `merge_artifacts.js`, `study_modal.js`; hoisted `_ICON_STYLE` in `icons.js` (4 of 5 icons shared the identical base style object); removed `SamplesBrowser`'s never-read `totalSamples` prop and both call sites.
+- Verified via Babel/browser load (no console errors, correct render) — same sandbox limitation as Pass 1: no live backend, so only the anonymous auth-gate path was visually exercised; the chat/merge/search flows touched by `app_state.js` need a live-backend pass before merge.
+
+**Ticket filed:** TKT-046 — the e2e test suite, `run_tests.sh`'s non-unit preflight, and all 4 benchmark scripts have been silently dormant since the auth middleware landed (401s with no session cookie, several swallowed into false-negative readings rather than failures). Found while auditing what still exercises the code touched here.
+
+**Final line counts:** `agent_tools.py` 507, `sample_search.py` 240, `db.py` 288, `study_service.py` 246, `qiita_fetch.py` 491, `merge_crud.py` 228, `config.py` 198, `style.css` 1815, `app_state.js` 611, `app_render.js` 600, `components.js` 684 (untouched beyond the dead-prop removal — still over cap, split remains ticketed).
+
 **Source documents**
 - `TICKETS/tickets.md` — source of truth (TKT-002 .. TKT-040, reconciled 2026-06-21)
 - `TICKETS/simplification-plan.md` (prior version, dated 2026-07-05) — **STALE**: uses old ticket IDs TKT-016..030 and contains one materially wrong recommendation (remove `_qiita_fetch`). This revision supersedes it.
@@ -57,10 +104,10 @@ These look like simplification but would break behavior:
 
 ## PHASE 1 — DEAD CODE & PLACEMENT (Quick wins, no behavior change)
 
-| ID | Title | Ticket | Files | Δ Lines | Agent | Risk |
-|----|-------|--------|-------|---------|-------|------|
-| **S-1** | Delete legacy `test.ipynb` | TKT-027 | `qiita_explore/test.ipynb` | -79 | Explore→SWE | Low |
-| **S-2** | Move mid-module imports to top of `llm_helpers.py` | TKT-028 | `backend/helpers/llm_helpers.py:55-59` | 0 net | Explore→SWE | Low |
+| ID | Title | Ticket | Files | Δ Lines | Agent | Risk | Status |
+|----|-------|--------|-------|---------|-------|------|--------|
+| **S-1** | Delete legacy `test.ipynb` | TKT-027 | `qiita_explore/test.ipynb` | -79 | Explore→SWE | Low | **DONE** |
+| **S-2** | Move mid-module imports to top of `llm_helpers.py` | TKT-028 | `backend/helpers/llm_helpers.py:55-59` | 0 net | Explore→SWE | Low | **DONE** (also applied to `qiita_fetch.py`, which had the same issue) |
 
 **Acceptance criteria**
 - S-1: `ls qiita_explore/test.ipynb` → "No such file"; `git status` shows deletion only.
@@ -70,15 +117,15 @@ These look like simplification but would break behavior:
 
 ## PHASE 2 — LOGIC CONSOLIDATION (Behavior-preserving refactors)
 
-| ID | Title | Ticket | Files | Δ Lines | Agent | Depends | Risk |
-|----|-------|--------|-------|---------|-------|---------|------|
-| **S-3** | Consolidate duplicate study-header SELECTs | TKT-029 | `backend/helpers/qiita_fetch.py` | -40 | Explore→SWE→Tester | S-2 | Low |
-| **S-4** | Consolidate sample fetch functions | TKT-030 | `backend/helpers/qiita_fetch.py` | -20 | Explore→SWE→Tester | S-3 | Low |
-| **S-5** | Extract shared `request_utils.py` | TKT-031 | new `backend/helpers/request_utils.py`; `routes/chat_routes.py`, `routes/global_chat_routes.py`, `routes/project_routes.py`, `routes/merge_routes.py` | -30 | Explore→SWE→Reviewer | S-2 | Medium |
-| **S-6** | Extract `useModelSelection()` hook | TKT-033 | `frontend/js/app_state.js` (-25); new `frontend/js/hooks/useModelSelection.js` | -20 net | Explore→SWE→Tester | — | Low |
-| **S-7** | Consolidate date formatting | TKT-034 | `frontend/js/utils.js` (+8); `frontend/js/app_render.js` (-5 at lines 96, 161) | -5 net | SWE→Tester | — | Low |
-| **S-8** | Simplify slash command matching | TKT-035 | `frontend/js/app_state.js:628-632` | -5 | SWE→Tester | — | Low |
-| **S-9** | Write-through `_study_header_cache` → SQLite | TKT-017 | `backend/store/db.py` (migration), `store/cache.py`, `helpers/qiita_fetch.py` | -15 | Explore→SWE→Reviewer→Tester | S-3 | Medium |
+| ID | Title | Ticket | Files | Δ Lines | Agent | Depends | Risk | Status |
+|----|-------|--------|-------|---------|-------|---------|------|--------|
+| **S-3** | Consolidate duplicate study-header SELECTs | TKT-029 | `backend/helpers/qiita_fetch.py` | -40 | Explore→SWE→Tester | S-2 | Low | **DONE** |
+| **S-4** | Consolidate sample fetch functions | TKT-030 | `backend/helpers/qiita_fetch.py` | -20 | Explore→SWE→Tester | S-3 | Low | **PARTIAL** — `_fetch_sample_context_text` delegates to `_fetch_full_sample_metadata`; `_fetch_study_samples` intentionally kept separate (different return shape: 3 named JSON keys vs full `sample_values`). Won't-merge. |
+| **S-5** | Extract shared `request_utils.py` | TKT-031 | new `backend/helpers/request_utils.py`; `routes/chat_routes.py`, `routes/global_chat_routes.py` | -30 | Explore→SWE→Reviewer | S-2 | Medium | **DONE** for chat/global-chat routes (`parse_chat_stream_body`, `build_full_msgs`, `sse_response`, `stream_samples_report`). `project_routes.py`/`merge_routes.py` didn't have the same duplicated shape — not touched. |
+| **S-6** | Extract `useModelSelection()` hook | TKT-033 | `frontend/js/app_state.js` (-25); new `frontend/js/hooks/useModelSelection.js` | -20 net | Explore→SWE→Tester | — | Low | **DONE** |
+| **S-7** | Consolidate date formatting | TKT-034 | `frontend/js/utils.js` (+8); `frontend/js/app_render.js` (-5 at lines 96, 161) | -5 net | SWE→Tester | — | Low | **DONE** |
+| **S-8** | Simplify slash command matching | TKT-035 | `frontend/js/app_state.js:628-632` | -5 | SWE→Tester | — | Low | **DONE** |
+| **S-9** | Write-through `_study_header_cache` → SQLite | TKT-017 | `backend/store/db.py` (migration), `store/cache.py`, `helpers/qiita_fetch.py` | -15 | Explore→SWE→Reviewer→Tester | S-3 | Medium | **PENDING** |
 
 **Acceptance criteria**
 - S-3: `grep -c "SELECT s.study_id" qiita_fetch.py` returns 1 (single shared `_build_study_header_query`); integration test diffs `first_studies()` vs `_fetch_study_header()` results on 3 study IDs and shows identical columns.
@@ -93,32 +140,38 @@ These look like simplification but would break behavior:
 
 ## PHASE 3 — FILE SPLITS (Mechanical, enforce 500-line cap)
 
-**Current line counts** (`wc -l`, verified 2026-07-05):
+**Current line counts** (`wc -l`, verified 2026-07-14, after Phase 1/2 work above):
 
 | File | Lines | Over cap | Tracked by |
 |------|-------|----------|------------|
-| `frontend/js/components.js` | 688 | +188 | TKT-038 |
-| `frontend/js/app_state.js` | 672 | +172 | TKT-036 |
+| `frontend/js/components.js` | 684 | +184 | TKT-038 |
+| `frontend/js/app_state.js` | 633 | +133 | TKT-036 |
 | `frontend/js/app_render.js` | 601 | +101 | TKT-037 |
 | `backend/helpers/agent_tools.py` | 548 | +48 | TKT-013 / TKT-039 |
-| `backend/helpers/qiita_fetch.py` | 534 | +34 | TKT-040 |
-| `backend/routes/merge_routes.py` | 528 | +28 | TKT-014 |
-| `backend/store/crud.py` | 515 | +15 | TKT-011 |
+| `backend/helpers/qiita_fetch.py` | 486 | — | TKT-040 (closed — under cap) |
+| `backend/routes/merge_routes.py` | 364 | — | TKT-014 (closed — under cap after S-14's helper extraction) |
+| `backend/store/crud.py` | 412 | — | TKT-011 (closed — under cap, see S-15) |
 
-After Phase 2 reductions, several files drop below or near the cap:
-- `qiita_fetch.py`: 534 → ~474 (S-3 + S-4) — **under cap, no split needed**
-- `app_state.js`: 672 → ~647 (S-6 + S-8) — still over, split required
-- `agent_tools.py`: 548 — still over, split required
+Already resolved:
+- `qiita_fetch.py`: 534 → 486 (S-3 + S-4) — **under cap, split (S-16) not needed.**
+- `merge_routes.py`: 528 → 364 — the shared artifact/sample-resolution helpers (`_get_artifacts`, `_type_filtered_artifacts`, `_resolve_artifact`, `_get_sample_ids`) moved to new `helpers/merge_helpers.py` (48 lines), also fixing the route→route import from `artifact_routes.py`. **The route-file split itself (new `merge_workspace_routes.py`/`merge_job_routes.py`) is no longer needed** — under cap without it.
+- `crud.py`: 515 → 412 (S-15, `global_chat_crud.py` extracted) — **under cap.**
 
-| ID | Title | Ticket | Files | Δ Lines | Agent | Depends | Risk |
-|----|-------|--------|-------|---------|-------|---------|------|
-| **S-10** | Split `app_state.js` (672→~647, still over) | TKT-036 | `frontend/js/app_state.js`; new `frontend/js/sse_helpers.js`, `frontend/js/chat_actions.js`, `frontend/js/search_helpers.js` | 0 net | SWE→Tester | S-6, S-8 | High |
-| **S-11** | Split `app_render.js` (601→~596) | TKT-037 | `frontend/js/app_render.js`; new `sidebar_renderer.js`, `browse_renderer.js`, `chat_renderer.js`, `composer_renderer.js` | 0 net | SWE→Tester | S-10 | High |
-| **S-12** | Split `components.js` (688) | TKT-038 | `frontend/js/components.js`; new `model_picker.js`, `pinned_bar.js`, `slash_commands.js` | 0 net | SWE→Tester | S-11 | High |
-| **S-13** | Split `agent_tools.py` (548) | TKT-013 | `backend/helpers/agent_tools.py`; new `agent_tool_schemas.py`, `agent_tool_executors.py` | 0 net | Explore→SWE→Reviewer→Tester | S-5 | Medium |
-| **S-14** | Split `merge_routes.py` (528) | TKT-014 | `backend/routes/merge_routes.py`; new `merge_workspace_routes.py`, `merge_job_routes.py`, `helpers/merge_helpers.py` | 0 net | SWE→Tester | S-5 | Medium |
-| **S-15** | Split `crud.py` (515) | TKT-011 | `backend/store/crud.py`; new `crud_projects.py`, `crud_chats.py`, `crud_search.py` | 0 net | SWE→Tester | — | Medium |
-| **S-16** | Split `qiita_fetch.py` (534, optional after S-3/S-4) | TKT-040 | `backend/helpers/qiita_fetch.py`; new `qiita_queries.py`, `qiita_study_context.py` | 0 net | SWE→Reviewer→Tester | S-3, S-4 | High |
+Still over cap, split still required:
+- `app_state.js`: 672 → 633 (S-6, S-8, plus new `streamChat`/`createProjChatAndSeed`/`createGlobalChatAndSeed` helpers) — still over, split (S-10) required.
+- `app_render.js`: 601 — unchanged, split (S-11) required.
+- `components.js`: 688 → 684 — still over, split (S-12) required.
+- `agent_tools.py`: 548 — unchanged, split (S-13) required.
+
+| ID | Title | Ticket | Files | Δ Lines | Agent | Depends | Risk | Status |
+|----|-------|--------|-------|---------|-------|---------|------|--------|
+| **S-10** | Split `app_state.js` (633, still over) | TKT-036 | `frontend/js/app_state.js`; new `frontend/js/sse_helpers.js`, `frontend/js/chat_actions.js`, `frontend/js/search_helpers.js` | 0 net | SWE→Tester | S-6, S-8 | High | **PENDING** |
+| **S-11** | Split `app_render.js` (601→~596) | TKT-037 | `frontend/js/app_render.js`; new `sidebar_renderer.js`, `browse_renderer.js`, `chat_renderer.js`, `composer_renderer.js` | 0 net | SWE→Tester | S-10 | High | **PENDING** |
+| **S-12** | Split `components.js` (684) | TKT-038 | `frontend/js/components.js`; new `model_picker.js`, `pinned_bar.js`, `slash_commands.js` | 0 net | SWE→Tester | S-11 | High | **PENDING** |
+| **S-13** | Split `agent_tools.py` (548) | TKT-013 | `backend/helpers/agent_tools.py`; new `agent_tool_schemas.py`, `agent_tool_executors.py` | 0 net | Explore→SWE→Reviewer→Tester | S-5 | Medium | **PENDING** |
+| **S-14** | Split `merge_routes.py` (528) | TKT-014 | `backend/routes/merge_routes.py`; new `merge_workspace_routes.py`, `merge_job_routes.py`, `helpers/merge_helpers.py` | 0 net | SWE→Tester | S-5 | Medium | **DONE (helper half only)** — `helpers/merge_helpers.py` extracted (also used by `artifact_routes.py`, fixing a route→route import); file dropped to 364 lines so the route-file split is no longer needed. |
+| **S-15** | Split `crud.py` (515) | TKT-011 | `backend/store/crud.py`; new `crud_projects.py`, `crud_chats.py`, `crud_search.py` | 0 net | SWE→Tester | — | Medium | **DONE** — via `global_chat_crud.py` extraction (different split shape than originally proposed, same outcome: under cap). |
+| **S-16** | Split `qiita_fetch.py` (534, optional after S-3/S-4) | TKT-040 | `backend/helpers/qiita_fetch.py`; new `qiita_queries.py`, `qiita_study_context.py` | 0 net | SWE→Reviewer→Tester | S-3, S-4 | High | **CLOSED — not needed** (486 lines, under cap) |
 
 **Acceptance criteria (all splits)**
 - `wc -l <file>` ≤ 500 after split.
@@ -227,14 +280,14 @@ The prior `simplification-plan.md` (2026-07-05) made several claims that this re
 
 ## SUCCESS CRITERIA
 
-- [ ] No file in `qiita_explore/` exceeds 500 lines (`find qiita_explore -name "*.py" -o -name "*.js" | xargs wc -l | sort -rn`).
-- [ ] `_qiita_fetch` preserved (grep confirms 10 call sites).
-- [ ] `_study_header_cache` write-through to SQLite (S-9); L1 dict retained.
-- [ ] No duplicated study-header SELECTs (single `_build_study_header_query`).
-- [ ] `request_utils.py` shared across `chat_routes`, `global_chat_routes`, `project_routes`, `merge_routes`.
-- [ ] `formatDate` in `utils.js`; `toLocaleDateString` removed from `app_render.js`.
-- [ ] Slash matching inlined (no `useMemo`).
-- [ ] `test.ipynb` deleted.
-- [ ] Mid-module imports in `llm_helpers.py` moved to top.
-- [ ] All existing pytest tests pass after each phase.
-- [ ] Manual smoke test: search, global chat (tool-capable model), project chat, pin study, merge workflow, study modal — all functional.
+- [ ] No file in `qiita_explore/` exceeds 500 lines — **not yet**: `components.js` (684), `app_state.js` (633), `app_render.js` (601), `agent_tools.py` (548) still over; S-10..S-13 pending.
+- [x] `_qiita_fetch` preserved (grep confirms call sites).
+- [ ] `_study_header_cache` write-through to SQLite (S-9) — pending; L1 dict retained.
+- [x] No duplicated study-header SELECTs (single `_build_study_header_query`).
+- [x] `request_utils.py` shared across `chat_routes`, `global_chat_routes` (not `project_routes`/`merge_routes` — no matching duplication found there).
+- [x] `formatDate` in `utils.js`; `toLocaleDateString` removed from `app_render.js`.
+- [x] Slash matching inlined (no `useMemo`).
+- [x] `test.ipynb` deleted.
+- [x] Mid-module imports in `llm_helpers.py` and `qiita_fetch.py` moved to top.
+- [x] All existing pytest unit tests pass (95 passed, `run_tests.sh --unit`) after this pass.
+- [ ] Manual smoke test: search, global chat (tool-capable model), project chat, pin study, merge workflow, study modal — **not run**; this sandbox has no live Postgres/Qiita DB/conda env to start the real backend. Frontend-only smoke test (page load, no console errors, anonymous-auth gate renders) passed; full authenticated golden path needs to be verified against a live backend before merge.

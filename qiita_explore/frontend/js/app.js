@@ -3,7 +3,7 @@ function AuthenticatedApp({ identity, onLogout, onClaimDone }) {
   return (
     <>
       <AccountBar identity={identity} onLogout={onLogout} />
-      <LegacyClaimBanner csrfToken={identity.csrf_token} onDone={onClaimDone} />
+      <LegacyClaimBanner onDone={onClaimDone} />
       {renderApp(state)}
     </>
   );

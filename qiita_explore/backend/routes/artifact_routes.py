@@ -12,7 +12,7 @@ from store import get_merge_job, get_study_detail_cache
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_samples import get_biom_sample_ids
 from helpers.qiita_fetch import _qiita_fetch
-from routes.merge_routes import _get_artifacts
+from helpers.merge_helpers import _get_artifacts
 
 _FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
 

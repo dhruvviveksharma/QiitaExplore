@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from .db import _conn, _as_dict, _now
-from .crud import _project_exists, _load_project_studies
+from .db import _conn, _as_dict, _now, _resolve_user
+from .crud import _project_exists
 
 SCOPE_PROJECT = "project"
 SCOPE_GLOBAL  = "global"
@@ -13,7 +13,7 @@ _STUDY_DETAIL_CACHE_TTL_HOURS = 6
 
 
 def upsert_project_study_summary(project_id: str, user_id: str, study_id: int, summary_text: str):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         if not _project_exists(conn, project_id, resolved_user):
             return False
@@ -30,7 +30,7 @@ def upsert_project_study_summary(project_id: str, user_id: str, study_id: int, s
 
 
 def get_project_context_summary(project_id: str, user_id: str):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         if not _project_exists(conn, project_id, resolved_user):
             return None
@@ -42,7 +42,7 @@ def get_project_context_summary(project_id: str, user_id: str):
 
 
 def upsert_project_context_summary(project_id: str, user_id: str, summary_text: str, source_updated_at: str = None):
-    resolved_user = (user_id or "").strip() or "default"
+    resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         if not _project_exists(conn, project_id, resolved_user):
             return False

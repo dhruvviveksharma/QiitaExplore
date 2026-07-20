@@ -37,24 +37,18 @@ flowchart LR
 
     subgraph MIINT["Qiita-MIINT (the new platform)"]
         CP["Control plane :8080<br/>FastAPI"]
-        DP["Data plane :50051<br/>Rust · Arrow Flight"]
-        CO["Compute orch. :8081"]
     end
 
     QE ==>|"ALL study data<br/>direct SQL, read-only"| PG
     QE ==>|"identity only<br/>PAT → whoami → principal_idx"| CP
-    QE -.->|not used today| DP
-    QE -.->|not used today| CO
 
-    style DP fill:#eee,stroke:#999,color:#777
-    style CO fill:#eee,stroke:#999,color:#777
     style PG stroke-width:2px
     style CP stroke-width:2px
 ```
 
 **Classic Qiita** is the original monolith. QiitaExplore reads *all* of its scientific data — studies, preps, artifacts, sample metadata — by connecting directly to its PostgreSQL database, read-only, using a vendored and trimmed copy of Qiita's own DB layer (`qiita_db/`, `qiita_core/`). No HTTP is involved. QiitaExplore never writes to it.
 
-**Qiita-MIINT** is the new platform: a FastAPI control plane that mints every identifier, a Rust data plane serving bulk data over Arrow Flight backed by DuckDB/DuckLake over Parquet, and a compute orchestrator for SLURM jobs. QiitaExplore uses exactly one thing from it: **identity**. A user's Personal Access Token is verified against the control plane's `whoami` endpoint, and the returned `principal_idx` becomes that user's identity throughout QiitaExplore.
+**Qiita-MIINT** is the new platform. QiitaExplore uses exactly one thing from it today: **identity**, via the FastAPI control plane. A user's Personal Access Token is verified against the control plane's `whoami` endpoint, and the returned `principal_idx` becomes that user's identity throughout QiitaExplore. Other MIINT services (data plane, compute orchestrator) are not part of this integration.
 
 So the seam is:
 

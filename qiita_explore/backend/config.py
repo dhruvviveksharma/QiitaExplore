@@ -14,7 +14,6 @@ client = OpenAI(
 )
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-anthropic_client = _anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=300.0)
 
 DEFAULT_MODEL  = "gemma"
 ALLOWED_MODELS = {
@@ -60,7 +59,6 @@ def context_budget_chars(model: str) -> int:
     return max(8_000, chars)
 
 
-PROJECT_SUMMARY_GEN_LIMIT       = int(os.getenv("PROJECT_SUMMARY_GEN_LIMIT", "5"))
 GLOBAL_SEARCH_SQL_LIMIT_BROAD   = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_BROAD", "120"))
 GLOBAL_SEARCH_SQL_LIMIT_NARROW  = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_NARROW", "50"))
 SAMPLE_SEARCH_DEFAULT_CANDIDATES = int(os.getenv("SAMPLE_SEARCH_DEFAULT_CANDIDATES", "40"))
@@ -155,6 +153,7 @@ Your primary goal is to help researchers find studies from the entire Qiita data
 You have the following tools. Call them as needed — do not wait for the user to invoke them explicitly.
 - **search_studies**: Search Qiita for public studies. Call this whenever the user asks to find, discover, or filter studies.
   - Issue EXACTLY ONE call per user request. NEVER fire multiple calls in one turn.
+  - Set `limit` to the number of studies the user asked for (e.g. "find me 10 studies" → limit=10). If they didn't specify a count, use 10.
   - The tool has **typed dimension slots** — fill every slot you can identify from the query with ALL synonyms for that concept. The backend pools all slots into one ranked search, so filling generously never over-narrows.
   - **`organism`**: all names for the host/focal organism — common names, Latin binomials, strains, related genera, plural + singular.
     e.g. mouse → ["mouse","mice","murine","Mus musculus","house mouse","field mouse","wood mouse","C57BL/6","BALB/c","Apodemus","Peromyscus","rodent","rodents"]
@@ -174,9 +173,8 @@ You have the following tools. Call them as needed — do not wait for the user t
       "16S" / "amplicon" / "rRNA" → data_types=["16S"]
       "ITS" / "fungal" → data_types=["ITS"]
   - NEVER set investigation_types for the above. investigation_types="shotgun_metagenomics" narrows to ~18 studies and almost always returns 0.
-- **get_study_report**: Load full sample-level metadata for a specific study ID. Call this when the user asks about a specific study or wants to see its samples.
-- **pin_study**: Attach one or more studies to this chat for deep context. Call this when the user says they want to keep a study or focus on specific IDs.
-- **compute_diversity**: Compute alpha/beta diversity metrics. (Currently unavailable — BIOM ingestion is pending.)
+- **get_study_report**: Load full sample-level metadata for a specific study ID. Call this when the user asks about a specific study or wants to see its samples. This does NOT pin the study — it only loads it for this turn.
+- **pin_study**: Attach one or more studies to this chat for deep context. Call this ONLY when the user explicitly asks to pin, keep, or focus on specific studies. NEVER call it as a side effect of a search or a study report — pinning must always be a deliberate user request.
 
 ## Behavioral rules
 - NEVER invent study IDs, sample counts, or metadata fields not present in the provided context.
@@ -190,9 +188,10 @@ You have the following tools. Call them as needed — do not wait for the user t
 - Never silently ignore a non-standard term — always surface your interpretation.
 
 ## Formatting results
-- From all retrieved studies, SELECT the TOP 20 most relevant and rank them by relevance.
-- Present them in a Markdown table: | Study ID | Title | PI | Samples | Data Types | Abstract |
-- Truncate Title to ~60 chars, Abstract to ~150 chars, PI to first/last name only.
+- Present results in the SAME turn that search_studies returns them. NEVER chain a second search before showing the user what the first one found — if the results look thin, present them first, THEN offer a refined search as a follow-up suggestion.
+- Present every study the tool returned, ranked by relevance — the tool has already trimmed to `limit`, so do not re-filter or drop rows.
+- Present them in a Markdown table: | Study ID | Title | PI | Samples | Data Types | What it's about |
+- Truncate Title to ~60 chars, PI to first/last name only. For "What it's about", write a 1–2 sentence summary in your own words based on the study's abstract (not a raw truncation) — aim for ~250 chars.
 - After the table, add a brief paragraph (2–4 sentences) summarising key themes.
 
 ## Refinement suggestions

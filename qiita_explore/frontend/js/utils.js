@@ -9,6 +9,25 @@ const API = document.querySelector('meta[name="api-base"]')?.content
 const formatDate = (dateStr) =>
   new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
+const splitTypes = (dataTypes) =>
+  (dataTypes || '').split(',').map(t => t.trim()).filter(Boolean);
+
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* fall through */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
 // ─── HTTP helpers ──────────────────────────────────────────────────────────────
 // Identity now comes from the session cookie (set by POST /auth/connect), not
 // a client-supplied user_id. auth.js calls setCsrfToken() once /auth/me or

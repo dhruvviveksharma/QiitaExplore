@@ -49,6 +49,21 @@ def list_workspaces(user_id: str) -> list:
     return [_as_dict(r) for r in rows]
 
 
+def _ws_studies(conn, workspace_id: str) -> list:
+    rows = conn.execute(
+        "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
+        (workspace_id,),
+    ).fetchall()
+    return [_hydrate_study(_as_dict(r)) for r in rows]
+
+
+def _touch(conn, workspace_id: str, now: str) -> None:
+    conn.execute(
+        "UPDATE merge_workspaces SET updated_at=? WHERE workspace_id=?",
+        (now, workspace_id),
+    )
+
+
 def get_workspace(workspace_id: str, user_id: str) -> Optional[dict]:
     with _conn() as conn:
         row = conn.execute(
@@ -58,11 +73,7 @@ def get_workspace(workspace_id: str, user_id: str) -> Optional[dict]:
         if row is None:
             return None
         ws = _as_dict(row)
-        studies = conn.execute(
-            "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
-            (workspace_id,),
-        ).fetchall()
-    ws["studies"] = [_hydrate_study(_as_dict(s)) for s in studies]
+        ws["studies"] = _ws_studies(conn, workspace_id)
     return ws
 
 
@@ -114,16 +125,10 @@ def add_study_to_workspace(workspace_id: str, user_id: str, study: dict):
             (workspace_id, int(study["study_id"]), study.get("study_title"),
              study.get("data_types"), study.get("num_samples"), now),
         )
-        conn.execute(
-            "UPDATE merge_workspaces SET updated_at=? WHERE workspace_id=?",
-            (now, workspace_id),
-        )
+        _touch(conn, workspace_id, now)
         conn.commit()
-        rows = conn.execute(
-            "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
-            (workspace_id,),
-        ).fetchall()
-    return [_hydrate_study(_as_dict(r)) for r in rows]
+        studies = _ws_studies(conn, workspace_id)
+    return studies
 
 
 def remove_study_from_workspace(workspace_id: str, user_id: str, study_id: int):
@@ -137,16 +142,10 @@ def remove_study_from_workspace(workspace_id: str, user_id: str, study_id: int):
             "DELETE FROM merge_workspace_studies WHERE workspace_id=? AND study_id=?",
             (workspace_id, int(study_id)),
         )
-        conn.execute(
-            "UPDATE merge_workspaces SET updated_at=? WHERE workspace_id=?",
-            (now, workspace_id),
-        )
+        _touch(conn, workspace_id, now)
         conn.commit()
-        rows = conn.execute(
-            "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
-            (workspace_id,),
-        ).fetchall()
-    return [_hydrate_study(_as_dict(r)) for r in rows]
+        studies = _ws_studies(conn, workspace_id)
+    return studies
 
 
 def update_workspace_study(workspace_id: str, user_id: str, study_id: int, *,
@@ -175,16 +174,10 @@ def update_workspace_study(workspace_id: str, user_id: str, study_id: int, *,
                WHERE workspace_id=? AND study_id=?""",
             (legacy_id, ids_json, sample_filter_str, workspace_id, int(study_id)),
         )
-        conn.execute(
-            "UPDATE merge_workspaces SET updated_at=? WHERE workspace_id=?",
-            (now, workspace_id),
-        )
+        _touch(conn, workspace_id, now)
         conn.commit()
-        rows = conn.execute(
-            "SELECT * FROM merge_workspace_studies WHERE workspace_id=? ORDER BY added_at",
-            (workspace_id,),
-        ).fetchall()
-    return [_hydrate_study(_as_dict(r)) for r in rows]
+        studies = _ws_studies(conn, workspace_id)
+    return studies
 
 
 def create_merge_job(workspace_id: str, user_id: str, workspace_snap: list) -> dict:

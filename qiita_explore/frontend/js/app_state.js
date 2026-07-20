@@ -106,11 +106,17 @@ function useAppState() {
     if (res.ok) { const d = await res.json(); setFirstStudies(d.results || []); }
   };
 
-  const hydrateChatCache = async (type, projId, chatId) => {
+  // Shared project-chat vs global-chat URL prefix, used for hydration, stream,
+  // and pin/unpin requests alike. Returns null for a project-chat view with no
+  // projId (guards against firing a request to a malformed URL).
+  const chatScopeUrl = (view, chatId) =>
+    view.type === 'project-chat' && view.projId ? `/projects/${view.projId}/chats/${chatId}`
+    : view.type === 'global-chat' ? `/global-chats/${chatId}`
+    : null;
+
+  const hydrateChatCache = async (view, chatId) => {
     if (chatCache[chatId]) return;
-    const res = type === 'project-chat'
-      ? await apiFetch(`/projects/${projId}/chats/${chatId}`)
-      : await apiFetch(`/global-chats/${chatId}`);
+    const res = await apiFetch(chatScopeUrl(view, chatId));
     if (res.ok) {
       const d = await res.json();
       const messages = (d.messages || []).map(m => ({
@@ -163,31 +169,26 @@ function useAppState() {
   };
 
   // ─── chat navigation ──────────────────────────────────────────────────────────
-  const openProjChat = async (projId, chatId) => {
-    setView({ type: 'project-chat', projId, chatId });
+  const openChat = async (view) => {
+    setView(view);
     setCompErr('');
-    if (!chatCache[chatId]) {
+    if (!chatCache[view.chatId]) {
       setChatLoading(true);
-      try { await hydrateChatCache('project-chat', projId, chatId); }
+      try { await hydrateChatCache(view, view.chatId); }
       finally { setChatLoading(false); }
     }
   };
 
-  const openGlobChat = async (chatId) => {
-    setView({ type: 'global-chat', chatId });
-    setCompErr('');
-    if (!chatCache[chatId]) {
-      setChatLoading(true);
-      try { await hydrateChatCache('global-chat', null, chatId); }
-      finally { setChatLoading(false); }
-    }
-  };
+  const openProjChat = (projId, chatId) => openChat({ type: 'project-chat', projId, chatId });
+  const openGlobChat = (chatId) => openChat({ type: 'global-chat', chatId });
+
+  // Evict a chat's cache entry — shared by both delete handlers below.
+  const dropChat = (chatId) =>
+    setChatCache(prev => { const n = { ...prev }; delete n[chatId]; return n; });
 
   const newProjChat = async (projId) => {
-    const res = await apiPost(`/projects/${projId}/chats`, {});
-    if (!res.ok) return;
-    const chat = await res.json();
-    setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title: 'New chat' } }));
+    const chat = await createProjChatAndSeed(projId, 'New chat').catch(() => null);
+    if (!chat) return;
     setOpenProject(prev => prev ? { ...prev, chats: [{ ...chat, messages: [] }, ...(prev.chats || [])] } : prev);
     setView({ type: 'project-chat', projId, chatId: chat.chat_id });
     setCompErr('');
@@ -195,24 +196,21 @@ function useAppState() {
 
   const deleteProjChat = async (projId, chatId) => {
     await apiDel(`/projects/${projId}/chats/${chatId}`);
-    setChatCache(prev => { const n = { ...prev }; delete n[chatId]; return n; });
+    dropChat(chatId);
     if (view.chatId === chatId) setView({ type: 'project-chat', projId, chatId: null });
     setOpenProject(prev => prev ? { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) } : prev);
   };
 
   const newGlobChat = async () => {
-    const res = await apiPost('/global-chats', {});
-    if (!res.ok) return;
-    const chat = await res.json();
-    setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title: 'New chat' } }));
-    setGlobalChats(prev => [chat, ...prev]);
+    const chat = await createGlobalChatAndSeed('New chat').catch(() => null);
+    if (!chat) return;
     setView({ type: 'global-chat', chatId: chat.chat_id });
     setCompErr('');
   };
 
   const deleteGlobChat = async (chatId) => {
     await apiDel(`/global-chats/${chatId}`);
-    setChatCache(prev => { const n = { ...prev }; delete n[chatId]; return n; });
+    dropChat(chatId);
     if (view.chatId === chatId) setView({ type: 'global-chat', chatId: null });
     setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
   };
@@ -225,6 +223,17 @@ function useAppState() {
       const msgs = [...c.messages];
       msgs[msgs.length - 1] = fn(msgs[msgs.length - 1]);
       return { ...prev, [chatId]: { ...c, messages: msgs } };
+    });
+
+  // Patch a whole chatCache entry (not just its last message). Bails if the
+  // chat isn't cached; `fn(cur)` may return null/the same object to skip the
+  // update (e.g. a no-op like "already pinned").
+  const patchChat = (chatId, fn) =>
+    setChatCache(prev => {
+      const cur = prev[chatId];
+      if (!cur) return prev;
+      const patch = fn(cur);
+      return !patch || patch === cur ? prev : { ...prev, [chatId]: { ...cur, ...patch } };
     });
 
   const optimisticAppend = (chatId, userMsg) =>
@@ -243,7 +252,7 @@ function useAppState() {
       };
     });
 
-  const applyStreamDone = (chatId, title, reportStudyId, pinnedList) => {
+  const applyStreamDone = (chatId, title, pinnedList) => {
     patchLast(chatId, m => {
       const next = { ...m, isStreaming: false, pendingStep: null };
       if (m.segments !== null) {
@@ -259,6 +268,34 @@ function useAppState() {
       const nextPins = pinnedList != null ? pinnedList : pins;
       return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
     });
+  };
+
+  // Shared fetch+guard+parseSSE for a chat stream. `handlers.onToken`/`onDone`
+  // (and any agent-only extras like onQueryPlan) are supplied per call site;
+  // the step/ui/error handlers are identical across project and global chat.
+  const streamChat = async (url, body, chatId, signal, handlers) => {
+    const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body), signal });
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Stream failed');
+    }
+    await parseSSE(res, {
+      onUi:        (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
+      onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
+      onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
+        ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
+      })),
+      onError: ({ error }) => {
+        setCompErr(error || 'Error');
+        patchLast(chatId, m => ({
+          ...m,
+          isStreaming: false,
+          pendingStep: null,
+          content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
+        }));
+      },
+      ...handlers,
+    }, signal);
   };
 
   // ─── agent/segments helpers ──────────────────────────────────────────────────
@@ -297,35 +334,23 @@ function useAppState() {
     });
 
   const unpinStudy = async (chatId, studyId) => {
-    setChatCache(prev => {
-      const cur = prev[chatId];
-      if (!cur) return prev;
-      return { ...prev, [chatId]: { ...cur, pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId) } };
-    });
+    patchChat(chatId, cur => ({ pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId) }));
+    const base = chatScopeUrl(view, chatId);
+    if (!base) return;
     try {
-      if (view.type === 'project-chat' && view.projId) {
-        await apiDel(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}`);
-      } else if (view.type === 'global-chat') {
-        await apiDel(`/global-chats/${chatId}/pinned/${studyId}`);
-      }
+      await apiDel(`${base}/pinned/${studyId}`);
     } catch (_) {}
   };
 
   const pinStudy = async (chatId, study) => {
     const studyId = study.study_id;
-    setChatCache(prev => {
-      const cur = prev[chatId];
-      if (!cur) return prev;
-      if ((cur.pinnedStudies || []).includes(studyId)) return prev;
-      return { ...prev, [chatId]: { ...cur, pinnedStudies: [...(cur.pinnedStudies || []), studyId] } };
-    });
+    patchChat(chatId, cur => (cur.pinnedStudies || []).includes(studyId)
+      ? null
+      : { pinnedStudies: [...(cur.pinnedStudies || []), studyId] });
+    const base = chatScopeUrl(view, chatId);
+    if (!base) return;
     try {
-      let res;
-      if (view.type === 'project-chat' && view.projId) {
-        res = await apiPost(`/projects/${view.projId}/chats/${chatId}/pinned/${studyId}`, {});
-      } else if (view.type === 'global-chat') {
-        res = await apiPost(`/global-chats/${chatId}/pinned/${studyId}`, {});
-      }
+      const res = await apiPost(`${base}/pinned/${studyId}`, {});
       if (res?.ok) {
         const data = await res.json();
         if (data.pinned_studies) {
@@ -336,16 +361,49 @@ function useAppState() {
   };
 
   const removeCtxStudyFromChat = (chatId, studyId) => {
-    setChatCache(prev => {
-      const c = prev[chatId];
-      if (!c) return prev;
-      return { ...prev, [chatId]: { ...c, ctxStudies: (c.ctxStudies || []).filter(s => s.study_id !== studyId) } };
-    });
+    patchChat(chatId, cur => ({ ctxStudies: (cur.ctxStudies || []).filter(s => s.study_id !== studyId) }));
   };
 
   const completeSlash = (item) => {
     setInput(item.insert);
     setTimeout(() => taRef.current?.focus(), 0);
+  };
+
+  // Create a chat and seed its chatCache entry — used by sendMessage whenever
+  // the active view has no chatId yet (first message in a fresh chat).
+  const createProjChatAndSeed = async (projId, title) => {
+    const res = await apiPost(`/projects/${projId}/chats`, {});
+    if (!res.ok) throw new Error('Failed to create chat');
+    const chat = await res.json();
+    setChatCache(prev => ({
+      ...prev,
+      [chat.chat_id]: {
+        messages: [],
+        title,
+        pinnedStudies: chat.pinned_studies || [],
+        totalStudiesInProject: chat.total_studies_in_project,
+      },
+    }));
+    return chat;
+  };
+
+  const createGlobalChatAndSeed = async (title, extraCacheFields = {}) => {
+    const res = await apiPost('/global-chats', {});
+    if (!res.ok) throw new Error('Failed to create chat');
+    const chat = await res.json();
+    setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title, ...extraCacheFields } }));
+    setGlobalChats(prev => [chat, ...prev]);
+    return chat;
+  };
+
+  // Resolve workView's chatId, creating+seeding a chat first if it has none yet.
+  const ensureChatId = async (workView, title) => {
+    if (workView.chatId) return workView.chatId;
+    const chat = workView.type === 'project-chat'
+      ? await createProjChatAndSeed(workView.projId, title)
+      : await createGlobalChatAndSeed(title);
+    setView(v => ({ ...v, chatId: chat.chat_id }));
+    return chat.chat_id;
   };
 
   // ─── send ─────────────────────────────────────────────────────────────────────
@@ -383,14 +441,7 @@ function useAppState() {
 
       if (view.type === 'browse') {
         const snapCtx = [...ctxStudies];
-        const res = await apiPost('/global-chats', {});
-        if (!res.ok) throw new Error('Failed to create chat');
-        const chat = await res.json();
-        setChatCache(prev => ({
-          ...prev,
-          [chat.chat_id]: { messages: [], title: displayMsg.slice(0, 60), ctxStudies: snapCtx },
-        }));
-        setGlobalChats(prev => [chat, ...prev]);
+        const chat = await createGlobalChatAndSeed(displayMsg.slice(0, 60), { ctxStudies: snapCtx });
         workView   = { type: 'global-chat', chatId: chat.chat_id };
         setView(workView);
         setCtxStudies([]);
@@ -399,30 +450,9 @@ function useAppState() {
 
       // ── /systems ────────────────────────────────────────────────────────────
       if (/^\/systems\s*$/i.test(msg)) {
-        let chatId;
-        if (workView.type === 'project-chat') {
-          const { projId } = workView;
-          chatId = workView.chatId;
-          if (!chatId) {
-            const res = await apiPost(`/projects/${projId}/chats`, {});
-            if (!res.ok) throw new Error('Failed to create chat');
-            const chat = await res.json();
-            chatId = chat.chat_id;
-            setChatCache(prev => ({ ...prev, [chatId]: { messages: [], title: '/systems', pinnedStudies: [], totalStudiesInProject: chat.total_studies_in_project } }));
-            setView(v => ({ ...v, chatId }));
-          }
-        } else if (workView.type === 'global-chat') {
-          chatId = workView.chatId;
-          if (!chatId) {
-            const res = await apiPost('/global-chats', {});
-            if (!res.ok) throw new Error('Failed to create chat');
-            const chat = await res.json();
-            chatId = chat.chat_id;
-            setChatCache(prev => ({ ...prev, [chatId]: { messages: [], title: '/systems' } }));
-            setGlobalChats(prev => [chat, ...prev]);
-            setView(v => ({ ...v, chatId }));
-          }
-        }
+        const chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
+          ? await ensureChatId(workView, '/systems')
+          : null;
         if (!chatId) return;
         optimisticAppend(chatId, '/systems — Model status');
         patchLast(chatId, m => ({ ...m, pendingStep: { name: 'probe', label: 'Probing all models…' } }));
@@ -435,117 +465,57 @@ function useAppState() {
 
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
-        let { projId, chatId } = workView;
-        if (!chatId) {
-          const res = await apiPost(`/projects/${projId}/chats`, {});
-          if (!res.ok) throw new Error('Failed to create chat');
-          const chat = await res.json();
-          chatId = chat.chat_id;
-          setChatCache(prev => ({
-            ...prev,
-            [chatId]: {
-              messages: [],
-              title: displayMsg.slice(0, 60),
-              pinnedStudies: chat.pinned_studies || [],
-              totalStudiesInProject: chat.total_studies_in_project,
-            },
-          }));
-          setView(v => ({ ...v, chatId }));
-        }
+        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
         optimisticAppend(chatId, displayMsg);
-        const res = await apiFetch(`/projects/${projId}/chats/${chatId}/message/stream`, {
-          method: 'POST',
-          body: JSON.stringify({
+        await streamChat(
+          `${chatScopeUrl(workView, chatId)}/message/stream`,
+          {
             message: msg,
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
-          }), signal: ctrl.signal,
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Stream failed');
-        }
-        await parseSSE(res, {
-          onToken:     ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
-          onUi:        (payload)  => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
-          onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
-          onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
-            ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
-          })),
-          onDone: (payload) => {
-            const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
-            setOpenProject(prev => prev ? {
-              ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
-            } : prev);
           },
-          onError: ({ error }) => {
-            setCompErr(error || 'Error');
-            patchLast(chatId, m => ({
-              ...m,
-              isStreaming: false,
-              pendingStep: null,
-              content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
-            }));
+          chatId, ctrl.signal,
+          {
+            onToken: ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
+            onDone: (payload) => {
+              const title = displayMsg.slice(0, 60);
+              applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
+              setOpenProject(prev => prev ? {
+                ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
+              } : prev);
+            },
           },
-        }, ctrl.signal);
+        );
 
       } else if (workView.type === 'global-chat') {
-        let { chatId } = workView;
-        if (!chatId) {
-          const res = await apiPost('/global-chats', {});
-          if (!res.ok) throw new Error('Failed to create chat');
-          const chat = await res.json();
-          chatId = chat.chat_id;
-          setChatCache(prev => ({ ...prev, [chatId]: { messages: [], title: displayMsg.slice(0, 60) } }));
-          setGlobalChats(prev => [chat, ...prev]);
-          setView(v => ({ ...v, chatId }));
-        }
+        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
         optimisticAppend(chatId, displayMsg);
         const ctxToSend = studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || []);
-        const res = await apiFetch(`/global-chats/${chatId}/message/stream`, {
-          method: 'POST',
-          body: JSON.stringify({
+        await streamChat(
+          `${chatScopeUrl(workView, chatId)}/message/stream`,
+          {
             message: sendMsg,
             model: selectedModel,
             selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
             ...(isDeepSearch            && { deep_search: true }),
-          }),
-          signal: ctrl.signal,
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Stream failed');
-        }
-        await parseSSE(res, {
-          onToken:             onTokenAgent(chatId),
-          onUi:                (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
-          onStepStart:         ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
-          onStepDone:          ({ name, label, detail }) => patchLast(chatId, m => ({
-            ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
-          })),
-          onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
-          onAgentStart:        onAgentStart(chatId),
-          onSegmentToolCall:   onSegmentToolCall(chatId),
-          onSegmentToolResult: onSegmentToolResult(chatId),
-          onDone: (payload) => {
-            const title = displayMsg.slice(0, 60);
-            applyStreamDone(chatId, title, reportStudyId, payload?.pinned_studies ?? null);
-            setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
           },
-          onError: ({ error }) => {
-            setCompErr(error || 'Error');
-            patchLast(chatId, m => ({
-              ...m,
-              isStreaming: false,
-              pendingStep: null,
-              content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
-            }));
+          chatId, ctrl.signal,
+          {
+            onToken:             onTokenAgent(chatId),
+            onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
+            onAgentStart:        onAgentStart(chatId),
+            onSegmentToolCall:   onSegmentToolCall(chatId),
+            onSegmentToolResult: onSegmentToolResult(chatId),
+            onDone: (payload) => {
+              const title = displayMsg.slice(0, 60);
+              applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
+              setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
+            },
           },
-        }, ctrl.signal);
+        );
       }
     } catch (e) {
       if (e.name !== 'AbortError') setCompErr(e.message || 'Failed to send');
@@ -621,7 +591,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -630,13 +600,12 @@ function useAppState() {
     // refs
     taRef, bottomRef,
     // handlers
-    loadProjects, fetchProjectDetail, loadGlobalChats, loadFirstStudies,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
     removeCtxStudyFromChat, completeSlash,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
-    activeMsgs, lastContent, slashMatches,
+    activeMsgs, slashMatches,
   };
 }

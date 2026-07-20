@@ -6,7 +6,7 @@ import time
 from typing import Generator, Optional
 
 from config import client, get_client
-from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model, friendly_llm_error
+from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
 from helpers.agent_tools import TOOL_SCHEMAS, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -328,8 +328,6 @@ def _tool_label(name: str, args: dict) -> str:
     if name == "pin_study":
         ids = args.get("study_ids") or []
         return f"Pinning {len(ids)} {'study' if len(ids) == 1 else 'studies'}…"
-    if name == "compute_diversity":
-        return "Computing diversity…"
     if name == "search_by_sample":
         ff  = args.get("field_filters") or []
         kws = args.get("keywords") or []

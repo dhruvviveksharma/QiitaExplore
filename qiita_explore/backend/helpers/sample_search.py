@@ -9,7 +9,6 @@ import concurrent.futures
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
@@ -63,6 +62,45 @@ def _get_candidate_ids(data_types, exclude_ids, max_candidates):
     return result
 
 
+def _probe_pool(workers):
+    """A per-call ThreadedConnectionPool — parallel probes need independent
+    psycopg2 connections since the shared TRN singleton is not thread-safe."""
+    return ThreadedConnectionPool(
+        1, workers,
+        user=qiita_config.user,
+        password=qiita_config.password,
+        database=qiita_config.database,
+        host=qiita_config.host,
+        port=qiita_config.port,
+        options=f"-c statement_timeout={SAMPLE_SEARCH_PROBE_TIMEOUT_MS}",
+    )
+
+
+def _probe_exists(pool, sid, clauses, params, tag):
+    """Run a `SELECT EXISTS` probe against sample_{sid} on a pooled connection."""
+    sql = f"""
+        SELECT EXISTS (
+            SELECT 1 FROM qiita.study_sample ss
+            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
+            WHERE ss.study_id = %s
+              AND ss.sample_id <> 'qiita_sample_column_names'
+              AND ({" OR ".join(clauses)})
+        )
+    """
+    conn = pool.getconn()
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except Exception:
+        logger.exception("%s study=%s failed", tag, sid)
+        return False
+    finally:
+        pool.putconn(conn)
+
+
 def _probe_study_raw(pool, study_id, kws):
     """Return True if any host field in sample_{study_id} matches a keyword.
 
@@ -78,27 +116,7 @@ def _probe_study_raw(pool, study_id, kws):
         for kw in kws:
             conditions.append(f"sm.sample_values->>'{field}' ILIKE %s")
             params.append(f"%{kw}%")
-    sql = f"""
-        SELECT EXISTS (
-            SELECT 1 FROM qiita.study_sample ss
-            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
-            WHERE ss.study_id = %s
-              AND ss.sample_id <> 'qiita_sample_column_names'
-              AND ({" OR ".join(conditions)})
-        )
-    """
-    conn = pool.getconn()
-    try:
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            row = cur.fetchone()
-            return bool(row and row[0])
-    except Exception:
-        logger.exception("probe study=%s failed", sid)
-        return False
-    finally:
-        pool.putconn(conn)
+    return _probe_exists(pool, sid, conditions, params, "probe")
 
 
 def _probe_fields_raw(pool, study_id, field_filters, keywords):
@@ -118,27 +136,54 @@ def _probe_fields_raw(pool, study_id, field_filters, keywords):
         params.append(f"%{kw}%")
     if not clauses:
         return False
-    sql = f"""
-        SELECT EXISTS (
-            SELECT 1 FROM qiita.study_sample ss
-            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
-            WHERE ss.study_id = %s
-              AND ss.sample_id <> 'qiita_sample_column_names'
-              AND ({" OR ".join(clauses)})
-        )
+    return _probe_exists(pool, sid, clauses, params, "_probe_fields_raw")
+
+
+def _parallel_probe(candidate_ids, submit, log_tag, scanned_label="scanned", pool_size=16):
+    """Fan `submit(pool, sid)` out across a thread pool with a bounded timeout.
+
+    Returns the list of candidate IDs for which `submit` returned truthy. On
+    timeout, logs a partial-results warning and cancels the remaining futures.
     """
-    conn = pool.getconn()
+    workers = min(len(candidate_ids), pool_size)
+    timeout = max(30, len(candidate_ids) * 0.4)
+
+    pool = _probe_pool(workers)
+    matched_ids = []
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {executor.submit(submit, pool, sid): sid for sid in candidate_ids}
     try:
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            row = cur.fetchone()
-            return bool(row and row[0])
-    except Exception:
-        logger.exception("_probe_fields_raw study=%s failed", sid)
-        return False
+        for fut in as_completed(futures, timeout=timeout):
+            sid = futures[fut]
+            try:
+                if fut.result():
+                    matched_ids.append(sid)
+            except Exception:
+                pass
+    except (TimeoutError, concurrent.futures.TimeoutError):
+        n_done = sum(1 for f in futures if f.done())
+        logger.warning(
+            "[%s] timed out after %.0fs; %d/%d %s, %d matched — returning partial",
+            log_tag, timeout, n_done, len(candidate_ids), scanned_label, len(matched_ids),
+        )
+        for f in futures:
+            f.cancel()
     finally:
-        pool.putconn(conn)
+        # shutdown(wait=False) returns immediately; background threads finish on their own
+        executor.shutdown(wait=False)
+        pool.closeall()
+    return matched_ids
+
+
+def _hydrate_headers(ids):
+    """Fetch study-header dicts for matched IDs, tagging each with its search origin."""
+    studies = []
+    for sid in ids:
+        header = _fetch_study_header(sid)
+        if header:
+            header["via"] = "sample_metadata"
+            studies.append(header)
+    return studies
 
 
 def search_studies_by_field_filters(field_filters=None, keywords=None,
@@ -159,51 +204,13 @@ def search_studies_by_field_filters(field_filters=None, keywords=None,
     if not candidate_ids:
         return []
 
-    workers = min(len(candidate_ids), pool_size)
-    timeout = max(30, len(candidate_ids) * 0.4)
-
-    pool = ThreadedConnectionPool(
-        1, workers,
-        user=qiita_config.user,
-        password=qiita_config.password,
-        database=qiita_config.database,
-        host=qiita_config.host,
-        port=qiita_config.port,
-        options=f"-c statement_timeout={SAMPLE_SEARCH_PROBE_TIMEOUT_MS}",
+    matched_ids = _parallel_probe(
+        candidate_ids,
+        lambda pool, sid: _probe_fields_raw(pool, sid, ff, kws),
+        "field_filter_search",
+        pool_size=pool_size,
     )
-    matched_ids = []
-    executor = ThreadPoolExecutor(max_workers=workers)
-    futures = {
-        executor.submit(_probe_fields_raw, pool, sid, ff, kws): sid
-        for sid in candidate_ids
-    }
-    try:
-        for fut in as_completed(futures, timeout=timeout):
-            sid = futures[fut]
-            try:
-                if fut.result():
-                    matched_ids.append(sid)
-            except Exception:
-                pass
-    except (TimeoutError, concurrent.futures.TimeoutError):
-        n_done = sum(1 for f in futures if f.done())
-        logger.warning(
-            "[field_filter_search] timed out after %.0fs; %d/%d scanned, %d matched — returning partial",
-            timeout, n_done, len(candidate_ids), len(matched_ids),
-        )
-        for f in futures:
-            f.cancel()
-    finally:
-        executor.shutdown(wait=False)
-        pool.closeall()
-
-    studies = []
-    for sid in matched_ids:
-        header = _fetch_study_header(sid)
-        if header:
-            header["via"] = "sample_metadata"
-            studies.append(header)
-    return studies
+    return _hydrate_headers(matched_ids)
 
 
 def search_studies_by_sample_meta(topic_keywords, data_types=None,
@@ -223,52 +230,11 @@ def search_studies_by_sample_meta(topic_keywords, data_types=None,
     if not candidate_ids:
         return []
 
-    workers = min(len(candidate_ids), pool_size)
-    timeout = max(30, len(candidate_ids) * 0.4)  # ~0.4s budget per study
-
-    pool = ThreadedConnectionPool(
-        1, workers,
-        user=qiita_config.user,
-        password=qiita_config.password,
-        database=qiita_config.database,
-        host=qiita_config.host,
-        port=qiita_config.port,
-        options=f"-c statement_timeout={SAMPLE_SEARCH_PROBE_TIMEOUT_MS}",
+    matched_ids = _parallel_probe(
+        candidate_ids,
+        lambda pool, sid: _probe_study_raw(pool, sid, kws),
+        "sample_search",
+        scanned_label="studies scanned",
+        pool_size=pool_size,
     )
-    matched_ids = []
-    executor = ThreadPoolExecutor(max_workers=workers)
-    futures = {
-        executor.submit(_probe_study_raw, pool, sid, kws): sid
-        for sid in candidate_ids
-    }
-    try:
-        for fut in as_completed(futures, timeout=timeout):
-            sid = futures[fut]
-            try:
-                if fut.result():
-                    matched_ids.append(sid)
-            except Exception:
-                pass
-    except (TimeoutError, concurrent.futures.TimeoutError):
-        n_done = sum(1 for f in futures if f.done())
-        logger.warning(
-            "[sample_search] timed out after %.0fs; %d/%d studies scanned, %d matched — returning partial",
-            timeout, n_done, len(candidate_ids), len(matched_ids),
-        )
-        for f in futures:
-            f.cancel()
-    finally:
-        # shutdown(wait=False) returns immediately; background threads finish on their own
-        executor.shutdown(wait=False)
-        pool.closeall()
-
-    if not matched_ids:
-        return []
-
-    studies = []
-    for sid in matched_ids:
-        header = _fetch_study_header(sid)
-        if header:
-            header["via"] = "sample_metadata"
-            studies.append(header)
-    return studies
+    return _hydrate_headers(matched_ids)

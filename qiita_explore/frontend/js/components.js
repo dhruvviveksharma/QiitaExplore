@@ -37,7 +37,7 @@ const FIELD_GROUPS = [
 ];
 
 // ─── SamplesBrowser: shared two-pane / stacked sample viewer ──────────────────
-function SamplesBrowser({ samples, totalSamples, layout, fetchFields }) {
+function SamplesBrowser({ samples, layout, fetchFields }) {
   const [activeId,     setActiveId]     = useState(null);
   const [activeFields, setActiveFields] = useState(null);
   const [loading,      setLoading]      = useState(false);
@@ -415,7 +415,7 @@ function SamplesReportBubble({ ui, messageKey }) {
       <CollapsibleSection id={`${keyBase}-samples`} title="Samples"
         subtitle={`${numSamples} total${samples.length < numSamples ? `, showing ${samples.length}` : ''}`}
         defaultOpen={true}>
-        <SamplesBrowser samples={samples} totalSamples={numSamples} layout="stacked" />
+        <SamplesBrowser samples={samples} layout="stacked" />
       </CollapsibleSection>
       <CollapsibleSection id={`${keyBase}-preps`} title="Prep Templates"
         subtitle={detail ? `${(detail.preps || []).length} total` : (header.num_preps != null ? `${header.num_preps} total` : '')}
@@ -433,7 +433,7 @@ function SamplesReportBubble({ ui, messageKey }) {
 // ─── InlineStudyCard ──────────────────────────────────────────────────────────
 const _META_TYPES = new Set(['Metagenomic', 'Metatranscriptomic', 'WGS', 'Genome Isolate']);
 function InlineStudyCard({ study, isPinned, onPin, onMerge, onOpen }) {
-  const types = (study.data_types || '').split(',').map(t => t.trim()).filter(Boolean);
+  const types = splitTypes(study.data_types);
   return (
     <div className="inline-study-card" onClick={() => onOpen?.(study)}>
       <div className="isc-id-row">
@@ -532,8 +532,25 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
   );
 }
 
+// ─── CopyResponseButton ───────────────────────────────────────────────────────
+function CopyResponseButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(text);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
+  };
+  return (
+    <button className="msg-copy-btn" title="Copy response" onClick={handleCopy}>
+      {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+      <span>{copied ? 'Copied' : 'Copy'}</span>
+    </button>
+  );
+}
+
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
 function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds }) {
+  const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
@@ -549,6 +566,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
       {isStreaming && !(segments || []).length && (
         <InfinityLoader w={80} h={50} />
       )}
+      {!isStreaming && textContent && <CopyResponseButton text={textContent} />}
     </div>
   );
 }

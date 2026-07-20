@@ -301,9 +301,7 @@ function GlobalBiomSelector({ workspace, studyDetails, onApply }) {
   const studies = workspace?.studies || [];
   if (studies.length < 2) return null;
 
-  const allTypes = [...new Set(
-    studies.flatMap(s => (s.data_types || '').split(',').map(t => t.trim()).filter(Boolean))
-  )].sort();
+  const allTypes = [...new Set(studies.flatMap(s => splitTypes(s.data_types)))].sort();
 
   async function handleApply() {
     setApplying(true); setMsg('');

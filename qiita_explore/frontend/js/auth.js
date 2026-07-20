@@ -46,7 +46,7 @@ function useAuth() {
 
   const logout = useCallback(async () => {
     try {
-      await apiFetch('/auth/logout', { method: 'POST' });
+      await apiPost('/auth/logout', {});
     } catch (_) {}
     clearCsrfToken();
     setIdentity(null);
@@ -74,7 +74,7 @@ function ConnectQiita({ onConnected }) {
     if (!pat || busy) return;
     setBusy(true); setError('');
     try {
-      const res = await apiFetch('/auth/connect', { method: 'POST', body: JSON.stringify({ token: pat }) });
+      const res = await apiPost('/auth/connect', { token: pat });
       setToken(''); // clear the pasted PAT from state immediately, success or not
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -131,7 +131,7 @@ function ConnectQiita({ onConnected }) {
   );
 }
 
-function LegacyClaimBanner({ csrfToken, onDone }) {
+function LegacyClaimBanner({ onDone }) {
   const [counts,  setCounts]  = useState(null);
   const [visible, setVisible] = useState(true);
   const [busy,    setBusy]    = useState(false);
@@ -146,7 +146,7 @@ function LegacyClaimBanner({ csrfToken, onDone }) {
   const claim = async () => {
     setBusy(true);
     try {
-      await apiFetch('/auth/claim-default', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
+      await apiPost('/auth/claim-default', {});
     } finally {
       setBusy(false);
       setVisible(false);

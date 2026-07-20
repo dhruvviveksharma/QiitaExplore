@@ -1,7 +1,5 @@
 """Auto-pick BIOM artifact per study and validate namespace compatibility for merging."""
 
-import json
-
 
 def autopick_artifact(artifacts: list, data_type: str):
     """Return the best BIOM artifact for merging given a study's artifact list.

@@ -8,7 +8,7 @@ function renderApp(s) {
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, firstStudies, searching, searched, sqlQuery, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -23,7 +23,6 @@ function renderApp(s) {
     activeMsgs, slashMatches,
   } = s;
 
-  const lastUiMsg = [...activeMsgs].reverse().find(m => m.ui?.kind != null);
   const hasSourcesBar = (view.type === 'project-chat' && openProject?.studies?.length > 0) ||
     (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0);
 
@@ -93,7 +92,7 @@ function renderApp(s) {
                         <div className="cr-title">{chatCache[c.chat_id]?.title || c.title || 'New chat'}</div>
                         {c.updated_at && (
                           <div className="cr-date">
-                            {new Date(c.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {formatDate(c.updated_at)}
                           </div>
                         )}
                       </div>
@@ -158,7 +157,7 @@ function renderApp(s) {
                 <div className="cr-title">{chatCache[c.chat_id]?.title || c.title || 'New chat'}</div>
                 {c.updated_at && (
                   <div className="cr-date">
-                    {new Date(c.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {formatDate(c.updated_at)}
                   </div>
                 )}
               </div>
@@ -291,7 +290,7 @@ function renderApp(s) {
                     {displayStudies.map(study => {
                       const inProj = projStudyIds.includes(study.study_id);
                       const inCtx  = ctxStudyIds.includes(study.study_id);
-                      const dataTypeList = (study.data_types || '').split(',').map(t => t.trim()).filter(Boolean);
+                      const dataTypeList = splitTypes(study.data_types);
                       const metaParts = [
                         study.num_samples != null ? `${study.num_samples} samples` : null,
                         study.num_preps    != null ? `${study.num_preps} preps`    : null,
@@ -374,7 +373,7 @@ function renderApp(s) {
                 </div>
               )}
 
-              <div className={`chat-messages${ (view.type === 'project-chat' && openProject?.studies?.length > 0) || (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0) ? ' has-sources' : ''}`}>
+              <div className={`chat-messages${hasSourcesBar ? ' has-sources' : ''}`}>
                 {activeMsgs.length === 0 && chatLoading ? (
                   <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
@@ -462,6 +461,7 @@ function renderApp(s) {
                                 }}
                               />
                               {m.isStreaming && m.content && <div style={{marginTop:'6px'}}><InfinityLoader w={64} h={40} /></div>}
+                              {!m.isStreaming && m.content && <CopyResponseButton text={m.content} />}
                             </>
                           ) : null}
                         </>

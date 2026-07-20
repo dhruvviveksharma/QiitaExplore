@@ -1,18 +1,13 @@
 """SQLite schema creation, migration helpers, and core connection utilities."""
 
-import json
 import os
 import sqlite3
-import uuid
 from datetime import datetime
 
 # Go up one level (store/ → backend/) so the data dir stays at backend/data/
 _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(_DEFAULT_DATA_DIR, exist_ok=True)
 DB_PATH = os.getenv("QIITA_EXPERIMENT_DB_PATH", os.path.join(_DEFAULT_DATA_DIR, "projects.db"))
-
-TINYDB_PRIMARY_PATH    = os.path.join(_DEFAULT_DATA_DIR, "projects.json")
-TINYDB_LEGACY_TMP_PATH = "/tmp/qiita-experiment/projects.json"
 
 
 def _now():
@@ -32,18 +27,12 @@ def _as_dict(row):
     return dict(row) if row is not None else None
 
 
-def _parse_tinydb_docs(path):
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        bucket = payload.get("_default") if isinstance(payload, dict) else None
-        if not isinstance(bucket, dict):
-            return []
-        return [v for v in bucket.values() if isinstance(v, dict)]
-    except Exception:
-        return []
+def _resolve_user(user_id):
+    return (user_id or "").strip() or "default"
+
+
+def _chat_title(raw):
+    return (raw or "New chat")[:60].strip() or "New chat"
 
 
 def _reconcile_legacy_users_table(conn):
@@ -270,196 +259,29 @@ def _create_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(absolute_expires_at);
         """
     )
-    for col, definition in [
-        ("data_types", "TEXT"),
-        ("num_samples", "INTEGER"),
-        ("num_preps", "INTEGER"),
-        ("preps_json", "TEXT"),
+    for tbl, col, definition in [
+        ("project_studies", "data_types", "TEXT"),
+        ("project_studies", "num_samples", "INTEGER"),
+        ("project_studies", "num_preps", "INTEGER"),
+        ("project_studies", "preps_json", "TEXT"),
+        ("study_detail_cache", "full_samples_json", "TEXT"),
+        ("study_detail_cache", "artifact_graph_json", "TEXT"),
+        ("study_detail_cache", "prep_metadata_json", "TEXT"),
+        ("study_detail_cache", "samples_json", "TEXT"),
+        ("study_detail_cache", "total_samples", "INTEGER"),
+        ("merge_workspace_studies", "chosen_artifact_ids", "TEXT"),
+        ("project_chat_messages", "ui_payload", "TEXT"),
+        ("global_chat_messages", "ui_payload", "TEXT"),
     ]:
         try:
-            conn.execute(f"ALTER TABLE project_studies ADD COLUMN {col} {definition}")
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")
         except Exception:
             pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN samples_context TEXT")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN full_samples_json TEXT")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN artifact_graph_json TEXT")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN prep_metadata_json TEXT")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN samples_json TEXT")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE study_detail_cache ADD COLUMN total_samples INTEGER")
-    except Exception:
-        pass
-
-    try:
-        conn.execute("ALTER TABLE merge_workspace_studies ADD COLUMN chosen_artifact_ids TEXT")
-    except Exception:
-        pass
-
-    for tbl in ("project_chat_messages", "global_chat_messages"):
-        try:
-            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN ui_payload TEXT")
-        except Exception:
-            pass
-
-
-def _mark_migration(conn):
-    conn.execute(
-        "INSERT OR REPLACE INTO meta(key, value) VALUES('tinydb_imported', '1')"
-    )
-
-
-def _should_migrate(conn):
-    marker = conn.execute("SELECT value FROM meta WHERE key='tinydb_imported'").fetchone()
-    if marker and marker["value"] == "1":
-        return False
-    existing = conn.execute("SELECT COUNT(1) AS c FROM projects").fetchone()["c"]
-    return existing == 0
-
-
-def _insert_project_doc(conn, doc):
-    project_id = str(doc.get("project_id") or str(uuid.uuid4())[:8])
-    user_id = (doc.get("user_id") or "default").strip() or "default"
-    created_at = doc.get("created_at") or _now()
-    updated_at = doc.get("updated_at") or created_at
-    name = (doc.get("name") or "Untitled").strip() or "Untitled"
-
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO projects(project_id, user_id, name, created_at, updated_at)
-        VALUES(?, ?, ?, ?, ?)
-        """,
-        (project_id, user_id, name, created_at, updated_at),
-    )
-
-    for study in (doc.get("studies") or []):
-        study_id = study.get("study_id")
-        if study_id is None:
-            continue
-        now = _now()
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO project_studies(
-                project_id, study_id, study_title, study_abstract,
-                pi_name, pi_email, pi_affiliation, lab_person_name,
-                summary_text, added_at, updated_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                project_id,
-                int(study_id),
-                study.get("study_title") or "",
-                study.get("study_abstract") or "",
-                study.get("pi_name"),
-                study.get("pi_email"),
-                study.get("pi_affiliation"),
-                study.get("lab_person_name"),
-                study.get("summary_text"),
-                study.get("added_at") or now,
-                study.get("updated_at") or now,
-            ),
-        )
-
-    for chat in (doc.get("chats") or []):
-        chat_id = str(chat.get("chat_id") or str(uuid.uuid4())[:8])
-        chat_created = chat.get("created_at") or _now()
-        chat_updated = chat.get("updated_at") or chat_created
-        title = (chat.get("title") or "New chat")[:60].strip() or "New chat"
-
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO project_chats(chat_id, project_id, user_id, title, created_at, updated_at)
-            VALUES(?, ?, ?, ?, ?, ?)
-            """,
-            (chat_id, project_id, user_id, title, chat_created, chat_updated),
-        )
-
-        for msg in (chat.get("messages") or []):
-            role = (msg.get("role") or "user").strip() or "user"
-            if role not in ("user", "assistant"):
-                role = "user"
-            content = msg.get("content") or ""
-            conn.execute(
-                """
-                INSERT INTO project_chat_messages(chat_id, role, content, created_at)
-                VALUES(?, ?, ?, ?)
-                """,
-                (chat_id, role, content, msg.get("created_at") or _now()),
-            )
-
-
-def _insert_global_bucket(conn, doc):
-    bucket_user = (doc.get("user_id") or "default").strip() or "default"
-    for chat in (doc.get("global_chats") or []):
-        chat_id = str(chat.get("chat_id") or str(uuid.uuid4())[:8])
-        chat_created = chat.get("created_at") or _now()
-        chat_updated = chat.get("updated_at") or chat_created
-        title = (chat.get("title") or "New chat")[:60].strip() or "New chat"
-
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO global_chats(chat_id, user_id, title, created_at, updated_at)
-            VALUES(?, ?, ?, ?, ?)
-            """,
-            (chat_id, bucket_user, title, chat_created, chat_updated),
-        )
-
-        for msg in (chat.get("messages") or []):
-            role = (msg.get("role") or "user").strip() or "user"
-            if role not in ("user", "assistant"):
-                role = "user"
-            content = msg.get("content") or ""
-            conn.execute(
-                """
-                INSERT INTO global_chat_messages(chat_id, role, content, created_at)
-                VALUES(?, ?, ?, ?)
-                """,
-                (chat_id, role, content, msg.get("created_at") or _now()),
-            )
-
-
-def _migrate_from_tinydb(conn):
-    docs = _parse_tinydb_docs(TINYDB_PRIMARY_PATH)
-    if not docs:
-        docs = _parse_tinydb_docs(TINYDB_LEGACY_TMP_PATH)
-
-    for doc in docs:
-        if doc.get("project_id"):
-            _insert_project_doc(conn, doc)
-            continue
-        bucket_type = str(doc.get("bucket_type") or "")
-        if bucket_type.startswith("global_chats::"):
-            _insert_global_bucket(conn, doc)
 
 
 def _bootstrap():
     with _conn() as conn:
         _create_schema(conn)
-        if _should_migrate(conn):
-            _migrate_from_tinydb(conn)
-            _mark_migration(conn)
-        elif conn.execute("SELECT value FROM meta WHERE key='tinydb_imported'").fetchone() is None:
-            _mark_migration(conn)
         conn.commit()
 
 

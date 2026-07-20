@@ -516,6 +516,15 @@ input, textarea { font-family: var(--sans); }
 /* ── Agent segments ──────────────────────────────────────────── */
 .agent-msg { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 
+.msg-copy-btn {
+  align-self: flex-start;
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-3);
+  padding: 2px 7px; border-radius: 3px; border: 1px solid var(--border-soft);
+  background: transparent; transition: all var(--t);
+}
+.msg-copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+
 .tool-call-card {
   border-left: 2px solid var(--accent-muted, rgba(99,102,241,.3));
   font-size: 11.5px;
