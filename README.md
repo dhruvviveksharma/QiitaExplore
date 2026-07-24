@@ -21,13 +21,14 @@ QiitaExplore replaces that manual loop with a local web console that sits in fro
 - **Bounded, cached data access** — Study detail (preps, artifacts, sample counts) is fetched lazily on first view and cached for 6 hours, so the read-only Qiita database only ever sees the queries you actually need.
 
 ## 📸 Screenshots & Demo
+### Home Page
+Study browser grid showing searchable Qiita studies with data type and sample count columns:
+![](assets/dashboard.png)
 
-![Study browser grid showing searchable Qiita studies with data type and sample count columns](assets/dashboard.png)
-
+### Discovery Agent View
 ![Agentic chat panel with a tool-call card expanded to show search_studies arguments and results](assets/agent-chat.png)
 
-![Combined text and sample-metadata search results ranked by relevance](assets/study-search.png)
-
+### BIOM Merges View
 ![BIOM merge workspace showing selected studies, sample counts, and validation status](assets/merge-workspace.png)
 
 ## Tech Stack
