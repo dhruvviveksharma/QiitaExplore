@@ -1804,7 +1804,9 @@ input, textarea { font-family: var(--sans); }
 .dark .auth-error { color: #e08080; }
 
 .auth-account-bar {
-  position: fixed; top: 12px; right: 16px; z-index: 150;
+  /* top:15px centers the 30px avatar on the topbar row (margin 8 + height 44
+     → row center 30 → 30 − 15) rather than sitting 3px high */
+  position: fixed; top: 15px; right: 16px; z-index: 150;
 }
 .auth-avatar {
   width: 30px; height: 30px; border-radius: 50%;
