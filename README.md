@@ -22,7 +22,6 @@ QiitaExplore replaces that manual loop with a local web console that sits in fro
 
 ## 📸 Screenshots & Demo
 ### Home Page
-Study browser grid showing searchable Qiita studies with data type and sample count columns:
 ![](assets/dashboard.png)
 
 ### Discovery Agent View
