@@ -15,9 +15,11 @@ function staticLabel(name) {
 
 /**
  * Recursively map a plain JSON-Schema object (as produced by
- * agent_tools.TOOL_SCHEMAS) to a TypeBox schema. Covers exactly what
- * TOOL_SCHEMAS actually uses today: object/string/integer/array, description,
- * required. Extend if a new tool needs a shape this doesn't cover yet.
+ * agent_tools.TOOL_SCHEMAS) to a TypeBox schema, carrying `description` and
+ * `required` through. TOOL_SCHEMAS uses only object/array/string/integer today;
+ * number/boolean are handled because they are one line each and are the obvious
+ * next thing a tool author reaches for. Anything else degrades to Type.Unknown()
+ * rather than throwing — extend the switch when a tool needs a richer shape.
  */
 function jsonSchemaToTypeBox(schema) {
   if (!schema || typeof schema !== "object") return Type.Unknown();
@@ -48,20 +50,43 @@ function jsonSchemaToTypeBox(schema) {
   }
 }
 
-/**
- * Fetch the tool schemas from Flask (single source of truth: agent_tools.TOOL_SCHEMAS)
- * and build one pi defineTool() per entry. Each tool's execute() posts back to the
- * same internal tool route the schema came from — Flask enforces scope, dispatches to
- * the existing execute_tool(), and the tool set can never drift from qiita_explore's.
- */
-export async function loadTools({ flaskUrl, piSecret, getToolToken, fetchImpl = fetch }) {
-  const res = await fetchImpl(`${flaskUrl}/api/internal/tools/schemas`, {
-    headers: { "x-pi-secret": piSecret },
-  });
-  if (!res.ok) {
-    throw new Error(`failed to fetch tool schemas: ${res.status} ${await res.text()}`);
+// Schemas are fixed for the lifetime of the Flask process, and loadTools() runs
+// on every session cache miss — i.e. once per chat. Memoised so that is one
+// round trip for the sidecar's lifetime rather than one per conversation.
+// Keyed by URL so a test harness pointing at its own stub is not served the
+// real process's schemas.
+const _schemaCache = new Map(); // flaskUrl -> Promise<schemas>
+
+function fetchToolSchemas(flaskUrl, piSecret) {
+  let pending = _schemaCache.get(flaskUrl);
+  if (!pending) {
+    pending = (async () => {
+      const res = await fetch(`${flaskUrl}/api/internal/tools/schemas`, {
+        headers: { "x-pi-secret": piSecret },
+      });
+      if (!res.ok) {
+        throw new Error(`failed to fetch tool schemas: ${res.status} ${await res.text()}`);
+      }
+      return (await res.json()).tools;
+    })().catch((err) => {
+      // Never cache a failure — the next session should retry rather than
+      // inherit a permanently broken tool list.
+      _schemaCache.delete(flaskUrl);
+      throw err;
+    });
+    _schemaCache.set(flaskUrl, pending);
   }
-  const { tools: schemas } = await res.json();
+  return pending;
+}
+
+/**
+ * Build one pi defineTool() per entry in Flask's TOOL_SCHEMAS (the single source
+ * of truth). Each tool's execute() posts back to the same internal tool route the
+ * schema came from — Flask enforces scope, dispatches to the existing
+ * execute_tool(), and the tool set can never drift from qiita_explore's.
+ */
+export async function loadTools({ flaskUrl, piSecret, getToolToken }) {
+  const schemas = await fetchToolSchemas(flaskUrl, piSecret);
 
   return schemas.map(({ function: fn }) =>
     defineTool({
@@ -70,7 +95,7 @@ export async function loadTools({ flaskUrl, piSecret, getToolToken, fetchImpl = 
       description: fn.description || "",
       parameters: jsonSchemaToTypeBox(fn.parameters || { type: "object", properties: {} }),
       async execute(_toolCallId, params, signal) {
-        const res = await fetchImpl(`${flaskUrl}/api/internal/tools/${fn.name}`, {
+        const res = await fetch(`${flaskUrl}/api/internal/tools/${fn.name}`, {
           method: "POST",
           signal,
           headers: {

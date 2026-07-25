@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   SessionManager,
   SettingsManager,
@@ -97,10 +98,19 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(cwd, { recursive: true });
 
-  async function findExistingPath(sessionKey) {
-    const infos = await SessionManager.list(cwd, sessionDir);
-    const hit = infos.find((i) => i.id === sessionKey);
-    return hit ? hit.path : null;
+  // SessionManager.create() names files "<timestamp>_<id>.jsonl", so the id is
+  // recoverable from the filename alone. Matching on that instead of
+  // SessionManager.list() matters because list() opens and parses every session
+  // in the directory to report its metadata — an O(all chats ever created) scan
+  // on each cache miss, just to resolve one path. Timestamps sort lexically, so
+  // the last match is the newest if a key somehow has more than one file.
+  function findExistingPath(sessionKey) {
+    const suffix = `_${sessionKey}.jsonl`;
+    let newest = null;
+    for (const name of fs.readdirSync(sessionDir)) {
+      if (name.endsWith(suffix) && (newest === null || name > newest)) newest = name;
+    }
+    return newest ? path.join(sessionDir, newest) : null;
   }
 
   async function getOrCreate(sessionKey, { model, systemPrompt }) {
@@ -111,7 +121,7 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
       return cached;
     }
 
-    const existingPath = await findExistingPath(sessionKey);
+    const existingPath = findExistingPath(sessionKey);
     const sessionManager = existingPath
       ? SessionManager.open(existingPath, sessionDir, cwd)
       : SessionManager.create(cwd, sessionDir, { id: sessionKey });
@@ -212,7 +222,7 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
       cached.session.dispose();
       cache.delete(sessionKey);
     }
-    const existingPath = await findExistingPath(sessionKey);
+    const existingPath = findExistingPath(sessionKey);
     if (existingPath && fs.existsSync(existingPath)) {
       fs.unlinkSync(existingPath);
     }

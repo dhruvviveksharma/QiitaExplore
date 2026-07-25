@@ -41,6 +41,16 @@ def _matches_data_types(study: dict, wanted: set) -> bool:
     return bool(wanted & have)
 
 
+def _filter_by_data_types(studies: list, data_types) -> list:
+    """No-op when no data types were requested. Both search entry points narrow
+    the workspace this way, so the lowercasing lives here rather than twice."""
+    types = [t.strip() for t in (data_types or []) if t]
+    if not types:
+        return studies
+    wanted = {t.lower() for t in types}
+    return [s for s in studies if _matches_data_types(s, wanted)]
+
+
 def _local_relevance(study: dict, kws: list) -> int:
     """Mirror services.study_service.build_relevance_score's weights
     (title=3, pi_name=2, abstract=1) over an already-fetched local row. No
@@ -65,10 +75,7 @@ def project_scoped_search_studies(args: dict, studies: list) -> ToolResult:
             "Search studies", "no keywords", args={"keywords": []},
         )
 
-    candidates = studies
-    if explicit_types:
-        wanted = {t.lower() for t in explicit_types}
-        candidates = [s for s in candidates if _matches_data_types(s, wanted)]
+    candidates = _filter_by_data_types(studies, explicit_types)
 
     kws = [k.lower() for k in expand_keyword_variants(raw_kws) if k]
     scored = [(s, _local_relevance(s, kws)) for s in candidates]
@@ -118,10 +125,7 @@ def project_scoped_search_by_sample(args: dict, studies: list) -> ToolResult:
             "Sample metadata search", "no criteria",
         )
 
-    candidates = studies
-    if data_types:
-        wanted = {t.lower() for t in data_types}
-        candidates = [s for s in candidates if _matches_data_types(s, wanted)]
+    candidates = _filter_by_data_types(studies, data_types)
     member_ids = [int(s["study_id"]) for s in candidates if s.get("study_id") is not None]
 
     if not member_ids:

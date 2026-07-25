@@ -26,6 +26,14 @@ def _resolve_model(model):
 
 
 def friendly_llm_error(exc, model=None):
+    # Checked before the connection markers below: a dead sidecar raises
+    # "sidecar unreachable: connection refused", which would otherwise match
+    # those markers and advise switching model — useless, since every model
+    # routes through the same sidecar. Imported here rather than at module
+    # scope because helpers.pi_client imports config, which imports this module.
+    from helpers.pi_client import PiSidecarError
+    if isinstance(exc, PiSidecarError):
+        return "The chat service is not responding. This is a backend problem, not a model one — switching models will not help."
     if isinstance(exc, _anthropic.RateLimitError):
         return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
     if isinstance(exc, (_anthropic.APIConnectionError, _anthropic.APIStatusError)):
@@ -434,3 +442,22 @@ def llm_chat_stream(messages, study_context_text: str, system_prompt: str = None
             yielded = True
     if not yielded:
         yield "(No response received from model)"
+
+
+def _build_workspace_manifest(proj) -> str:
+    """Short 'what's in this workspace' list — one line per study (id, title,
+    data types). Deliberately NOT the full 3-tier _build_project_study_context
+    cascade: pi's own compaction plus the workspace-scoped search_studies tool
+    (helpers/project_scope.py) replace that. Sent as part of context_block
+    (per-turn, never persisted to the pi session) rather than system_prompt,
+    since pi's system prompt is fixed for the session's lifetime but workspace
+    membership can change between turns."""
+    studies = (proj or {}).get("studies") or []
+    if not studies:
+        return "This project's workspace currently has no studies added."
+    lines = [f"This project's workspace contains {len(studies)} studies:"]
+    for s in studies:
+        title = (s.get("study_title") or "Untitled study").strip()
+        dtypes = s.get("data_types") or "unknown"
+        lines.append(f"- Study {s.get('study_id')}: {title} ({dtypes})")
+    return "\n".join(lines)

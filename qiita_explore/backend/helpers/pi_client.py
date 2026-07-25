@@ -81,7 +81,15 @@ def delete_session(*, scope, chat_id, timeout_seconds=3.0):
     """Best-effort: dispose the sidecar's in-memory session and delete its
     JSONL file when a chat is deleted. Called from the chat-delete routes;
     failures are logged, not raised — a leaked pi session file is a cleanup
-    debt, not a reason to fail the user's delete."""
+    debt, not a reason to fail the user's delete.
+
+    Skips only when pi is not configured at all. Callers must NOT gate this on
+    PI_BACKEND_GLOBAL/PI_BACKEND_PROJECT: those flags say "route new turns
+    through pi", not "pi sessions exist". A chat created with the flag on and
+    deleted after it was flipped off still has a JSONL to clean up, and gating
+    on the flag is what left those orphaned (docs/09-operations.md)."""
+    if not config.PI_SIDECAR_SECRET:
+        return
     url = f"{config.PI_SIDECAR_URL}/session/delete"
     try:
         httpx.post(

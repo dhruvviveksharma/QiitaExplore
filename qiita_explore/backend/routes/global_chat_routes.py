@@ -7,8 +7,8 @@ import config
 from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars, model_supports_tools
 from services.study_service import search_studies_with_sql, build_where_from_plan
 from helpers.agent import stream_agent
-from helpers.pi_client import stream_chat as pi_stream_chat, PiSidecarError
-from helpers.pi_translate import translate as pi_translate, build_segments as pi_build_segments
+from helpers.pi_client import delete_session as pi_delete_session
+from helpers.pi_turn import stream_pi_turn
 from helpers.scope_token import mint_scope_token
 from store import (
     SCOPE_GLOBAL,
@@ -64,13 +64,10 @@ def api_get_global_chat(chat_id):
 @app.route('/api/global-chats/<chat_id>', methods=['DELETE'])
 def api_delete_global_chat(chat_id):
     delete_global_chat(g.user_id, chat_id)
-    if config.PI_BACKEND_GLOBAL:
-        # Best-effort: dispose the pi session + its JSONL file too, so a
-        # deleted chat doesn't leave an orphaned session on disk. Gated on
-        # the flag — otherwise every delete pays a network round trip (or a
-        # timeout) to a sidecar that may not even be running.
-        from helpers.pi_client import delete_session as pi_delete_session
-        pi_delete_session(scope=SCOPE_GLOBAL, chat_id=chat_id)
+    # Best-effort, and deliberately not gated on PI_BACKEND_GLOBAL: a chat
+    # created while the flag was on still has a pi session after it is flipped
+    # off. delete_session() no-ops when pi isn't configured at all.
+    pi_delete_session(scope=SCOPE_GLOBAL, chat_id=chat_id)
     return jsonify({'ok': True})
 
 
@@ -134,26 +131,12 @@ def api_global_chat_message_stream(chat_id):
                         user_id=user_id, scope=SCOPE_GLOBAL, chat_id=chat_id,
                         deep_search=deep_search, ttl_seconds=config.PI_SCOPE_TOKEN_TTL_SECONDS,
                     )
-                    raw_events = []
-
-                    def _tee(events):
-                        for e in events:
-                            raw_events.append(e)
-                            yield e
-
-                    for sse_name, payload in pi_translate(_tee(pi_stream_chat(
+                    assistant_parts, ui_payload = yield from stream_pi_turn(
                         scope=SCOPE_GLOBAL, chat_id=chat_id, model=model,
                         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                         message=user_content, context_block=combined_ctx,
                         tool_token=tool_token, deep_search=deep_search,
-                    ))):
-                        if sse_name == "token":
-                            assistant_parts.append(payload["token"])
-                        yield _sse(sse_name, payload)
-
-                    segments_list = pi_build_segments(raw_events)
-                    if segments_list:
-                        ui_payload = {"kind": "agent_segments", "segments": segments_list}
+                    )
                 elif model_supports_tools(model):
                     # Legacy Python agentic path: model_supports_tools(model) is
                     # true but PI_BACKEND_GLOBAL is off — flip the flag to cut

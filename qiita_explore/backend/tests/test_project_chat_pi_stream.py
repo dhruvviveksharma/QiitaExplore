@@ -2,7 +2,7 @@
 routes/chat_routes.py — scope token minting, workspace manifest, the
 tee()/translate() SSE loop, and persistence.
 
-Mocks only helpers.chat_routes.pi_stream_chat (the one function that talks to
+Mocks only helpers.pi_turn.pi_stream_chat (the one function that talks to
 the sidecar over HTTP) — already independently verified in
 tests/e2e/test_internal_tools.py-adjacent coverage (Phase 1 sidecar tests +
 the cross-language smoke check done while building this). Everything else
@@ -165,7 +165,7 @@ class TestProjectChatPiStream:
         project_id = _make_project_with_study(user_id=user_id)
         chat = crud.create_chat(project_id, user_id, "hi")
 
-        with patch("routes.chat_routes.pi_stream_chat", return_value=iter(sample_pi_events)) as mock_stream:
+        with patch("helpers.pi_turn.pi_stream_chat", return_value=iter(sample_pi_events)) as mock_stream:
             resp = client.post(
                 f"/api/projects/{project_id}/chats/{chat['chat_id']}/message/stream",
                 json={"message": "find studies on wild mice", "model": "qwen3"},
@@ -214,7 +214,7 @@ class TestProjectChatPiStream:
         project_id = _make_project_with_study(user_id=user_id)
         chat = crud.create_chat(project_id, user_id, "hi")
 
-        with patch("routes.chat_routes.pi_stream_chat", return_value=iter(sample_pi_events)) as mock_stream:
+        with patch("helpers.pi_turn.pi_stream_chat", return_value=iter(sample_pi_events)) as mock_stream:
             resp = client.post(
                 f"/api/projects/{project_id}/chats/{chat['chat_id']}/message/stream",
                 json={"message": "what about study 10317?", "model": "qwen3"},
@@ -240,7 +240,7 @@ class TestProjectChatPiStream:
 
         config.PI_BACKEND_PROJECT = False
         try:
-            with patch("routes.chat_routes.pi_stream_chat") as mock_stream:
+            with patch("helpers.pi_turn.pi_stream_chat") as mock_stream:
                 with patch("routes.chat_routes.llm_chat_stream", return_value=iter(["legacy ", "response"])):
                     resp = client.post(
                         f"/api/projects/{project_id}/chats/{chat['chat_id']}/message/stream",

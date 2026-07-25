@@ -11,7 +11,12 @@ import { createSessionStore } from "../sessions.mjs";
 
 export const SECRET = "test-secret";
 
-export async function startFlaskStub({ toolSchemas, toolHandlers = {} }) {
+// Mirrors config.py MODEL_METADATA's nrp+supports_tools rows. Only used when a
+// test exercises the real NRP provider registration; the faux provider used by
+// the turn tests bypasses it.
+const STUB_MODELS = [{ id: "qwen3", contextWindow: 1_010_000 }];
+
+export async function startFlaskStub({ toolSchemas, toolHandlers = {}, models = STUB_MODELS }) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/api/internal/tools/schemas") {
@@ -20,6 +25,14 @@ export async function startFlaskStub({ toolSchemas, toolHandlers = {} }) {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ tools: toolSchemas }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/internal/models") {
+      if (req.headers["x-pi-secret"] !== SECRET) {
+        res.writeHead(401).end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ models }));
       return;
     }
     const match = req.url.match(/^\/api\/internal\/tools\/([^/]+)$/);
@@ -65,7 +78,11 @@ export async function createTestHarness({ toolSchemas, toolHandlers, fauxModels 
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-sidecar-test-"));
   const flask = await startFlaskStub({ toolSchemas, toolHandlers });
 
-  const modelRuntime = await createModelRuntime({ agentDir: path.join(stateDir, "agent") });
+  const modelRuntime = await createModelRuntime({
+    agentDir: path.join(stateDir, "agent"),
+    flaskUrl: flask.url,
+    piSecret: SECRET,
+  });
   const faux = fauxProvider({
     models: fauxModels || [{ id: "faux-1", contextWindow: 100000, maxTokens: 4096 }],
   });

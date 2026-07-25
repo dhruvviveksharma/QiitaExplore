@@ -23,6 +23,7 @@ alone can't be replayed from an unlisted host, and a captured scope token
 alone can't be used without the secret.
 """
 
+import dataclasses
 import hmac
 import logging
 
@@ -30,6 +31,7 @@ from flask import jsonify, request
 
 from run import app
 import config
+from config import MODEL_METADATA
 from helpers.agent_tools import TOOL_SCHEMAS, execute_tool
 from helpers.scope_token import verify_scope_token, ScopeTokenError
 from helpers.project_scope import (
@@ -43,7 +45,12 @@ from store import get_project, get_project_studies_only
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_TOOLS = {"search_studies", "get_study_report", "pin_study", "search_by_sample"}
+# Derived, never hand-listed. This file serves TOOL_SCHEMAS verbatim so the
+# sidecar's tool set cannot drift from qiita_explore's; a hardcoded copy here
+# would reintroduce exactly that drift, and the failure mode is nasty — a tool
+# added to TOOL_SCHEMAS gets advertised to the model, called, and 404'd by this
+# route, which looks like a sidecar bug and is diagnosed nowhere near here.
+_KNOWN_TOOLS = {t["function"]["name"] for t in TOOL_SCHEMAS}
 
 
 def _guard():
@@ -72,13 +79,34 @@ def api_internal_tool_schemas():
     return jsonify({'tools': TOOL_SCHEMAS})
 
 
+@app.route('/api/internal/models', methods=['GET'])
+def api_internal_models():
+    """The NRP model roster the sidecar registers with pi.
+
+    Served rather than duplicated in JS for the same reason as the tool schemas:
+    the sidecar previously hardcoded this list and its context windows had
+    already drifted from MODEL_METADATA at introduction (kimi and glm-5 were
+    both short, so pi compacted those conversations early for no reason) —
+    silent drift, because nothing errors when a context window is merely wrong.
+
+    supports_tools does the filtering: pi has no per-model tool flag and always
+    sends tool schemas, so a model that cannot do tool calling must never be
+    offered here."""
+    denied = _guard()
+    if denied is not None:
+        return denied
+    models = [
+        {'id': name, 'contextWindow': meta['context']}
+        for name, meta in MODEL_METADATA.items()
+        if meta.get('provider') == 'nrp' and meta.get('supports_tools')
+    ]
+    return jsonify({'models': models})
+
+
 def _serialize(result):
-    return jsonify({
-        'text': result.text,
-        'label': result.label,
-        'detail': result.detail,
-        'ui_payload': result.ui_payload,
-    })
+    """ToolResult is a dataclass, so asdict() keeps this in step automatically
+    when a field is added — the sidecar reads `details` wholesale."""
+    return jsonify(dataclasses.asdict(result))
 
 
 def _run_project_scoped(name, args, claims):

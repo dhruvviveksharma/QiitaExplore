@@ -149,6 +149,52 @@ class TestSchemaEndpoint:
         resp = client.get("/api/internal/tools/schemas", headers={"X-Pi-Secret": "test-pi-secret"})
         assert resp.get_json()["tools"] == TOOL_SCHEMAS
 
+    def test_known_tools_is_derived_not_hardcoded(self, client):
+        """A tool added to TOOL_SCHEMAS must be accepted by the call route
+        without a second edit. The failure mode of a hardcoded list is remote:
+        the sidecar advertises the tool, the model calls it, and this route
+        404s."""
+        import routes.internal_tool_routes as itr
+        from helpers.agent_tools import TOOL_SCHEMAS
+        assert itr._KNOWN_TOOLS == {t["function"]["name"] for t in TOOL_SCHEMAS}
+
+
+class TestModelRoster:
+    """The sidecar fetches its NRP roster here rather than hardcoding it —
+    a hardcoded copy had already drifted (kimi/glm-5 listed short), and a wrong
+    contextWindow silently makes pi compact early instead of erroring."""
+
+    def test_requires_the_shared_secret(self, client):
+        assert client.get("/api/internal/models").status_code == 401
+        assert client.get("/api/internal/models",
+                          headers={"X-Pi-Secret": "wrong"}).status_code == 401
+
+    def test_context_windows_match_config_exactly(self, client):
+        from config import MODEL_METADATA
+        resp = client.get("/api/internal/models", headers={"X-Pi-Secret": "test-pi-secret"})
+        assert resp.status_code == 200
+        served = {m["id"]: m["contextWindow"] for m in resp.get_json()["models"]}
+        expected = {
+            name: meta["context"] for name, meta in MODEL_METADATA.items()
+            if meta.get("provider") == "nrp" and meta.get("supports_tools")
+        }
+        assert served == expected
+
+    def test_excludes_models_that_cannot_call_tools(self, client):
+        """pi has no per-model tool flag and always sends tool schemas, so a
+        supports_tools=False model must never reach the sidecar."""
+        resp = client.get("/api/internal/models", headers={"X-Pi-Secret": "test-pi-secret"})
+        assert "gemma-small" not in [m["id"] for m in resp.get_json()["models"]]
+
+    def test_excludes_non_nrp_providers(self, client):
+        """Anthropic models go through pi's own built-in provider — registering
+        them under the NRP provider would point them at the wrong baseUrl."""
+        from config import MODEL_METADATA
+        resp = client.get("/api/internal/models", headers={"X-Pi-Secret": "test-pi-secret"})
+        served = {m["id"] for m in resp.get_json()["models"]}
+        anthropic = {n for n, m in MODEL_METADATA.items() if m.get("provider") == "anthropic"}
+        assert anthropic and not (served & anthropic)
+
 
 # ── _guard(): shared secret + source-IP allowlist ───────────────────────────
 

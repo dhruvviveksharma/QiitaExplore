@@ -11,10 +11,11 @@ real pi event stream.
 """
 import json
 import os
+import re
 
 import pytest
 
-from helpers.pi_translate import translate, build_segments, _tool_step_name
+from helpers.pi_translate import translate, build_segments, _tool_step_name, TurnTranslator
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "pi_events_sample_turn.json")
 
@@ -158,6 +159,33 @@ class TestBuildSegments:
         call_payload = next(p for n, p in translate(sample_events) if n == "segment_tool_call")
         segments = build_segments(sample_events)
         assert segments[0]["name"] == call_payload["name"]
+
+    def test_persisted_detail_keeps_the_live_elapsed_time(self, sample_events):
+        """The live SSE detail and the persisted segment detail must be the same
+        string, elapsed-time suffix included.
+
+        Regression: segments used to be rebuilt in a second pass after the stream
+        had finished, so their timer measured the replay rather than the tool
+        call and every reloaded tool card read "· 0.0s" while the live stream had
+        shown the real duration. Asserting only that the suffix ends in "s" —
+        which is all the older test did — passes happily on "· 0.0s"."""
+        import time
+
+        def slow(events):
+            for e in events:
+                if e.get("type") == "tool_execution_end":
+                    time.sleep(0.25)
+                yield e
+
+        translator = TurnTranslator()
+        live = [p for n, p in translator.run(slow(sample_events)) if n == "segment_tool_result"]
+        persisted = [s["result"] for s in translator.segments if s.get("type") == "tool"]
+
+        assert len(live) == len(persisted) == 1
+        assert live[0]["detail"] == persisted[0]["detail"]
+        # and it recorded the real duration, not the replay
+        assert "0.0s" not in persisted[0]["detail"]
+        assert re.search(r"· \d+\.\ds$", persisted[0]["detail"])
 
     def test_failed_tool_call_still_produces_a_done_segment(self):
         events = [

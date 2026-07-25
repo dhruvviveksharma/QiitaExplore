@@ -4,31 +4,47 @@ and the persisted segments list.
 Single source of truth for both, closing the dual-authoring hazard
 docs/06-streaming-and-chat.md calls its headline risk (today the segment
 array is built independently in Python and JS from a Python-specific event
-shape). translate() and build_segments() both consume the same pi event
-sequence and require no frontend changes: the segment/event shapes emitted
-here are byte-identical to what helpers/agent.py + global_chat_routes.py
-produce today.
+shape). The SSE events and segments emitted here are byte-identical to what
+helpers/agent.py + global_chat_routes.py produce, so the frontend needs no
+changes.
+
+Segments are derived from the SSE events, not from a second walk over the pi
+stream. That matters for more than tidiness: an earlier version ran a separate
+pass after the stream had finished, so its elapsed-time clock measured the
+replay rather than the tool call and every persisted tool card rendered
+"· 0.0s" while the live stream had shown the real duration.
 
 Turn completion: the sidecar only closes the NDJSON stream after the turn has
 fully settled (agent_settled, not agent_end's own willRetry-agnostic
 resolution) — see pi_sidecar/sessions.mjs. So by the time the caller's event
-iterable is exhausted, the turn is done; neither function here needs to
-reason about pi's own retry/settlement semantics. Callers are responsible for
-emitting `done` themselves afterward (this module never does, exactly as
-helpers/agent.py's stream_agent() never does today — that's the route's job).
+iterable is exhausted, the turn is done; nothing here needs to reason about
+pi's retry/settlement semantics. Callers emit `done` themselves afterward,
+exactly as helpers/agent.py's stream_agent() never does — that's the route's job.
 """
 
 import logging
+import time
 
 from helpers.tool_labels import _tool_label
 
 logger = logging.getLogger(__name__)
 
+# pi events that mean the model has actually started working. `agent_start` is
+# synthesized on the first of these rather than on the first event of any kind:
+# a sidecar that dies before the model speaks emits only `sidecar_error`, and
+# announcing agent_start for that would flip the frontend into segments mode
+# (app_render.js renders AgentMessageBubble once m.segments !== null) and hide
+# the error text in an empty bubble.
+_TURN_STARTED_EVENTS = frozenset({
+    "agent_start", "turn_start", "message_start", "message_update",
+    "tool_execution_start", "compaction_start", "auto_retry_start",
+})
+
 
 def _tool_step_name(tool_name: str, tool_call_id: str) -> str:
-    """Byte-identical to helpers/agent.py:28 — this string is the
+    """Byte-identical to helpers/agent.py:29 — this string is the
     call<->result correlation key on both the server reducer and
-    app_state.js:314-322. Get it right and the frontend needs no changes."""
+    app_state.js. Get it right and the frontend needs no changes."""
     return f"tool_{tool_name}_{(tool_call_id or '')[:6]}"
 
 
@@ -37,6 +53,14 @@ def _first_text(result: dict) -> str:
         if block.get("type") == "text":
             return block.get("text") or ""
     return ""
+
+
+def _detail_with_elapsed(base: str, dt) -> str:
+    """`{base} · {dt:.1f}s`, degrading cleanly when either half is missing.
+    helpers/agent.py:41-46 builds the same suffix from its own perf_counter."""
+    if dt is None:
+        return base
+    return f"{base} · {dt:.1f}s" if base else f"{dt:.1f}s"
 
 
 def _compaction_detail(event: dict) -> str:
@@ -51,36 +75,67 @@ def _compaction_detail(event: dict) -> str:
     return "done"
 
 
-class _ToolTimer:
-    """Elapsed-time tracking for the '· {t:.1f}s' detail suffix
-    (helpers/agent.py:41-46 does this with a local t0/time.perf_counter());
-    pi's tool_execution_start/end events carry no timestamp of their own, so
-    the translator tracks wall-clock time itself, keyed by the same
-    correlation name used for call<->result matching."""
+class TurnTranslator:
+    """One walk over the pi event stream: yields SSE events live, and
+    accumulates the persisted segment list as a side effect.
+
+    pi's tool_execution_start/end carry no timestamps, so elapsed time is
+    measured here — which is only correct because this runs while the stream
+    is live. Building segments in a second pass is what produced the "· 0.0s"
+    regression, so segments deliberately reuse this pass's timings rather than
+    re-deriving their own.
+    """
 
     def __init__(self):
-        self._started_at = {}
+        self.segments = []
+        self._started = False
+        self._tool_started_at = {}
+        self._text = []
 
-    def start(self, name: str):
-        import time
-        self._started_at[name] = time.perf_counter()
+    # ── segment accumulation ────────────────────────────────────────────────
+    def _flush_text(self):
+        if self._text:
+            self.segments.append({"type": "text", "content": "".join(self._text), "done": True})
+            self._text = []
 
-    def elapsed(self, name: str):
-        import time
-        t0 = self._started_at.pop(name, None)
-        return (time.perf_counter() - t0) if t0 is not None else None
+    def _open_tool_segment(self, payload):
+        self._flush_text()
+        self.segments.append({
+            "type": "tool", "name": payload["name"], "label": payload["label"],
+            "args": payload["args"], "done": False, "result": None,
+        })
 
+    def _close_tool_segment(self, payload):
+        for seg in self.segments:
+            if seg.get("type") == "tool" and seg.get("name") == payload["name"] and not seg.get("done"):
+                seg["done"] = True
+                seg["result"] = {
+                    "label": payload["label"],
+                    "detail": payload["detail"],
+                    "ui_payload": payload["ui_payload"],
+                }
+                break
 
-def translate(pi_events):
-    """Yield (sse_event_name, payload) for each pi event, live, single-pass."""
-    started = False
-    timer = _ToolTimer()
+    # ── the walk ────────────────────────────────────────────────────────────
+    def run(self, pi_events):
+        """Yield (sse_event_name, payload) per pi event. Lazy: safe to iterate
+        straight into an SSE response without buffering the stream."""
+        for event in pi_events:
+            for sse_name, payload in self._handle(event):
+                if sse_name == "token":
+                    self._text.append(payload["token"])
+                elif sse_name == "segment_tool_call":
+                    self._open_tool_segment(payload)
+                elif sse_name == "segment_tool_result":
+                    self._close_tool_segment(payload)
+                yield (sse_name, payload)
+        self._flush_text()
 
-    for event in pi_events:
+    def _handle(self, event):
         etype = event.get("type")
 
-        if not started:
-            started = True
+        if not self._started and etype in _TURN_STARTED_EVENTS:
+            self._started = True
             yield ("agent_start", {})
 
         if etype == "message_update":
@@ -88,12 +143,12 @@ def translate(pi_events):
             if ame.get("type") == "text_delta":
                 yield ("token", {"token": ame.get("delta", "")})
             elif ame.get("type") == "error":
-                err_msg = (ame.get("error") or {}).get("errorMessage") or "The model returned an error."
-                yield ("error", {"error": err_msg})
+                err = (ame.get("error") or {}).get("errorMessage") or "The model returned an error."
+                yield ("error", {"error": err})
 
         elif etype == "tool_execution_start":
             name = _tool_step_name(event.get("toolName"), event.get("toolCallId"))
-            timer.start(name)
+            self._tool_started_at[name] = time.perf_counter()
             yield ("segment_tool_call", {
                 "name": name,
                 "label": _tool_label(event.get("toolName"), event.get("args") or {}),
@@ -102,25 +157,23 @@ def translate(pi_events):
 
         elif etype == "tool_execution_end":
             name = _tool_step_name(event.get("toolName"), event.get("toolCallId"))
-            dt = timer.elapsed(name)
-            suffix = f" · {dt:.1f}s" if dt is not None else ""
+            t0 = self._tool_started_at.pop(name, None)
+            dt = (time.perf_counter() - t0) if t0 is not None else None
             result = event.get("result") or {}
             if event.get("isError"):
                 text = _first_text(result)
                 yield ("segment_tool_result", {
                     "name": name,
                     "label": f"{event.get('toolName')} failed",
-                    "detail": f"{text[:60]}{suffix}" if text else suffix.strip(" ·") or "failed",
+                    "detail": _detail_with_elapsed(text[:60], dt) or "failed",
                     "ui_payload": None,
                 })
             else:
                 details = result.get("details") or {}
-                base_detail = details.get("detail") or ""
-                detail = f"{base_detail}{suffix}" if base_detail else suffix.strip(" ·")
                 yield ("segment_tool_result", {
                     "name": name,
                     "label": details.get("label") or f"{event.get('toolName')} complete",
-                    "detail": detail,
+                    "detail": _detail_with_elapsed(details.get("detail") or "", dt),
                     "ui_payload": details.get("ui_payload"),
                 })
 
@@ -157,65 +210,26 @@ def translate(pi_events):
         # deliberately dropped rather than invented.
 
 
+def translate(pi_events):
+    """Yield (sse_event_name, payload) for each pi event, live, single-pass.
+
+    Callers that also need the persisted segments should drive a TurnTranslator
+    directly and read `.segments` afterward, rather than calling build_segments()
+    on a buffered copy of the stream."""
+    yield from TurnTranslator().run(pi_events)
+
+
 def build_segments(pi_events):
-    """The persisted ui_payload['segments'] list — same shape
-    global_chat_routes.py:137-154 builds today, computed from the same event
-    sequence translate() consumes."""
-    segments = []
-    current_text = []
-    timer = _ToolTimer()
+    """The persisted ui_payload['segments'] list.
 
-    def flush_text():
-        if current_text:
-            segments.append({"type": "text", "content": "".join(current_text), "done": True})
-            current_text.clear()
-
-    for event in pi_events:
-        etype = event.get("type")
-
-        if etype == "message_update":
-            ame = event.get("assistantMessageEvent") or {}
-            if ame.get("type") == "text_delta":
-                current_text.append(ame.get("delta", ""))
-
-        elif etype == "tool_execution_start":
-            flush_text()
-            name = _tool_step_name(event.get("toolName"), event.get("toolCallId"))
-            timer.start(name)
-            segments.append({
-                "type": "tool", "name": name,
-                "label": _tool_label(event.get("toolName"), event.get("args") or {}),
-                "args": event.get("args") or {},
-                "done": False, "result": None,
-            })
-
-        elif etype == "tool_execution_end":
-            name = _tool_step_name(event.get("toolName"), event.get("toolCallId"))
-            dt = timer.elapsed(name)
-            suffix = f" · {dt:.1f}s" if dt is not None else ""
-            result = event.get("result") or {}
-            for seg in segments:
-                if seg.get("type") == "tool" and seg.get("name") == name and not seg.get("done"):
-                    seg["done"] = True
-                    if event.get("isError"):
-                        text = _first_text(result)
-                        seg["result"] = {
-                            "label": f"{event.get('toolName')} failed",
-                            "detail": f"{text[:60]}{suffix}" if text else suffix.strip(" ·") or "failed",
-                            "ui_payload": None,
-                        }
-                    else:
-                        details = result.get("details") or {}
-                        base_detail = details.get("detail") or ""
-                        seg["result"] = {
-                            "label": details.get("label") or f"{event.get('toolName')} complete",
-                            "detail": f"{base_detail}{suffix}" if base_detail else suffix.strip(" ·"),
-                            "ui_payload": details.get("ui_payload"),
-                        }
-                    break
-
-    flush_text()
-    return segments
+    Convenience wrapper for callers that already hold the full event list (and
+    for the parity tests). Note the elapsed times will be ~0 when replaying a
+    buffered stream, because the tool calls have already happened — live callers
+    must use TurnTranslator.run() and read `.segments`, not this."""
+    t = TurnTranslator()
+    for _ in t.run(pi_events):
+        pass
+    return t.segments
 
 
 def _log_usage(agent_end_event: dict):

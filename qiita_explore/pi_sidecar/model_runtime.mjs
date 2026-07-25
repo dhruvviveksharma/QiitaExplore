@@ -4,19 +4,29 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 const NRP_PROVIDER_ID = "nrp";
 const NRP_BASE_URL = process.env.NRP_BASE_URL || "https://ellm.nrp-nautilus.io/v1";
 
-// Mirrors qiita_explore/backend/config.py MODEL_METADATA — keep contextWindow in
-// sync by hand when that file changes. gemma-small is intentionally absent: pi has
-// no per-model "supports tools" flag and always sends tool schemas, so a model that
-// can't do tool calling (config.py: supports_tools=False) must never be offered here.
-const NRP_MODELS = [
-  { id: "qwen3", name: "Qwen3", contextWindow: 1_000_000 },
-  { id: "qwen3-small", name: "Qwen3 Small", contextWindow: 1_000_000 },
-  { id: "gpt-oss", name: "GPT-OSS", contextWindow: 131_072 },
-  { id: "gemma", name: "Gemma", contextWindow: 262_144 },
-  { id: "kimi", name: "Kimi", contextWindow: 131_072 },
-  { id: "glm-5", name: "GLM-5", contextWindow: 131_072 },
-  { id: "minimax-m2", name: "MiniMax M2", contextWindow: 204_800 },
-];
+/**
+ * Fetch the model roster from Flask — the same single-source-of-truth pattern
+ * the tool schemas already use. Not hardcoded here: an earlier hardcoded copy
+ * had already drifted from config.py MODEL_METADATA at introduction (kimi and
+ * glm-5 both listed short), and since pi uses contextWindow to decide when to
+ * compact, a wrong number silently compacts conversations early rather than
+ * erroring.
+ *
+ * Flask filters on supports_tools, which matters: pi has no per-model tool flag
+ * and always sends tool schemas, so a model that cannot do tool calling must
+ * never appear in this list.
+ */
+async function fetchNrpModels({ flaskUrl, piSecret }) {
+  const res = await fetch(`${flaskUrl}/api/internal/models`, {
+    headers: { "x-pi-secret": piSecret },
+  });
+  if (!res.ok) {
+    throw new Error(`failed to fetch model roster: ${res.status} ${await res.text()}`);
+  }
+  const { models } = await res.json();
+  if (!models?.length) throw new Error("Flask returned an empty model roster");
+  return models;
+}
 
 // Anthropic models pass straight through to pi's built-in provider, which reads
 // ANTHROPIC_API_KEY from the environment on its own — no registration needed here.
@@ -26,7 +36,7 @@ export const ANTHROPIC_PROVIDER_ID = "anthropic";
  * Build a ModelRuntime isolated to the sidecar's own agentDir (never touches
  * ~/.pi/agent on the host) and register the NRP OpenAI-compatible provider.
  */
-export async function createModelRuntime({ agentDir }) {
+export async function createModelRuntime({ agentDir, flaskUrl, piSecret }) {
   const runtime = await ModelRuntime.create({
     authPath: path.join(agentDir, "auth.json"),
     modelsPath: null, // no external models.json — providers are registered programmatically
@@ -35,6 +45,7 @@ export async function createModelRuntime({ agentDir }) {
 
   const apiKey = process.env.OPENAI_API_KEY || process.env.API_KEY;
   if (apiKey) {
+    const models = await fetchNrpModels({ flaskUrl, piSecret });
     runtime.registerProvider(NRP_PROVIDER_ID, {
       name: "NRP Nautilus ELLM",
       baseUrl: NRP_BASE_URL,
@@ -45,9 +56,9 @@ export async function createModelRuntime({ agentDir }) {
         supportsReasoningEffort: false,
         maxTokensField: "max_tokens",
       },
-      models: NRP_MODELS.map((m) => ({
+      models: models.map((m) => ({
         id: m.id,
-        name: m.name,
+        name: m.id,
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0 },

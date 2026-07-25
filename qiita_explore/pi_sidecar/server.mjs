@@ -24,7 +24,11 @@ const CWD = path.join(STATE_DIR, "cwd");
 const AGENT_DIR = path.join(STATE_DIR, "agent"); // isolated auth.json location; no models.json is read
 const SESSION_DIR = path.join(STATE_DIR, "sessions");
 
-const modelRuntime = await createModelRuntime({ agentDir: AGENT_DIR });
+const modelRuntime = await createModelRuntime({
+  agentDir: AGENT_DIR,
+  flaskUrl: FLASK_URL,
+  piSecret: SECRET,
+});
 const sessionStore = createSessionStore({
   cwd: CWD,
   agentDir: AGENT_DIR,

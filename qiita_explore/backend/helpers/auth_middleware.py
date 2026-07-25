@@ -38,6 +38,7 @@ PUBLIC_ENDPOINTS = {
     # via the session cookie, so they're exempt from both the cookie check
     # and the CSRF check below — see routes/internal_tool_routes.py.
     "api_internal_tool_schemas",
+    "api_internal_models",
     "api_internal_tool_call",
 }
 

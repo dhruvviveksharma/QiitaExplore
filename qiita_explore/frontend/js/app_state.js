@@ -333,6 +333,17 @@ function useAppState() {
       return { ...m, segments: segs };
     });
 
+  // The four handlers every agentic stream needs, as one unit — spread by both
+  // call sites so they cannot drift. They did once: project chat used a raw
+  // content-appending onToken, which renders blank, because agent_start flips
+  // app_render.js to AgentMessageBubble and that reads only `segments`.
+  const agentHandlers = (chatId) => ({
+    onToken:             onTokenAgent(chatId),
+    onAgentStart:        onAgentStart(chatId),
+    onSegmentToolCall:   onSegmentToolCall(chatId),
+    onSegmentToolResult: onSegmentToolResult(chatId),
+  });
+
   const unpinStudy = async (chatId, studyId) => {
     patchChat(chatId, cur => ({ pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId) }));
     const base = chatScopeUrl(view, chatId);
@@ -477,15 +488,9 @@ function useAppState() {
           },
           chatId, ctrl.signal,
           {
-            // onToken (not onTokenAgent) still covers the legacy plain-stream
-            // path. onAgentStart/onSegmentToolCall/onSegmentToolResult are the
-            // same handlers global chat already uses — project chat can now
-            // emit agent_start/segment_* too (PI_BACKEND_PROJECT), and these
-            // were previously unwired here because it never could.
-            onToken: ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
-            onAgentStart:        onAgentStart(chatId),
-            onSegmentToolCall:   onSegmentToolCall(chatId),
-            onSegmentToolResult: onSegmentToolResult(chatId),
+            // Project chat can emit agent_start/segment_* under PI_BACKEND_PROJECT;
+            // before that it never could, which is why these were unwired here.
+            ...agentHandlers(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
@@ -512,11 +517,9 @@ function useAppState() {
           },
           chatId, ctrl.signal,
           {
-            onToken:             onTokenAgent(chatId),
+            ...agentHandlers(chatId),
+            // Legacy llm_plan_query path only — global chat's alone.
             onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
-            onAgentStart:        onAgentStart(chatId),
-            onSegmentToolCall:   onSegmentToolCall(chatId),
-            onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
