@@ -111,7 +111,7 @@ if [ -f "$ENV_FILE" ]; then
   eval "$(python3 -c "
 import shlex
 from dotenv import dotenv_values
-wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY')
+wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','PI_NODE_BIN','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY')
 for k, v in dotenv_values('$ENV_FILE').items():
     if v and k in wanted:
         print(f'export {k}={shlex.quote(v)}')
