@@ -16,8 +16,22 @@ cd "$SCRIPT_DIR/backend"
 # Mac running the app tier against a tunnelled Postgres), fall through to
 # whatever python3/gunicorn is already on PATH rather than hard-failing.
 if command -v conda >/dev/null 2>&1; then
+  # `set -eu` off across the activation. conda's activate.d/deactivate.d hooks
+  # are not written to survive `set -u` — barnacle's
+  # deactivate-gcc_linux-64.sh reads $_CONDA_PYTHON_SYSCONFIGDATA_NAME_USED
+  # unguarded and killed this script with "unbound variable" before it started
+  # anything. Which hooks run depends on the env you launch from, so this fails
+  # for one person and not another.
+  set +eu
+  # shellcheck disable=SC1091
   source "$(conda info --base)/etc/profile.d/conda.sh"
   conda activate qiita-web
+  CONDA_RC=$?
+  set -eu
+  if [ "$CONDA_RC" -ne 0 ]; then
+    echo "conda activate qiita-web failed (exit $CONDA_RC)." >&2
+    exit 1
+  fi
 else
   echo "conda not found — using the ambient python3 environment."
 fi
