@@ -1,0 +1,1381 @@
+[
+  {
+    "type": "agent_start"
+  },
+  {
+    "type": "turn_start"
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "find studies on wild mice"
+        }
+      ],
+      "timestamp": 1784970149372
+    }
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "find studies on wild mice"
+        }
+      ],
+      "timestamp": 1784970149372
+    }
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "assistant",
+      "content": [],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "toolcall_start",
+      "contentIndex": 0,
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "toolcall_delta",
+      "contentIndex": 0,
+      "delta": "{\"keywords\":",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "toolcall_delta",
+      "contentIndex": 0,
+      "delta": "[\"wild\",\"mic",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "toolcall_delta",
+      "contentIndex": 0,
+      "delta": "e\"]}",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "toolcall_end",
+      "contentIndex": 0,
+      "toolCall": {
+        "type": "toolCall",
+        "id": "tool:1784970149356:3eh22hfvvmr",
+        "name": "search_studies",
+        "arguments": {
+          "keywords": [
+            "wild",
+            "mice"
+          ]
+        }
+      },
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "tool_execution_start",
+    "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+    "toolName": "search_studies",
+    "args": {
+      "keywords": [
+        "wild",
+        "mice"
+      ]
+    }
+  },
+  {
+    "type": "tool_execution_end",
+    "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+    "toolName": "search_studies",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey"
+        }
+      ],
+      "details": {
+        "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey",
+        "label": "Searched Qiita database",
+        "detail": "top 1 results",
+        "ui_payload": {
+          "kind": "tool_call",
+          "tool": "search_studies",
+          "args": {
+            "keywords": [
+              "wild",
+              "mice"
+            ],
+            "data_types": null,
+            "limit": 10
+          },
+          "result_summary": "1 studies",
+          "result_studies": [
+            {
+              "study_id": 11043,
+              "study_title": "Wild mice gut microbiome survey",
+              "pi_name": "Dr. Test",
+              "num_samples": 50,
+              "data_types": "16S",
+              "via": "text"
+            }
+          ]
+        }
+      }
+    },
+    "isError": false
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "toolResult",
+      "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+      "toolName": "search_studies",
+      "content": [
+        {
+          "type": "text",
+          "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey"
+        }
+      ],
+      "details": {
+        "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey",
+        "label": "Searched Qiita database",
+        "detail": "top 1 results",
+        "ui_payload": {
+          "kind": "tool_call",
+          "tool": "search_studies",
+          "args": {
+            "keywords": [
+              "wild",
+              "mice"
+            ],
+            "data_types": null,
+            "limit": 10
+          },
+          "result_summary": "1 studies",
+          "result_studies": [
+            {
+              "study_id": 11043,
+              "study_title": "Wild mice gut microbiome survey",
+              "pi_name": "Dr. Test",
+              "num_samples": 50,
+              "data_types": "16S",
+              "via": "text"
+            }
+          ]
+        }
+      },
+      "isError": false,
+      "timestamp": 1784970149379
+    }
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "toolResult",
+      "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+      "toolName": "search_studies",
+      "content": [
+        {
+          "type": "text",
+          "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey"
+        }
+      ],
+      "details": {
+        "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey",
+        "label": "Searched Qiita database",
+        "detail": "top 1 results",
+        "ui_payload": {
+          "kind": "tool_call",
+          "tool": "search_studies",
+          "args": {
+            "keywords": [
+              "wild",
+              "mice"
+            ],
+            "data_types": null,
+            "limit": 10
+          },
+          "result_summary": "1 studies",
+          "result_studies": [
+            {
+              "study_id": 11043,
+              "study_title": "Wild mice gut microbiome survey",
+              "pi_name": "Dr. Test",
+              "num_samples": 50,
+              "data_types": "16S",
+              "via": "text"
+            }
+          ]
+        }
+      },
+      "isError": false,
+      "timestamp": 1784970149379
+    }
+  },
+  {
+    "type": "turn_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "tool:1784970149356:3eh22hfvvmr",
+          "name": "search_studies",
+          "arguments": {
+            "keywords": [
+              "wild",
+              "mice"
+            ]
+          }
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 83,
+        "output": 11,
+        "cacheRead": 0,
+        "cacheWrite": 83,
+        "totalTokens": 177,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1784970149356
+    },
+    "toolResults": [
+      {
+        "role": "toolResult",
+        "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+        "toolName": "search_studies",
+        "content": [
+          {
+            "type": "text",
+            "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey"
+          }
+        ],
+        "details": {
+          "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey",
+          "label": "Searched Qiita database",
+          "detail": "top 1 results",
+          "ui_payload": {
+            "kind": "tool_call",
+            "tool": "search_studies",
+            "args": {
+              "keywords": [
+                "wild",
+                "mice"
+              ],
+              "data_types": null,
+              "limit": 10
+            },
+            "result_summary": "1 studies",
+            "result_studies": [
+              {
+                "study_id": 11043,
+                "study_title": "Wild mice gut microbiome survey",
+                "pi_name": "Dr. Test",
+                "num_samples": 50,
+                "data_types": "16S",
+                "via": "text"
+              }
+            ]
+          }
+        },
+        "isError": false,
+        "timestamp": 1784970149379
+      }
+    ]
+  },
+  {
+    "type": "turn_start"
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "assistant",
+      "content": [],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_start",
+      "contentIndex": 0,
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_delta",
+      "contentIndex": 0,
+      "delta": "Study 11043 (Wild mi",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_delta",
+      "contentIndex": 0,
+      "delta": "ce gut microbiom",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_delta",
+      "contentIndex": 0,
+      "delta": "e survey) ma",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_delta",
+      "contentIndex": 0,
+      "delta": "tches your query wel",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_delta",
+      "contentIndex": 0,
+      "delta": "l.",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_update",
+    "assistantMessageEvent": {
+      "type": "text_end",
+      "contentIndex": 0,
+      "content": "Study 11043 (Wild mice gut microbiome survey) matches your query well.",
+      "partial": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    },
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    }
+  },
+  {
+    "type": "turn_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+        }
+      ],
+      "api": "faux:1784970149355:z3ytrg0igkn",
+      "provider": "faux",
+      "model": "faux-1",
+      "usage": {
+        "input": 88,
+        "output": 18,
+        "cacheRead": 37,
+        "cacheWrite": 88,
+        "totalTokens": 231,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 1784970149356
+    },
+    "toolResults": []
+  },
+  {
+    "type": "agent_end",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "find studies on wild mice"
+          }
+        ],
+        "timestamp": 1784970149372
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tool:1784970149356:3eh22hfvvmr",
+            "name": "search_studies",
+            "arguments": {
+              "keywords": [
+                "wild",
+                "mice"
+              ]
+            }
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 83,
+          "output": 11,
+          "cacheRead": 0,
+          "cacheWrite": 83,
+          "totalTokens": 177,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1784970149356
+      },
+      {
+        "role": "toolResult",
+        "toolCallId": "tool:1784970149356:3eh22hfvvmr",
+        "toolName": "search_studies",
+        "content": [
+          {
+            "type": "text",
+            "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey"
+          }
+        ],
+        "details": {
+          "text": "search_studies returned the top 1 studies:\n\n- ID 11043: Wild mice gut microbiome survey",
+          "label": "Searched Qiita database",
+          "detail": "top 1 results",
+          "ui_payload": {
+            "kind": "tool_call",
+            "tool": "search_studies",
+            "args": {
+              "keywords": [
+                "wild",
+                "mice"
+              ],
+              "data_types": null,
+              "limit": 10
+            },
+            "result_summary": "1 studies",
+            "result_studies": [
+              {
+                "study_id": 11043,
+                "study_title": "Wild mice gut microbiome survey",
+                "pi_name": "Dr. Test",
+                "num_samples": 50,
+                "data_types": "16S",
+                "via": "text"
+              }
+            ]
+          }
+        },
+        "isError": false,
+        "timestamp": 1784970149379
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Study 11043 (Wild mice gut microbiome survey) matches your query well."
+          }
+        ],
+        "api": "faux:1784970149355:z3ytrg0igkn",
+        "provider": "faux",
+        "model": "faux-1",
+        "usage": {
+          "input": 88,
+          "output": 18,
+          "cacheRead": 37,
+          "cacheWrite": 88,
+          "totalTokens": 231,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1784970149356
+      }
+    ],
+    "willRetry": false
+  },
+  {
+    "type": "agent_settled"
+  }
+]

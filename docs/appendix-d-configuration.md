@@ -170,6 +170,43 @@ The merge executor is explicitly dev-only. Its module docstring carries a `TODO 
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `API_KEY` are additionally read directly from `os.environ` by `backend/tests/e2e/parity_helpers.py`, bypassing `config.py`. `QIITA_EXPERIMENT_DB_PATH` is *written* by `backend/tests/test_auth.py` to redirect the suite at a temporary database.
 
+### pi sidecar
+
+<a id="env-PI_SIDECAR_URL"></a>
+<a id="env-PI_SIDECAR_SECRET"></a>
+<a id="env-PI_ALLOWED_TOOL_CALLERS"></a>
+<a id="env-PI_SCOPE_TOKEN_KEY"></a>
+<a id="env-PI_SCOPE_TOKEN_TTL_SECONDS"></a>
+<a id="env-PI_BACKEND_GLOBAL"></a>
+<a id="env-PI_BACKEND_PROJECT"></a>
+
+The pi-backed agent runtime (`qiita_explore/pi_sidecar/`, a standalone Node process — see [`05-agent.md`](05-agent.md#pi-backend-2026-behind-feature-flags)). All seven read by `backend/config.py`, same restart rules as everything else on this page.
+
+In the deployed topology the sidecar runs on the **intermediate node** and Flask on **barnacle**, so `/api/internal/tools/*` is a real cross-machine boundary, not a loopback convenience. It has three independent gates — source IP, shared secret, scope token — so that no single leaked value is sufficient. The localhost defaults below are for local development only.
+
+| Name | Default | Consumed by | Effect | Restart? |
+|---|---|---|---|---|
+| `PI_SIDECAR_URL` | `http://127.0.0.1:5100` | `backend/helpers/pi_client.py` | Base URL of the pi sidecar HTTP service. The localhost default is a dev convenience — set it explicitly to the intermediate node in deployment. | Yes |
+| `PI_SIDECAR_SECRET` | *(none)* | `backend/helpers/pi_client.py`, `backend/routes/internal_tool_routes.py`, sidecar's own `PI_SIDECAR_SECRET` env | Shared secret the sidecar presents (`X-Pi-Secret`) on **every** internal tool request — schema reads *and* tool calls. Must be set identically on both processes. No insecure fallback: unset fails closed and 401s everything. | Yes (both processes) |
+| `PI_ALLOWED_TOOL_CALLERS` | *(empty — no IP restriction)* | `backend/routes/internal_tool_routes.py` | Comma-separated exact remote addresses permitted to call `/api/internal/tools/*` (the intermediate node). Empty is correct for local dev; **always set it in deployment** so a leaked `PI_SIDECAR_SECRET` is not usable from an arbitrary host. | Yes |
+| `PI_SCOPE_TOKEN_KEY` | *(none)* | `backend/helpers/scope_token.py` | HMAC key signing the short-lived per-turn scope token that authorizes a tool call's `POST /api/internal/tools/<name>`. This — not the sidecar, not `PI_SIDECAR_SECRET` — is what makes project-chat scoping a hard boundary. No insecure fallback; `mint_scope_token`/`verify_scope_token` raise if unset. | Yes |
+| `PI_SCOPE_TOKEN_TTL_SECONDS` | `600` | `backend/routes/global_chat_routes.py`, `backend/routes/chat_routes.py` | How long a minted scope token is valid — long enough to cover one slow, tool-heavy turn, short enough that a leaked token is useless well before the next one is minted. | Yes |
+| `PI_BACKEND_GLOBAL` | `false` | `backend/routes/global_chat_routes.py` | When true, global chat's agentic branch calls the pi sidecar instead of `stream_agent`. Independent of `PI_BACKEND_PROJECT` — cut either over (or back) without touching the other. | Yes |
+| `PI_BACKEND_PROJECT` | `false` | `backend/routes/chat_routes.py` | When true, project chat becomes agentic via the pi sidecar, with every tool call hard-scoped to the project (`backend/helpers/project_scope.py`). When false, project chat keeps today's non-agentic, context-stuffed behavior. | Yes |
+
+The sidecar itself is a separate Node process, started independently (`qiita_explore/pi_sidecar/start_sidecar.sh`), with its own env vars — `PI_SIDECAR_PORT` (default `5100`), `PI_SIDECAR_HOST` (default `127.0.0.1`), `FLASK_INTERNAL_URL` (default `http://127.0.0.1:5001`), `PI_SIDECAR_STATE_DIR` (default `pi_sidecar/.state`), plus `OPENAI_API_KEY`/`API_KEY` (reused for the NRP provider) and `ANTHROPIC_API_KEY` (picked up by pi's built-in Anthropic provider). It refuses to start without `PI_SIDECAR_SECRET`, without Node ≥ 20, or without `node_modules`.
+
+**Deploying across two hosts** means changing four of these together, and getting a subset right leaves you with a sidecar Flask cannot reach or a tool route the sidecar cannot call:
+
+| On | Set | To |
+|---|---|---|
+| intermediate node | `PI_SIDECAR_HOST` | `0.0.0.0` — the loopback default makes the sidecar unreachable from barnacle |
+| intermediate node | `FLASK_INTERNAL_URL` | barnacle's internal base URL |
+| barnacle | `PI_SIDECAR_URL` | the intermediate node's `host:5100` |
+| barnacle | `PI_ALLOWED_TOOL_CALLERS` | the intermediate node's address |
+
+Firewall both directions to just those two hosts: the sidecar's port is otherwise an unauthenticated LLM endpoint to anything that can route to it.
+
 ### Minimum viable `.env`
 
 The smallest file that produces a backend which boots, queries, authenticates, and answers:
@@ -206,6 +243,13 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`OPENAI_API_KEY`](#env-OPENAI_API_KEY) | LLM | *(none)* |
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | Storage | `8` |
 | [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `2` |
+| [`PI_ALLOWED_TOOL_CALLERS`](#env-PI_ALLOWED_TOOL_CALLERS) | pi sidecar | *(empty — no IP restriction)* |
+| [`PI_BACKEND_GLOBAL`](#env-PI_BACKEND_GLOBAL) | pi sidecar | `false` |
+| [`PI_BACKEND_PROJECT`](#env-PI_BACKEND_PROJECT) | pi sidecar | `false` |
+| [`PI_SCOPE_TOKEN_KEY`](#env-PI_SCOPE_TOKEN_KEY) | pi sidecar | **required if either PI_BACKEND_\* is true** |
+| [`PI_SCOPE_TOKEN_TTL_SECONDS`](#env-PI_SCOPE_TOKEN_TTL_SECONDS) | pi sidecar | `600` |
+| [`PI_SIDECAR_SECRET`](#env-PI_SIDECAR_SECRET) | pi sidecar | **required if either PI_BACKEND_\* is true** |
+| [`PI_SIDECAR_URL`](#env-PI_SIDECAR_URL) | pi sidecar | `http://127.0.0.1:5100` |
 | [`PINNED_REPORT_CONTEXT_MAX_CHARS`](#env-PINNED_REPORT_CONTEXT_MAX_CHARS) | Context | `40000` |
 | [`PINNED_REPORT_MIN_PER_STUDY`](#env-PINNED_REPORT_MIN_PER_STUDY) | Context | `2000` |
 | [`PROJECT_SUMMARY_GEN_LIMIT`](#env-PROJECT_SUMMARY_GEN_LIMIT) | Context (dead) | `5` |
@@ -225,7 +269,7 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`SAMPLE_SEARCH_DEFAULT_CANDIDATES`](#env-SAMPLE_SEARCH_DEFAULT_CANDIDATES) | Search | `40` |
 | [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `8000` |
 
-Thirty-four names in total: thirty-two read by `config.py` or backend helpers, plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
+Forty names in total: thirty-eight read by `config.py` or backend helpers (including the six `PI_*` pi-sidecar variables), plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
 
 ---
 

@@ -25,6 +25,30 @@ This is historical: project chat predates the tool loop and already had its cont
 
 ---
 
+## pi backend (2026, behind feature flags)
+
+**Update:** the asymmetry above is closed, behind a flag. A second, parallel agent runtime — [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`), run as a standalone Node process in `qiita_explore/pi_sidecar/` — now backs **both** chat types, gated independently:
+
+- `config.PI_BACKEND_GLOBAL` — when true, `global_chat_routes.py`'s agentic branch calls the pi sidecar instead of `stream_agent`.
+- `config.PI_BACKEND_PROJECT` — when true, project chat becomes agentic for the first time: `chat_routes.py` gets the same tool loop as global chat, with every tool call **hard-scoped server-side** to the project's studies (`helpers/project_scope.py`) rather than the soft, prompt-only boundary `_build_project_study_context` relies on.
+
+Both default to `False` — the paths this chapter describes below (`stream_agent`, the OpenAI/Anthropic loops, the legacy project-chat token accumulator) are unchanged and remain the default runtime. Flip a flag to cut over; flip it back to revert without a deploy.
+
+**Why a separate process, not a rewrite of `stream_agent`.** pi is a TypeScript agent runtime with no Python bindings and no HTTP server of its own — `qiita_explore/pi_sidecar/server.mjs` is a small `node:http` service that wraps it. The sidecar:
+- Owns conversation history and context management: one pi session (JSONL, tree-structured) per chat, with pi's own auto-compaction — not the 10-message truncation `_normalize_messages` does today, and not the 3-tier char-budget cascade `_build_project_study_context` does for project chat.
+- Holds **no** qiita_db/Postgres access and **no** built-in tools (`bash`/`read`/`edit`/`write` are explicitly disabled — `noTools: "builtin"` in `sessions.mjs`). Its four tools (`search_studies`, `get_study_report`, `pin_study`, `search_by_sample`) are thin `fetch` wrappers that call back into Flask.
+- Fetches its tool schemas from `GET /api/internal/tools/schemas` at session-creation time rather than hardcoding them, so `agent_tools.TOOL_SCHEMAS` stays the single source of truth — a schema change on the Python side needs no sidecar edit.
+
+**The hard scope boundary.** The sidecar runs on the intermediate node while Flask runs on barnacle, so `/api/internal/tools/*` is a genuine cross-machine surface and is guarded as one. Every request — schema reads and tool calls alike — passes `_guard()`: a source-IP allowlist (`PI_ALLOWED_TOOL_CALLERS`) plus the `X-Pi-Secret` shared secret, failing closed if the secret is unset. Tool calls then need a third, independent credential, so no single leaked value is enough: a stolen secret is unusable from an unlisted host, and a captured scope token is unusable without the secret.
+
+`POST /api/internal/tools/<name>` (`routes/internal_tool_routes.py`) authenticates each call with a short-lived HMAC-signed "scope token" (`helpers/scope_token.py`, ~10 min TTL), minted per-turn by the chat route — the sidecar never sees a database credential or a raw `user_id`/`project_id` it could forge. When the token's scope is `"project"`, `search_studies`/`search_by_sample` are re-ranked over the project's own SQLite-mirrored studies (never a Postgres query against the full database), and `get_study_report`/`pin_study` refuse any `study_id` that isn't a project member — checked *before* `execute_tool()` runs. Project ownership is independently re-verified at this route (`get_project(project_id, user_id)`), since `get_project_studies_only()` itself performs no such check.
+
+**Translation, not a rewrite of the SSE contract.** `helpers/pi_translate.py` maps pi's event stream onto the exact same 10 SSE events and segment shapes `stream_agent` + `global_chat_routes.py` produce today (`translate()` for the live stream, `build_segments()` for the persisted `ui_payload`) — the frontend (`app_state.js`, `components.js`) needed zero changes. The tool-call↔result correlation name (`tool_{name}_{call_id[:6]}`) is byte-identical to `_execute_tool_call`'s in this file.
+
+See [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for the full event-translation table and [`appendix-d-configuration.md`](appendix-d-configuration.md#pi-sidecar) for the sidecar's environment variables.
+
+---
+
 ## What `stream_agent` is
 
 `backend/helpers/agent.py :: stream_agent` is a **generator that yields typed dictionaries, not SSE strings**:

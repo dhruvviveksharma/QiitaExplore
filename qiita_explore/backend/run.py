@@ -41,6 +41,7 @@ import routes.study_routes        # noqa: F401, E402
 import routes.project_routes      # noqa: F401, E402
 import routes.chat_routes         # noqa: F401, E402
 import routes.global_chat_routes  # noqa: F401, E402
+import routes.internal_tool_routes  # noqa: F401, E402
 import routes.merge_routes        # noqa: F401, E402
 import routes.artifact_routes     # noqa: F401, E402 (split out of merge_routes)
 

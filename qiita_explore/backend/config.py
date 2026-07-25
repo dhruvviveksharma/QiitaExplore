@@ -115,6 +115,42 @@ SESSION_COOKIE_SECURE = os.getenv("QIITA_EXPLORE_COOKIE_SECURE", "true").strip()
 _claimant_raw = os.getenv("QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", "").strip()
 QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = int(_claimant_raw) if _claimant_raw.isdigit() else None
 
+# ── pi sidecar (agentic chat backend) ───────────────────────────────────────
+# The localhost default is a DEV convenience only. In the deployed topology the
+# sidecar runs on the intermediate node and Flask runs on barnacle, so this is a
+# genuine cross-machine hop — set it explicitly there. Nothing in the internal
+# tool surface may assume a loopback caller (see PI_ALLOWED_TOOL_CALLERS).
+PI_SIDECAR_URL = os.getenv("PI_SIDECAR_URL", "http://127.0.0.1:5100").rstrip("/")
+
+# Shared secret the sidecar must present (X-Pi-Secret) on EVERY internal tool
+# request — schema reads and tool calls alike. No insecure fallback:
+# helpers/scope_token.py and internal_tool_routes.py raise/401 loudly if unset,
+# same posture as PAT_ENCRYPTION_KEY above.
+PI_SIDECAR_SECRET = os.getenv("PI_SIDECAR_SECRET")
+
+# Source-IP allowlist for /api/internal/tools/*. Comma-separated exact remote
+# addresses (the intermediate node). Unset = no IP restriction, which is right
+# for local dev but should always be set in deployment: the shared secret and
+# the scope token are the primary gates, this is the third one that makes a
+# leaked secret alone insufficient from an arbitrary host.
+PI_ALLOWED_TOOL_CALLERS = [
+    h.strip() for h in os.getenv("PI_ALLOWED_TOOL_CALLERS", "").split(",") if h.strip()
+]
+
+# Signs the short-lived per-turn scope token (helpers/scope_token.py) that
+# authorizes the sidecar's tool calls back into Flask. This — not the sidecar
+# — is what makes project-chat scoping a hard boundary rather than a prompt
+# request.
+PI_SCOPE_TOKEN_KEY = os.getenv("PI_SCOPE_TOKEN_KEY")
+
+PI_SCOPE_TOKEN_TTL_SECONDS = int(os.getenv("PI_SCOPE_TOKEN_TTL_SECONDS", "600"))
+
+# Per-chat-type cutover flags so global and project chat can move to the pi
+# backend independently and be flipped back without a deploy if parity issues
+# turn up after one ships but not the other.
+PI_BACKEND_GLOBAL = os.getenv("PI_BACKEND_GLOBAL", "false").strip().lower() in ("1", "true", "yes")
+PI_BACKEND_PROJECT = os.getenv("PI_BACKEND_PROJECT", "false").strip().lower() in ("1", "true", "yes")
+
 # Temporary debugging aid: when true, an unexpected exception in
 # POST /auth/connect includes the exception type/message in the JSON
 # response, not just the server log. Off by default — only enable while
@@ -143,6 +179,32 @@ Behavioral rules:
 When answering:
 - Prefer concise, technically accurate explanations.
 - Format all responses using Markdown (bold, bullets, code blocks, headers where appropriate).
+- Do not output SQL or code unless the user explicitly asks for it."""
+
+PROJECT_CHAT_AGENT_SYSTEM_PROMPT = """You are a research assistant for a specific project workspace in the Qiita microbiome database.
+
+Your primary goal is to help the researcher work with the studies in THIS PROJECT'S WORKSPACE — not the whole Qiita database. A short list of the workspace's current studies is provided as part of your context each turn.
+
+## Hard boundary — read this carefully
+Every tool call you make is scoped server-side to this project's workspace. You CANNOT retrieve, search, or pin studies outside it, even if you know a study ID exists in Qiita generally — the tools will refuse and tell you so. Do not treat a refusal as an error to route around; it means the study genuinely isn't part of this workspace. Tell the user plainly and suggest they add it to the project (or ask in a global/discovery chat) if they want it.
+
+## Tools available to you
+- **search_studies**: Search the studies already in this workspace. Call this when the user asks to find or filter among the project's own studies. Issue EXACTLY ONE call per user request.
+  - Same typed dimension slots as elsewhere (organism, qualifier, body_site, condition_or_intervention, project_or_pi, keywords, data_types, investigation_types) — fill every slot you can identify.
+  - Results are ranked among workspace studies only — this is not a database-wide search.
+- **search_by_sample**: Search the workspace's studies by sample-level metadata (body site, disease, host organism, etc.), scoped the same way.
+- **get_study_report**: Load full sample-level metadata for a specific study ID — but ONLY if that study is in this workspace.
+- **pin_study**: Attach a workspace study to this chat for persistent deep context. Only call this when the user explicitly asks to pin, keep, or focus on specific studies — never as a side effect of a search or report.
+
+## Behavioral rules
+- NEVER invent study IDs, sample counts, or metadata fields not present in the provided workspace context or a tool result.
+- When referencing specific studies, ONLY use IDs that are in the workspace list, returned by search_studies/search_by_sample, or present in a pinned report.
+- If the user asks about a study not in this workspace, say so plainly rather than guessing or fabricating an answer.
+- When a "PINNED STUDY REPORTS" block is present, reference per-sample fields from it verbatim.
+- It is always acceptable to answer conceptual microbiome/analysis questions at a high level without naming specific studies.
+
+## Formatting
+- Prefer concise, technically accurate explanations. Format responses using Markdown.
 - Do not output SQL or code unless the user explicitly asks for it."""
 
 GLOBAL_CHAT_SYSTEM_PROMPT = """You are a discovery assistant for the Qiita microbiome database.

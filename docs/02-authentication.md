@@ -1,8 +1,8 @@
 # 02 — Authentication
 
-*How a browser becomes an authenticated `g.user_id`, why the design is shaped this way, and every way it can fail.*
+*How a browser becomes an authenticated* `g.user_id`*, why the design is shaped this way, and every way it can fail.*
 
-Prerequisites: [`01-architecture.md`](01-architecture.md) — the request lifecycle and the two `before_request` hooks.
+Prerequisites: `[01-architecture.md](01-architecture.md)` — the request lifecycle and the two `before_request` hooks.
 
 ---
 
@@ -28,9 +28,11 @@ One deployment detail explains an otherwise baffling piece of configuration. Aut
 
 The fix is to wrap the login URL in LoginRocket's `/logout` endpoint first. This is applied to the control plane at runtime by `Qiita/run_patched_control_plane.py`, which monkeypatches the URL builder before launching uvicorn, so the Qiita repo itself stays unmodified at master.
 
-QiitaExplore has its own opt-in version of this wrap behind `QIITA_LOGINROCKET_URL`. **It does not work and must stay unset** — LoginRocket refuses to forward `/logout` to an external control-plane URL. The barnacle environment script actively deletes the variable. See [`appendix-d-configuration.md`](appendix-d-configuration.md#env-QIITA_LOGINROCKET_URL).
+QiitaExplore has its own opt-in version of this wrap behind `QIITA_LOGINROCKET_URL`. **It does not work and must stay unset** — LoginRocket refuses to forward `/logout` to an external control-plane URL. The barnacle environment script actively deletes the variable. See `[appendix-d-configuration.md](appendix-d-configuration.md#env-QIITA_LOGINROCKET_URL)`.
 
 ---
+
+
 
 ## The connect flow
 
@@ -58,6 +60,8 @@ sequenceDiagram
     Note over FE: PAT cleared from form state<br/>csrf_token → JS module variable
 ```
 
+
+
 Three properties of this flow are worth stating explicitly.
 
 **The PAT never persists client-side.** It lives only in the React form's `useState`, is POSTed once, and is cleared immediately on both success *and* failure. It is never placed in `localStorage`, `sessionStorage`, or a URL parameter.
@@ -84,6 +88,8 @@ Note its default: when `ALLOWED_ORIGINS` is **empty, the check passes**. That is
 
 ---
 
+
+
 ## The middleware
 
 Two `before_request` hooks in `backend/helpers/auth_middleware.py`. Flask short-circuits the chain the moment one returns a non-`None` value.
@@ -96,14 +102,16 @@ Resolves the cookie to an identity, and re-verifies the underlying PAT on a sche
 
 The re-verification branch is the subtle part. If `last_verified_at` is older than `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` (default 15 minutes), the stored PAT is decrypted and re-checked against the control plane, with four distinct outcomes:
 
-| Outcome | Action | Reasoning |
-|---|---|---|
-| Decryption fails | **Revoke** | The stored ciphertext is unusable; the session cannot be maintained. |
-| `transient_error` | **503, session preserved** | Qiita is unreachable *right now*. Do not trust an unverified credential — but do not destroy a valid session over an upstream outage. |
-| Not ok (401) | **Revoke** | The PAT was revoked or expired upstream. |
-| `principal_idx` ≠ session's `user_id` | **Revoke** | The token now resolves to a *different person*. Treated as rotation or compromise. |
 
-The transient case is the one worth dwelling on. The naive implementation — treat "can't verify" as "not authenticated" — would log out every user in the building the moment the control plane restarted, and each would have to re-obtain and re-paste a PAT. Instead the request fails with 503, the session row is untouched, and the next successful re-verification resumes it with no user action. The frontend's matching `unavailable` state exists for exactly this (see [`08-frontend.md`](08-frontend.md)).
+| Outcome                               | Action                     | Reasoning                                                                                                                             |
+| ------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Decryption fails                      | **Revoke**                 | The stored ciphertext is unusable; the session cannot be maintained.                                                                  |
+| `transient_error`                     | **503, session preserved** | Qiita is unreachable *right now*. Do not trust an unverified credential — but do not destroy a valid session over an upstream outage. |
+| Not ok (401)                          | **Revoke**                 | The PAT was revoked or expired upstream.                                                                                              |
+| `principal_idx` ≠ session's `user_id` | **Revoke**                 | The token now resolves to a *different person*. Treated as rotation or compromise.                                                    |
+
+
+The transient case is the one worth dwelling on. The naive implementation — treat "can't verify" as "not authenticated" — would log out every user in the building the moment the control plane restarted, and each would have to re-obtain and re-paste a PAT. Instead the request fails with 503, the session row is untouched, and the next successful re-verification resumes it with no user action. The frontend's matching `unavailable` state exists for exactly this (see `[08-frontend.md](08-frontend.md)`).
 
 Finally, `touch_session` updates `last_seen_at` **only**. Its docstring says it must never extend `absolute_expires_at`, and that is the sliding-window-vs-hard-cap distinction: activity extends the idle window, nothing extends the 30-day ceiling.
 
@@ -147,15 +155,21 @@ stateDiagram-v2
     Revoked --> [*]
 ```
 
-| Bound | Default | Variable | Extended by activity? |
-|---|---|---|---|
-| PAT re-verification | 15 min | `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | n/a |
-| Idle expiry | 7 days | `AUTH_SESSION_IDLE_TTL_SECONDS` | **Yes** — `touch_session` |
-| Absolute expiry | 30 days | `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | **No** — hard ceiling |
+
+
+
+| Bound               | Default | Variable                             | Extended by activity?     |
+| ------------------- | ------- | ------------------------------------ | ------------------------- |
+| PAT re-verification | 15 min  | `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | n/a                       |
+| Idle expiry         | 7 days  | `AUTH_SESSION_IDLE_TTL_SECONDS`      | **Yes** — `touch_session` |
+| Absolute expiry     | 30 days | `AUTH_SESSION_ABSOLUTE_TTL_SECONDS`  | **No** — hard ceiling     |
+
 
 > **Known gap.** `backend/store/auth_store.py :: purge_expired_sessions` hard-deletes rows past absolute expiry (deliberately keeping revoked rows for audit). **It is never called** — no route, no scheduler, no startup hook invokes it. Expired session rows therefore accumulate indefinitely. This is a storage-growth issue rather than a security one: `get_session_by_token` correctly rejects expired sessions regardless of whether their rows still exist. Worth wiring up, and worth a ticket.
 
 ---
+
+
 
 ## Tenancy: `g.user_id` is the only identity
 
@@ -163,24 +177,28 @@ This is the guarantee that keeps users' data separate, and it is worth stating p
 
 `g.user_id` is set once, by the middleware, from the session row. Handlers read it directly and pass it into store functions that filter on it **in the WHERE clause** — `get_project(project_id, g.user_id)`, `get_global_chat(g.user_id, chat_id)`, `get_workspace(workspace_id, g.user_id)`, `get_merge_job(job_id, g.user_id)`.
 
-**No endpoint accepts a client-supplied `user_id`** — not in a body, a query parameter, a path segment, or a header. There is no code path where the browser can assert who it is. Ownership is enforced by scoping the query, not by fetching a row and checking it afterward, so a wrong-owner request returns "not found" rather than leaking existence.
+**No endpoint accepts a client-supplied** `user_id` — not in a body, a query parameter, a path segment, or a header. There is no code path where the browser can assert who it is. Ownership is enforced by scoping the query, not by fetching a row and checking it afterward, so a wrong-owner request returns "not found" rather than leaking existence.
 
 Two caveats to be aware of:
 
 - `backend/store/crud.py :: get_project_studies_only` is **not owner-scoped**. It is used in the hot chat-streaming path, where the caller has already authorized the project. It is safe as currently called and would be an IDOR if called from a new route without a prior ownership check.
 - `backend/store/db.py :: _resolve_user` maps an empty or `None` user to the literal string `"default"`. This is the pre-authentication tenancy fallback that the legacy claim exists to clean up. It should never trigger on a request path, because the middleware guarantees `g.user_id` is set — but the fallback remains reachable from any caller that passes nothing.
 
+
+
 ### Two places where tenancy does not hold
 
 The guarantee above describes the *curational* surface — projects, chats, workspaces, jobs. Two endpoints fall outside it. Both were verified against the code while writing this document, and are now tracked as **TKT-042** and **TKT-043**.
 
-> **TKT-042 — settings are global, not per-user.** `GET`/`POST /api/settings` route through `backend/store/crud.py :: get_setting` / `set_setting`, which read and write the shared `meta` table and **take no `user_id`**. Any authenticated user who saves an Anthropic API key overwrites the key for every other user, and the key is then used to bill that user's requests. This is pre-authentication code that was not re-scoped when multi-user auth landed. A per-user settings table, or a `user_id`-keyed `meta`, is the fix.
+> **TKT-042 — settings are global, not per-user.** `GET`/`POST /api/settings` route through `backend/store/crud.py :: get_setting` / `set_setting`, which read and write the shared `meta` table and **take no** `user_id`. Any authenticated user who saves an Anthropic API key overwrites the key for every other user, and the key is then used to bill that user's requests. This is pre-authentication code that was not re-scoped when multi-user auth landed. A per-user settings table, or a `user_id`-keyed `meta`, is the fix.
 
 > **TKT-043 — artifact file download performs no study-level authorization.** `backend/routes/artifact_routes.py :: download_artifact_file` requires a session, then takes `study_id`, `artifact_id`, and `filepath_id` from the request and streams the resolved file. It does **not** call `is_study_public`, unlike `api_study_detail`, which gates on exactly that — and it has no ownership check, because artifacts are not owned by QiitaExplore users. Any authenticated user can therefore download any file reachable through any study's artifact graph, including studies that are not public.
 >
 > Its path safety is real but narrow: `_resolve_artifact_file` resolves paths from the artifact graph rather than from user input, calls `os.path.realpath`, and rejects a **blocklist** of roots (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`). That prevents directory traversal out of the data tree. It does not, and is not intended to, decide *which studies this user may read* — that check is simply absent. An allowlist of permitted data roots plus an `is_study_public` gate would close it.
 
 ---
+
+
 
 ## Legacy claim
 
@@ -198,6 +216,8 @@ flowchart TB
     G -->|no| I["COMMIT"]
 ```
 
+
+
 Three deliberate properties:
 
 **It never auto-claims.** Eligibility requires `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX` to be explicitly configured *and* to match the requesting user exactly. Absent that variable, the endpoint always refuses. Legacy data is never silently absorbed by whoever logs in first.
@@ -207,6 +227,8 @@ Three deliberate properties:
 **Concurrency is handled by the schema, not by a lock.** The claim marker is a plain `INSERT` into `meta`, whose `key` column is a primary key. Two racing claims both attempt it; the loser raises `IntegrityError`, and because all five `UPDATE`s and the `INSERT` are in one transaction, the loser's reassignments **roll back entirely**. There is no window in which a partial reassignment can persist.
 
 ---
+
+
 
 ## What this design does and does not defend against
 
@@ -225,7 +247,7 @@ Stated plainly, without overclaiming.
 **Does not defend against:**
 
 - An attacker who can read process memory or the encryption key.
-- XSS. The CSRF token lives in a JS variable; script execution in the page defeats the protection. Model output is sanitized with DOMPurify (see [`08-frontend.md`](08-frontend.md)), which is the relevant mitigation, not an absolute one.
+- XSS. The CSRF token lives in a JS variable; script execution in the page defeats the protection. Model output is sanitized with DOMPurify (see `[08-frontend.md](08-frontend.md)`), which is the relevant mitigation, not an absolute one.
 - Anything within the 15-minute re-verification window after an upstream revocation.
 - A cross-origin deployment that leaves `ALLOWED_ORIGINS` empty — the Origin check passes by default.
 - Session fixation beyond what a fresh random token per connect provides; there is no rotation on privilege change, because there are no privilege changes.
@@ -236,4 +258,4 @@ The last two are open defects, not accepted tradeoffs. They are listed here so t
 
 ---
 
-*See also: [`appendix-a-api-reference.md`](appendix-a-api-reference.md) for the 6 auth endpoints · [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md#table-auth_sessions) for the `users` and `auth_sessions` tables · [`appendix-d-configuration.md`](appendix-d-configuration.md) for the `AUTH_*` variables · [`08-frontend.md`](08-frontend.md) for the browser-side state machine.*
+*See also:* `[appendix-a-api-reference.md](appendix-a-api-reference.md)` *for the 6 auth endpoints ·* `[appendix-b-sqlite-schema.md](appendix-b-sqlite-schema.md#table-auth_sessions)` *for the* `users` *and* `auth_sessions` *tables ·* `[appendix-d-configuration.md](appendix-d-configuration.md)` *for the* `AUTH_`* *variables ·* `[08-frontend.md](08-frontend.md)` *for the browser-side state machine.*

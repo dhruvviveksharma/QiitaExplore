@@ -1,0 +1,21 @@
+{
+  "name": "qiita-pi-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Long-lived Node service embedding the pi agent loop for qiita-web chat.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.82.0"
+  }
+}

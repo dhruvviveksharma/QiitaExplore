@@ -9,9 +9,11 @@ Prerequisites: [`05-agent.md`](05-agent.md) — the segments described here are 
 ## Two endpoints stream. Nothing else does.
 
 ```
-POST /api/projects/<pid>/chats/<cid>/message/stream    ← legacy path only
-POST /api/global-chats/<cid>/message/stream            ← agentic or legacy
+POST /api/projects/<pid>/chats/<cid>/message/stream    ← legacy, or pi-agentic behind PI_BACKEND_PROJECT
+POST /api/global-chats/<cid>/message/stream            ← legacy, pi-agentic, or Python-agentic
 ```
+
+("legacy path only" was true before the pi backend landed — see the pi-backend section below.)
 
 Every other endpoint in the application is a plain request/response. All SSE frames anywhere are produced by a single function, `backend/helpers/llm_helpers.py :: _sse`:
 
@@ -57,17 +59,16 @@ With one exception, in the other direction. `stream_agent` yields a **`reasoning
 
 ### The asymmetry between the two endpoints
 
-Project chats and global chats have diverged, and it is visible in which events each can emit:
+This was true before the pi backend landed, and remains true for the *legacy* Python paths both endpoints still default to:
 
-| | Project chat | Global chat |
+| | Project chat (legacy) | Global chat (legacy) |
 |---|---|---|
 | Agentic path | **never** | when `model_supports_tools` |
 | `agent_start` / `segment_*` | never | yes |
 | `step_start` / `step_done` | yes | legacy path only |
 | `query_plan` | no | legacy path only |
-| Frontend handlers wired | token accumulator only | all handlers |
 
-The frontend mirrors this: `sendMessage` wires `onAgentStart` / `onSegmentToolCall` / `onSegmentToolResult` / `onQueryPlan` for the **global** call site only. Even if a project chat somehow emitted a segment event, nothing would consume it.
+**Behind `PI_BACKEND_PROJECT`, this asymmetry closes.** Project chat can now emit `agent_start`/`segment_tool_call`/`segment_tool_result` too (see [`05-agent.md`](05-agent.md#pi-backend-2026-behind-feature-flags)), and `frontend/js/app_state.js`'s project-chat `sendMessage` call site now wires `onAgentStart` / `onSegmentToolCall` / `onSegmentToolResult` — the identical handler functions the global call site already used — so both call sites consume the full event set. `query_plan` remains global-only: it is specific to the legacy keyword-planner path, which project chat never had.
 
 ---
 
@@ -186,6 +187,8 @@ flowchart TB
 ```
 
 The live view comes from the client's construction. The reloaded view comes from the server's. **If the two ever disagree, a conversation renders one way while you watch it and a different way after refresh** — a bug that is invisible in development, since you rarely reload mid-conversation, and obvious to users.
+
+**The pi backend (behind `PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT`) halves this hazard, but does not eliminate it.** `helpers/pi_translate.py` has exactly one function for each server-side output — `translate()` for the live SSE stream, `build_segments()` for the persisted `ui_payload` — both driven by the same pi event sequence, so there is no longer a *second Python implementation* to drift from. But the diagram above is otherwise unchanged: the frontend still independently re-derives the live view in `app_state.js`, because pi_translate.py emits the identical 10 SSE events this document already describes — no frontend change was needed or made. `tests/test_pi_translate.py` is the parity test this document's "if you change this" section below asks for, fed a real captured pi event stream rather than a hand-constructed guess.
 
 ### Current status: they agree
 

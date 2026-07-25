@@ -477,7 +477,15 @@ function useAppState() {
           },
           chatId, ctrl.signal,
           {
+            // onToken (not onTokenAgent) still covers the legacy plain-stream
+            // path. onAgentStart/onSegmentToolCall/onSegmentToolResult are the
+            // same handlers global chat already uses — project chat can now
+            // emit agent_start/segment_* too (PI_BACKEND_PROJECT), and these
+            // were previously unwired here because it never could.
             onToken: ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
+            onAgentStart:        onAgentStart(chatId),
+            onSegmentToolCall:   onSegmentToolCall(chatId),
+            onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null);

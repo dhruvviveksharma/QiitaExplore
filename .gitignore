@@ -81,6 +81,12 @@ notebooks/resource-allocation/data
 qiita_db/support_files/patches/test_db_sql/91.sql
 
 *.env
+# Timestamped .env backups. `*.env` above only matches files ENDING in .env,
+# so `.env.bak.<timestamp>` — which Qiita/barnacle_backend_env.sh creates on
+# every run, and which contains the LLM API key and the Fernet PAT-encryption
+# key in plaintext — was slipping through. See TKT-045.
+.env.bak*
+*.env.bak*
 
 # Archives
 *.tar.gz

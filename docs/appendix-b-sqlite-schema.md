@@ -628,6 +628,26 @@ Second, `cached_at` is the one field assigned unconditionally: `cached_at = excl
 
 ---
 
+## Table ownership, for the eventual tier split
+
+Today all 16 tables live in one SQLite file on barnacle. The planned topology moves the Flask app tier to the intermediate node and leaves a slim data service plus PostgreSQL on barnacle (see [`01-architecture.md`](01-architecture.md)). When that happens this file splits, and **it does not split along the lines you would guess from the ER diagram** — it splits by which side of the boundary the data is *derived* from.
+
+**User data — follows the app tier to the intermediate node.** Owned by a person, meaningless without the account that created it, and never reconstructible from PostgreSQL:
+
+`users`, `auth_sessions`, `projects`, `project_studies`, `project_chats`, `project_chat_messages`, `project_context_summaries`, `global_chats`, `global_chat_messages`, `chat_pinned_studies`, `merge_workspaces`, `merge_workspace_studies`, `meta`
+
+**Derived caches — stay on barnacle with the data service.** Every row is a memo of a PostgreSQL read; all of it is disposable and regenerates on a miss:
+
+`study_detail_cache`, `biom_sample_cache`, and the `full_samples_json` column on `project_studies`
+
+`merge_jobs` is the awkward one: it is user-initiated work, but `merge_executor.py` shells out to a local `conda run` against the artifact filesystem, so the job rows have to sit where the executor runs — **barnacle**, with the workspace tables that reference them left on the app tier across the boundary.
+
+The rule worth remembering: **a cache belongs next to its source, not next to its reader.** Letting `study_detail_cache` follow the user data would put every cache miss a network hop away from the PostgreSQL it is caching, which is the opposite of the reason the cache exists. The same reasoning is why Flask does not move ahead of the data — see the hop-volume analysis in [`01-architecture.md`](01-architecture.md).
+
+Note also that `project_studies` would straddle the split: its identity/membership columns are user data while `full_samples_json` is a cache. Cleanest resolution is to drop that column from the app-tier copy and let the data service own the sample payload keyed by `study_id`.
+
+---
+
 ## See also
 
 - [`03-data-access-and-caching.md`](03-data-access-and-caching.md) — how `study_detail_cache` and `biom_sample_cache` sit within the wider cache stack, alongside the in-process TTL memoization in `qiita_fetch.py`.

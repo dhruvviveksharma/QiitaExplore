@@ -3,9 +3,13 @@ import logging
 from flask import g, jsonify, request
 
 from run import app
+import config
 from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars, model_supports_tools
 from services.study_service import search_studies_with_sql, build_where_from_plan
 from helpers.agent import stream_agent
+from helpers.pi_client import stream_chat as pi_stream_chat, PiSidecarError
+from helpers.pi_translate import translate as pi_translate, build_segments as pi_build_segments
+from helpers.scope_token import mint_scope_token
 from store import (
     SCOPE_GLOBAL,
     append_global_chat_messages,
@@ -60,6 +64,13 @@ def api_get_global_chat(chat_id):
 @app.route('/api/global-chats/<chat_id>', methods=['DELETE'])
 def api_delete_global_chat(chat_id):
     delete_global_chat(g.user_id, chat_id)
+    if config.PI_BACKEND_GLOBAL:
+        # Best-effort: dispose the pi session + its JSONL file too, so a
+        # deleted chat doesn't leave an orphaned session on disk. Gated on
+        # the flag — otherwise every delete pays a network round trip (or a
+        # timeout) to a sidecar that may not even be running.
+        from helpers.pi_client import delete_session as pi_delete_session
+        pi_delete_session(scope=SCOPE_GLOBAL, chat_id=chat_id)
     return jsonify({'ok': True})
 
 
@@ -111,8 +122,42 @@ def api_global_chat_message_stream(chat_id):
                     yield _sse("step_done", {"name": "pinned_reports", "label": "Pinned reports ready", "detail": f"{len(pinned_studies)} studies"})
                     yield ': keepalive\n\n'
 
-                if model_supports_tools(model):
-                    # Agentic path: the model decides what to search and when
+                if model_supports_tools(model) and config.PI_BACKEND_GLOBAL:
+                    # pi-backed agentic path: pi owns history/compaction/the tool
+                    # loop. Only the new user message is sent — no full_msgs — and
+                    # pinned/selected-study context rides in per-turn via
+                    # context_block (context.ts hook, never persisted to the pi
+                    # session) rather than baked into the system prompt.
+                    sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
+                    combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
+                    tool_token = mint_scope_token(
+                        user_id=user_id, scope=SCOPE_GLOBAL, chat_id=chat_id,
+                        deep_search=deep_search, ttl_seconds=config.PI_SCOPE_TOKEN_TTL_SECONDS,
+                    )
+                    raw_events = []
+
+                    def _tee(events):
+                        for e in events:
+                            raw_events.append(e)
+                            yield e
+
+                    for sse_name, payload in pi_translate(_tee(pi_stream_chat(
+                        scope=SCOPE_GLOBAL, chat_id=chat_id, model=model,
+                        system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
+                        message=user_content, context_block=combined_ctx,
+                        tool_token=tool_token, deep_search=deep_search,
+                    ))):
+                        if sse_name == "token":
+                            assistant_parts.append(payload["token"])
+                        yield _sse(sse_name, payload)
+
+                    segments_list = pi_build_segments(raw_events)
+                    if segments_list:
+                        ui_payload = {"kind": "agent_segments", "segments": segments_list}
+                elif model_supports_tools(model):
+                    # Legacy Python agentic path: model_supports_tools(model) is
+                    # true but PI_BACKEND_GLOBAL is off — flip the flag to cut
+                    # over without a deploy if pi-path parity issues turn up.
                     sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
                     combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
                     # Accumulate segments for persistence

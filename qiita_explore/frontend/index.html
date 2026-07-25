@@ -12,7 +12,9 @@
        the cookie rides along. The SSH tunnel to barnacle must bind 127.0.0.1
        (ssh -L 127.0.0.1:5002:localhost:5002), and this origin must be in
        barnacle's QIITA_EXPLORE_ALLOWED_ORIGINS. -->
-  <meta name="api-base" content="http://127.0.0.1:5002/api">
+  <!-- #TODO(local-dev): 5001 is the LOCAL pi-enabled backend on this Mac.
+       Revert to the barnacle tunnel port (5002) before committing to master. -->
+  <meta name="api-base" content="http://127.0.0.1:5001/api">
   <title>Qiita Explorer</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>

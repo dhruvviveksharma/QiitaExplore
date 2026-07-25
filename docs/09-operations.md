@@ -31,11 +31,25 @@ This is a repo convention stated in `CLAUDE.md`, not a preference. **Do not run 
 
 Note what the script does **not** do: it does not read `qiita_explore/.env`. That file is loaded later, by `backend/config.py` at import time, inside each worker. See [Configuration](#configuration).
 
+### Starting the pi sidecar (only if `PI_BACKEND_GLOBAL` or `PI_BACKEND_PROJECT` is set)
+
+With both flags at their default (`false`), skip this — the backend runs exactly as it always has, and nothing tries to reach a sidecar. With either flag on, start the sidecar **before or alongside** gunicorn — Flask calls out to it synchronously mid-request, so a chat turn arriving before the sidecar is up fails with a connection error surfaced through the normal `error` SSE event, not a crash.
+
+```bash
+cd qiita_explore/pi_sidecar
+npm ci   # once, or after a package-lock.json change
+PI_SIDECAR_SECRET=<same value as backend's PI_SIDECAR_SECRET> bash start_sidecar.sh
+```
+
+It is a separate, independently-supervised process — `start_barnacle.sh` does not start it, and there is no process manager wiring the two together yet (this repo has none for gunicorn either; see the note on `systemctl` above). Requires Node ≥ 20 on `PATH` (developed and tested against 22.12; the package's declared `>=22.19.0` floor is a support-policy statement inherited from upstream pi, not a hard technical requirement — see `pi_sidecar/package.json`).
+
+Health check: every route, including `/healthz`, requires the `X-Pi-Secret` header — a bare `curl http://127.0.0.1:5100/healthz` returns `401`, which just confirms the process is up and enforcing auth. Add the header to confirm it's actually healthy: `curl -H "X-Pi-Secret: $PI_SIDECAR_SECRET" http://127.0.0.1:5100/healthz` → `{"ok":true,"cachedSessions":N}`.
+
 ### The gunicorn flags, and why each one is there
 
 ```
 gunicorn -w 4 --threads 2 -b 0.0.0.0:5001 \
-  --timeout 120 --graceful-timeout 30 \
+  --timeout 300 --graceful-timeout 30 \
   --worker-class gthread --log-level info run:app
 ```
 
@@ -45,11 +59,13 @@ gunicorn -w 4 --threads 2 -b 0.0.0.0:5001 \
 | `--threads 2` | Two request threads per worker, so **8 concurrent requests** total. Chat requests hold a thread for the whole stream, which is what makes this number matter. |
 | `--worker-class gthread` | Required for `--threads` to mean anything. It is also the reason the vendored `TRN` transaction singleton is a hazard: two threads in one worker share it. |
 | `-b 0.0.0.0:5001` | Binds all interfaces. In production nginx is the only intended client; nothing in the app restricts who may connect directly to 5001. |
-| `--timeout 120` | Gunicorn kills a worker whose request has not completed in 120 s. |
+| `--timeout 300` | Gunicorn kills a worker whose request has not completed in 300 s. Raised from 120s when the pi backend landed (see below). |
 | `--graceful-timeout 30` | On restart, workers get 30 s to finish in-flight work before `SIGKILL`. |
 | `--log-level info` | Gunicorn's *error* log level. It does not enable an access log — see [Logging](#logging-and-observability). |
 
-**`--timeout 120` versus SSE.** This is a whole-request timeout, and an SSE chat stream *is* one request. A turn that takes longer than 120 seconds — a slow model, an agent loop that runs all four iterations with a deep sample search in the middle — has its worker killed mid-stream. The browser sees a truncated stream, not an error message, because the SSE `done` event never arrives. nginx's `proxy_read_timeout 120s` is set to match; the two numbers are meant to move together, and raising one without the other converts a clean cut into a confusing one.
+**`--timeout 300` versus SSE.** This is a whole-request timeout, and an SSE chat stream *is* one request. A turn that takes longer than 300 seconds has its worker killed mid-stream. The browser sees a truncated stream, not an error message, because the SSE `done` event never arrives. nginx's `proxy_read_timeout 300s` is set to match; the two numbers are meant to move together, and raising one without the other converts a clean cut into a confusing one.
+
+**Why 300, not 120.** The original 120s budget was already tight for a single slow NRP completion (the OpenAI/Anthropic clients themselves use a 300s timeout — see [`appendix-d-configuration.md`](appendix-d-configuration.md)). Behind `PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT`, a turn can additionally include pi's own compaction pass and several sequential tool round-trips to the sidecar (each itself a synchronous HTTP call from Flask to `PI_SIDECAR_URL`) before the model produces its final answer — comfortably capable of exceeding 120s on a loaded NRP endpoint even without anything going wrong. **The sidecar has no request-level timeout of its own** (`pi_sidecar/server.mjs` streams for as long as the pi turn runs); gunicorn's `--timeout` remains the only backstop, which is why it moved rather than being left for the sidecar to enforce.
 
 Note that gunicorn's `--timeout` is a *worker liveness* check, not a wall-clock request budget in the usual sense, but for a synchronous streaming response the practical effect is the same: exceed it and the worker is recycled.
 
@@ -344,6 +360,8 @@ Nothing on this list is automated. All four items grow without bound.
 **`.env` backups accumulate, and they hold secrets.** `Qiita/barnacle_backend_env.sh` runs `cp "${ENV_FILE}" "${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"` on **every** invocation, and never prunes. Each backup is a full copy of the backend's `.env`, which on a correctly configured host contains the LLM API key and the Fernet PAT-encryption key in plaintext. The script is safe to re-run — that is the point of it — but re-running it leaves a growing set of timestamped secret files beside the live one. Prune them, and keep the directory's permissions in mind when you do.
 >
 > Tracked as **TKT-045**. Note that `helpers/pat_crypto.py` keeps the Fernet key out of SQLite specifically so a leaked database file does not also leak PATs — plaintext copies beside the database partly defeat that, so this is worth treating as a live exposure rather than housekeeping.
+
+**pi sidecar session files (only relevant if `PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT` is or was ever on).** Each chat gets one JSONL session file under `pi_sidecar/.state/sessions/`. Deleting a chat calls `POST /session/delete` on the sidecar as a best-effort cleanup (`backend/helpers/pi_client.py :: delete_session`), which removes it — but that call is skipped entirely if the deleting request's flag is off, and it's fire-and-log-only if the sidecar is unreachable at delete time. There is no reaper for orphaned session files independent of chat deletion, mirroring the pattern above: periodic pruning against SQLite's chat tables (a session file with no matching `chat_id` in either `project_chats` or `global_chats` is safe to remove) is the workaround until one exists.
 
 **None of this is scheduled.** There is no cron entry, no APScheduler, and no startup hook in the repo that performs any of the above. If these tasks are running on a host, they were added out-of-band and are not described by anything checked in.
 

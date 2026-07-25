@@ -33,6 +33,12 @@ PUBLIC_ENDPOINTS = {
     "api_auth_login_url",
     "api_auth_connect",
     "api_auth_me",
+    # Internal-only routes the pi sidecar calls, never the browser. Each
+    # authenticates independently (X-Pi-Secret / X-Tool-Token) rather than
+    # via the session cookie, so they're exempt from both the cookie check
+    # and the CSRF check below — see routes/internal_tool_routes.py.
+    "api_internal_tool_schemas",
+    "api_internal_tool_call",
 }
 
 _STATE_CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

@@ -9,6 +9,18 @@ sys.path.insert(0, str(backend_dir))
 
 
 @pytest.fixture(autouse=True)
+def isolate_dotenv(monkeypatch):
+    """config.py calls load_dotenv() at import, so whatever sits in
+    qiita_explore/.env leaks into every test process. QIITA_EXPLORE_ALLOWED_ORIGINS
+    is the one that bites: with it set, _origin_allowed() demands an Origin header
+    the Flask test client never sends, and POST /api/auth/connect 403s — which
+    fails every test that logs a principal in. Neutralise it so results depend on
+    the code under test, not on the developer's local .env."""
+    import config
+    monkeypatch.setattr(config, "ALLOWED_ORIGINS", [], raising=False)
+
+
+@pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
     """Each test gets a fresh temporary database."""
     db_path = str(tmp_path / "test.db")
