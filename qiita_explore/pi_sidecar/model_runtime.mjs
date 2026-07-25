@@ -16,16 +16,44 @@ const NRP_BASE_URL = process.env.NRP_BASE_URL || "https://ellm.nrp-nautilus.io/v
  * and always sends tool schemas, so a model that cannot do tool calling must
  * never appear in this list.
  */
+const ROSTER_RETRY_MS = 3000;
+const ROSTER_TIMEOUT_MS = 30000;
+
 async function fetchNrpModels({ flaskUrl, piSecret }) {
-  const res = await fetch(`${flaskUrl}/api/internal/models`, {
-    headers: { "x-pi-secret": piSecret },
-  });
-  if (!res.ok) {
-    throw new Error(`failed to fetch model roster: ${res.status} ${await res.text()}`);
+  // Retried, not fail-fast: Flask may still be booting. start_barnacle.sh
+  // already waits for it before launching the sidecar, but start_sidecar.sh is
+  // also a standalone entry point and a future systemd unit gives no ordering
+  // guarantee — without this, a sidecar that starts a second too early dies for
+  // good. Each attempt is logged so a genuinely wrong secret (a steady 401)
+  // reads differently from a slow start.
+  const deadline = Date.now() + ROSTER_TIMEOUT_MS;
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    let reason;
+    try {
+      const res = await fetch(`${flaskUrl}/api/internal/models`, {
+        headers: { "x-pi-secret": piSecret },
+      });
+      if (res.ok) {
+        const { models } = await res.json();
+        if (models?.length) return models;
+        reason = "Flask returned an empty model roster";
+      } else {
+        reason = `HTTP ${res.status} ${(await res.text()).slice(0, 120)}`;
+      }
+    } catch (err) {
+      reason = err.message; // connection refused while Flask is still binding
+    }
+
+    if (Date.now() + ROSTER_RETRY_MS >= deadline) {
+      throw new Error(
+        `failed to fetch model roster from ${flaskUrl} after ${attempt} attempts: ${reason}`
+      );
+    }
+    console.log(`waiting for Flask model roster (attempt ${attempt}): ${reason}`);
+    await new Promise((r) => setTimeout(r, ROSTER_RETRY_MS));
   }
-  const { models } = await res.json();
-  if (!models?.length) throw new Error("Flask returned an empty model roster");
-  return models;
 }
 
 // Anthropic models pass straight through to pi's built-in provider, which reads

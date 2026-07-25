@@ -60,13 +60,32 @@ if lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   exit 1
 fi
 
-# ── 4. Warn if the backend is unreachable, but do not block ─────────────────
-# 401 is the healthy answer here: /api/global-chats is auth-protected, so a 401
-# proves the backend is up and enforcing. 000 means nothing answered.
-CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${API_PORT}/api/global-chats" || echo 000)"
+# ── 4. Wait briefly for the backend, then serve regardless ──────────────────
+# The SSH tunnel runs in its own terminal, so it is often a second or two behind
+# this script. Poll rather than one-shot, but never block: the tunnel can come
+# up afterwards and the page will start working without restarting the server.
+# 401 is the healthy answer — /api/global-chats is auth-protected, so anything
+# other than a connection failure means the backend is up. 000 = nothing there.
+BARNACLE="${BARNACLE_HOST:-d4sharma@barnacle2.ucsd.edu}"
+echo -n "Checking the backend on :${API_PORT}"
+CODE=000
+for _ in $(seq 1 10); do
+  # `|| true`, not `|| echo 000`: curl's -w already prints 000 on a connection
+  # failure, so echoing another one yields "000000", which matches no case and
+  # broke out of this loop on the first pass instead of waiting.
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://127.0.0.1:${API_PORT}/api/global-chats" 2>/dev/null || true)"
+  [ -n "$CODE" ] && [ "$CODE" != "000" ] && break
+  echo -n "."
+  sleep 1
+done
+echo
 case "$CODE" in
-  000) echo "WARNING: nothing answering on 127.0.0.1:${API_PORT} — is the SSH tunnel up?" >&2
-       echo "         ssh -N -L 127.0.0.1:${API_PORT}:localhost:${API_PORT} d4sharma@barnacle2.ucsd.edu" >&2 ;;
+  000) echo "WARNING: nothing answering on 127.0.0.1:${API_PORT}." >&2
+       echo "         The SSH tunnel is probably not up. In another terminal:" >&2
+       echo >&2
+       echo "           ssh -N -L 127.0.0.1:${API_PORT}:localhost:${API_PORT} ${BARNACLE}" >&2
+       echo >&2
+       echo "         Serving anyway — reload the page once the tunnel is up." >&2 ;;
   401) echo "Backend reachable on :${API_PORT} (401 = up and enforcing auth)." ;;
   *)   echo "Backend on :${API_PORT} answered HTTP ${CODE}." ;;
 esac
