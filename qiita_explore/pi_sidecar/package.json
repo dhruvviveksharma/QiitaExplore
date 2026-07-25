@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Long-lived Node service embedding the pi agent loop for qiita-web chat.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node server.mjs",

@@ -41,7 +41,11 @@ npm ci   # once, or after a package-lock.json change
 PI_SIDECAR_SECRET=<same value as backend's PI_SIDECAR_SECRET> bash start_sidecar.sh
 ```
 
-It is a separate, independently-supervised process — `start_barnacle.sh` does not start it, and there is no process manager wiring the two together yet (this repo has none for gunicorn either; see the note on `systemctl` above). Requires Node ≥ 20 on `PATH` (developed and tested against 22.12; the package's declared `>=22.19.0` floor is a support-policy statement inherited from upstream pi, not a hard technical requirement — see `pi_sidecar/package.json`).
+`start_barnacle.sh` starts it: gunicorn goes up first, the script waits for it to answer, then launches the sidecar (which fetches its model roster from Flask at boot). Ctrl-C stops both, and if either dies the other is torn down. `PI_SKIP_SIDECAR=1` runs Flask alone. There is still no process manager wiring the pair into the OS (this repo has none for gunicorn either; see the note on `systemctl` above).
+
+**Requires Node ≥ 22.** An earlier version of this page called pi's declared `>=22.19.0` a support-policy floor with no technical teeth. That was wrong: on Node 20 the undici bundled in pi's dependency tree dies at import with `TypeError: webidl.util.markAsUncloneable is not a function` — a stack trace that never mentions the Node version. 22.12 is verified working, so the check in `start_sidecar.sh` is a major-version floor.
+
+Watch for **conda's node shadowing the system one**: `start_barnacle.sh` activates the `qiita-web` env before launching the sidecar, so `conda install -n qiita-web nodejs` decides which interpreter runs it, regardless of what `node -v` says in your shell. A host with 22.6 on `PATH` ran the sidecar under conda's 20.20 exactly this way. Fix with `conda install -n qiita-web -c conda-forge 'nodejs>=22.19' -y` followed by a clean `npm ci`, or set `PI_NODE_BIN=/abs/path/to/node`. `start_sidecar.sh` also records the installing major in `node_modules/.pi-node-major` and refuses to start if the running major differs.
 
 Health check: every route, including `/healthz`, requires the `X-Pi-Secret` header — a bare `curl http://127.0.0.1:5100/healthz` returns `401`, which just confirms the process is up and enforcing auth. Add the header to confirm it's actually healthy: `curl -H "X-Pi-Secret: $PI_SIDECAR_SECRET" http://127.0.0.1:5100/healthz` → `{"ok":true,"cachedSessions":N}`.
 
