@@ -10,7 +10,7 @@ function renderApp(s) {
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
-    input, sending, compErr, selectedModel, theme,
+    input, sending, compErr, actionErr, setActionErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
@@ -170,6 +170,18 @@ function renderApp(s) {
 
       {/* ══════════════════ MAIN ══════════════════════ */}
       <div className="main">
+
+        {/* Mutation failures, at the app level rather than in the composer.
+            compErr below only renders inside the composer, so a failed action on
+            the browse grid — the reported "+ Add to Project does nothing" — had
+            nowhere to appear. */}
+        {actionErr && (
+          <div className="action-error" role="alert">
+            <span className="action-error-text">{actionErr}</span>
+            <button className="action-error-close" onClick={() => setActionErr('')}
+                    aria-label="Dismiss">×</button>
+          </div>
+        )}
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}`}>
           {(view.type === 'browse' || view.type === 'merges') ? (

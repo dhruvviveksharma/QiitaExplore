@@ -1821,3 +1821,20 @@ input, textarea { font-family: var(--sans); }
   font-size: 0.82rem; color: var(--text-2);
   max-width: 90vw;
 }
+/* ── App-level action error ───────────────────────────────────
+   Mutation failures (add/remove study, create/delete, pin) surface here.
+   Deliberately NOT in the composer: .composer-error only exists inside a chat,
+   so a failed action on the browse grid had nowhere to appear. */
+.action-error {
+  display: flex; align-items: center; gap: 10px;
+  margin: 10px 16px 0; padding: 9px 12px;
+  background: var(--danger-muted, rgba(220, 38, 38, .08));
+  border: 1px solid var(--danger, #dc2626); border-radius: var(--radius-s, 6px);
+  color: var(--danger, #dc2626); font-size: 13px; line-height: 1.45;
+}
+.action-error-text { flex: 1; }
+.action-error-close {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: inherit; font-size: 18px; line-height: 1; padding: 0 2px; opacity: .7;
+}
+.action-error-close:hover { opacity: 1; }

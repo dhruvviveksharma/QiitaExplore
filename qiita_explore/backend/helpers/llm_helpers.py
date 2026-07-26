@@ -204,7 +204,20 @@ def _study_discovery_compact_block(study: dict) -> str:
 
 
 def _format_discovery_study_list(studies, header_line: str, max_chars: int):
-    """Fit as many compact study blocks as possible under max_chars."""
+    """Fit as many compact study blocks as possible under max_chars.
+
+    Appends "(showing N of M — context budget)" whenever fewer blocks fit than
+    were asked for. Callers build header_line from len(studies) BEFORE knowing
+    what fits, so without this the header asserts a count the body does not
+    contain — and the model believes it. That is exactly what produced a reply
+    reading "the system notes that 2 studies were selected, but only Study 393's
+    details appear": correct observation, and the only reason it could be made
+    was that the model noticed the contradiction itself.
+
+    Still `continue` rather than `break`: packing a later, smaller block in is
+    the right call for search results, where the list is ranked but any hit is
+    useful. What was wrong was staying silent about it.
+    """
     if not studies:
         return f"{header_line}\n(none)\n"
     chosen  = []
@@ -216,6 +229,8 @@ def _format_discovery_study_list(studies, header_line: str, max_chars: int):
             continue
         running += gap + len(block)
         chosen.append(block)
+    if len(chosen) < len(studies):
+        header_line = f"{header_line.rstrip()} (showing {len(chosen)} of {len(studies)} — context budget)"
     out = header_line.strip() + "\n\n" + "\n\n".join(chosen) if chosen else header_line.strip() + "\n"
     return out + "\n"
 
@@ -337,7 +352,20 @@ def merge_global_chat_context(selected_studies, db_studies, user_query: str, bud
         "Use database results for breadth and discovery; use selected studies when the question is "
         "specifically about those IDs or for comparison.\n"
     )
-    sel_budget = min(14000, max(1500, 400 * max(1, len(selected))))
+    # Derived from the budget the caller computed for this model, not hardcoded.
+    # This line used to read `min(14000, max(1500, 400 * len(selected)))`, which
+    # never looked at `budget` at all: on qwen3, where context_budget_chars gives
+    # 3,507,000 chars, two attached studies were allowed 1,500 — and a real
+    # compact block measures ~774 (up to ~950 once _truncate's 600-char abstract
+    # cap is hit), so the second one silently did not fit. Broken for EVERY count
+    # >= 2, not an edge case.
+    #
+    # 1,000 per study covers a full block with headroom; the 8,000 floor keeps one
+    # or two chips generous. `budget // 2` is the guard that matters — it stops
+    # attached studies starving the DATABASE SEARCH RESULTS half below, which is
+    # what the original ceiling was protecting, while still scaling with the model
+    # instead of against it.
+    sel_budget = min(max(1_000 * len(selected), 8_000), max(2_000, budget // 2))
     db_budget  = max(2000, budget - len(intro) - sel_budget - 80)
 
     sel_header = f"USER-SELECTED BROWSE CONTEXT ({len(selected)} studies):"
