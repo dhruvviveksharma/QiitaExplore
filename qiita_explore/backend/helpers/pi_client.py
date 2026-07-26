@@ -21,8 +21,9 @@ class PiSidecarError(Exception):
     """The sidecar was unreachable, rejected the request, or errored mid-stream."""
 
 
-def stream_chat(*, scope, chat_id, model, system_prompt, message,
-                 context_block=None, tool_token, timeout_seconds=290.0):
+def stream_chat(*, scope, chat_id, user_id, model, system_prompt, message,
+                 context_block=None, tool_token, session_file=None,
+                 timeout_seconds=290.0):
     """POST /chat/stream and yield one parsed pi event dict per NDJSON line.
 
     The sidecar only closes the response after the turn has fully settled
@@ -49,9 +50,21 @@ def stream_chat(*, scope, chat_id, model, system_prompt, message,
     # signs it into the scope token, and internal_tool_routes.py reads it from
     # THERE when a tool call comes back in. A body field here would just be a
     # second, unused copy of the same information.
+    # user_id scopes the sidecar's session directory and its session cache. The
+    # sidecar trusts Flask for that ROUTING, exactly as it already trusts the
+    # chat_id it is handed; the scope token remains the only thing it cannot
+    # forge and stays the authority for tool calls. Do not try to read user_id
+    # out of tool_token there — the sidecar deliberately holds no
+    # PI_SCOPE_TOKEN_KEY, so it could only decode it unverified.
+    #
+    # session_file lets it reopen the transcript with SessionManager.open()
+    # instead of scanning the session directory. None for chats predating the
+    # pi_session_file column, which fall back to the scan.
     body = {
         "scope": scope,
         "chat_id": chat_id,
+        "user_id": user_id,
+        "session_file": session_file,
         "model": model,
         "system_prompt": system_prompt,
         "message": message,
@@ -92,7 +105,7 @@ def stream_chat(*, scope, chat_id, model, system_prompt, message,
         raise PiSidecarError(f"sidecar unreachable: {exc}") from exc
 
 
-def delete_session(*, scope, chat_id, timeout_seconds=3.0):
+def delete_session(*, scope, chat_id, user_id, timeout_seconds=3.0):
     """Best-effort: dispose the sidecar's in-memory session and delete its
     JSONL file when a chat is deleted. Called from the chat-delete routes;
     failures are logged, not raised — a leaked pi session file is a cleanup
@@ -108,7 +121,7 @@ def delete_session(*, scope, chat_id, timeout_seconds=3.0):
     url = f"{config.PI_SIDECAR_URL}/session/delete"
     try:
         httpx.post(
-            url, json={"scope": scope, "chat_id": chat_id},
+            url, json={"scope": scope, "chat_id": chat_id, "user_id": user_id},
             headers={"x-pi-secret": config.PI_SIDECAR_SECRET or ""},
             timeout=timeout_seconds,
         )
@@ -116,11 +129,11 @@ def delete_session(*, scope, chat_id, timeout_seconds=3.0):
         logger.exception("failed to delete pi session for scope=%s chat_id=%s", scope, chat_id)
 
 
-def abort_session(*, scope, chat_id, timeout_seconds=10.0):
+def abort_session(*, scope, chat_id, user_id, timeout_seconds=10.0):
     url = f"{config.PI_SIDECAR_URL}/abort"
     try:
         httpx.post(
-            url, json={"scope": scope, "chat_id": chat_id},
+            url, json={"scope": scope, "chat_id": chat_id, "user_id": user_id},
             headers={"x-pi-secret": config.PI_SIDECAR_SECRET or ""},
             timeout=timeout_seconds,
         )

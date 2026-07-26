@@ -21,6 +21,7 @@ import logging
 
 from helpers.llm_helpers import _sse
 from helpers.pi_client import stream_chat as pi_stream_chat, abort_session as pi_abort_session
+from store import set_pi_session_file
 from helpers.pi_translate import TurnTranslator
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,18 @@ def stream_pi_turn(**kwargs):
         # GeneratorExit cannot itself yield a value back out.
         logger.info("pi turn abandoned mid-stream, aborting sidecar session: scope=%s chat_id=%s",
                     kwargs.get("scope"), kwargs.get("chat_id"))
-        pi_abort_session(scope=kwargs.get("scope"), chat_id=kwargs.get("chat_id"))
+        pi_abort_session(scope=kwargs.get("scope"), chat_id=kwargs.get("chat_id"),
+                          user_id=kwargs.get("user_id"))
         raise
+
+    # Persist the session path the sidecar reported, if it created one this turn.
+    # Best-effort and write-once (set_pi_session_file only fills a NULL), so a
+    # failure here costs a directory scan on the next turn, not the turn itself.
+    if translator.session_file:
+        try:
+            set_pi_session_file(kwargs["chat_id"], kwargs["scope"], translator.session_file)
+        except Exception:
+            logger.exception("could not record pi session path for chat_id=%s", kwargs.get("chat_id"))
 
     ui_payload = (
         {"kind": "agent_segments", "segments": translator.segments}

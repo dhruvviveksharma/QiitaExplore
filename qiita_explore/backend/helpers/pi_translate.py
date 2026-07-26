@@ -92,6 +92,11 @@ class TurnTranslator:
 
     def __init__(self):
         self.segments = []
+        # Set from the sidecar's `sidecar_session` line when it creates a new
+        # session, so the route can persist the JSONL path and skip the
+        # directory scan on later turns. A side-effect attribute like .segments,
+        # not an SSE event — the browser has no business knowing this path.
+        self.session_file = None
         self._started = False
         self._tool_started_at = {}
         self._text = []
@@ -141,6 +146,13 @@ class TurnTranslator:
         if not self._started and etype in _TURN_STARTED_EVENTS:
             self._started = True
             yield ("agent_start", {})
+
+        if etype == "sidecar_session":
+            # Sidecar bookkeeping, not a pi event. Captured and NOT forwarded:
+            # _handle's if/elif chain yields nothing for it, which is what keeps
+            # it off the wire.
+            self.session_file = event.get("session_file") or None
+            return
 
         if etype == "message_update":
             ame = event.get("assistantMessageEvent") or {}

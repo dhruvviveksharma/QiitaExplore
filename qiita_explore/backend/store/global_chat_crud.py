@@ -40,6 +40,41 @@ def _load_global_messages(conn, chat_id):
     return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
 
 
+def get_pi_session_file(chat_id: str, scope: str):
+    """The stored path of this chat's pi session JSONL, or None.
+
+    Lets the sidecar reopen a transcript directly instead of scanning its session
+    directory. Not user-scoped on purpose: it is read on a path where ownership
+    has already been established by the caller, and adding a user_id predicate
+    here would imply this is itself an authorization check, which it is not.
+    """
+    from store.cache import SCOPE_GLOBAL
+    table = "global_chats" if scope == SCOPE_GLOBAL else "project_chats"
+    with _conn() as conn:
+        row = conn.execute(
+            f"SELECT pi_session_file FROM {table} WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+    return row["pi_session_file"] if row else None
+
+
+def set_pi_session_file(chat_id: str, scope: str, session_file: str):
+    """Record the path the sidecar reports on first session creation.
+
+    Write-once in practice: only set when currently NULL, so a stale value from
+    a concurrent turn cannot clobber a live one.
+    """
+    from store.cache import SCOPE_GLOBAL
+    if not session_file:
+        return
+    table = "global_chats" if scope == SCOPE_GLOBAL else "project_chats"
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE {table} SET pi_session_file = ? WHERE chat_id = ? AND pi_session_file IS NULL",
+            (session_file, chat_id),
+        )
+        conn.commit()
+
+
 def load_global_chat_history(chat_id: str):
     """role/content only — what build_full_msgs needs and all it ever reads.
 

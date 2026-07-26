@@ -62,9 +62,12 @@ describe("full turn via faux provider (offline, deterministic)", () => {
 
       assert.ok(JSON.stringify(seenContext).includes("canary-xyz"), "context reached the provider request");
 
-      const sessionFiles = fs.readdirSync(`${h.stateDir}/sessions`).filter((f) => f.endsWith(".jsonl"));
+      // Sessions live under sessions/<userDir>/ now. This harness passes no
+      // userId, so userDirFor() files them under "_shared".
+      const userSessionDir = `${h.stateDir}/sessions/_shared`;
+      const sessionFiles = fs.readdirSync(userSessionDir).filter((f) => f.endsWith(".jsonl"));
       assert.equal(sessionFiles.length, 1);
-      const persisted = fs.readFileSync(`${h.stateDir}/sessions/${sessionFiles[0]}`, "utf8");
+      const persisted = fs.readFileSync(`${userSessionDir}/${sessionFiles[0]}`, "utf8");
       assert.ok(!persisted.includes("canary-xyz"), "context block must not leak into the persisted transcript");
       assert.ok(persisted.includes("hello"), "the real user message is still persisted verbatim");
     } finally {
@@ -393,6 +396,161 @@ describe("one-search-per-message budget", () => {
         await runTurnCollectingEvents(h.sessionStore, entry, { message: msg });
       }
       assert.equal(h.flask.calls.length, 2, "each user message gets its own search budget");
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("per-user session isolation", () => {
+  const idFor = (dir, file) => `${dir}/${file}`;
+
+  test("two users with the SAME chat_id get separate sessions and separate files", async () => {
+    // chat_ids are SQLite-generated so a collision is not a practical risk, but
+    // the cache must not be the only thing standing between two users'
+    // transcripts. Before per-user keying, this returned one shared session.
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      const a = await h.sessionStore.getOrCreate("global-collide", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+      });
+      const b = await h.sessionStore.getOrCreate("global-collide", {
+        model: h.model, systemPrompt: "t", userId: "990002",
+      });
+      assert.notEqual(a, b, "same chat_id, different users — must not share a session");
+      assert.equal(h.sessionStore.cacheSize(), 2);
+
+      for (const u of ["990001", "990002"]) {
+        h.faux.setResponses([fauxAssistantMessage("ack")]);
+        const entry = await h.sessionStore.getOrCreate("global-collide", {
+          model: h.model, systemPrompt: "t", userId: u,
+        });
+        await runTurnCollectingEvents(h.sessionStore, entry, { message: `hello from ${u}` });
+      }
+      for (const u of ["990001", "990002"]) {
+        const dir = `${h.stateDir}/sessions/${u}`;
+        const files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+        assert.equal(files.length, 1, `${u} should own exactly one session file`);
+        const body = fs.readFileSync(`${dir}/${files[0]}`, "utf8");
+        assert.ok(body.includes(`hello from ${u}`));
+        assert.ok(!body.includes(u === "990001" ? "990002" : "990001"),
+          "one user's transcript must not contain the other's message");
+      }
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a cache hit whose owner differs throws instead of handing over the session", async () => {
+    // Unreachable while the cache key includes the user dir — which is the point.
+    // If the key scheme is ever loosened this fails loudly rather than silently
+    // serving one user another's live AgentSession.
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      await h.sessionStore.getOrCreate("global-owner", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+      });
+      // Reach past the public API to simulate the loosened-key scenario.
+      const entry = await h.sessionStore.getOrCreate("global-owner", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+      });
+      entry.ownerDir = "someone-else";
+      // Synchronous throw, matching assertValidSessionId's existing behaviour in
+      // the same function — so assert.throws, not assert.rejects.
+      assert.throws(
+        () => h.sessionStore.getOrCreate("global-owner", {
+          model: h.model, systemPrompt: "t", userId: "990001",
+        }),
+        /owned by another user/,
+      );
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("deleting one user's session leaves the other user's file alone", async () => {
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      for (const u of ["990001", "990002"]) {
+        h.faux.setResponses([fauxAssistantMessage("ack")]);
+        const e = await h.sessionStore.getOrCreate("global-del", {
+          model: h.model, systemPrompt: "t", userId: u,
+        });
+        await runTurnCollectingEvents(h.sessionStore, e, { message: "hi" });
+      }
+      await h.sessionStore.deleteSession("global-del", { userId: "990001" });
+
+      assert.equal(fs.readdirSync(`${h.stateDir}/sessions/990001`).filter((f) => f.endsWith(".jsonl")).length, 0);
+      assert.equal(fs.readdirSync(`${h.stateDir}/sessions/990002`).filter((f) => f.endsWith(".jsonl")).length, 1,
+        "the other user's transcript must survive");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a stored session path outside the caller's directory is refused", async () => {
+    // Defence in depth: Flask supplies this path, so a bug there must not let a
+    // delete reach into another user's directory.
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      h.faux.setResponses([fauxAssistantMessage("ack")]);
+      const victim = await h.sessionStore.getOrCreate("global-victim", {
+        model: h.model, systemPrompt: "t", userId: "990002",
+      });
+      await runTurnCollectingEvents(h.sessionStore, victim, { message: "keep me" });
+      const victimDir = `${h.stateDir}/sessions/990002`;
+      const victimFile = `${victimDir}/${fs.readdirSync(victimDir).find((f) => f.endsWith(".jsonl"))}`;
+
+      // 990001 asks to delete, naming 990002's file.
+      await h.sessionStore.deleteSession("global-victim", {
+        userId: "990001", sessionFile: victimFile,
+      });
+      assert.ok(fs.existsSync(victimFile), "the other user's file must not be deleted");
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("session path is reported and reused", () => {
+  test("a newly created session reports its file, and reopening it skips the scan", async () => {
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      const created = await h.sessionStore.getOrCreate("global-path", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+      });
+      assert.ok(created.createdSessionFile, "a fresh session must report its path for Flask to store");
+      assert.match(created.createdSessionFile, /_global-path\.jsonl$/);
+      assert.ok(created.createdSessionFile.includes("/990001/"), "path must sit under the user's directory");
+
+      h.faux.setResponses([fauxAssistantMessage("ack")]);
+      await runTurnCollectingEvents(h.sessionStore, created, { message: "first" });
+
+      // Force a genuinely COLD reopen: backdate lastUsed so evictIdle disposes
+      // the cached entry. Without this the second getOrCreate is just a cache
+      // hit, which returns the same entry and proves nothing about reopening.
+      created.lastUsed = 0;
+      h.sessionStore.evictIdle();
+      assert.equal(h.sessionStore.cacheSize(), 0, "entry must actually be evicted");
+      const reopened = await h.sessionStore.getOrCreate("global-path", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+        sessionFile: created.createdSessionFile,
+      });
+      assert.equal(reopened.createdSessionFile, null,
+        "reopening an existing session must NOT report a path — Flask already has it");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a stored path that no longer exists degrades to the scan, not an error", async () => {
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      const entry = await h.sessionStore.getOrCreate("global-stale", {
+        model: h.model, systemPrompt: "t", userId: "990001",
+        sessionFile: `${h.stateDir}/sessions/990001/1999-01-01T00-00-00-000Z_global-stale.jsonl`,
+      });
+      assert.ok(entry.session, "a reaped or hand-moved file must not wedge the chat permanently");
     } finally {
       await h.cleanup();
     }

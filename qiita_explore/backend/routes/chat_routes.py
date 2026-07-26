@@ -9,6 +9,7 @@ from helpers.pi_client import delete_session as pi_delete_session
 from helpers.pi_turn import stream_pi_turn
 from helpers.scope_token import mint_scope_token
 from store import (
+    get_pi_session_file,
     SCOPE_PROJECT,
     append_chat_messages,
     create_chat,
@@ -108,7 +109,7 @@ def api_delete_chat(project_id, chat_id):
     delete_chat(project_id, g.user_id, chat_id)
     # See api_delete_global_chat — not gated on the rollout flag, since a chat
     # created while it was on still has a pi session to clean up afterwards.
-    pi_delete_session(scope=SCOPE_PROJECT, chat_id=chat_id)
+    pi_delete_session(scope=SCOPE_PROJECT, chat_id=chat_id, user_id=g.user_id)
     return jsonify({'ok': True})
 
 
@@ -158,7 +159,8 @@ def api_chat_message_stream(project_id, chat_id):
                     project_id=project_id, ttl_seconds=config.PI_SCOPE_TOKEN_TTL_SECONDS,
                 )
                 assistant_parts, ui_payload = yield from stream_pi_turn(
-                    scope=SCOPE_PROJECT, chat_id=chat_id, model=model,
+                    scope=SCOPE_PROJECT, chat_id=chat_id, user_id=user_id, model=model,
+                    session_file=get_pi_session_file(chat_id, SCOPE_PROJECT),
                     system_prompt=PROJECT_CHAT_AGENT_SYSTEM_PROMPT,
                     message=user_content, context_block=combined_ctx,
                     tool_token=tool_token,

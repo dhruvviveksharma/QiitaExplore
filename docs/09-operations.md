@@ -371,7 +371,27 @@ Nothing on this list is automated. All four items grow without bound.
 >
 > Tracked as **TKT-045**. Note that `helpers/pat_crypto.py` keeps the Fernet key out of SQLite specifically so a leaked database file does not also leak PATs — plaintext copies beside the database partly defeat that, so this is worth treating as a live exposure rather than housekeeping.
 
-**pi sidecar session files (only relevant if `PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT` is or was ever on).** Each chat gets one JSONL session file under `pi_sidecar/.state/sessions/`. Deleting a chat calls `POST /session/delete` on the sidecar as a best-effort cleanup (`backend/helpers/pi_client.py :: delete_session`), which removes it — but that call is skipped entirely if the deleting request's flag is off, and it's fire-and-log-only if the sidecar is unreachable at delete time. There is no reaper for orphaned session files independent of chat deletion, mirroring the pattern above: periodic pruning against SQLite's chat tables (a session file with no matching `chat_id` in either `project_chats` or `global_chats` is safe to remove) is the workaround until one exists.
+**pi sidecar session files (only relevant if `PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT` is or was ever on).** Each chat gets one JSONL session file under `pi_sidecar/.state/sessions/<user_id>/` — **per user**, since the layout change described below. Deleting a chat calls `POST /session/delete` on the sidecar as a best-effort cleanup (`backend/helpers/pi_client.py :: delete_session`), which removes it — but that call is skipped entirely if the deleting request's flag is off, and it's fire-and-log-only if the sidecar is unreachable at delete time. There is no reaper for orphaned session files independent of chat deletion, mirroring the pattern above: periodic pruning against SQLite's chat tables (a session file with no matching `chat_id` in either `project_chats` or `global_chats` is safe to remove) is the workaround until one exists.
+
+### Per-user session directories, and the one-shot migration
+
+Sessions used to sit in one flat directory shared by every user. They are now filed under the owning `user_id`, which makes ownership a filesystem property rather than resting solely on Flask's `get_global_chat(user_id, chat_id)` check, and scopes the sidecar's fallback directory scan to one user's chats instead of every chat ever created. `global_chats`/`project_chats` also gained a `pi_session_file` column, so the usual path is `SessionManager.open(storedPath)` with no scan at all.
+
+**Existing installs must run the migration once.** Without it every pre-existing chat looks session-less to the sidecar, which silently starts a fresh transcript — history loss with no error anywhere:
+
+```bash
+cd ~/qiita-web/qiita_explore/backend
+conda activate qiita-web
+python3 migrate_pi_sessions.py --dry-run    # prints the plan, touches nothing
+python3 migrate_pi_sessions.py
+```
+
+It recovers each file's owner by looking its `chat_id` up in SQLite (the filename carries scope and chat_id but not the user), verifies the SHA-256 across the move, and backfills `pi_session_file`. Files whose `chat_id` matches no row go to `_orphaned/` rather than being deleted — those are exactly the leaked JSONLs described above, so the migration is also the first time they get surfaced.
+
+Two operational constraints:
+
+- **Run it on barnacle, in place.** Session files are verbatim user conversations. `.state/` is gitignored (`pi_sidecar/.gitignore`, a directory rule, so the new per-user subdirectories and `_orphaned/` are covered), and they should not be copied off-host to be processed.
+- **It refuses to run if `global_chats` and `project_chats` are both empty**, which is what a wrong `QIITA_EXPERIMENT_DB_PATH` looks like — continuing would quarantine every session as an orphan.
 
 **None of this is scheduled.** There is no cron entry, no APScheduler, and no startup hook in the repo that performs any of the above. If these tasks are running on a host, they were added out-of-band and are not described by anything checked in.
 

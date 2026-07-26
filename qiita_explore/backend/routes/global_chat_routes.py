@@ -10,6 +10,7 @@ from helpers.pi_client import delete_session as pi_delete_session
 from helpers.pi_turn import stream_pi_turn
 from helpers.scope_token import mint_scope_token
 from store import (
+    get_pi_session_file,
     SCOPE_GLOBAL,
     append_global_chat_messages,
     create_global_chat,
@@ -64,7 +65,7 @@ def api_delete_global_chat(chat_id):
     # Best-effort, and deliberately not gated on PI_BACKEND_GLOBAL: a chat
     # created while the flag was on still has a pi session after it is flipped
     # off. delete_session() no-ops when pi isn't configured at all.
-    pi_delete_session(scope=SCOPE_GLOBAL, chat_id=chat_id)
+    pi_delete_session(scope=SCOPE_GLOBAL, chat_id=chat_id, user_id=g.user_id)
     return jsonify({'ok': True})
 
 
@@ -137,7 +138,8 @@ def api_global_chat_message_stream(chat_id):
                     # (helpers/pi_client.py) no longer accepts it as a
                     # separate parameter.
                     assistant_parts, ui_payload = yield from stream_pi_turn(
-                        scope=SCOPE_GLOBAL, chat_id=chat_id, model=model,
+                        scope=SCOPE_GLOBAL, chat_id=chat_id, user_id=user_id, model=model,
+                        session_file=get_pi_session_file(chat_id, SCOPE_GLOBAL),
                         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                         message=user_content, context_block=combined_ctx,
                         tool_token=tool_token,

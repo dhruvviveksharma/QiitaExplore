@@ -75,7 +75,7 @@ async function handleChatStream(req, res) {
     return;
   }
 
-  const { scope, chat_id, model, system_prompt, context_block, message, tool_token } = body;
+  const { scope, chat_id, user_id, session_file, model, system_prompt, context_block, message, tool_token } = body;
   if (!scope || !chat_id || !model || !message) {
     res.writeHead(400, { "content-type": "application/json" }).end(
       JSON.stringify({ error: "scope, chat_id, model, and message are required" })
@@ -95,7 +95,14 @@ async function handleChatStream(req, res) {
 
   let entry;
   try {
-    entry = await sessionStore.getOrCreate(sessionKey, { model: resolvedModel, systemPrompt: system_prompt });
+    entry = await sessionStore.getOrCreate(sessionKey, {
+      model: resolvedModel, systemPrompt: system_prompt,
+      // user_id scopes the session directory and the session cache. Flask is the
+      // routing authority here — the same trust level it already has for
+      // chat_id. session_file is the stored JSONL path, letting us skip the
+      // directory scan; null for chats predating the pi_session_file column.
+      userId: user_id, sessionFile: session_file,
+    });
   } catch (err) {
     res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: String(err.message) }));
     return;
@@ -110,6 +117,14 @@ async function handleChatStream(req, res) {
     if (!res.writableEnded) res.write(JSON.stringify(obj) + "\n");
   };
 
+  // Not a pi event: sidecar bookkeeping so Flask can persist the path of a
+  // session we just created and stop scanning for it. Emitted before the turn so
+  // it survives a turn that errors. pi_translate consumes it and does NOT
+  // forward it to the browser.
+  if (entry.createdSessionFile) {
+    writeLine({ type: "sidecar_session", session_file: entry.createdSessionFile });
+  }
+
   // Abort the in-flight turn if the client goes away before it settles — e.g.
   // Flask's generator was abandoned because the browser disconnected (a new
   // message sent before the previous one finished, or the tab closed).
@@ -119,7 +134,7 @@ async function handleChatStream(req, res) {
   // this chat just waits behind the orphaned one instead of failing fast.
   let turnSettled = false;
   const onClientGone = () => {
-    if (!turnSettled) sessionStore.abortSession(sessionKey).catch(() => {});
+    if (!turnSettled) sessionStore.abortSession(sessionKey, { userId: user_id }).catch(() => {});
   };
   res.on("close", onClientGone);
 
@@ -142,12 +157,12 @@ async function handleSessionDelete(req, res) {
     res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "invalid JSON body" }));
     return;
   }
-  const { scope, chat_id } = body;
+  const { scope, chat_id, user_id, session_file } = body;
   if (!scope || !chat_id) {
     res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "scope and chat_id are required" }));
     return;
   }
-  await sessionStore.deleteSession(sessionKeyFor(scope, chat_id));
+  await sessionStore.deleteSession(sessionKeyFor(scope, chat_id), { userId: user_id, sessionFile: session_file });
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true }));
 }
 
@@ -159,12 +174,12 @@ async function handleAbort(req, res) {
     res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "invalid JSON body" }));
     return;
   }
-  const { scope, chat_id } = body;
+  const { scope, chat_id, user_id } = body;
   if (!scope || !chat_id) {
     res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "scope and chat_id are required" }));
     return;
   }
-  await sessionStore.abortSession(sessionKeyFor(scope, chat_id));
+  await sessionStore.abortSession(sessionKeyFor(scope, chat_id), { userId: user_id });
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true }));
 }
 

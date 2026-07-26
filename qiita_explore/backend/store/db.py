@@ -272,6 +272,14 @@ def _create_schema(conn):
         ("merge_workspace_studies", "chosen_artifact_ids", "TEXT"),
         ("project_chat_messages", "ui_payload", "TEXT"),
         ("global_chat_messages", "ui_payload", "TEXT"),
+        # Absolute path of this chat's pi session JSONL. Lets the sidecar reopen
+        # a transcript with SessionManager.open(path) instead of readdir-ing the
+        # session directory and matching a filename suffix, which was O(all
+        # chats ever created) — see pi_sidecar/sessions.mjs :: findExistingPath.
+        # NULL for chats created before this column; those still fall back to the
+        # scan.
+        ("project_chats", "pi_session_file", "TEXT"),
+        ("global_chats", "pi_session_file", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")

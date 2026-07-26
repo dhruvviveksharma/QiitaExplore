@@ -130,11 +130,36 @@ function makeSearchBudgetRefunder(searchStateRef) {
   };
 }
 
+/**
+ * Directory component for one user's sessions.
+ *
+ * Sanitised the same defensive way server.mjs's sessionKeyFor treats chat_id.
+ * Note this MUST be a separate path segment rather than part of the session key:
+ * VALID_SESSION_ID forbids "/", which is what stops a crafted id escaping the
+ * session directory, so a key like "990001/global-abc" would simply be rejected.
+ *
+ * Empty/missing user_id lands in "_shared" rather than throwing. That is the
+ * pre-per-user layout's behaviour for anything that reaches the sidecar without
+ * one, and failing a turn over a directory name would be worse than filing it
+ * somewhere predictable.
+ */
+export function userDirFor(userId) {
+  const safe = String(userId ?? "").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return safe || "_shared";
+}
+
 export function createSessionStore({
   cwd, agentDir, sessionDir, modelRuntime, flaskUrl, piSecret,
   maxCachedSessions = DEFAULT_MAX_CACHED_SESSIONS,
 }) {
-  const cache = new Map(); // sessionKey -> { session, contextRef, lastUsed, turnQueue }
+  // Keyed `${userDir}/${sessionKey}`, not sessionKey alone: two users whose
+  // chats shared an id would otherwise share a cached AgentSession. chat_ids are
+  // SQLite-generated so that is not a practical collision today, but the cache
+  // must not be the only thing standing between two users' transcripts. Each
+  // entry also records ownerDir, and a hit whose owner differs throws — the key
+  // alone would make a mismatch a silent cache miss that quietly builds a second
+  // session, where the explicit check surfaces it.
+  const cache = new Map(); // cacheKey -> { session, contextRef, ownerDir, lastUsed, turnQueue }
   // sessionKey -> in-progress Promise<entry>. Closes a race in getOrCreate: two
   // requests for the same chat arriving close together (a double-send, a
   // retry, or two of gunicorn's threads) both miss `cache` before either
@@ -148,6 +173,16 @@ export function createSessionStore({
 
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(cwd, { recursive: true });
+
+  // sessionDir is now a BASE; each user gets a subdirectory under it. Ownership
+  // becomes a filesystem property rather than resting solely on Flask's
+  // get_global_chat(user_id, chat_id) check, and the readdir fallback below
+  // scans only one user's chats instead of every chat ever created.
+  function dirForUser(userDir) {
+    const dir = path.join(sessionDir, userDir);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
 
   // SessionManager.create() names files "<timestamp>_<id>.jsonl", so the id is
   // recoverable from the filename alone. Matching on that instead of
@@ -163,20 +198,31 @@ export function createSessionStore({
   // runs — on a directory that only grows, since nothing here prunes old
   // session files. The async form yields the same result without stalling
   // in-flight streams on other sessions while it does.
-  async function findExistingPath(sessionKey) {
+  // FALLBACK ONLY, for chats whose pi_session_file column is still NULL. Flask
+  // now stores the path it gets back from a new session and sends it on later
+  // turns, so the common case never reaches this scan at all.
+  async function findExistingPath(sessionKey, userDir) {
+    const dir = dirForUser(userDir);
     const suffix = `_${sessionKey}.jsonl`;
     let newest = null;
-    for (const name of await fs.promises.readdir(sessionDir)) {
+    for (const name of await fs.promises.readdir(dir)) {
       if (name.endsWith(suffix) && (newest === null || name > newest)) newest = name;
     }
-    return newest ? path.join(sessionDir, newest) : null;
+    return newest ? path.join(dir, newest) : null;
   }
 
-  async function buildSession(sessionKey, { model, systemPrompt }) {
-    const existingPath = await findExistingPath(sessionKey);
+  async function buildSession(sessionKey, { model, systemPrompt, userDir, sessionFile }) {
+    const dir = dirForUser(userDir);
+    // Prefer the path Flask stored; fall back to scanning this user's directory.
+    // Only trust a stored path that still exists — a hand-moved or reaped file
+    // would otherwise make SessionManager.open throw on every turn forever,
+    // where the scan (or a fresh session) recovers.
+    let existingPath = sessionFile && fs.existsSync(sessionFile) ? sessionFile : null;
+    if (!existingPath) existingPath = await findExistingPath(sessionKey, userDir);
+
     const sessionManager = existingPath
-      ? SessionManager.open(existingPath, sessionDir, cwd)
-      : SessionManager.create(cwd, sessionDir, { id: sessionKey });
+      ? SessionManager.open(existingPath, dir, cwd)
+      : SessionManager.create(cwd, dir, { id: sessionKey });
 
     const contextRef = { block: null };
     // Read fresh (not captured) at call time inside tools.mjs's execute(), so a
@@ -201,10 +247,13 @@ export function createSessionStore({
     });
     await resourceLoader.reload();
 
-    // Isolated to agentDir (never touches the host's ~/.pi/agent). projectTrusted:
-    // true means no trust prompting is even possible — belt-and-suspenders on top
-    // of cwd already being a dedicated empty dir with nothing that would require it.
-    const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
+    // In memory, not a file under agentDir. These values are identical for every
+    // user and every chat, so there is no reason for them to live on disk where
+    // something could edit them out from under a running process — and it leaves
+    // agentDir holding only auth.json. projectTrusted: true means no trust
+    // prompting is even possible, belt-and-suspenders on top of cwd already being
+    // a dedicated empty directory with nothing in it that would require trust.
+    const settingsManager = SettingsManager.inMemory({}, { projectTrusted: true });
 
     const tools = await loadTools({
       flaskUrl,
@@ -228,34 +277,53 @@ export function createSessionStore({
       noTools: "builtin",
     });
 
-    return { session, contextRef, toolTokenRef, lastUsed: Date.now(), turnQueue: null };
+    return {
+      session, contextRef, toolTokenRef,
+      ownerDir: userDir,
+      // Reported back to Flask so it can store it and skip the scan next time.
+      // Only surfaced when we CREATED the session — reopening an existing one
+      // means Flask either already knows the path or is about to learn it from
+      // the fallback scan, which is the NULL-column case.
+      createdSessionFile: existingPath ? null : (sessionManager.getSessionFile?.() ?? null),
+      lastUsed: Date.now(), turnQueue: null,
+    };
   }
 
-  function getOrCreate(sessionKey, { model, systemPrompt }) {
+  function getOrCreate(sessionKey, { model, systemPrompt, userId, sessionFile }) {
     assertValidSessionId(sessionKey);
-    const cached = cache.get(sessionKey);
+    const userDir = userDirFor(userId);
+    const cacheKey = `${userDir}/${sessionKey}`;
+
+    const cached = cache.get(cacheKey);
     if (cached) {
+      // Cannot happen while the key includes userDir, which is exactly why it is
+      // worth asserting: if the key scheme is ever loosened, or Flask sends a
+      // user_id that does not match the chat it is asking about, this throws
+      // instead of silently handing one user another's live AgentSession.
+      if (cached.ownerDir !== userDir) {
+        throw new Error(`session ${sessionKey} is owned by another user`);
+      }
       cached.lastUsed = Date.now();
       return Promise.resolve(cached);
     }
 
-    const existingBuild = inflight.get(sessionKey);
+    const existingBuild = inflight.get(cacheKey);
     if (existingBuild) return existingBuild;
 
     // inflight.set happens synchronously, before buildSession's first await —
-    // any concurrent getOrCreate for this sessionKey, no matter which await
-    // point it arrives at, converges on this SAME promise instead of starting
-    // a second build.
-    const buildPromise = buildSession(sessionKey, { model, systemPrompt })
+    // any concurrent getOrCreate for this key, no matter which await point it
+    // arrives at, converges on this SAME promise instead of starting a second
+    // build.
+    const buildPromise = buildSession(sessionKey, { model, systemPrompt, userDir, sessionFile })
       .then((entry) => {
-        cache.set(sessionKey, entry);
+        cache.set(cacheKey, entry);
         evictLruIfOverCap();
         return entry;
       })
       .finally(() => {
-        inflight.delete(sessionKey);
+        inflight.delete(cacheKey);
       });
-    inflight.set(sessionKey, buildPromise);
+    inflight.set(cacheKey, buildPromise);
     return buildPromise;
   }
 
@@ -345,20 +413,29 @@ export function createSessionStore({
   const sweepTimer = setInterval(evictIdle, SWEEP_INTERVAL_MS);
   sweepTimer.unref();
 
-  async function deleteSession(sessionKey) {
-    const cached = cache.get(sessionKey);
+  async function deleteSession(sessionKey, { userId, sessionFile } = {}) {
+    const userDir = userDirFor(userId);
+    const cacheKey = `${userDir}/${sessionKey}`;
+    const cached = cache.get(cacheKey);
     if (cached) {
       cached.session.dispose();
-      cache.delete(sessionKey);
+      cache.delete(cacheKey);
     }
-    const existingPath = await findExistingPath(sessionKey);
-    if (existingPath && fs.existsSync(existingPath)) {
-      fs.unlinkSync(existingPath);
+    // Scoped to this user's directory, so a delete can only ever remove a file
+    // under the caller's own path — even if the sessionKey were somehow another
+    // user's chat id.
+    let target = sessionFile && fs.existsSync(sessionFile) ? sessionFile : null;
+    if (target && path.dirname(path.resolve(target)) !== path.resolve(dirForUser(userDir))) {
+      // A stored path pointing outside the caller's directory is not something
+      // to act on: refuse it and fall back to the scoped scan.
+      target = null;
     }
+    if (!target) target = await findExistingPath(sessionKey, userDir);
+    if (target && fs.existsSync(target)) fs.unlinkSync(target);
   }
 
-  async function abortSession(sessionKey) {
-    const cached = cache.get(sessionKey);
+  async function abortSession(sessionKey, { userId } = {}) {
+    const cached = cache.get(`${userDirFor(userId)}/${sessionKey}`);
     if (cached) await cached.session.abort();
   }
 

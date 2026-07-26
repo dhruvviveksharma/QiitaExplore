@@ -66,7 +66,7 @@ def ndjson_server():
 
 def _consume(**kwargs):
     return list(stream_chat(
-        scope="global", chat_id="c1", model="qwen3", system_prompt="test",
+        scope="global", chat_id="c1", user_id="u1", model="qwen3", system_prompt="test",
         message="hi", tool_token="tok", **kwargs,
     ))
 
