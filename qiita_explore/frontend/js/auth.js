@@ -63,10 +63,18 @@ function ConnectQiita({ onConnected }) {
   const [error,    setError]    = useState('');
 
   useEffect(() => {
+    // Say so when this fails. Swallowing it left the button permanently
+    // disabled with no explanation anywhere — clicking did nothing, and an
+    // unreachable backend was indistinguishable from a working one. That is
+    // the whole visible symptom of a wrong api-base or a down tunnel, and it
+    // reads to the user as "the login button is broken".
     apiFetch('/auth/login-url')
       .then(r => r.json())
       .then(d => setLoginUrl(d.url))
-      .catch(() => {});
+      .catch(() => setError(
+        `Cannot reach the backend at ${API}. Check it is running and, if you ` +
+        `tunnel to it, that the tunnel's local end matches that port.`
+      ));
   }, []);
 
   const handleConnect = async () => {
