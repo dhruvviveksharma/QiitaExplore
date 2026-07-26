@@ -163,16 +163,28 @@ def _study_detail_block(study: dict, include_samples_context: bool = True):
     )
 
 
+def _format_pi_line(pi_name, pi_affiliation) -> str:
+    """'Noah Fierer (University of Colorado)', degrading to the name alone, the
+    affiliation alone, or 'N/A' as fields go missing.
+
+    Shared so the three places that show a study to the model agree: search
+    results (_study_discovery_compact_block), the report block
+    (qiita_fetch._build_full_samples_block), and the project workspace manifest.
+    They did not agree before — only search carried the PI, so a model that had
+    read a study report would state, correctly for its own context and wrongly
+    for the user, that no PI information existed."""
+    pi  = _truncate(pi_name or "N/A", 80)
+    aff = _truncate((pi_affiliation or "").strip(), 80)
+    if not aff:
+        return pi
+    return f"{pi} ({aff})" if pi != "N/A" else aff
+
+
 def _study_discovery_compact_block(study: dict) -> str:
     """One study, minimal lines for global discovery (no sample metadata dump)."""
     sid   = study.get("study_id")
     title = _truncate(study.get("study_title") or "Untitled study", 140)
-    pi    = _truncate(study.get("pi_name") or "N/A", 80)
-    aff   = _truncate((study.get("pi_affiliation") or "").strip(), 80)
-    if aff:
-        pi_line = f"{pi} ({aff})" if pi != "N/A" else aff
-    else:
-        pi_line = pi
+    pi_line = _format_pi_line(study.get("pi_name"), study.get("pi_affiliation"))
     abstract = _truncate((study.get("study_abstract") or "").strip() or "Not available", 600)
     dt       = _truncate((study.get("data_types") or "").strip(), 80)
     ns       = study.get("num_samples")
@@ -459,5 +471,10 @@ def _build_workspace_manifest(proj) -> str:
     for s in studies:
         title = (s.get("study_title") or "Untitled study").strip()
         dtypes = s.get("data_types") or "unknown"
-        lines.append(f"- Study {s.get('study_id')}: {title} ({dtypes})")
+        # PI included so workspace-wide questions about investigators are
+        # answerable without a tool call at all. project_studies already stores
+        # pi_name/pi_affiliation (store/db.py, selected in crud.py), so this is
+        # a read of rows already loaded — no extra query, ~25 chars per study.
+        pi = _format_pi_line(s.get("pi_name"), s.get("pi_affiliation"))
+        lines.append(f"- Study {s.get('study_id')}: {title} ({dtypes}) | PI: {pi}")
     return "\n".join(lines)

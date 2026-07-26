@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from helpers.pg_pool import pooled_fetchall
-from helpers.llm_helpers import _truncate
+from helpers.llm_helpers import _truncate, _format_pi_line
 
 from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
 from store import (
@@ -285,8 +285,16 @@ def _build_full_samples_block(study_id: int, budget_chars: int):
     num_samples = (header or {}).get("num_samples") or (len(samples) if samples else 0)
     data_types  = (header or {}).get("data_types") or ""
 
+    # PI comes from the same header dict the ui_payload uses
+    # (_build_samples_report_payload puts pi_name/pi_affiliation in `header`,
+    # which the chat card renders). It was missing from THIS string — the one
+    # the model actually receives — so a model asked "who is the PI" would read
+    # five reports and truthfully report that its context held no PI, while the
+    # name sat on screen above every answer.
+    pi_line = _format_pi_line((header or {}).get("pi_name"), (header or {}).get("pi_affiliation"))
     lines = [
         f"### Study {study_id}: {_truncate(title, 140)}",
+        f"  PI: {pi_line}",
         f"  Data Types: {data_types or 'Not available'} | Total samples: {num_samples} | In report: {len(samples)}",
     ]
     if not samples:

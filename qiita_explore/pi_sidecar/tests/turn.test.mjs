@@ -301,3 +301,100 @@ describe("full turn via faux provider (offline, deterministic)", () => {
     }
   });
 });
+
+describe("one-search-per-message budget", () => {
+  // No coverage existed for this gate at all before these three, which is why
+  // the executed=false hole below shipped.
+
+  const searchTwiceThenAnswer = (h) =>
+    h.faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["mice"] })], { stopReason: "toolUse" }),
+      fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["gut"] })], { stopReason: "toolUse" }),
+      fauxAssistantMessage("done."),
+    ]);
+
+  test("a search that DID work blocks a second search in the same message", async () => {
+    const h = await createTestHarness({
+      toolSchemas: [SEARCH_STUDIES_SCHEMA],
+      toolHandlers: {
+        search_studies: async () => ({
+          text: "Found study 11043", label: "Search complete", detail: "1 study",
+          ui_payload: null, executed: true,
+        }),
+      },
+    });
+    try {
+      searchTwiceThenAnswer(h);
+      const entry = await h.sessionStore.getOrCreate("global-budget-1", { model: h.model, systemPrompt: "t" });
+      const events = await runTurnCollectingEvents(h.sessionStore, entry, { message: "find mice" });
+
+      assert.equal(h.flask.calls.length, 1, "the second search must never reach Flask");
+      const ends = events.filter((e) => e.type === "tool_execution_end");
+      assert.equal(ends.length, 2, "the blocked call still reports back to the model");
+      assert.equal(ends[0].isError, false);
+      assert.equal(ends[1].isError, true);
+      assert.match(JSON.stringify(ends[1]), /already ran for this message/);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a search REJECTED for empty input leaves the budget unspent", async () => {
+    // The live failure: the model called search_studies {}, Flask answered
+    // "No keywords provided — cannot search" (executed=false), and the gate had
+    // already charged the budget in its pre-execution hook — so the model's own
+    // retry was blocked and it concluded the data did not exist.
+    const h = await createTestHarness({
+      toolSchemas: [SEARCH_STUDIES_SCHEMA],
+      toolHandlers: {
+        search_studies: async (args) =>
+          (args.keywords || []).length === 0
+            ? { text: "No keywords provided — cannot search.", label: "Search studies",
+                detail: "no keywords", ui_payload: null, executed: false }
+            : { text: "Found study 11043", label: "Search complete", detail: "1 study",
+                ui_payload: null, executed: true },
+      },
+    });
+    try {
+      h.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall("search_studies", {})], { stopReason: "toolUse" }),
+        fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["mice"] })], { stopReason: "toolUse" }),
+        fauxAssistantMessage("Study 11043 matches."),
+      ]);
+      const entry = await h.sessionStore.getOrCreate("global-budget-2", { model: h.model, systemPrompt: "t" });
+      const events = await runTurnCollectingEvents(h.sessionStore, entry, { message: "find mice" });
+
+      assert.equal(h.flask.calls.length, 2, "the retry must be allowed to reach Flask");
+      const ends = events.filter((e) => e.type === "tool_execution_end");
+      assert.ok(!JSON.stringify(ends).includes("already ran for this message"),
+        "no call may be blocked when the only prior one did no work");
+      assert.match(JSON.stringify(ends[1]), /11043/, "the retry returned real results");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("the budget resets between user messages", async () => {
+    const h = await createTestHarness({
+      toolSchemas: [SEARCH_STUDIES_SCHEMA],
+      toolHandlers: {
+        search_studies: async () => ({
+          text: "hit", label: "Search complete", detail: "1", ui_payload: null, executed: true,
+        }),
+      },
+    });
+    try {
+      const entry = await h.sessionStore.getOrCreate("global-budget-3", { model: h.model, systemPrompt: "t" });
+      for (const msg of ["first question", "second question"]) {
+        h.faux.setResponses([
+          fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["x"] })], { stopReason: "toolUse" }),
+          fauxAssistantMessage("ok."),
+        ]);
+        await runTurnCollectingEvents(h.sessionStore, entry, { message: msg });
+      }
+      assert.equal(h.flask.calls.length, 2, "each user message gets its own search budget");
+    } finally {
+      await h.cleanup();
+    }
+  });
+});

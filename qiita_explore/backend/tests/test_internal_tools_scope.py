@@ -476,3 +476,60 @@ class TestProjectScopeEnforcement:
                             json={"keywords": ["wild"], "data_types": ["Proteomic"]})
         assert resp.status_code == 200
         assert resp.get_json()["ui_payload"]["result_studies"] == []
+
+
+# ── ToolResult.executed: the per-message search budget signal ────────────────
+
+class TestExecutedFlagCrossesTheBoundary:
+    """`executed` tells the pi sidecar whether a call did any work, so its
+    one-search-per-message gate can refund a call it charged optimistically.
+
+    It has to be decided here rather than in the sidecar: judging "was this
+    input usable?" means knowing how _collect_terms pools six argument slots,
+    and reimplementing that in JS is exactly the drift the served-schema design
+    exists to prevent. So it must survive the HTTP hop — hence a route test and
+    not only a dataclass one.
+    """
+
+    def test_dataclass_defaults_to_executed(self):
+        from helpers.agent_tools import ToolResult
+        assert ToolResult(text="t", label="l").executed is True
+
+    def test_empty_input_helper_marks_the_call_as_not_executed(self):
+        from helpers.agent_tools import _empty_input_result
+        r = _empty_input_result("search_studies", "no keywords", "Search", "no keywords")
+        assert r.executed is False
+
+    def test_asdict_carries_the_field(self):
+        """_serialize() uses dataclasses.asdict, so a new field reaches the
+        sidecar with no route change — assert that rather than assuming it."""
+        import dataclasses
+        from helpers.agent_tools import _empty_input_result
+        body = dataclasses.asdict(
+            _empty_input_result("search_studies", "no keywords", "Search", "no keywords")
+        )
+        assert body["executed"] is False
+
+    def test_route_reports_executed_false_for_an_empty_search(self, client):
+        """The live failure: search_studies {} came back as a refusal, the gate
+        had already charged the budget, and the model's own retry was blocked."""
+        tok = _mint(user_id="u1", scope="global", chat_id="c1")
+        resp = client.post("/api/internal/tools/search_studies", headers=_hdrs(tok), json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["executed"] is False
+
+    def test_route_reports_executed_false_for_an_empty_sample_search(self, client):
+        tok = _mint(user_id="u1", scope="global", chat_id="c1")
+        resp = client.post("/api/internal/tools/search_by_sample", headers=_hdrs(tok), json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["executed"] is False
+
+    def test_project_scoped_empty_search_also_reports_it(self, client, crud_mod, db_mod):
+        """project_scope.py has its own copy of the empty-input early return —
+        it routes through the same _empty_input_result helper, so it must agree
+        with the global path rather than silently charging the budget."""
+        project_id = crud_mod.create_project("u1", "p")["project_id"]
+        tok = _mint(user_id="u1", scope="project", chat_id="c1", project_id=project_id)
+        resp = client.post("/api/internal/tools/search_studies", headers=_hdrs(tok), json={})
+        assert resp.status_code == 200
+        assert resp.get_json()["executed"] is False

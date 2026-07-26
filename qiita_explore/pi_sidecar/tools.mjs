@@ -85,7 +85,7 @@ function fetchToolSchemas(flaskUrl, piSecret) {
  * schema came from — Flask enforces scope, dispatches to the existing
  * execute_tool(), and the tool set can never drift from qiita_explore's.
  */
-export async function loadTools({ flaskUrl, piSecret, getToolToken }) {
+export async function loadTools({ flaskUrl, piSecret, getToolToken, onToolResult }) {
   const schemas = await fetchToolSchemas(flaskUrl, piSecret);
 
   return schemas.map(({ function: fn }) =>
@@ -114,7 +114,12 @@ export async function loadTools({ flaskUrl, piSecret, getToolToken }) {
           // shape helpers/agent.py:34-40 emits today.
           throw new Error(`${fn.name} failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
         }
-        const r = await res.json(); // {text, label, detail, ui_payload}
+        const r = await res.json(); // {text, label, detail, ui_payload, executed}
+        // Post-execution hook for callers tracking per-message tool budgets.
+        // Deliberately generic — this file is generated wholesale from the
+        // schemas Flask serves and must not know any tool by name; the
+        // search_studies rule lives in sessions.mjs beside its block hook.
+        onToolResult?.(fn.name, r);
         return {
           content: [{ type: "text", text: r.text ?? "" }],
           details: r,

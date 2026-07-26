@@ -225,6 +225,16 @@ class ToolResult:
     label: str                         # Shown in step_done UI
     detail: str = ""                   # Shown as sub-label in step_done UI
     ui_payload: Optional[dict] = None  # If set, emitted as a `ui` SSE event
+    # False when the tool rejected its input without doing any work, so a
+    # caller enforcing a per-message call budget can decline to charge for it.
+    # The pi sidecar's one-search-per-message gate reads this: it previously
+    # counted the call in a pre-execution hook, so a single `search_studies {}`
+    # (which lands on _empty_input_result below) disabled search for the rest of
+    # the message with no way to recover. Judging "was this input usable?" has to
+    # happen here — the sidecar would have to reimplement _collect_terms' slot
+    # pooling in JS to do it, which is exactly the drift the served-schema
+    # design exists to prevent.
+    executed: bool = True
 
 
 def _result_studies(studies, via=None):
@@ -246,8 +256,12 @@ def _result_studies(studies, via=None):
 
 
 def _empty_input_result(tool, text, label, detail, args=None):
-    """Shared shape for the 'no search criteria provided' early-return ToolResult."""
-    return ToolResult(text=text, label=label, detail=detail, ui_payload={
+    """Shared shape for the 'no search criteria provided' early-return ToolResult.
+
+    executed=False: nothing was searched, so this call must not count against a
+    per-message tool budget. Both search tools route their empty-input case
+    through here, so they both get it."""
+    return ToolResult(text=text, label=label, detail=detail, executed=False, ui_payload={
         "kind": "tool_call", "tool": tool, "args": args or {}, "result_summary": detail,
     })
 

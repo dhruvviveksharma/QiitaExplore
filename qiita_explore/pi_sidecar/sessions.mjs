@@ -82,24 +82,51 @@ function makeContextInjectionExtension(contextRef) {
  * the model re-run search_studies on every subsequent tool round — observed
  * live doing exactly that (three search calls in one message) before this was
  * corrected.
+ *
+ * The budget is charged OPTIMISTICALLY here and refunded by the result (see
+ * makeSearchBudgetRefunder). It has to be charged in this hook, synchronously:
+ * a single assistant message can carry two parallel search_studies calls, and
+ * both of their `tool_call` hooks run before either result exists — so a gate
+ * that waited for a result would let both through.
+ *
+ * The refund exists because this hook cannot know whether the call will do any
+ * work. A `search_studies {}` reaches Flask, comes back as _empty_input_result
+ * ("No keywords provided — cannot search"), and used to permanently burn the
+ * budget — leaving the model blocked on its own retry with "search_studies
+ * already ran for this message" as the only thing it could see. Observed live:
+ * that is what turned a recoverable mistake into a wrong answer.
  */
-function makeSearchOncePerMessageExtension() {
+function makeSearchOncePerMessageExtension(searchStateRef) {
   return function searchOncePerMessageExtension(pi) {
-    let searchCalledThisMessage = false;
     pi.on("agent_start", () => {
-      searchCalledThisMessage = false;
+      searchStateRef.spent = false;
     });
     pi.on("tool_call", (event) => {
       if (event.toolName !== "search_studies") return {};
-      if (searchCalledThisMessage) {
+      if (searchStateRef.spent) {
         return {
           block: true,
           reason: "search_studies already ran for this message — use the results you already have, or search_by_sample for a different angle.",
         };
       }
-      searchCalledThisMessage = true;
+      searchStateRef.spent = true;
       return {};
     });
+  };
+}
+
+/**
+ * Refunds the one-search budget when the call turned out to do no work.
+ * `executed` is set by Flask (agent_tools.ToolResult) and is false only when a
+ * tool rejected its input outright. Lives here beside the gate rather than in
+ * tools.mjs, which is generated wholesale from served schemas and must not
+ * know any tool by name.
+ */
+function makeSearchBudgetRefunder(searchStateRef) {
+  return function refundIfNothingRan(toolName, result) {
+    if (toolName === "search_studies" && result?.executed === false) {
+      searchStateRef.spent = false;
+    }
   };
 }
 
@@ -155,6 +182,9 @@ export function createSessionStore({
     // Read fresh (not captured) at call time inside tools.mjs's execute(), so a
     // per-turn token rotation takes effect without rebuilding the tool list.
     const toolTokenRef = { token: null };
+    // Shared between the block hook (reads) and the tool wrapper (writes), the
+    // same way contextRef and toolTokenRef span extension and tool code.
+    const searchStateRef = { spent: false };
 
     const resourceLoader = new DefaultResourceLoader({
       cwd,
@@ -164,7 +194,10 @@ export function createSessionStore({
       noPromptTemplates: true,
       noThemes: true,
       systemPrompt,
-      extensionFactories: [makeContextInjectionExtension(contextRef), makeSearchOncePerMessageExtension()],
+      extensionFactories: [
+        makeContextInjectionExtension(contextRef),
+        makeSearchOncePerMessageExtension(searchStateRef),
+      ],
     });
     await resourceLoader.reload();
 
@@ -177,6 +210,7 @@ export function createSessionStore({
       flaskUrl,
       piSecret,
       getToolToken: () => toolTokenRef.token,
+      onToolResult: makeSearchBudgetRefunder(searchStateRef),
     });
 
     const { session } = await createAgentSession({
