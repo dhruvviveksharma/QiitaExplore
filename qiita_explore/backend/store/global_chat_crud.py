@@ -26,6 +26,13 @@ def list_global_chats(user_id: str, limit: int = 200):
 
 
 def _load_global_messages(conn, chat_id):
+    """Full messages, ui_payload decoded — for hydrating a chat in the UI.
+
+    Expensive: ui_payload is where samples_report payloads live, and they are
+    ~147x the size of the message text (13.2 MB across 72 rows on barnacle, one
+    chat holding 12.2 MB). Only call this when the caller actually renders
+    messages. For history that feeds an LLM, use load_global_chat_history.
+    """
     rows = conn.execute(
         "SELECT role, content, ui_payload, created_at FROM global_chat_messages WHERE chat_id = ? ORDER BY id ASC",
         (chat_id,),
@@ -33,7 +40,27 @@ def _load_global_messages(conn, chat_id):
     return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
 
 
-def get_global_chat(user_id: str, chat_id: str):
+def load_global_chat_history(chat_id: str):
+    """role/content only — what build_full_msgs needs and all it ever reads.
+
+    Deliberately omits ui_payload from the projection rather than selecting and
+    discarding it: that column is the entire cost of this query.
+    """
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM global_chat_messages WHERE chat_id = ? ORDER BY id ASC",
+            (chat_id,),
+        ).fetchall()
+    return [_as_dict(r) for r in rows]
+
+
+def get_global_chat(user_id: str, chat_id: str, include_messages: bool = True):
+    """include_messages=False for callers that need title/pinned_studies only.
+
+    The streaming routes are the reason: they used the returned `chat` for
+    `title` and `pinned_studies`, but the message load came along anyway and
+    every turn paid for the whole transcript.
+    """
     from store.cache import SCOPE_GLOBAL, _load_pinned_studies
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -44,7 +71,8 @@ def get_global_chat(user_id: str, chat_id: str):
         if row is None:
             return None
         chat = _as_dict(row)
-        chat["messages"] = _load_global_messages(conn, chat_id)
+        if include_messages:
+            chat["messages"] = _load_global_messages(conn, chat_id)
         chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_GLOBAL)
         return chat
 

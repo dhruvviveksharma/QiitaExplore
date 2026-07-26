@@ -30,7 +30,7 @@ from helpers.qiita_fetch import (
     _pin_studies_validated,
 )
 from helpers.pin_flow import stream_pin_flow
-from helpers.request_utils import parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report
+from helpers.request_utils import parse_chat_stream_body, load_history_for, sse_response, stream_samples_report
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +84,9 @@ def api_global_chat_message_stream(chat_id):
     # client-supplied string.
     model = _resolve_model(model)
 
-    chat = get_global_chat(user_id, chat_id)
+    chat = get_global_chat(user_id, chat_id, include_messages=False)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
-
-    full_msgs = build_full_msgs(chat.get('messages'), user_content)
 
     def generate():
         assistant_parts = []
@@ -100,7 +98,7 @@ def api_global_chat_message_stream(chat_id):
                     pin_study_ids=pin_study_ids,
                     chat_id=chat_id,
                     scope=SCOPE_GLOBAL,
-                    full_msgs=full_msgs,
+                    full_msgs=load_history_for(chat_id, SCOPE_GLOBAL, user_content),
                     model=model,
                     system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                     persist=lambda ac: append_global_chat_messages(user_id, chat_id, user_content, ac),
@@ -168,7 +166,7 @@ def api_global_chat_message_stream(chat_id):
                     segments_list = []
                     current_text  = []
                     for event in stream_agent(
-                        full_msgs,
+                        load_history_for(chat_id, SCOPE_GLOBAL, user_content),
                         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                         model=model,
                         study_context_text=combined_ctx,

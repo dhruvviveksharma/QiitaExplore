@@ -33,7 +33,7 @@ from helpers.qiita_fetch import (
     _pin_studies_validated,
 )
 from helpers.pin_flow import stream_pin_flow
-from helpers.request_utils import parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report
+from helpers.request_utils import parse_chat_stream_body, load_history_for, sse_response, stream_samples_report
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +120,11 @@ def api_chat_message_stream(project_id, chat_id):
     if err_response is not None:
         return err_response
 
-    chat = get_chat(project_id, user_id, chat_id)
+    chat = get_chat(project_id, user_id, chat_id, include_messages=False)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
 
     proj      = get_project_studies_only(project_id)
-    full_msgs = build_full_msgs(chat.get('messages'), user_content)
 
     def generate():
         yield ': keepalive\n\n'
@@ -137,7 +136,7 @@ def api_chat_message_stream(project_id, chat_id):
                     pin_study_ids=pin_study_ids,
                     chat_id=chat_id,
                     scope=SCOPE_PROJECT,
-                    full_msgs=full_msgs,
+                    full_msgs=load_history_for(chat_id, SCOPE_PROJECT, user_content),
                     model=model,
                     persist=lambda ac: append_chat_messages(project_id, user_id, chat_id, user_content, ac),
                 )
@@ -176,7 +175,8 @@ def api_chat_message_stream(project_id, chat_id):
                 deep_ctx = yield from _stream_deep_context(user_content, proj, chat)
                 combined_ctx = "\n\n".join(x for x in (study_ctx, deep_ctx) if x) or None
                 yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, model=model):
+                history = load_history_for(chat_id, SCOPE_PROJECT, user_content)
+                for token in llm_chat_stream(history, study_context_text=combined_ctx, model=model):
                     assistant_parts.append(token)
                     yield _sse("token", {"token": token})
             assistant_content = "".join(assistant_parts).strip()

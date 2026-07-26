@@ -38,6 +38,27 @@ def build_full_msgs(messages, user_content):
     return full_msgs
 
 
+def load_history_for(chat_id: str, scope: str, user_content: str):
+    """Read a chat's history and build the LLM message list, in one call.
+
+    Called from the three branches that genuinely consume it — /pin's
+    stream_pin_flow, and the two legacy runtimes — rather than once at the top of
+    each streaming route. It used to run unconditionally before the runtime
+    branch, so a pi-backed turn loaded and JSON-decoded the entire transcript
+    (12.2 MB for the largest chat on barnacle, because ui_payload rides along)
+    to build a value pi never receives: pi owns history and is sent only the new
+    user message.
+
+    Uses the role/content-only projections, so even the legacy paths stop paying
+    for ui_payload they never look at.
+    """
+    from store import load_global_chat_history, load_project_chat_history
+    from store.cache import SCOPE_GLOBAL
+
+    loader = load_global_chat_history if scope == SCOPE_GLOBAL else load_project_chat_history
+    return build_full_msgs(loader(chat_id), user_content)
+
+
 def sse_response(generate):
     """Wrap a chat-stream generator in the standard text/event-stream Response."""
     return Response(

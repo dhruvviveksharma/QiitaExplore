@@ -73,6 +73,13 @@ def _decode_ui(value):
 
 
 def _load_project_chat_messages(conn, chat_id):
+    """Full messages, ui_payload decoded — for hydrating one chat in the UI.
+
+    Expensive: ui_payload holds samples_report payloads, ~147x the size of the
+    message text (1.68 MB across 58 project rows on barnacle). Only call this
+    when the caller renders messages. For LLM history use
+    load_project_chat_history.
+    """
     rows = conn.execute(
         """
         SELECT role, content, ui_payload, created_at
@@ -85,34 +92,39 @@ def _load_project_chat_messages(conn, chat_id):
     return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
 
 
+def load_project_chat_history(chat_id: str):
+    """role/content only — see load_global_chat_history for the reasoning."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM project_chat_messages WHERE chat_id = ? ORDER BY id ASC",
+            (chat_id,),
+        ).fetchall()
+    return [_as_dict(r) for r in rows]
+
+
 def _load_project_chats(conn, project_id):
+    """Chat rows for the sidebar. Deliberately WITHOUT message bodies.
+
+    This used to fan out `SELECT ... ui_payload ... WHERE chat_id IN (...)`
+    across every chat in the project and attach the rows to each one — 1.68 MB
+    of ui_payload decoded per project open. The frontend never read it:
+    hydrateChatCache (js/app_state.js) fetches messages lazily per chat from
+    /projects/<p>/chats/<id> when one is opened, and the only other readers are
+    that per-chat cache. A COUNT subquery replaces it: `messages_count` is the
+    one quantity a sidebar could want, and it is O(1) per chat rather than a
+    full row load. (list_chats already used exactly this shape.)
+    """
     rows = conn.execute(
         """
-        SELECT chat_id, title, created_at, updated_at
-        FROM project_chats
-        WHERE project_id = ?
-        ORDER BY updated_at DESC, created_at DESC
+        SELECT pc.chat_id, pc.title, pc.created_at, pc.updated_at,
+               (SELECT COUNT(1) FROM project_chat_messages m WHERE m.chat_id = pc.chat_id) AS messages_count
+        FROM project_chats pc
+        WHERE pc.project_id = ?
+        ORDER BY pc.updated_at DESC, pc.created_at DESC
         """,
         (project_id,),
     ).fetchall()
-    if not rows:
-        return []
-    chat_ids = [r["chat_id"] for r in rows]
-    placeholders = ",".join("?" * len(chat_ids))
-    msg_rows = conn.execute(
-        f"SELECT chat_id, role, content, ui_payload, created_at FROM project_chat_messages "
-        f"WHERE chat_id IN ({placeholders}) ORDER BY id ASC",
-        chat_ids,
-    ).fetchall()
-    messages_by_chat = {}
-    for msg in msg_rows:
-        messages_by_chat.setdefault(msg["chat_id"], []).append(
-            {**_as_dict(msg), "ui_payload": _decode_ui(msg["ui_payload"])}
-        )
-    return [
-        {**_as_dict(row), "messages": messages_by_chat.get(row["chat_id"], [])}
-        for row in rows
-    ]
+    return [_as_dict(row) for row in rows]
 
 
 def create_project(user_id: str, name: str):
@@ -281,7 +293,9 @@ def list_chats(project_id: str, user_id: str, limit: int = 200):
     return [_as_dict(r) for r in rows]
 
 
-def get_chat(project_id: str, user_id: str, chat_id: str):
+def get_chat(project_id: str, user_id: str, chat_id: str, include_messages: bool = True):
+    """include_messages=False for callers needing title/pinned_studies only —
+    see get_global_chat for why the streaming routes want that."""
     from store.cache import SCOPE_PROJECT, _load_pinned_studies
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -296,7 +310,8 @@ def get_chat(project_id: str, user_id: str, chat_id: str):
         if row is None:
             return None
         chat = _as_dict(row)
-        chat["messages"] = _load_project_chat_messages(conn, chat_id)
+        if include_messages:
+            chat["messages"] = _load_project_chat_messages(conn, chat_id)
         chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_PROJECT)
         total = conn.execute(
             "SELECT COUNT(1) AS c FROM project_studies WHERE project_id = ?",
