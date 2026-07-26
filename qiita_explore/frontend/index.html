@@ -3,23 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!--TODO: revert to port 5001 before committing to master -->
   <!-- api host MUST match the host this page is served from (Cursor Live
        Preview serves it at http://127.0.0.1:5503). A browser treats
        127.0.0.1 and localhost as *different sites*, so a SameSite=Lax session
        cookie set by a "localhost" API would NOT be sent on this page's
        cross-site fetches. Keeping both on 127.0.0.1 makes them same-site so
-       the cookie rides along. The SSH tunnel to barnacle must bind 127.0.0.1
-       (ssh -L 127.0.0.1:5002:localhost:5002), and this origin must be in
-       barnacle's QIITA_EXPLORE_ALLOWED_ORIGINS. -->
-  <meta name="api-base" content="http://127.0.0.1:5002/api">
+       the cookie rides along. The SSH tunnel to barnacle must bind 127.0.0.1,
+       and this origin must be in barnacle's QIITA_EXPLORE_ALLOWED_ORIGINS.
+
+       5001 is the committed value. To develop against a backend running on
+       barnacle's dev port instead, point the LOCAL end of the tunnel at 5001
+       rather than editing this file:
+         ssh -N -L 127.0.0.1:5001:localhost:5002 user@barnacle2.ucsd.edu -->
+  <meta name="api-base" content="http://127.0.0.1:5001/api">
   <title>Qiita Explorer</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=40" />
+  <link rel="stylesheet" href="style.css?v=41" />
 </head>
 <body>
   <div id="root"></div>
@@ -29,14 +32,14 @@
     and is irrelevant to the browser-served frontend, so we don't probe for it.
   -->
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
-  <script type="text/babel" src="js/utils.js?v=5"></script>
+  <script type="text/babel" src="js/utils.js?v=6"></script>
   <script type="text/babel" src="js/icons.js?v=1"></script>
   <script type="text/babel" src="js/loaders.js?v=4"></script>
   <script type="text/babel" src="js/auth.js?v=2"></script>
   <script type="text/babel" src="js/components.js?v=9"></script>
   <script type="text/babel" src="js/hooks/useModelSelection.js?v=1"></script>
-  <script type="text/babel" src="js/app_state.js?v=10"></script>
-  <script type="text/babel" src="js/app_render.js?v=20"></script>
+  <script type="text/babel" src="js/app_state.js?v=11"></script>
+  <script type="text/babel" src="js/app_render.js?v=21"></script>
   <script type="text/babel" src="js/merge_artifacts.js?v=9"></script>
   <script type="text/babel" src="js/merge_tree.js?v=9"></script>
   <script type="text/babel" src="js/merge_detail.js?v=7"></script>

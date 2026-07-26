@@ -4,7 +4,7 @@ Extend DISCOVERY_CASES as you validate more (query, expected_study_id) pairs.
 """
 import pytest
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
+from parity_helpers import search_ids, stream_chat, llm_judge
 
 # ---- Extend this list as you validate more (query, expected_id) pairs ----
 DISCOVERY_CASES = [
@@ -42,14 +42,16 @@ class TestChatFindsExpected:
     def test_chat_finds_study(self, backend, global_chat, query, expected_id):
         result = stream_chat(backend, global_chat["chat_id"], query)
 
-        # Deterministic check: expected study must be in the chat's search step.
-        in_search = False
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-            in_search = expected_id in chat_ids
-        assert in_search or expected_id in result["study_ids_mentioned"], (
+        # Deterministic check: the study must appear in what the search tool
+        # actually returned. This used to read `if result["query_plan"]:` and
+        # fall through to the text-mention check — query_plan stopped being
+        # emitted when the legacy llm_plan_query branch was deleted, so the
+        # deterministic half silently stopped running and only the (much
+        # weaker) "is the number in the prose" assertion remained.
+        assert expected_id in result["result_study_ids"] or expected_id in result["study_ids_mentioned"], (
             f"Study {expected_id} not in chat's search results for '{query}'.\n"
-            f"Query plan: {result['query_plan']}"
+            f"Tool returned: {sorted(result['result_study_ids'])}\n"
+            f"Mentioned in text: {sorted(result['study_ids_mentioned'])}"
         )
 
         # LLM judge: assistant must recommend or mention a relevant study.
@@ -72,11 +74,11 @@ class TestBothPathsIntersectOnExpected:
         frontend_ids = search_ids(backend, query)
 
         result = stream_chat(backend, global_chat["chat_id"], query)
-        chat_ids = set()
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-        # Chat IDs from text mentions are a fallback signal too
-        chat_ids |= result["study_ids_mentioned"]
+        # What the search tool returned, plus IDs the reply names as a fallback
+        # signal. The tool half was previously gated on query_plan, which has
+        # not been emitted since the legacy planner branch was removed, so this
+        # was effectively a text-mention-only assertion.
+        chat_ids = set(result["result_study_ids"]) | result["study_ids_mentioned"]
 
         assert expected_id in frontend_ids, (
             f"Study {expected_id} missing from frontend /api/search for '{query}'"
@@ -109,8 +111,18 @@ class TestChatKeywordsAreRicher:
         raw_params = frontend_plan.get("params") or []
         frontend_kws = {p.strip("%").lower() for p in raw_params}
 
+        # Keywords now come from the search_studies tool call's own args. Read
+        # from query_plan until now, which nothing has emitted since the legacy
+        # llm_plan_query branch was deleted — so chat_kws was always empty,
+        # `missing` was always the full frontend set, and this xfail(strict=False)
+        # test reported "expected failure" every run regardless of behaviour.
         result = stream_chat(backend, global_chat["chat_id"], query)
-        chat_kws = {k.lower().strip() for k in (result.get("query_plan") or {}).get("keywords", [])}
+        chat_kws = {
+            str(k).lower().strip()
+            for payload in result["tool_ui_payloads"]
+            if payload.get("tool") == "search_studies"
+            for k in (payload.get("args") or {}).get("keywords") or []
+        }
 
         missing = frontend_kws - chat_kws
         assert not missing, (

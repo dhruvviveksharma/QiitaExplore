@@ -430,26 +430,6 @@ function renderApp(s) {
                               )}
                             </div>
                           )}
-                          {m.queryPlan && (
-                            <div className="msg-query-plan">
-                              <span className="qp-icon">⌕</span>
-                              <span className="qp-desc">{m.queryPlan.description}</span>
-                              {(m.queryPlan.keywords || []).length > 0 && (
-                                <span className="qp-keywords">
-                                  {m.queryPlan.keywords.map(k => (
-                                    <span key={k} className="qp-kw-chip">{k}</span>
-                                  ))}
-                                </span>
-                              )}
-                              <span className="qp-mode">{m.queryPlan.match_mode}</span>
-                            </div>
-                          )}
-                          {m.queryPlan?.sql_where && (
-                            <details className="msg-sql-details">
-                              <summary className="msg-sql-summary">Show SQL</summary>
-                              <div className="sql-block">WHERE {m.queryPlan.sql_where}</div>
-                            </details>
-                          )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
                             <InfinityLoader w={80} h={50} />
                           ) : (!m.isStreaming || m.content) ? (

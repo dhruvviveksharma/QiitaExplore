@@ -584,27 +584,6 @@ input, textarea { font-family: var(--sans); }
   transition: background var(--t);
 }
 .btn-isc-merge:hover { background: var(--accent-h); }
-/* ── Query plan chip ─────────────────────────────────────────── */
-.msg-query-plan {
-  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px;
-  margin-bottom: 7px; padding: 4px 8px;
-  background: var(--surface-2, #f3f4f6); border-radius: 6px;
-  font-size: 11px; font-family: monospace; color: var(--text-3);
-  max-width: 100%;
-}
-.qp-icon { font-style: normal; color: var(--accent); flex-shrink: 0; }
-.qp-desc { color: var(--text-2); font-weight: 500; }
-.qp-keywords { display: inline-flex; flex-wrap: wrap; gap: 3px; }
-.qp-kw-chip {
-  padding: 1px 6px; border-radius: 10px;
-  background: var(--accent-muted, rgba(99,102,241,.12));
-  color: var(--accent); font-size: 10px; white-space: nowrap;
-}
-.qp-mode {
-  margin-left: 2px; color: var(--text-3);
-  font-size: 10px; text-transform: lowercase; opacity: .7;
-}
-
 /* ── Markdown rendering inside msg-bubble ────────────────────── */
 .msg-bubble p { margin: 0 0 0.5em; line-height: 1.65; }
 .msg-bubble p:last-child { margin-bottom: 0; }
@@ -1150,9 +1129,6 @@ input, textarea { font-family: var(--sans); }
 .sql-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); cursor: pointer; }
 .sql-toggle input { accent-color: var(--accent); }
 .sql-block { background: #0a1929; border-radius: var(--radius-s); padding: 10px 14px; font-family: monospace; font-size: 12px; color: #7ec8e3; }
-.msg-sql-details { margin: 2px 0 4px; }
-.msg-sql-summary { cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none; }
-.msg-sql-details .sql-block { margin-top: 4px; }
 
 .browse-count { font-size: 12px; color: var(--text-3); }
 

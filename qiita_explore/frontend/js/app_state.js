@@ -246,7 +246,7 @@ function useAppState() {
           messages: [
             ...c.messages,
             { role: 'user',      content: userMsg },
-            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null, segments: null },
+            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null },
           ],
         },
       };
@@ -566,8 +566,6 @@ function useAppState() {
           chatId, ctrl.signal,
           {
             ...agentHandlers(chatId),
-            // Legacy llm_plan_query path only — global chat's alone.
-            onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null);

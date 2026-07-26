@@ -82,7 +82,6 @@ def stream_chat(
     """POST a message to a global chat and consume the SSE stream.
 
     Returns a dict with:
-      query_plan          — the query_plan SSE event payload (or None)
       search_count        — int from step_done/search_db detail (or None)
       assistant_text      — full assembled LLM reply
       study_ids_mentioned — set of ints found in the assistant text
@@ -108,7 +107,6 @@ def stream_chat(
     )
     r.raise_for_status()
 
-    query_plan = None
     search_count = None
     ui_payload = None
     step_done_labels = []
@@ -135,9 +133,7 @@ def stream_chat(
             except json.JSONDecodeError:
                 continue
 
-            if current_event == "query_plan":
-                query_plan = data
-            elif current_event == "step_done":
+            if current_event == "step_done":
                 name = data.get("name") or ""
                 label = data.get("label") or ""
                 detail = data.get("detail") or ""
@@ -170,7 +166,6 @@ def stream_chat(
     )
 
     return {
-        "query_plan": query_plan,
         "search_count": search_count,
         "assistant_text": assistant_text,
         "study_ids_mentioned": mentioned,
@@ -181,19 +176,6 @@ def stream_chat(
         "pinned_studies": pinned_studies,
         "tool_ui_payloads": tool_ui_payloads,
     }
-
-
-def chat_search_ids(backend_url: str, query_plan: dict) -> set:
-    """Re-run the chat's search step via /api/search using its planner keywords.
-
-    Mirrors build_where_from_plan → search_studies_with_sql, but over HTTP
-    so no direct Postgres connection is required in the caller.
-    """
-    keywords = query_plan.get("keywords") or []
-    if not keywords:
-        return set()
-    query = " ".join(keywords[:10])
-    return search_ids(backend_url, query)
 
 
 def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL) -> bool:

@@ -6,7 +6,7 @@ Tests 1.1–1.3 are parametrized over the list; 1.4–1.5 test chat specifically
 import pytest
 import requests
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
+from parity_helpers import search_ids, stream_chat, llm_judge
 
 # ---- Extend this list as you validate more non-public studies ----
 BLOCKED_STUDY_IDS = [16084]
@@ -78,11 +78,17 @@ class TestChatDoesNotSurfaceBlocked:
         question = f"Tell me about study {study_id}. What samples does it have?"
         result = stream_chat(backend, global_chat["chat_id"], question)
 
-        # Deterministic check: the chat's SQL search step must not return the blocked study.
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-            assert study_id not in chat_ids, (
-                f"Study {study_id} appeared in chat's own search step results"
+        # Deterministic check: no tool call may return the blocked study.
+        # Guarded on `if result["query_plan"]` until now — nothing has emitted
+        # that event since the legacy llm_plan_query branch was deleted, so this
+        # containment check silently stopped running.
+        assert study_id not in result["result_study_ids"], (
+            f"Study {study_id} was returned by a tool call in the chat.\n"
+            f"Tool results: {sorted(result['result_study_ids'])}"
+        )
+        for payload in result["tool_ui_payloads"]:
+            assert payload.get("study_id") != study_id, (
+                f"A tool returned a report payload for non-public study {study_id}"
             )
 
         # LLM judge: assistant must acknowledge the study is unavailable.
@@ -105,7 +111,13 @@ class TestChatDoesNotSurfaceBlocked:
 @pytest.mark.e2e_llm
 @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
 class TestChatSearchResultsExcludeBlocked:
-    """1.5 — The chat's SQL search step itself excludes non-public studies."""
+    """1.5 — The chat's search step itself excludes non-public studies.
+
+    Before this rewrite the whole test body sat behind `if result["query_plan"]`,
+    which has been permanently falsy since the legacy llm_plan_query branch was
+    deleted. The method therefore asserted NOTHING and reported green — on a
+    non-public-data containment check.
+    """
 
     def test_chat_broad_query_excludes_blocked(self, backend, global_chat, study_id):
         result = stream_chat(
@@ -113,11 +125,17 @@ class TestChatSearchResultsExcludeBlocked:
             global_chat["chat_id"],
             "List studies available in the database",
         )
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-            assert study_id not in chat_ids, (
-                f"Study {study_id} appeared in chat's SQL search step for a broad query"
-            )
+        # A search that returned nothing would make the containment assertion
+        # below trivially true — which is the failure mode this test just came
+        # out of. Require the search to have actually produced results first.
+        assert result["result_study_ids"], (
+            "the broad query returned no studies at all, so this proves nothing "
+            "about containment — check the model issued a search_studies call"
+        )
+        assert study_id not in result["result_study_ids"], (
+            f"Non-public study {study_id} appeared in search results for a broad query.\n"
+            f"Returned: {sorted(result['result_study_ids'])}"
+        )
 
 
 @pytest.mark.e2e
