@@ -6,22 +6,26 @@ Prerequisites: [`04-search.md`](04-search.md) — the tools call into the search
 
 ---
 
-## The switch
+## Which runtime is running
 
-Everything in chat forks on one predicate:
+> **This chapter describes the legacy in-process Python loop (`backend/helpers/agent.py :: stream_agent`), which is no longer the default.** Chat now runs on **pi** — an external Node agent runtime in a sidecar process — with Flask translating pi's events back into the same SSE contract described in [`06-streaming-and-chat.md`](06-streaming-and-chat.md). The tool set, the search layer, and every scope rule are unchanged and still live in Python; what moved is the loop, the conversation history, and context compaction.
+>
+> `PI_BACKEND_GLOBAL` and `PI_BACKEND_PROJECT` (`backend/config.py`) both default to **true**. Setting either to `false` reverts that chat type to the loop described below — a rollback that needs no deploy. Nothing exercises the legacy path in normal use any more, so treat it as drifting rather than known-good.
+>
+> The mechanics below still describe what the tools do and why they are shaped that way, which is runtime-independent. Read them for the tool design; read `backend/helpers/pi_translate.py` for what the frontend actually receives today.
+
+Historically, chat forked on one predicate:
 
 ```python
 if model_supports_tools(model):   # agentic path — this chapter
 else:                             # legacy path — regex planner, one search, plain stream
 ```
 
-`backend/config.py :: model_supports_tools` reads `supports_tools` from `MODEL_METADATA`. Ten of the eleven configured models return `True`; `gemma-small` is the only one that does not, because it cannot emit streaming tool calls.
+`backend/config.py :: model_supports_tools` reads `supports_tools` from `MODEL_METADATA`. **Every configured model now returns `True`**, so the `else` branch became unreachable and was deleted. `gemma-small` was the sole exception, on the belief that it could not emit streaming tool calls; checked against the live NRP endpoint, it can. The predicate is retained because `/api/internal/models` uses it to filter the roster it serves the sidecar, and a future model that genuinely cannot call tools must still be excluded.
 
-There is a second fork, and it surprises people:
+The second fork **no longer exists**:
 
-> **Only global chats use the agentic path.** `backend/routes/chat_routes.py` never imports `stream_agent`. Project chats — the ones scoped to a saved collection of studies — use a plain token accumulator with pre-built context, regardless of which model is selected. Tool cards appear in global chat only.
-
-This is historical: project chat predates the tool loop and already had its context-building path. The asymmetry is not principled, and unifying the two is a natural cleanup. It is documented here because a reader comparing the two chat implementations will otherwise assume they missed something.
+> Project chats used to be non-agentic — `backend/routes/chat_routes.py` never imported `stream_agent`, so tool cards appeared in global chat only. On the pi path both chat types run the same loop. The difference is now scope, and it is enforced rather than requested: every project-chat tool call is hard-bounded to the workspace's own studies server-side (`backend/helpers/project_scope.py`), where it used to be a sentence in the prompt.
 
 ---
 
@@ -159,7 +163,7 @@ A third provider would need: schema translation, system-prompt placement, a stre
 
 ---
 
-## The five tools
+## The four tools
 
 Full schemas in [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md). What follows is why each is shaped the way it is.
 
@@ -209,9 +213,7 @@ Explicit pinning, capped at 10 per chat. Reports back which IDs were pinned, whi
 
 Structured `{field, value}` filters against sample metadata, for when the user names a field explicitly. Its schema description contrasts it with `search_studies` to steer selection, since the two overlap: `search_studies` always runs a sample probe alongside its text search, so `search_by_sample` is for the case where the *field* is known, not merely the value.
 
-### `compute_diversity`
-
-> **Stub.** `_tool_compute_diversity` always returns a message stating that diversity computation is unavailable pending BIOM/OTU ingestion (TKT-010). **It is present in the live tool schema**, so the model can and does call it — consuming an iteration to receive an apology. Removing it from the schema until it is implemented would be strictly better. Tracked in [`11-roadmap.md`](11-roadmap.md).
+> `compute_diversity` was a fifth tool: a hard stub, live in the schema, that the model could call and be apologised to. It has been removed from both `TOOL_SCHEMAS` and the `execute_tool` dispatch. Diversity computation remains unimplemented pending BIOM/OTU ingestion — tracked in [`11-roadmap.md`](11-roadmap.md).
 
 ---
 
@@ -241,6 +243,16 @@ Each iteration logs time-to-first-token, total elapsed time, content and reasoni
 `backend/agent_harness.py` runs the whole loop from the command line, which is the fastest way to iterate on prompts or tool schemas without a browser — and the only way to observe `reasoning` output.
 
 > **`AGENT_DEBUG` does not affect the server.** Its only reader is `agent_harness.py`. Setting it in the backend's `.env` has no effect on the Gunicorn process — a natural assumption that is wrong, and an easy few minutes lost. Server-side agent logging is whatever `logging.basicConfig(level=INFO)` in `run.py` produces.
+
+---
+
+## When this loop is finally deleted
+
+The legacy path stays reachable behind `PI_BACKEND_GLOBAL` / `PI_BACKEND_PROJECT`, but the intent is to remove it once pi has proven parity. Two things should be written down before then, because both are easy to get wrong at that moment.
+
+**`backend/helpers/pi_translate.py` should be re-pointed, not deleted.** It exists to preserve the legacy SSE vocabulary (`segment_tool_call`, `step_start`, `token`, …) so that swapping the agent runtime needed no frontend change — deliberately, since the alternative was editing four JS files in the same commit that replaced the loop, with no way to bisect a regression. When `agent.py` goes, the right move is to retarget the translator at pi's native event names and update the frontend in one reviewable change. Deleting the translator and expecting pi's raw events to reach the browser would break every rendering path at once.
+
+**The one-search-per-message invariant is enforced in two unrelated places.** The legacy loop mutates the tool schema mid-run (`agent.py`, `active_tools`); pi cannot do that — `setActiveTools` only takes effect on the next agent turn — so the sidecar uses a `tool_call` block hook plus a result-driven refund (`pi_sidecar/sessions.mjs`). They are the same rule with no shared code. Whichever survives, check the other's tests came with it: the refund in particular exists because a `search_studies` call rejected for empty input used to spend the budget permanently, leaving the model blocked on its own retry.
 
 ---
 

@@ -80,7 +80,7 @@ The actual identity provider is **AuthRocket** (via its hosted LoginRocket UI), 
 
 **Search** (`[04-search.md](04-search.md)`) — Three entry points converge on one parameterized SQL builder. Full-text search scores studies by keyword hits weighted by field (title 3, alias 2, PI 2, abstract 1). Sample-metadata search fans out per-study `EXISTS` probes because Qiita stores each study's sample metadata in its own table, so there is no global index to query. The fanout is bounded, time-limited, and returns partial results rather than failing.
 
-**Agentic chat** (`[05-agent.md](05-agent.md)`, `[06-streaming-and-chat.md](06-streaming-and-chat.md)`) — For models that support tool-calling, a loop gives the model five tools and streams its work to the browser as it happens: each tool call and its result render as a card inline, before the final prose arrives. The loop is bounded at four iterations, and `search_studies` is *removed from the tool schema* after its first successful call — the model is mechanically prevented from re-searching, not merely instructed not to.
+**Agentic chat** (`[05-agent.md](05-agent.md)`, `[06-streaming-and-chat.md](06-streaming-and-chat.md)`) — Both global and project chat run an agent loop with four tools, streaming its work to the browser as it happens: each tool call and its result render as a card inline, before the final prose arrives. `search_studies` may run **once per user message** — the model is mechanically blocked from re-searching, not merely instructed not to. The loop itself runs in **pi**, an external Node agent runtime in a sidecar process; Flask translates its events into the same SSE contract the frontend already spoke, and the tools, the search layer and all scope enforcement stay in Python.
 
 **Curation** (`[appendix-b-sqlite-schema.md](appendix-b-sqlite-schema.md)`) — Projects, chats, and pins live in a local SQLite database, keyed by the user's `principal_idx`. Nothing curational is written back to Qiita. Every mutation updates the UI from the response body rather than triggering a refetch.
 
@@ -160,7 +160,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | `[02-authentication.md](02-authentication.md)`                           | Paste-PAT flow, sessions, CSRF, tenancy, legacy claim                            |
 | `[03-data-access-and-caching.md](03-data-access-and-caching.md)`         | Reading classic Qiita, the three cache layers, context budgeting                 |
 | `[04-search.md](04-search.md)`                                           | The three search paths and the SQL they build                                    |
-| `[05-agent.md](05-agent.md)`                                             | The tool-calling loop and the five tools                                         |
+| `[05-agent.md](05-agent.md)`                                             | The tool-calling loop and the four tools                                         |
 | `[06-streaming-and-chat.md](06-streaming-and-chat.md)`                   | SSE protocol and the segment contract                                            |
 | `[07-merge-and-biom.md](07-merge-and-biom.md)`                           | Merge workspaces, artifact graphs, jobs                                          |
 | `[08-frontend.md](08-frontend.md)`                                       | The no-build-step React app                                                      |

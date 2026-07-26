@@ -122,7 +122,7 @@ No recommendation here — this needs an upstream conversation, not a local deci
 
 ### TKT-010 — BIOM ingestion and diversity
 
-`compute_diversity` is a hard stub that is **live in the tool schema**, so the model calls it and receives an apology. The immediate, near-zero-cost improvement is to **remove it from the schema until it is implemented**.
+`compute_diversity` was a hard stub live in the tool schema, so the model called it and received an apology. It has since been removed from `TOOL_SCHEMAS` and the `execute_tool` dispatch; what remains is the real implementation.
 
 A real implementation needs decisions that have not been made: where BIOM tables are ingested and held (the merge pipeline already reads them — see [`07-merge-and-biom.md`](07-merge-and-biom.md)); a rarefaction policy, since alpha diversity is not comparable across uneven sampling depth; which metrics (Shannon, Simpson, Faith's PD, and any phylogenetic metric needs a tree); and where results are cached — plausibly permanently, keyed on artifact id, since artifacts are immutable.
 
@@ -217,7 +217,6 @@ None of these were previously ticketed. The four most serious were filed as **TK
 Ordered by value per unit of effort, not by ticket number.
 
 1. **The three access-control defects** — TKT-042 (settings tenancy), TKT-043 (artifact download authorization), TKT-045 (plaintext key backups). Small, contained, and currently wrong. TKT-045 first if the barnacle host has accumulated `.env.bak.*` files, since exposure continues until they are removed.
-2. **Remove `compute_diversity` from the live schema.** One line; stops wasting agent iterations today.
 3. **The segment-contract parity test.** The contract is correct *now*; a test is what keeps it correct.
 4. **TKT-023's compatibility checks.** Scientifically the most consequential item on this list — a silently wrong merge is worse than a failed one.
 5. **Move the two `TRN` call sites onto `pooled_fetchall`.** Removes a thread-safety hazard independently of the platform migration.

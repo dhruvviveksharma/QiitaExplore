@@ -191,10 +191,12 @@ In the deployed topology the sidecar runs on the **intermediate node** and Flask
 | `PI_ALLOWED_TOOL_CALLERS` | *(empty — no IP restriction)* | `backend/routes/internal_tool_routes.py` | Comma-separated exact remote addresses permitted to call `/api/internal/tools/*` (the intermediate node). Empty is correct for local dev; **always set it in deployment** so a leaked `PI_SIDECAR_SECRET` is not usable from an arbitrary host. | Yes |
 | `PI_SCOPE_TOKEN_KEY` | *(none)* | `backend/helpers/scope_token.py` | HMAC key signing the short-lived per-turn scope token that authorizes a tool call's `POST /api/internal/tools/<name>`. This — not the sidecar, not `PI_SIDECAR_SECRET` — is what makes project-chat scoping a hard boundary. No insecure fallback; `mint_scope_token`/`verify_scope_token` raise if unset. | Yes |
 | `PI_SCOPE_TOKEN_TTL_SECONDS` | `600` | `backend/routes/global_chat_routes.py`, `backend/routes/chat_routes.py` | How long a minted scope token is valid — long enough to cover one slow, tool-heavy turn, short enough that a leaked token is useless well before the next one is minted. | Yes |
-| `PI_BACKEND_GLOBAL` | `false` | `backend/routes/global_chat_routes.py` | When true, global chat's agentic branch calls the pi sidecar instead of `stream_agent`. Independent of `PI_BACKEND_PROJECT` — cut either over (or back) without touching the other. | Yes |
-| `PI_BACKEND_PROJECT` | `false` | `backend/routes/chat_routes.py` | When true, project chat becomes agentic via the pi sidecar, with every tool call hard-scoped to the project (`backend/helpers/project_scope.py`). When false, project chat keeps today's non-agentic, context-stuffed behavior. | Yes |
+| `PI_BACKEND_GLOBAL` | **`true`** | `backend/routes/global_chat_routes.py` | pi is the default runtime. Set `false` to revert global chat to the in-process `stream_agent` loop — a rollback needing no deploy. Independent of `PI_BACKEND_PROJECT`. | Yes |
+| `PI_BACKEND_PROJECT` | **`true`** | `backend/routes/chat_routes.py` | pi is the default runtime. Project chat is agentic, with every tool call hard-scoped to the project (`backend/helpers/project_scope.py`). Set `false` to revert to the non-agentic, context-stuffed path. | Yes |
 
-The sidecar itself is a separate Node process, started independently (`qiita_explore/pi_sidecar/start_sidecar.sh`), with its own env vars — `PI_SIDECAR_PORT` (default `5100`), `PI_SIDECAR_HOST` (default `127.0.0.1`), `FLASK_INTERNAL_URL` (default `http://127.0.0.1:5001`), `PI_SIDECAR_STATE_DIR` (default `pi_sidecar/.state`), plus `OPENAI_API_KEY`/`API_KEY` (reused for the NRP provider) and `ANTHROPIC_API_KEY` (picked up by pi's built-in Anthropic provider). It refuses to start without `PI_SIDECAR_SECRET`, without Node ≥ 20, or without `node_modules`.
+The sidecar itself is a separate Node process, started independently (`qiita_explore/pi_sidecar/start_sidecar.sh`), with its own env vars — `PI_SIDECAR_PORT` (default `5100`), `PI_SIDECAR_HOST` (default `127.0.0.1`), `FLASK_INTERNAL_URL` (default `http://127.0.0.1:5001`), `PI_SIDECAR_STATE_DIR` (default `pi_sidecar/.state`), plus `OPENAI_API_KEY`/`API_KEY` (reused for the NRP provider) and `ANTHROPIC_API_KEY` (picked up by pi's built-in Anthropic provider). It refuses to start without `PI_SIDECAR_SECRET`, without Node ≥ 22, or without `node_modules`.
+
+**Because both `PI_BACKEND_*` now default to true, `PI_SIDECAR_SECRET` and `PI_SCOPE_TOKEN_KEY` are effectively required.** `backend/config.py :: pi_config_errors()` checks them (plus a `PI_SIDECAR_PORT` set without a matching `PI_SIDECAR_URL`) and `run.py` **refuses to boot** if any are missing. Previously the backend would start fine and every chat turn would 401 — which reads as "chat is broken", not "one variable is unset". To run without the sidecar at all, use `PI_SKIP_SIDECAR=1 bash qiita_explore/start_barnacle.sh`: that exports both flags `false` for the run, so "Flask alone" means the legacy chat path rather than a backend that 500s on every message.
 
 **Deploying across two hosts** means changing four of these together, and getting a subset right leaves you with a sidecar Flask cannot reach or a tool route the sidecar cannot call:
 
@@ -244,8 +246,8 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | Storage | `8` |
 | [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `2` |
 | [`PI_ALLOWED_TOOL_CALLERS`](#env-PI_ALLOWED_TOOL_CALLERS) | pi sidecar | *(empty — no IP restriction)* |
-| [`PI_BACKEND_GLOBAL`](#env-PI_BACKEND_GLOBAL) | pi sidecar | `false` |
-| [`PI_BACKEND_PROJECT`](#env-PI_BACKEND_PROJECT) | pi sidecar | `false` |
+| [`PI_BACKEND_GLOBAL`](#env-PI_BACKEND_GLOBAL) | pi sidecar | `true` |
+| [`PI_BACKEND_PROJECT`](#env-PI_BACKEND_PROJECT) | pi sidecar | `true` |
 | [`PI_SCOPE_TOKEN_KEY`](#env-PI_SCOPE_TOKEN_KEY) | pi sidecar | **required if either PI_BACKEND_\* is true** |
 | [`PI_SCOPE_TOKEN_TTL_SECONDS`](#env-PI_SCOPE_TOKEN_TTL_SECONDS) | pi sidecar | `600` |
 | [`PI_SIDECAR_SECRET`](#env-PI_SIDECAR_SECRET) | pi sidecar | **required if either PI_BACKEND_\* is true** |
@@ -306,17 +308,21 @@ Eleven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`back
 | `qwen3-small` | nrp | main | 27B | 1,010,000 | image, video | yes | 3,507,000 |
 | `gpt-oss` | nrp | main | 120B | 131,072 | — | yes | 430,752 |
 | `gemma` *(default)* | nrp | main | 31B | 262,144 | image, video | yes | 889,504 |
-| `gemma-small` | nrp | evaluating | ~8B | 131,072 | image, video, audio | **no** | 430,752 |
+| `gemma-small` | nrp | evaluating | 12B | 262,144 | image, video, audio | yes | 889,504 |
 | `kimi` | nrp | evaluating | 1T | 262,144 | image, video | yes | 889,504 |
-| `glm-5` | nrp | evaluating | 744B | 202,752 | — | yes | 681,632 |
+| `glm-5` | nrp | evaluating | 744B | 524,288 | — | yes | 1,807,008 |
 | `minimax-m2` | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
 | `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
 
-**`supports_tools: False` is a routing decision, not a capability note.** `gemma-small` is the only model with it, and the consequence is structural: `backend/routes/global_chat_routes.py` branches on `model_supports_tools(model)`. Tool-capable models go through `stream_agent` — the agentic loop with real tool calls, `segment_tool_call` / `segment_tool_result` SSE events, and the frontend's segments rendering. `gemma-small` falls to the **legacy path**: an LLM-planned query followed by keyword search, emitting the older `step_start` / `step_done` events. A user who selects `gemma-small` gets a visibly different chat, not a slightly worse one.
+**`supports_tools` is a routing decision, not a capability note** — but as of the pi cutover every configured model returns `True`, so it no longer routes anything. `backend/routes/global_chat_routes.py` still branches on `model_supports_tools(model)`, and `/api/internal/models` filters the pi roster on it, so a future model that cannot emit streaming tool calls must still set it `False`. The branch it used to select — an LLM-planned query followed by keyword search — has been deleted; there is no third path any more.
 
-`provider` splits along a second axis: `backend/config.py :: get_client` returns the shared NRP `OpenAI` client for `provider: "nrp"`, and a freshly constructed `anthropic.Anthropic` for `provider: "anthropic"`. The agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
+`gemma-small` was the one model with `supports_tools: False`, on the basis that it could not emit streaming tool calls. Checked against the live NRP endpoint and corrected: it can. Its size and context window were wrong in the same row (`~8B` / 131,072; actually 12B / 262,144), as was `glm-5`'s context (202,752; actually 524,288 — pi compacts at `contextWindow − 16384`, so glm-5 was truncating at ~186k of a real ~508k window).
+
+`provider` splits along a second axis. On the pi path it decides how the sidecar registers the model: `provider: "nrp"` models are the ones `/api/internal/models` serves, registered against the NRP OpenAI-compatible endpoint, while `anthropic` models pass through to pi's own built-in provider (which reads `ANTHROPIC_API_KEY` from the sidecar's environment). On the legacy path `backend/config.py :: get_client` returns the shared NRP `OpenAI` client or a freshly constructed `anthropic.Anthropic`, and the agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
+
+The roster is hand-maintained by decision. `test_context_windows_match_config_exactly` proves Flask and the sidecar agree **with each other**, not that either matches NRP — this table drifted once already and will again the next time NRP changes a window.
 
 Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in all three helpers (`get_client`, `model_supports_tools`, `context_budget_chars`), with one asymmetry worth knowing: `model_supports_tools` defaults an unrecognized name to `False`, routing it to the legacy path rather than raising.
 

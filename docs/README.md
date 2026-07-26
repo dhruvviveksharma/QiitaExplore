@@ -35,7 +35,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 | [`02-authentication.md`](02-authentication.md) | Paste-PAT flow · sessions · CSRF · tenancy · legacy claim |
 | [`03-data-access-and-caching.md`](03-data-access-and-caching.md) | Reading classic Qiita · three cache layers · context budgeting |
 | [`04-search.md`](04-search.md) | Three search paths · the SQL builder · per-study JSONB probes |
-| [`05-agent.md`](05-agent.md) | The tool loop · the one-search invariant · the five tools |
+| [`05-agent.md`](05-agent.md) | The tool loop · the one-search invariant · the four tools |
 | [`06-streaming-and-chat.md`](06-streaming-and-chat.md) | SSE protocol · segments · **the dual-authoring hazard** |
 | [`07-merge-and-biom.md`](07-merge-and-biom.md) | Merge workspaces · artifact graphs · jobs · two known defects |
 | [`08-frontend.md`](08-frontend.md) | No-build-step React · the mega-hook · routing that isn't |

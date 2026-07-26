@@ -41,7 +41,13 @@ npm ci   # once, or after a package-lock.json change
 PI_SIDECAR_SECRET=<same value as backend's PI_SIDECAR_SECRET> bash start_sidecar.sh
 ```
 
-`start_barnacle.sh` starts it: gunicorn goes up first, the script waits for it to answer, then launches the sidecar (which fetches its model roster from Flask at boot). Ctrl-C stops both, and if either dies the other is torn down. `PI_SKIP_SIDECAR=1` runs Flask alone. There is still no process manager wiring the pair into the OS (this repo has none for gunicorn either; see the note on `systemctl` above).
+`start_barnacle.sh` starts it: pi config is resolved and validated first, then gunicorn goes up, the script waits for it to answer, then it launches the sidecar (which fetches its model roster from Flask at boot). Ctrl-C stops both, and if either dies the other is torn down. There is still no process manager wiring the pair into the OS (this repo has none for gunicorn either; see the note on `systemctl` above).
+
+**The sidecar is no longer optional.** Both `PI_BACKEND_*` flags default to true, so a missing `PI_SIDECAR_SECRET` is now a hard failure at startup rather than a warning — it used to print *"pi sidecar not started (legacy chat path only)"* and carry on, which became a lie the moment pi became the default. `run.py` refuses to boot on a missing `PI_SIDECAR_SECRET` or `PI_SCOPE_TOKEN_KEY` (`config.pi_config_errors()`). To run without it deliberately, use `PI_SKIP_SIDECAR=1`, which also exports both flags `false` so "Flask alone" means the legacy chat path.
+
+**The script refuses a port that is already listening.** The readiness probe cannot distinguish "my child is serving" from "something else answers on this port" — a stale gunicorn on `:5002` once satisfied the health check while the newly-spawned one was logging `Connection in use` and dying, after which the script happily wired a sidecar to a Flask it had not started. Clear the port first: `lsof -nP -iTCP:$PORT -sTCP:LISTEN`, then `pkill -f "gunicorn.*:$PORT"`.
+
+**Exit codes are meaningful now.** The EXIT trap used to end in a bare `exit 0`, so a refused start and a gunicorn that died during boot both reported success to whatever ran the script. `shutdown()` preserves the triggering status; an operator's Ctrl-C is still a clean `0`.
 
 **Requires Node ≥ 22.** An earlier version of this page called pi's declared `>=22.19.0` a support-policy floor with no technical teeth. That was wrong: on Node 20 the undici bundled in pi's dependency tree dies at import with `TypeError: webidl.util.markAsUncloneable is not a function` — a stack trace that never mentions the Node version. 22.12 is verified working, so the check in `start_sidecar.sh` is a major-version floor.
 
@@ -82,7 +88,7 @@ A restart is therefore never free while a merge is running. Check for `running` 
 
 ### Restarting, and what a restart costs
 
-There is no zero-downtime story here. `start_barnacle.sh` ends in `exec gunicorn`, so the shell process *is* gunicorn and the ordinary stop-then-start is what the environment script suggests: `pkill -f gunicorn` followed by re-running the script, or `systemctl restart` where the backend runs as a unit.
+There is no zero-downtime story here. `start_barnacle.sh` supervises gunicorn and the sidecar as children and holds both in the foreground (it no longer `exec`s gunicorn), so the ordinary stop is Ctrl-C, or `pkill -f gunicorn` from another shell — the die-together loop then tears the sidecar down too. Re-run the script to start again. Because the script now refuses an occupied port, a restart that races the old process exits with a clear message instead of half-starting.
 
 Four things are lost or degraded on every restart, in rough order of how much they matter:
 

@@ -193,6 +193,17 @@ def stream_agent(
     for iteration in range(max_iters):
         # After a search completes, drop search_studies from the schema so the
         # model is forced to synthesise results rather than re-searching.
+        #
+        # SECOND IMPLEMENTATION EXISTS. pi enforces the same invariant in
+        # pi_sidecar/sessions.mjs (makeSearchOncePerMessageExtension), because
+        # it cannot mutate the schema mid-run — setActiveTools only applies from
+        # the next agent turn — so it uses a `tool_call` block hook instead.
+        # Same rule, no shared code: change one and check the other.
+        #
+        # The sidecar additionally refunds the budget when Flask reports
+        # `executed: false` (a call rejected for empty input). This path has no
+        # such hole: search_already_done is set from a call that ran, not from
+        # one that was merely attempted.
         if search_already_done:
             active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]
         else:

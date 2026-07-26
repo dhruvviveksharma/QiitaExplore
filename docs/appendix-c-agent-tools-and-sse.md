@@ -22,7 +22,9 @@ Agentic tool-calling exists in exactly one place: `POST /api/global-chats/<chat_
 
 This list is passed directly as `tools=` to `client.chat.completions.create(...)` for every NRP-Nautilus (`provider: "nrp"`) model. For Anthropic models (`provider: "anthropic"` in `config.py :: MODEL_METADATA`), `backend/helpers/agent.py :: _openai_tools_to_anthropic` reshapes each entry into `{"name", "description", "input_schema"}` — `input_schema` is the OpenAI `parameters` object, passed through unchanged. No field is added, dropped, or renamed in translation, so the JSON Schema itself — types, the `required` list, and every prose description the model reads to decide what synonyms to fill in — is identical between providers. The translation runs once per turn, at the top of `_stream_anthropic_agent`, not once per loop iteration.
 
-Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. `model_supports_tools(model)` (also in `config.py`) gates whether the agentic path runs at all — it is `False` only for `gemma-small` among the eleven configured models, at time of writing.
+Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. This applies to the legacy in-process loop; on the pi path (the default — see [`05-agent.md`](05-agent.md)) the sidecar registers providers itself, from the roster `/api/internal/models` serves.
+
+`model_supports_tools(model)` (also in `config.py`) used to gate whether the agentic path ran at all. **Every configured model now returns `True`**, so it gates nothing; it survives because `/api/internal/models` filters the pi roster on it, and pi has no per-model tool flag of its own — a model that cannot call tools must never be offered to it. `gemma-small` was the one `False`, and that was wrong: checked against the live NRP endpoint, it does support tool calls.
 
 ### The `active_tools` mutation
 
