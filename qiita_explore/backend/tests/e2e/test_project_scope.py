@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))          # tests/ — for 
 from study_fixtures import PUBLIC_STUDY_WITH_SAMPLES, PRIVATE_STUDY  # noqa: E402
 from helpers.scope_token import mint_scope_token  # noqa: E402
 
-BASE = os.environ.get("BARNACLE_URL", "http://localhost:5001")
+BASE = os.environ.get("BARNACLE_URL", f"http://localhost:{os.environ.get('QIITA_EXPLORE_PORT', '5001')}")
 
 # A real public study, NOT in the test project below — the out-of-workspace
 # probe. Distinct from PUBLIC_STUDY_WITH_SAMPLES on purpose.
@@ -67,8 +67,9 @@ def e2e_session():
         requests.get(f"{BASE}/api/auth/login-url", timeout=5)
     except requests.exceptions.RequestException:
         pytest.skip("barnacle backend not running — start with: bash qiita_explore/start_barnacle.sh")
-    if not os.environ.get("PI_SCOPE_TOKEN_KEY"):
-        pytest.skip("PI_SCOPE_TOKEN_KEY not set — cannot mint a valid X-Tool-Token for this test process")
+    for var in ("PI_SCOPE_TOKEN_KEY", "PI_SIDECAR_SECRET"):
+        if not os.environ.get(var):
+            pytest.skip(f"{var} not set — must match the running backend's value")
     try:
         user_id, raw_token, csrf_token = _mint_e2e_session()
     except Exception as exc:  # noqa: BLE001 — surfaces misconfigured shared DB/key clearly
@@ -113,7 +114,10 @@ def _project_tool_call(tool_name, args, *, project_id, user_id, chat_id="e2e-pro
     token = mint_scope_token(user_id=user_id, scope="project", chat_id=chat_id, project_id=project_id)
     return requests.post(
         f"{BASE}/api/internal/tools/{tool_name}",
-        headers={"X-Tool-Token": token}, json=args, timeout=30,
+        # X-Pi-Secret too: _guard() checks it before the scope token, so a
+        # call sending only X-Tool-Token 401s regardless of scope.
+        headers={"X-Tool-Token": token, "X-Pi-Secret": os.environ.get("PI_SIDECAR_SECRET", "")},
+        json=args, timeout=30,
     )
 
 
