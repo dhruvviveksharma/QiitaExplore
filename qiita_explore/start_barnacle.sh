@@ -80,6 +80,13 @@ SIDECAR_PID=""
 CRASHED=""
 
 shutdown() {
+  # Capture the status that triggered this FIRST — it is $? until any other
+  # command runs. The trap used to end in a bare `exit 0`, which silently
+  # replaced the status of every `exit 1` reached after the trap was installed:
+  # a refused start (port busy, sidecar secret missing) and a gunicorn that
+  # died during boot all reported success to whatever ran this script. CRASHED
+  # only ever covered the die-together loop at the bottom.
+  local rc="${1:-$?}"
   trap - INT TERM EXIT
   echo
   echo "Stopping…"
@@ -88,10 +95,70 @@ shutdown() {
   [ -n "$SIDECAR_PID" ] && kill "$SIDECAR_PID" 2>/dev/null || true
   [ -n "$FLASK_PID" ]   && kill "$FLASK_PID"   2>/dev/null || true
   wait 2>/dev/null || true
-  [ -n "$CRASHED" ] && exit 1
-  exit 0
+  [ -n "$CRASHED" ] && rc=1
+  exit "$rc"
 }
-trap shutdown INT TERM EXIT
+# An operator's Ctrl-C is a clean stop, so INT/TERM pass an explicit 0 rather
+# than inheriting whatever the interrupted command happened to return.
+trap 'shutdown 0' INT TERM
+trap shutdown EXIT
+
+# ── pi configuration, resolved BEFORE gunicorn ──────────────────────────────
+# Order matters: gunicorn reads PI_BACKEND_* at import, so the decision about
+# which chat runtime this process serves has to be made before it is spawned.
+# Validating first also means a misconfiguration costs one clear message rather
+# than four worker tracebacks.
+#
+# The sidecar is Node and cannot read .env itself, so its secrets are exported
+# here. Parsed with python-dotenv (a declared backend dep, requirements.txt)
+# rather than shell word-splitting, which mangles the existing
+# `API_KEY = "SQ…"` line — spaces around = and quotes around the value.
+ENV_FILE="$SCRIPT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+  eval "$(python3 -c "
+import shlex
+from dotenv import dotenv_values
+wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','PI_NODE_BIN','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY')
+for k, v in dotenv_values('$ENV_FILE').items():
+    if v and k in wanted:
+        print(f'export {k}={shlex.quote(v)}')
+")"
+fi
+
+START_SIDECAR=1
+if [ "${PI_SKIP_SIDECAR:-}" = "1" ]; then
+  # An explicit "Flask alone" request. pi is the default runtime, so this must
+  # also switch the app off it — otherwise this flag produces a backend that
+  # boots cleanly and 500s on every chat turn, which is the opposite of what
+  # anyone reaches for it to do.
+  echo "PI_SKIP_SIDECAR=1 — Flask alone, forcing the legacy chat path."
+  export PI_BACKEND_GLOBAL=false
+  export PI_BACKEND_PROJECT=false
+  START_SIDECAR=0
+elif [ -z "${PI_SIDECAR_SECRET:-}" ]; then
+  # Hard failure now that pi is the default runtime. This used to print
+  # "legacy chat path only" and carry on, which was true while PI_BACKEND_*
+  # defaulted false and is a lie now: Flask would come up, the UI would load,
+  # and every chat turn would 401. run.py refuses to boot in this state too —
+  # this check just puts the reason on screen before four workers print it.
+  echo "PI_SIDECAR_SECRET unset, but pi is the default chat backend." >&2
+  echo "Set it in $ENV_FILE (openssl rand -base64 32), or run the legacy path with:" >&2
+  echo "  PI_SKIP_SIDECAR=1 bash qiita_explore/start_barnacle.sh" >&2
+  exit 1
+fi
+
+# Refuse to hand the port to gunicorn if something already holds it. The
+# readiness probe below cannot tell "my child is up" from "a stale process
+# answers on this port" — seen live: an orphaned gunicorn held :5002, the new
+# one logged "Connection in use" five times and died, the probe reported ok
+# because the OLD process replied, and the script went on to wire a sidecar to
+# a Flask it had not started.
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $PORT is already in use — refusing to start a second backend." >&2
+  echo "Inspect it with:  lsof -nP -iTCP:$PORT -sTCP:LISTEN" >&2
+  echo "Stop it with:     pkill -f \"gunicorn.*:$PORT\"" >&2
+  exit 1
+fi
 
 echo "Starting gunicorn on port $PORT (4 workers, 2 threads each)..."
 # --timeout 300 (was 120): a pi-backed turn can include compaction plus
@@ -123,30 +190,9 @@ for _ in $(seq 1 60); do
 done
 
 # ── pi sidecar ──────────────────────────────────────────────────────────────
-# The sidecar is Node and cannot read .env itself, so its secrets are exported
-# here. Parsed with python-dotenv (a declared backend dep, requirements.txt)
-# rather than shell word-splitting, which mangles the existing
-# `API_KEY = "SQ…"` line — spaces around = and quotes around the value.
-ENV_FILE="$SCRIPT_DIR/.env"
-if [ -f "$ENV_FILE" ]; then
-  eval "$(python3 -c "
-import shlex
-from dotenv import dotenv_values
-wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','PI_NODE_BIN','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY')
-for k, v in dotenv_values('$ENV_FILE').items():
-    if v and k in wanted:
-        print(f'export {k}={shlex.quote(v)}')
-")"
-fi
-
-if [ "${PI_SKIP_SIDECAR:-}" = "1" ]; then
-  echo "PI_SKIP_SIDECAR=1 — running Flask alone."
-elif [ -z "${PI_SIDECAR_SECRET:-}" ]; then
-  # Not an error: with the PI_BACKEND_* flags off, chat still works through the
-  # legacy Python agent path. A missing sidecar must not block the backend.
-  echo "PI_SIDECAR_SECRET unset — pi sidecar not started (legacy chat path only)."
-else
-  # The sidecar calls back into the Flask we just started.
+# Started only now: it fetches its model roster from Flask at boot, so Flask has
+# to be answering first. Everything it needs was resolved and validated above.
+if [ "$START_SIDECAR" = "1" ]; then
   export FLASK_INTERNAL_URL="${FLASK_INTERNAL_URL:-http://127.0.0.1:$PORT}"
   echo "Starting pi sidecar (flask=$FLASK_INTERNAL_URL)..."
   bash "$SCRIPT_DIR/pi_sidecar/start_sidecar.sh" &

@@ -7,6 +7,20 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+# Module level, not a fixture: run.py now refuses to start when pi is the
+# active chat backend and its secrets are missing (config.pi_config_errors),
+# and that check runs at IMPORT time — before any fixture could set these. Test
+# modules that `from run import app` would SystemExit on a machine with no
+# .env, so the suite would pass for whoever has one locally and fail everywhere
+# else. Give them fixed dummy values so the result depends on the code under
+# test, same reasoning as isolate_dotenv below.
+os.environ.setdefault("PI_SIDECAR_SECRET", "test-pi-secret")
+os.environ.setdefault("PI_SCOPE_TOKEN_KEY", "test-scope-token-key")
+# Pre-existing, surfaced by the same audit: config.py constructs an OpenAI
+# client at import, so without a key the suite fails at COLLECTION on any
+# machine lacking a .env. No test makes a real completion call.
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+
 
 @pytest.fixture(autouse=True)
 def isolate_dotenv(monkeypatch):

@@ -145,11 +145,54 @@ PI_SCOPE_TOKEN_KEY = os.getenv("PI_SCOPE_TOKEN_KEY")
 
 PI_SCOPE_TOKEN_TTL_SECONDS = int(os.getenv("PI_SCOPE_TOKEN_TTL_SECONDS", "600"))
 
-# Per-chat-type cutover flags so global and project chat can move to the pi
-# backend independently and be flipped back without a deploy if parity issues
-# turn up after one ships but not the other.
-PI_BACKEND_GLOBAL = os.getenv("PI_BACKEND_GLOBAL", "false").strip().lower() in ("1", "true", "yes")
-PI_BACKEND_PROJECT = os.getenv("PI_BACKEND_PROJECT", "false").strip().lower() in ("1", "true", "yes")
+# Per-chat-type flags. pi is now the DEFAULT runtime for both; the legacy
+# Python paths (helpers/agent.py :: stream_agent for global, llm_chat_stream for
+# project) remain reachable by setting either of these false, as a rollback that
+# needs no deploy.
+#
+# Because the default flipped, the legacy paths are no longer exercised by
+# anything in normal use and will drift. They are kept deliberately, not because
+# they are believed correct — re-verify before relying on one.
+def _flag(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes")
+
+
+PI_BACKEND_GLOBAL = _flag("PI_BACKEND_GLOBAL")
+PI_BACKEND_PROJECT = _flag("PI_BACKEND_PROJECT")
+
+
+def pi_config_errors() -> list:
+    """Config that is only optional while pi is off. Returns human-readable
+    problems; empty list means the active configuration can actually serve chat.
+
+    Exists because the failure mode is otherwise invisible at boot and awful at
+    runtime: with pi as the default path and PI_SIDECAR_SECRET unset, Flask
+    starts clean, the UI loads, and every single chat turn dies on a 401 from
+    internal_tool_routes._guard() — which reads as "the chat is broken", not as
+    "a secret is missing"."""
+    if not (PI_BACKEND_GLOBAL or PI_BACKEND_PROJECT):
+        return []
+    problems = []
+    if not PI_SIDECAR_SECRET:
+        problems.append(
+            "PI_SIDECAR_SECRET is unset — the sidecar cannot authenticate to "
+            "/api/internal/tools/*, so every tool call would 401."
+        )
+    if not PI_SCOPE_TOKEN_KEY:
+        problems.append(
+            "PI_SCOPE_TOKEN_KEY is unset — per-turn scope tokens cannot be "
+            "signed, so no tool call can be authorized."
+        )
+    # PI_SIDECAR_URL defaults to the sidecar's own default port. If one of them
+    # was overridden and the other was not, Flask posts turns into a closed
+    # port and every chat fails with a connection error.
+    sidecar_port = os.getenv("PI_SIDECAR_PORT")
+    if sidecar_port and not os.getenv("PI_SIDECAR_URL"):
+        problems.append(
+            f"PI_SIDECAR_PORT={sidecar_port} is set but PI_SIDECAR_URL is not — "
+            f"Flask would still post turns to {PI_SIDECAR_URL}."
+        )
+    return problems
 
 # Temporary debugging aid: when true, an unexpected exception in
 # POST /auth/connect includes the exception type/message in the JSON
