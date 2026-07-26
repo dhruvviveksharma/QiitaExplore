@@ -5,7 +5,6 @@ from flask import g, jsonify, request
 from run import app
 import config
 from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars, model_supports_tools
-from services.study_service import search_studies_with_sql, build_where_from_plan
 from helpers.agent import stream_agent
 from helpers.pi_client import delete_session as pi_delete_session
 from helpers.pi_turn import stream_pi_turn
@@ -22,10 +21,8 @@ from store import (
 )
 from helpers.llm_helpers import (
     _sse,
-    _build_global_search_context,
+    _resolve_model,
     merge_global_chat_context,
-    llm_chat_stream,
-    llm_plan_query,
     friendly_llm_error,
 )
 from helpers.qiita_fetch import (
@@ -80,6 +77,12 @@ def api_global_chat_message_stream(chat_id):
     user_content, model, report_study_id, pin_study_ids, err_response = parse_chat_stream_body(data)
     if err_response is not None:
         return err_response
+    # Normalized once, here, rather than leaving each downstream path (pi,
+    # stream_agent, llm_chat_stream) to fall back on an invalid/missing model
+    # independently — makes model_supports_tools(model) below a reliable
+    # check against a real ALLOWED_MODELS member instead of an unvalidated
+    # client-supplied string.
+    model = _resolve_model(model)
 
     chat = get_global_chat(user_id, chat_id)
     if not chat:
@@ -108,7 +111,6 @@ def api_global_chat_message_stream(chat_id):
                 assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
             else:
                 budget    = context_budget_chars(model)
-                n_sel     = len(selected_studies) if selected_studies else 0
 
                 # Build pinned context once — reused across all paths
                 pinned_studies = chat.get("pinned_studies") or []
@@ -131,16 +133,35 @@ def api_global_chat_message_stream(chat_id):
                         user_id=user_id, scope=SCOPE_GLOBAL, chat_id=chat_id,
                         deep_search=deep_search, ttl_seconds=config.PI_SCOPE_TOKEN_TTL_SECONDS,
                     )
+                    # deep_search is NOT passed here — it already rode into
+                    # tool_token above (mint_scope_token), which is where
+                    # internal_tool_routes.py actually reads it. stream_chat
+                    # (helpers/pi_client.py) no longer accepts it as a
+                    # separate parameter.
                     assistant_parts, ui_payload = yield from stream_pi_turn(
                         scope=SCOPE_GLOBAL, chat_id=chat_id, model=model,
                         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                         message=user_content, context_block=combined_ctx,
-                        tool_token=tool_token, deep_search=deep_search,
+                        tool_token=tool_token,
                     )
-                elif model_supports_tools(model):
-                    # Legacy Python agentic path: model_supports_tools(model) is
-                    # true but PI_BACKEND_GLOBAL is off — flip the flag to cut
-                    # over without a deploy if pi-path parity issues turn up.
+                else:
+                    # Legacy Python agentic path — used when PI_BACKEND_GLOBAL
+                    # is off. Flip the flag to cut over without a deploy if
+                    # pi-path parity issues turn up.
+                    #
+                    # This used to be `elif model_supports_tools(model):`, with
+                    # a third `else` running llm_plan_query -> keyword search
+                    # for models that couldn't call tools. That branch is
+                    # deleted: model_supports_tools(model) is True for every
+                    # entry in MODEL_METADATA now (gemma-small was the last
+                    # False, corrected once its real NRP listing showed it
+                    # does support tool calls), so it had no live caller. A
+                    # future supports_tools=False model would reach
+                    # stream_agent here instead — contained by this
+                    # generator's own try/except at the bottom of this
+                    # function (a per-request error, not a crash), which is
+                    # an acceptable failure mode for a case nothing in
+                    # ALLOWED_MODELS currently produces.
                     sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
                     combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
                     # Accumulate segments for persistence
@@ -182,66 +203,6 @@ def api_global_chat_message_stream(chat_id):
                         segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
                     if segments_list:
                         ui_payload = {"kind": "agent_segments", "segments": segments_list}
-                else:
-                    # Legacy path: llm_plan_query → keyword search → llm_chat_stream
-                    yield _sse("step_start", {"name": "translate_query", "label": "Planning query…"})
-                    plan = llm_plan_query(full_msgs)
-                    where, search_params = build_where_from_plan(plan)
-                    kws = plan.get("keywords", [])
-                    display_where = " OR ".join(
-                        f"(title/abstract/alias ILIKE '%{kw}%')" for kw in kws
-                    ) if kws else "all public studies"
-                    yield _sse("step_done", {"name": "translate_query", "label": "Query planned", "detail": plan["description"]})
-                    yield _sse("query_plan", {
-                        "description": plan["description"],
-                        "keywords": kws,
-                        "match_mode": "OR",
-                        "sql_where": display_where,
-                    })
-                    yield ': keepalive\n\n'
-                    skip_search = bool(plan.get("skip_search"))
-
-                    if skip_search:
-                        yield _sse("step_done", {"name": "search_db", "label": "Filtering from conversation context", "detail": "no new search"})
-                        if selected_studies:
-                            sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget)
-                            combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
-                        else:
-                            combined_ctx = pinned_ctx
-                        yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                        for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, model=model):
-                            assistant_parts.append(token)
-                            yield _sse("token", {"token": token})
-                    else:
-                        PAGE_SIZE = 50
-                        page_num  = max(0, int(plan.get("page") or 0))
-                        offset    = page_num * PAGE_SIZE
-                        s_label   = "Searching Qiita database…" if page_num == 0 else f"Fetching batch {page_num + 1}…"
-                        yield _sse("step_start", {"name": "search_db", "label": s_label})
-                        try:
-                            studies = search_studies_with_sql(where, search_params, limit=PAGE_SIZE, offset=offset)
-                        except Exception:
-                            studies = []
-                        s_detail = f"{len(studies)} studies found"
-                        if n_sel:
-                            s_detail += f" · merged with {n_sel} context {'studies' if n_sel != 1 else 'study'}"
-                        yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": s_detail})
-                        yield ': keepalive\n\n'
-
-                        yield _sse("step_start", {"name": "build_context", "label": "Building context…"})
-                        if selected_studies:
-                            study_ctx = merge_global_chat_context(selected_studies, studies, user_content, budget)
-                            yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{n_sel} selected + {len(studies)} from search"})
-                        else:
-                            study_ctx = _build_global_search_context(studies, user_content, budget)
-                            yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{len(studies)} studies"})
-                        yield ': keepalive\n\n'
-
-                        combined_ctx = "\n\n".join(x for x in (study_ctx, pinned_ctx) if x) or None
-                        yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                        for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, model=model):
-                            assistant_parts.append(token)
-                            yield _sse("token", {"token": token})
             assistant_content = "".join(assistant_parts).strip()
             append_global_chat_messages(user_id, chat_id, user_content, assistant_content, assistant_ui_payload=ui_payload)
             # For agent turns, send the full current pinned list so the frontend can sync

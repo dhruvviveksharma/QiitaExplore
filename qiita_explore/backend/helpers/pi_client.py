@@ -22,8 +22,7 @@ class PiSidecarError(Exception):
 
 
 def stream_chat(*, scope, chat_id, model, system_prompt, message,
-                 context_block=None, tool_token, deep_search=False,
-                 timeout_seconds=180.0):
+                 context_block=None, tool_token, timeout_seconds=290.0):
     """POST /chat/stream and yield one parsed pi event dict per NDJSON line.
 
     The sidecar only closes the response after the turn has fully settled
@@ -32,7 +31,24 @@ def stream_chat(*, scope, chat_id, model, system_prompt, message,
     exhausted, the turn is genuinely done. Callers don't need to reason about
     pi's own willRetry/agent_settled distinction; that's already resolved on
     the sidecar side.
+
+    timeout_seconds default (290s) is deliberately just UNDER gunicorn's
+    --timeout 300 and nginx's proxy_read_timeout 300s (start_barnacle.sh,
+    nginx.conf), not equal to them. This is the innermost hop, so it should
+    time out FIRST and cleanly — raising PiSidecarError, caught by the route
+    and turned into a proper SSE `error` event — rather than racing gunicorn's
+    own worker timeout, which if it wins kills the whole WSGI worker with no
+    graceful error frame at all. A prior default of 180s was actually
+    shorter than a real deep search can take (measured at 61s for a plain
+    search over a tunnelled Postgres — see docs/09-operations.md), so it was
+    erroring out turns the outer 300s ladder was explicitly sized to allow.
     """
+    # No deep_search field: the sidecar (server.mjs's handleChatStream) never
+    # reads one — nothing under pi_sidecar/ references it. The real signal
+    # already travels inside tool_token: mint_scope_token(..., deep_search=...)
+    # signs it into the scope token, and internal_tool_routes.py reads it from
+    # THERE when a tool call comes back in. A body field here would just be a
+    # second, unused copy of the same information.
     body = {
         "scope": scope,
         "chat_id": chat_id,
@@ -41,7 +57,6 @@ def stream_chat(*, scope, chat_id, model, system_prompt, message,
         "message": message,
         "context_block": context_block,
         "tool_token": tool_token,
-        "deep_search": deep_search,
     }
     url = f"{config.PI_SIDECAR_URL}/chat/stream"
     try:

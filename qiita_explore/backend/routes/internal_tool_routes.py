@@ -136,10 +136,9 @@ def _run_project_scoped(name, args, claims):
             return _serialize(refusal)
         return _serialize(execute_tool(name, args, scope='project', chat_id=claims['chat_id']))
     if name == 'pin_study':
-        refusal = enforce_project_pin(args, member_ids)
+        refusal, dropped = enforce_project_pin(args, member_ids)
         if refusal is not None:
             return _serialize(refusal)
-        dropped = args.pop('_dropped_out_of_scope', None)
         result = execute_tool(name, args, scope='project', chat_id=claims['chat_id'])
         if dropped:
             note = f"({len(dropped)} of the requested studies are not in this project's workspace and were skipped: {dropped}.) "

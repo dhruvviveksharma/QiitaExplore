@@ -10,6 +10,17 @@ import { loadTools } from "./tools.mjs";
 
 const IDLE_EVICT_MS = 30 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+// Each cache entry holds a live AgentSession — its full message history, tool
+// list, and extension closures. Without a cap, the ONLY eviction is the idle
+// sweep at IDLE_EVICT_MS, so a burst of activity (a few hundred chats in a
+// half hour) keeps every one of those sessions resident in memory the whole
+// time, on a box that also runs Flask and Postgres. This bounds resident
+// session count independent of how recently anything went idle. Read once
+// here as the default and threaded through createSessionStore as a parameter
+// (see below), rather than being a plain module-level constant, so tests can
+// override it per-harness without needing to set the env var before this
+// module is ever imported.
+const DEFAULT_MAX_CACHED_SESSIONS = Number(process.env.PI_MAX_CACHED_SESSIONS || 200);
 
 // pi's own session id rule (session-manager.ts): first/last char alnum, body
 // alnum/dot/underscore/dash. Not re-exported from the package's public entry
@@ -92,8 +103,21 @@ function makeSearchOncePerMessageExtension() {
   };
 }
 
-export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, flaskUrl, piSecret }) {
-  const cache = new Map(); // sessionKey -> { session, contextRef, lastUsed }
+export function createSessionStore({
+  cwd, agentDir, sessionDir, modelRuntime, flaskUrl, piSecret,
+  maxCachedSessions = DEFAULT_MAX_CACHED_SESSIONS,
+}) {
+  const cache = new Map(); // sessionKey -> { session, contextRef, lastUsed, turnQueue }
+  // sessionKey -> in-progress Promise<entry>. Closes a race in getOrCreate: two
+  // requests for the same chat arriving close together (a double-send, a
+  // retry, or two of gunicorn's threads) both miss `cache` before either
+  // finishes — building a session takes several awaited steps
+  // (resourceLoader.reload, loadTools, createAgentSession) — and without this,
+  // both would construct a separate AgentSession over the SAME JSONL file:
+  // two writers on one append-only transcript, plus the loser leaked (never
+  // disposed, its file handle held until process exit — idle eviction only
+  // ever sees the winner that made it into `cache`).
+  const inflight = new Map();
 
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(cwd, { recursive: true });
@@ -104,24 +128,25 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
   // in the directory to report its metadata — an O(all chats ever created) scan
   // on each cache miss, just to resolve one path. Timestamps sort lexically, so
   // the last match is the newest if a key somehow has more than one file.
-  function findExistingPath(sessionKey) {
+  //
+  // fs.promises.readdir, not the sync form: this still lists the whole
+  // sessionDir (still O(all chats ever created) in directory-entry count, not
+  // file-parse cost), but doing it synchronously blocks Node's single-threaded
+  // event loop for every OTHER concurrent chat's request handling while it
+  // runs — on a directory that only grows, since nothing here prunes old
+  // session files. The async form yields the same result without stalling
+  // in-flight streams on other sessions while it does.
+  async function findExistingPath(sessionKey) {
     const suffix = `_${sessionKey}.jsonl`;
     let newest = null;
-    for (const name of fs.readdirSync(sessionDir)) {
+    for (const name of await fs.promises.readdir(sessionDir)) {
       if (name.endsWith(suffix) && (newest === null || name > newest)) newest = name;
     }
     return newest ? path.join(sessionDir, newest) : null;
   }
 
-  async function getOrCreate(sessionKey, { model, systemPrompt }) {
-    assertValidSessionId(sessionKey);
-    const cached = cache.get(sessionKey);
-    if (cached) {
-      cached.lastUsed = Date.now();
-      return cached;
-    }
-
-    const existingPath = findExistingPath(sessionKey);
+  async function buildSession(sessionKey, { model, systemPrompt }) {
+    const existingPath = await findExistingPath(sessionKey);
     const sessionManager = existingPath
       ? SessionManager.open(existingPath, sessionDir, cwd)
       : SessionManager.create(cwd, sessionDir, { id: sessionKey });
@@ -169,18 +194,45 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
       noTools: "builtin",
     });
 
-    const entry = { session, contextRef, toolTokenRef, lastUsed: Date.now() };
-    cache.set(sessionKey, entry);
-    return entry;
+    return { session, contextRef, toolTokenRef, lastUsed: Date.now(), turnQueue: null };
+  }
+
+  function getOrCreate(sessionKey, { model, systemPrompt }) {
+    assertValidSessionId(sessionKey);
+    const cached = cache.get(sessionKey);
+    if (cached) {
+      cached.lastUsed = Date.now();
+      return Promise.resolve(cached);
+    }
+
+    const existingBuild = inflight.get(sessionKey);
+    if (existingBuild) return existingBuild;
+
+    // inflight.set happens synchronously, before buildSession's first await —
+    // any concurrent getOrCreate for this sessionKey, no matter which await
+    // point it arrives at, converges on this SAME promise instead of starting
+    // a second build.
+    const buildPromise = buildSession(sessionKey, { model, systemPrompt })
+      .then((entry) => {
+        cache.set(sessionKey, entry);
+        evictLruIfOverCap();
+        return entry;
+      })
+      .finally(() => {
+        inflight.delete(sessionKey);
+      });
+    inflight.set(sessionKey, buildPromise);
+    return buildPromise;
   }
 
   /**
-   * Run one turn to completion. Subscribes before prompting (no race), streams
-   * every event to onEvent, and resolves once the session reports agent_settled —
-   * NOT on session.prompt()'s own resolution, which only signals preflight
+   * One turn, run exclusively (never called directly — see runTurn below).
+   * Subscribes before prompting (no race), streams every event to onEvent,
+   * and resolves once the session reports agent_settled — NOT on
+   * session.prompt()'s own resolution, which only signals preflight
    * acceptance (queued/dispatched), not turn completion.
    */
-  async function runTurn(entry, { message, contextBlock, toolToken }, onEvent) {
+  async function runTurnExclusive(entry, { message, contextBlock, toolToken }, onEvent) {
     entry.lastUsed = Date.now();
     entry.contextRef.block = contextBlock || null;
     entry.toolTokenRef.token = toolToken || null;
@@ -204,6 +256,28 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
     });
   }
 
+  /**
+   * Run one turn to completion, SERIALIZED per session entry via
+   * entry.turnQueue. Two turns on the same chat_id — a double-send, or two
+   * requests racing — must not run concurrently: entry.contextRef and
+   * entry.toolTokenRef are shared mutable state that tools.mjs's execute()
+   * reads at call time, so an overlapping second turn silently overwrites the
+   * first turn's per-turn context and scope token while its tool calls are
+   * still in flight (if the two turns are different scopes, a tool call can
+   * then execute under the WRONG scope). entry.session.subscribe() also has
+   * no per-turn partitioning, so two concurrent runTurnExclusive calls would
+   * each get every event from both turns.
+   */
+  function runTurn(entry, args, onEvent) {
+    const run = () => runTurnExclusive(entry, args, onEvent);
+    const queue = entry.turnQueue || Promise.resolve();
+    const next = queue.then(run, run); // run this turn regardless of the previous one's outcome
+    // Keep the chain alive past a rejection so the NEXT queued turn still
+    // runs; this call's OWN caller still observes the real rejection via `next`.
+    entry.turnQueue = next.catch(() => {});
+    return next;
+  }
+
   function evictIdle() {
     const now = Date.now();
     for (const [key, entry] of cache) {
@@ -211,6 +285,27 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
         entry.session.dispose();
         cache.delete(key);
       }
+    }
+  }
+
+  // Runs once per successful build (see getOrCreate), not on a timer — a
+  // sustained burst that keeps pushing the cache over MAX_CACHED_SESSIONS
+  // between idle sweeps must not be able to grow it unbounded in between.
+  // Same non-streaming guard as evictIdle: never dispose a session with a
+  // turn in flight, regardless of how stale its lastUsed looks.
+  function evictLruIfOverCap() {
+    while (cache.size > maxCachedSessions) {
+      let lruKey = null, lruEntry = null;
+      for (const [key, entry] of cache) {
+        if (entry.session.isStreaming) continue;
+        if (lruEntry === null || entry.lastUsed < lruEntry.lastUsed) {
+          lruKey = key;
+          lruEntry = entry;
+        }
+      }
+      if (lruKey === null) break; // every cached session is mid-turn — nothing safe to evict
+      lruEntry.session.dispose();
+      cache.delete(lruKey);
     }
   }
   const sweepTimer = setInterval(evictIdle, SWEEP_INTERVAL_MS);
@@ -222,7 +317,7 @@ export function createSessionStore({ cwd, agentDir, sessionDir, modelRuntime, fl
       cached.session.dispose();
       cache.delete(sessionKey);
     }
-    const existingPath = findExistingPath(sessionKey);
+    const existingPath = await findExistingPath(sessionKey);
     if (existingPath && fs.existsSync(existingPath)) {
       fs.unlinkSync(existingPath);
     }

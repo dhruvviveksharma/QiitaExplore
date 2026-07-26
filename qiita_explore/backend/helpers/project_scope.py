@@ -163,12 +163,21 @@ def project_scoped_search_by_sample(args: dict, studies: list) -> ToolResult:
 
 
 def enforce_project_get_report(args: dict, member_ids: set):
-    """Return a refusal ToolResult if study_id isn't a project member, else None
-    to signal the caller should proceed via execute_tool()."""
+    """Return a refusal ToolResult if study_id isn't a project member OR isn't
+    parseable, else None to signal the caller should proceed via execute_tool().
+
+    Must fail CLOSED on a malformed id. Returning None here used to mean
+    "proceed" with args unchanged — args["study_id"] then reached
+    _tool_get_study_report (agent_tools.py), whose `int(args.get("study_id")
+    or 0)` has no guard of its own and raises uncaught, 500ing the request
+    instead of refusing cleanly."""
     try:
         sid = int(args.get("study_id") or 0)
     except (TypeError, ValueError):
-        return None
+        return ToolResult(
+            text="That study_id is not valid — could not parse it as a study number.",
+            label="Invalid study_id", detail="unparseable",
+        )
     if sid in member_ids:
         return None
     return ToolResult(
@@ -183,16 +192,40 @@ def enforce_project_get_report(args: dict, member_ids: set):
 
 
 def enforce_project_pin(args: dict, member_ids: set):
-    """Filter study_ids to project members in place. Returns a refusal
-    ToolResult if nothing survives, a (possibly-annotated) None otherwise —
-    the caller proceeds via execute_tool() with args['study_ids'] already
-    trimmed to in-scope ids, and args['_dropped_out_of_scope'] set for the
-    caller to fold into the final response text."""
+    """Filter study_ids to project members in place. Returns (refusal, dropped):
+    `refusal` is a ToolResult if nothing survives, else None — the caller
+    proceeds via execute_tool() with args['study_ids'] already trimmed to
+    in-scope ids. `dropped` is the list of out-of-scope ids that were removed,
+    for the caller to fold into the final response text.
+
+    dropped is a plain return value, not smuggled through args as a
+    "_dropped_out_of_scope" key the way an earlier version of this function
+    did — args is the dict that goes on to become execute_tool()'s call
+    arguments, so anything stashed there has to be remembered and popped
+    again before that call, and a forgotten pop leaks an internal bookkeeping
+    key into the tool's own args/ui_payload.
+
+    Parses each element independently (mirroring _tool_pin_study's own
+    per-element tolerance in agent_tools.py) rather than aborting the whole
+    list on the first unparseable entry. That is a security boundary, not a
+    style choice: an all-or-nothing `[int(x) for x in raw_ids]` raises on the
+    first bad element, before any scope filtering runs — a request like
+    study_ids=["x", <non-member-id>] would then skip scope enforcement
+    entirely, reaching execute_tool() with the non-member id intact, and
+    _tool_pin_study's own per-element skip would pin it from a project chat,
+    past the workspace boundary this module exists to enforce."""
     raw_ids = args.get("study_ids") or []
-    try:
-        ids = [int(x) for x in raw_ids]
-    except (TypeError, ValueError):
-        return None
+    ids = []
+    for x in raw_ids:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return ToolResult(
+            text="No valid study IDs provided to pin.",
+            label="Pin refused", detail="no valid ids",
+        ), []
     in_scope = [i for i in ids if i in member_ids]
     out_of_scope = [i for i in ids if i not in member_ids]
     if out_of_scope and not in_scope:
@@ -202,7 +235,7 @@ def enforce_project_pin(args: dict, member_ids: set):
                 "This chat can only pin studies already added to the project."
             ),
             label="Pin refused", detail="out of scope",
-        )
+        ), []
     args["study_ids"] = in_scope
-    args["_dropped_out_of_scope"] = out_of_scope
+    return None, out_of_scope
     return None

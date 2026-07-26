@@ -42,19 +42,57 @@ class TestTranslateSSESequence:
         assert call_payload["args"] == {"keywords": ["wild", "mice"]}
         assert call_payload["name"].startswith("tool_search_studies_")
 
-    def test_correlation_name_matches_agent_py_convention(self, sample_events):
-        """Byte-identical to helpers/agent.py:28 — f'tool_{name}_{call_id[:6]}'.
-        This is the join key between call and result on both the server
-        reducer and app_state.js:314-322; getting it right needs no frontend
-        change at all."""
+    def test_correlation_name_uses_the_full_tool_call_id(self, sample_events):
+        """The join key between call and result on both the server reducer and
+        app_state.js:314-322 — must be the FULL toolCallId, not a [:6] prefix.
+        pi's ids are shaped "tool:<epoch-ms>:<rand>", so a truncated prefix is
+        "tool:1" for every call (until the year 2286): two calls to the same
+        tool in a turn would then share a correlation key and one result would
+        populate both cards. See test_distinct_calls_to_the_same_tool_do_not_collide
+        for the failure this guards against."""
         tool_start = next(e for e in sample_events if e["type"] == "tool_execution_start")
         expected = _tool_step_name(tool_start["toolName"], tool_start["toolCallId"])
-        assert expected == f"tool_search_studies_{tool_start['toolCallId'][:6]}"
+        assert expected == f"tool_search_studies_{tool_start['toolCallId']}"
+        assert tool_start["toolCallId"] in expected
 
         call_payload = next(p for n, p in translate(sample_events) if n == "segment_tool_call")
         result_payload = next(p for n, p in translate(sample_events) if n == "segment_tool_result")
         assert call_payload["name"] == expected
         assert result_payload["name"] == expected
+
+    def test_distinct_calls_to_the_same_tool_do_not_collide(self):
+        """Regression for the [:6]-truncation bug: pi's real toolCallIds all
+        share the "tool:1..." prefix (epoch-ms since 2026 starts with 1), so
+        truncating to 6 chars collapsed every same-tool call in a turn onto one
+        correlation key. Two get_study_report calls in one turn must produce
+        two distinct names and each result must land on its own call."""
+        events = [
+            {"type": "tool_execution_start", "toolCallId": "tool:1784970149356:aaaaaaaaaaa",
+             "toolName": "get_study_report", "args": {"study_id": 111}},
+            {"type": "tool_execution_start", "toolCallId": "tool:1784970149400:bbbbbbbbbbb",
+             "toolName": "get_study_report", "args": {"study_id": 222}},
+            {"type": "tool_execution_end", "toolCallId": "tool:1784970149356:aaaaaaaaaaa",
+             "toolName": "get_study_report", "isError": False,
+             "result": {"content": [], "details": {"detail": "report 111", "ui_payload": {"study_id": 111}}}},
+            {"type": "tool_execution_end", "toolCallId": "tool:1784970149400:bbbbbbbbbbb",
+             "toolName": "get_study_report", "isError": False,
+             "result": {"content": [], "details": {"detail": "report 222", "ui_payload": {"study_id": 222}}}},
+        ]
+        calls = [p for n, p in translate(events) if n == "segment_tool_call"]
+        results = [p for n, p in translate(events) if n == "segment_tool_result"]
+
+        assert calls[0]["name"] != calls[1]["name"]
+        # each result must correlate back to its OWN call, not the other one
+        assert {r["name"] for r in results} == {c["name"] for c in calls}
+        by_name = {r["name"]: r for r in results}
+        assert by_name[calls[0]["name"]]["ui_payload"]["study_id"] == 111
+        assert by_name[calls[1]["name"]]["ui_payload"]["study_id"] == 222
+
+        segments = build_segments(events)
+        tool_segs = [s for s in segments if s["type"] == "tool"]
+        assert len(tool_segs) == 2
+        assert tool_segs[0]["result"]["ui_payload"]["study_id"] == 111
+        assert tool_segs[1]["result"]["ui_payload"]["study_id"] == 222
 
     def test_tool_result_carries_flask_ui_payload_and_timing_suffix(self, sample_events):
         result_payload = next(p for n, p in translate(sample_events) if n == "segment_tool_result")

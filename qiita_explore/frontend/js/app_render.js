@@ -454,12 +454,9 @@ function renderApp(s) {
                             <InfinityLoader w={80} h={50} />
                           ) : (!m.isStreaming || m.content) ? (
                             <>
-                              <div
+                              <MarkdownText
                                 className={`msg-bubble${m.isStreaming ? ' streaming' : ''}`}
-                                dangerouslySetInnerHTML={{
-                                  __html: DOMPurify.sanitize(marked.parse(m.content || (!m.isStreaming ? '*No response*' : '')))
-                                }}
-                              />
+                                content={m.content || (!m.isStreaming ? '*No response*' : '')} />
                               {m.isStreaming && m.content && <div style={{marginTop:'6px'}}><InfinityLoader w={64} h={40} /></div>}
                               {!m.isStreaming && m.content && <CopyResponseButton text={m.content} />}
                             </>

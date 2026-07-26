@@ -180,11 +180,22 @@ class TestModelRoster:
         }
         assert served == expected
 
-    def test_excludes_models_that_cannot_call_tools(self, client):
+    def test_excludes_models_that_cannot_call_tools(self, client, monkeypatch):
         """pi has no per-model tool flag and always sends tool schemas, so a
-        supports_tools=False model must never reach the sidecar."""
+        supports_tools=False model must never reach the sidecar.
+
+        No real MODEL_METADATA row currently has supports_tools=False — the
+        last one (gemma-small) was flipped to True once its real NRP listing
+        showed it does support tool calls — so this exercises the filter with
+        an injected row rather than asserting on a specific model name that
+        may not exist. monkeypatch.setitem mutates the dict in place (rather
+        than rebinding config.MODEL_METADATA, which internal_tool_routes.py's
+        `from config import MODEL_METADATA` would not see)."""
+        from config import MODEL_METADATA
+        monkeypatch.setitem(MODEL_METADATA, "test-no-tools-model",
+                             {"provider": "nrp", "context": 8192, "supports_tools": False})
         resp = client.get("/api/internal/models", headers={"X-Pi-Secret": "test-pi-secret"})
-        assert "gemma-small" not in [m["id"] for m in resp.get_json()["models"]]
+        assert "test-no-tools-model" not in [m["id"] for m in resp.get_json()["models"]]
 
     def test_excludes_non_nrp_providers(self, client):
         """Anthropic models go through pi's own built-in provider — registering
@@ -366,6 +377,67 @@ class TestProjectScopeEnforcement:
                             json={"study_ids": [10317, 99999]})
         assert resp.status_code == 200
         assert "nothing pinned" in resp.get_json()["text"]
+
+    def test_mixed_pin_batch_notes_the_dropped_out_of_scope_ids(self, client, crud_mod, db_mod):
+        """member study 11043 + non-member 10317 in one call: enforce_project_pin
+        must let 11043 proceed to execute_tool() while surfacing 10317 as
+        dropped — exercises the (refusal, dropped) return value end to end,
+        not just enforce_project_pin in isolation."""
+        project_id = self._make_project_with_study(crud_mod, db_mod)  # member: 11043
+        tok = _mint(user_id="u1", scope="project", chat_id="c1", project_id=project_id)
+        resp = client.post("/api/internal/tools/pin_study", headers=_hdrs(tok),
+                            json={"study_ids": [11043, 10317]})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert "10317" in body["text"] and "skipped" in body["text"]
+        assert body["ui_payload"]["args"]["study_ids"] == [11043], \
+            "only the in-scope id reaches execute_tool()"
+
+    def test_malformed_element_does_not_smuggle_a_non_member_id_past_scope(self, client, crud_mod, db_mod):
+        """Regression: enforce_project_pin used to parse study_ids with
+        `[int(x) for x in raw_ids]`, which raised on the FIRST unparseable
+        element and returned None ("proceed") with args untouched — so
+        ["x", 10317] skipped scope filtering entirely and _tool_pin_study's own
+        per-element tolerance pinned 10317 (not a workspace member) anyway.
+        A malformed sibling must not defeat the workspace boundary."""
+        project_id = self._make_project_with_study(crud_mod, db_mod)
+        tok = _mint(user_id="u1", scope="project", chat_id="c1", project_id=project_id)
+        resp = client.post("/api/internal/tools/pin_study", headers=_hdrs(tok),
+                            json={"study_ids": ["not-an-id", 10317]})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # Refusal path: nothing survived scope-filtering, so there is no
+        # ui_payload at all — the old bug's signature was reaching execute_tool
+        # with ui_payload.args.study_ids containing 10317 and actually pinning it.
+        assert body["ui_payload"] is None
+        assert "nothing pinned" in body["text"]
+
+    def test_malformed_element_alongside_a_member_id_still_pins_the_member(self, client, crud_mod, db_mod):
+        """The fix must not overcorrect into refusing everything: a malformed
+        element next to a genuine member id should still let the member pin,
+        matching _tool_pin_study's own per-element tolerance for the parts of
+        the request that DO make sense."""
+        project_id = self._make_project_with_study(crud_mod, db_mod)  # member: 11043
+        tok = _mint(user_id="u1", scope="project", chat_id="c1", project_id=project_id)
+        resp = client.post("/api/internal/tools/pin_study", headers=_hdrs(tok),
+                            json={"study_ids": ["not-an-id", 11043]})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ui_payload"]["args"]["study_ids"] == [11043]
+
+    def test_malformed_study_id_on_get_report_refuses_cleanly(self, client, crud_mod, db_mod):
+        """Regression: enforce_project_get_report used to return None
+        ("proceed") on an unparseable study_id, and _tool_get_study_report's
+        own `int(args.get("study_id") or 0)` has no guard — the request 500'd
+        instead of refusing. Must fail closed with a normal ToolResult."""
+        project_id = self._make_project_with_study(crud_mod, db_mod)
+        tok = _mint(user_id="u1", scope="project", chat_id="c1", project_id=project_id)
+        resp = client.post("/api/internal/tools/get_study_report", headers=_hdrs(tok),
+                            json={"study_id": "not-an-id"})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ui_payload"] is None
+        assert "not valid" in body["text"] or "could not parse" in body["text"]
 
     def test_search_never_leaks_outside_workspace(self, client, crud_mod, db_mod):
         """Control-adjacent: a broad query that would match many public

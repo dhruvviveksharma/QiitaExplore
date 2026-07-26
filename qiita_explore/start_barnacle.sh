@@ -72,6 +72,12 @@ fi
 
 FLASK_PID=""
 SIDECAR_PID=""
+# Set (to a short reason) right before the die-together loop below breaks out
+# on a detected crash — distinguishes that from an operator's Ctrl-C/TERM, so
+# shutdown() can report failure. Without this, shutdown() always exited 0:
+# a crashed Flask or sidecar looked identical, to any script or supervisor
+# checking this command's exit code, to a clean operator-requested stop.
+CRASHED=""
 
 shutdown() {
   trap - INT TERM EXIT
@@ -82,6 +88,7 @@ shutdown() {
   [ -n "$SIDECAR_PID" ] && kill "$SIDECAR_PID" 2>/dev/null || true
   [ -n "$FLASK_PID" ]   && kill "$FLASK_PID"   2>/dev/null || true
   wait 2>/dev/null || true
+  [ -n "$CRASHED" ] && exit 1
   exit 0
 }
 trap shutdown INT TERM EXIT
@@ -159,10 +166,12 @@ echo "Backend up. Ctrl-C stops everything."
 while :; do
   if [ -n "$FLASK_PID" ] && ! kill -0 "$FLASK_PID" 2>/dev/null; then
     echo "gunicorn exited — stopping the sidecar too." >&2
+    CRASHED="gunicorn exited"
     break
   fi
   if [ -n "$SIDECAR_PID" ] && ! kill -0 "$SIDECAR_PID" 2>/dev/null; then
     echo "pi sidecar exited — stopping Flask too. See the traceback above." >&2
+    CRASHED="pi sidecar exited"
     break
   fi
   sleep 2

@@ -12,8 +12,6 @@
        the cookie rides along. The SSH tunnel to barnacle must bind 127.0.0.1
        (ssh -L 127.0.0.1:5002:localhost:5002), and this origin must be in
        barnacle's QIITA_EXPLORE_ALLOWED_ORIGINS. -->
-  <!-- #TODO(local-dev): 5001 is the LOCAL pi-enabled backend on this Mac.
-       Revert to the barnacle tunnel port (5002) before committing to master. -->
   <meta name="api-base" content="http://127.0.0.1:5002/api">
   <title>Qiita Explorer</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -35,10 +33,10 @@
   <script type="text/babel" src="js/icons.js?v=1"></script>
   <script type="text/babel" src="js/loaders.js?v=4"></script>
   <script type="text/babel" src="js/auth.js?v=2"></script>
-  <script type="text/babel" src="js/components.js?v=7"></script>
+  <script type="text/babel" src="js/components.js?v=9"></script>
   <script type="text/babel" src="js/hooks/useModelSelection.js?v=1"></script>
-  <script type="text/babel" src="js/app_state.js?v=8"></script>
-  <script type="text/babel" src="js/app_render.js?v=18"></script>
+  <script type="text/babel" src="js/app_state.js?v=10"></script>
+  <script type="text/babel" src="js/app_render.js?v=20"></script>
   <script type="text/babel" src="js/merge_artifacts.js?v=9"></script>
   <script type="text/babel" src="js/merge_tree.js?v=9"></script>
   <script type="text/babel" src="js/merge_detail.js?v=7"></script>

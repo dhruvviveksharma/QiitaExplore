@@ -110,11 +110,26 @@ async function handleChatStream(req, res) {
     if (!res.writableEnded) res.write(JSON.stringify(obj) + "\n");
   };
 
+  // Abort the in-flight turn if the client goes away before it settles — e.g.
+  // Flask's generator was abandoned because the browser disconnected (a new
+  // message sent before the previous one finished, or the tab closed).
+  // Without this the turn keeps streaming into a dead socket — burning NRP
+  // tokens — and holds the session non-idle (runTurn's serialization queue,
+  // see sessions.mjs) until it finishes on its own, so the NEXT request for
+  // this chat just waits behind the orphaned one instead of failing fast.
+  let turnSettled = false;
+  const onClientGone = () => {
+    if (!turnSettled) sessionStore.abortSession(sessionKey).catch(() => {});
+  };
+  res.on("close", onClientGone);
+
   try {
     await sessionStore.runTurn(entry, { message, contextBlock: context_block, toolToken: tool_token }, writeLine);
   } catch (err) {
     writeLine({ type: "sidecar_error", error: String(err && err.message ? err.message : err) });
   } finally {
+    turnSettled = true;
+    res.off("close", onClientGone);
     res.end();
   }
 }
@@ -186,6 +201,13 @@ server.listen(PORT, HOST, () => {
 
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.on(sig, () => {
+    // server.close() alone only stops accepting NEW connections — it waits
+    // indefinitely for existing ones to finish, and a live NDJSON chat stream
+    // stays open for the whole turn. Without closeAllConnections() (Node
+    // >=18.2; this sidecar already requires >=22), Ctrl-C on
+    // start_barnacle.sh during an active turn hangs the shutdown until that
+    // turn happens to finish on its own, instead of terminating promptly.
     server.close(() => process.exit(0));
+    server.closeAllConnections();
   });
 }

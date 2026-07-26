@@ -270,6 +270,33 @@ function useAppState() {
     });
   };
 
+  // Coalesces per-token calls into ~one flush per animation frame instead of
+  // one React state update per SSE token. A streamed reply used to call
+  // onToken (-> patchLast -> setChatCache) for every single token — hundreds
+  // of times for a long answer — and each one re-rendered AgentMessageBubble,
+  // which re-parses the ENTIRE accumulated markdown via marked.parse +
+  // DOMPurify.sanitize on every render (components.js). That's O(n^2) work in
+  // reply length and was the actual source of input lag / dropped frames
+  // while a reply streams. Concatenating buffered chars into one onToken call
+  // keeps every downstream handler's contract unchanged — they just receive
+  // fewer, larger chunks.
+  function makeTokenBuffer(onToken) {
+    let pending = '';
+    let rafHandle = null;
+    const flush = () => {
+      if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
+      if (!pending || !onToken) return;
+      const chunk = pending;
+      pending = '';
+      onToken({ token: chunk });
+    };
+    const bufferedOnToken = ({ token }) => {
+      pending += token || '';
+      if (rafHandle === null) rafHandle = requestAnimationFrame(flush);
+    };
+    return { flush, onToken: onToken ? bufferedOnToken : undefined };
+  }
+
   // Shared fetch+guard+parseSSE for a chat stream. `handlers.onToken`/`onDone`
   // (and any agent-only extras like onQueryPlan) are supplied per call site;
   // the step/ui/error handlers are identical across project and global chat.
@@ -279,23 +306,44 @@ function useAppState() {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Stream failed');
     }
-    await parseSSE(res, {
-      onUi:        (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
-      onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
-      onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
-        ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
-      })),
-      onError: ({ error }) => {
-        setCompErr(error || 'Error');
-        patchLast(chatId, m => ({
-          ...m,
-          isStreaming: false,
-          pendingStep: null,
-          content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
-        }));
-      },
-      ...handlers,
-    }, signal);
+
+    const tokenBuffer = makeTokenBuffer(handlers.onToken);
+    // Anything that can interleave with tokens must flush the buffer FIRST, or
+    // ordering/final content breaks: parseSSE dispatches events synchronously
+    // as they're parsed off the wire, so two SSE frames arriving in the same
+    // network chunk can fire onToken then e.g. onDone with no await between
+    // them — racing the rAF-scheduled flush and losing the tail of the reply.
+    const flushBefore = (fn) => fn && ((...args) => { tokenBuffer.flush(); return fn(...args); });
+
+    try {
+      await parseSSE(res, {
+        onUi:        (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
+        onStepStart: flushBefore(({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } }))),
+        onStepDone:  flushBefore(({ name, label, detail }) => patchLast(chatId, m => ({
+          ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
+        }))),
+        onError: flushBefore(({ error }) => {
+          setCompErr(error || 'Error');
+          patchLast(chatId, m => ({
+            ...m,
+            isStreaming: false,
+            pendingStep: null,
+            content: m.content || `⚠️ ${error || 'Something went wrong.'}`,
+          }));
+        }),
+        ...handlers,
+        onToken: tokenBuffer.onToken,
+        onAgentStart:        flushBefore(handlers.onAgentStart),
+        onSegmentToolCall:   flushBefore(handlers.onSegmentToolCall),
+        onSegmentToolResult: flushBefore(handlers.onSegmentToolResult),
+        onDone:              flushBefore(handlers.onDone),
+      }, signal);
+    } finally {
+      // Guarantees no buffered tail is lost even if the stream throws/aborts —
+      // matches the pre-coalescing behavior where every token was applied
+      // immediately regardless of how the stream ended.
+      tokenBuffer.flush();
+    }
   };
 
   // ─── agent/segments helpers ──────────────────────────────────────────────────

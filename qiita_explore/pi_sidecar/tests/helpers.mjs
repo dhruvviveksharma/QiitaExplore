@@ -74,7 +74,7 @@ export async function startFlaskStub({ toolSchemas, toolHandlers = {}, models = 
   return { url, calls, close: () => new Promise((r) => server.close(r)) };
 }
 
-export async function createTestHarness({ toolSchemas, toolHandlers, fauxModels }) {
+export async function createTestHarness({ toolSchemas, toolHandlers, fauxModels, maxCachedSessions }) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-sidecar-test-"));
   const flask = await startFlaskStub({ toolSchemas, toolHandlers });
 
@@ -95,6 +95,7 @@ export async function createTestHarness({ toolSchemas, toolHandlers, fauxModels 
     modelRuntime,
     flaskUrl: flask.url,
     piSecret: SECRET,
+    ...(maxCachedSessions !== undefined ? { maxCachedSessions } : {}),
   });
 
   const model = modelRuntime.getModel("faux", (fauxModels || [{ id: "faux-1" }])[0].id);

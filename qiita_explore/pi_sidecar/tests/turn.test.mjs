@@ -190,4 +190,114 @@ describe("full turn via faux provider (offline, deterministic)", () => {
       await h.cleanup();
     }
   });
+
+  test("runTurn serializes: overlapping turns do not clobber each other's contextRef/toolTokenRef", async () => {
+    // Regression, verified both ways (revert sessions.mjs and this test fails):
+    // the old runTurn had no serialization, so two calls fired back-to-back on
+    // the same entry (no await between them — exactly what two requests
+    // racing on one chat_id look like) both ran their synchronous prefix,
+    // including entry.session.prompt(), before either settled. Empirically
+    // that makes the SECOND call's prompt() throw outright —
+    // "Agent is already processing a prompt. Use steer() or followUp()..." —
+    // so an unlucky double-send or client retry 500'd instead of being queued.
+    // The underlying entry.contextRef.block/entry.toolTokenRef.token writes
+    // are also unsynchronized shared mutable state with no ordering guarantee
+    // relative to either turn's actual (asynchronous) tool execution — this
+    // test's real job is proving BOTH turns complete cleanly, with each
+    // tool call carrying its OWN token, when run back-to-back on one entry.
+    const h = await createTestHarness({
+      toolSchemas: [SEARCH_STUDIES_SCHEMA],
+      toolHandlers: {
+        search_studies: async () => ({ text: "ok", label: "Search complete", detail: "", ui_payload: null }),
+      },
+    });
+    try {
+      h.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["a"] })], { stopReason: "toolUse" }),
+        fauxAssistantMessage("turn A done"),
+        fauxAssistantMessage([fauxToolCall("search_studies", { keywords: ["b"] })], { stopReason: "toolUse" }),
+        fauxAssistantMessage("turn B done"),
+      ]);
+      const entry = await h.sessionStore.getOrCreate("global-race", { model: h.model, systemPrompt: "test" });
+
+      const eventsA = [], eventsB = [];
+      // No await between these two calls — they race exactly as two HTTP
+      // requests for the same chat_id would.
+      const turnA = h.sessionStore.runTurn(
+        entry, { message: "turn A", toolToken: "token-A", contextBlock: "context-A" },
+        (e) => eventsA.push(e)
+      );
+      const turnB = h.sessionStore.runTurn(
+        entry, { message: "turn B", toolToken: "token-B", contextBlock: "context-B" },
+        (e) => eventsB.push(e)
+      );
+      await Promise.all([turnA, turnB]);
+
+      assert.equal(h.flask.calls.length, 2, "both tool calls executed");
+      assert.equal(h.flask.calls[0].toolToken, "token-A", "turn A's tool call must carry turn A's own token");
+      assert.equal(h.flask.calls[1].toolToken, "token-B", "turn B's tool call must carry turn B's own token");
+      assert.ok(eventsA.some((e) => e.type === "agent_settled"), "turn A settled");
+      assert.ok(eventsB.some((e) => e.type === "agent_settled"), "turn B settled");
+      // Serialization means B's events cannot start before A's settle.
+      const aSettledIdx = eventsA.findIndex((e) => e.type === "agent_settled");
+      assert.equal(aSettledIdx, eventsA.length - 1, "turn A's own event stream ends cleanly at its own settle");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("session cache respects maxCachedSessions: the LRU entry is evicted first", async () => {
+    // Without a cap, the only eviction is the 30-minute idle sweep, so a burst
+    // of activity keeps every session (full message history, tool list,
+    // extension closures) resident in memory for the whole window. maxCachedSessions
+    // forces eviction on insert once the cache is over cap, picking the LRU
+    // (oldest lastUsed) entry — same non-streaming safety guard evictIdle uses.
+    const h = await createTestHarness({
+      toolSchemas: [], toolHandlers: {}, maxCachedSessions: 2,
+    });
+    try {
+      h.faux.setResponses([fauxAssistantMessage("ack 1"), fauxAssistantMessage("ack 2")]);
+
+      const e1 = await h.sessionStore.getOrCreate("global-lru-1", { model: h.model, systemPrompt: "t" });
+      await runTurnCollectingEvents(h.sessionStore, e1, { message: "hi" });
+      assert.equal(h.sessionStore.cacheSize(), 1);
+
+      const e2 = await h.sessionStore.getOrCreate("global-lru-2", { model: h.model, systemPrompt: "t" });
+      await runTurnCollectingEvents(h.sessionStore, e2, { message: "hi" });
+      assert.equal(h.sessionStore.cacheSize(), 2);
+
+      // A third session pushes the cache over the cap of 2 — global-lru-1 (used
+      // first, longest ago) must be the one evicted, not global-lru-2.
+      await h.sessionStore.getOrCreate("global-lru-3", { model: h.model, systemPrompt: "t" });
+      assert.equal(h.sessionStore.cacheSize(), 2, "cache never exceeds the configured cap");
+
+      // Proof global-lru-1 was actually evicted (not just that SOME entry
+      // was): asking for it again must build a genuinely new entry.
+      const e1Again = await h.sessionStore.getOrCreate("global-lru-1", { model: h.model, systemPrompt: "t" });
+      assert.notEqual(e1Again, e1, "the evicted session had to be rebuilt from scratch, not reused from cache");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("getOrCreate: concurrent calls for the same sessionKey build only one session", async () => {
+    // Regression: getOrCreate used to be a plain cache-miss-then-build async
+    // function with no in-flight tracking. Building a session spans several
+    // awaited steps (resourceLoader.reload, loadTools, createAgentSession), so
+    // two calls for the same key arriving close together both missed the
+    // cache before either finished — each building its OWN AgentSession over
+    // the SAME JSONL file (two writers on one append-only transcript), with
+    // the loser silently leaked (never disposed).
+    const h = await createTestHarness({ toolSchemas: [], toolHandlers: {} });
+    try {
+      const [a, b] = await Promise.all([
+        h.sessionStore.getOrCreate("global-concurrent-create", { model: h.model, systemPrompt: "test" }),
+        h.sessionStore.getOrCreate("global-concurrent-create", { model: h.model, systemPrompt: "test" }),
+      ]);
+      assert.equal(a, b, "both callers must receive the SAME entry, not two independently-built ones");
+      assert.equal(h.sessionStore.cacheSize(), 1);
+    } finally {
+      await h.cleanup();
+    }
+  });
 });

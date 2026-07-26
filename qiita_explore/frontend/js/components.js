@@ -491,8 +491,40 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
     : null;
 }
 
+// ─── MarkdownText: memoized marked.parse + DOMPurify.sanitize ─────────────────
+// Streamed replies re-render frequently while text is arriving (once per
+// animation-frame token flush — see app_state.js's makeTokenBuffer). Without
+// memoizing on `content`, every render re-parsed and re-sanitized the FULL
+// accumulated string from scratch, which is O(n^2) work over the length of a
+// reply and was the dominant cost behind streaming jank. useMemo makes this a
+// no-op for any segment whose text hasn't changed since the last render —
+// which, in a multi-segment agent reply, is every segment except the one
+// currently growing.
+function MarkdownText({ content, className }) {
+  const html = useMemo(() => DOMPurify.sanitize(marked.parse(content || '')), [content]);
+  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
+// Memoized with a custom comparator rather than React.memo's default shallow
+// prop compare: onPin/onMerge/onOpen/isPinned are recreated on every render of
+// the parent (AgentMessageBubble is itself re-rendered on every token flush,
+// and app_render.js recreates its onPinStudy/onMergeStudy closures on every
+// app-level render), so a default shallow compare would never actually skip a
+// render — it would just add a wasted comparison on top of the full re-render.
+// The three delegation callbacks carry no render-varying closure state beyond
+// `view.chatId`, which is already reflected in `msgKey` (built as
+// `${view.chatId}-${i}`) — so it's `seg`, `msgKey`, and `pinnedStudyIds` (by
+// value, since pin state must stay correct after a pin/unpin) that actually
+// determine this card's rendered output.
+function toolCardPropsEqual(prev, next) {
+  if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
+  const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
@@ -530,7 +562,7 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
   );
-}
+}, toolCardPropsEqual);
 
 // ─── CopyResponseButton ───────────────────────────────────────────────────────
 function CopyResponseButton({ text }) {
@@ -555,12 +587,13 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
-          <div key={i} className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
-            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
+          <MarkdownText key={i} content={seg.content}
+            className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
-            isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
+            isPinned={sid => (pinnedStudyIds || []).includes(sid)}
+            pinnedStudyIds={pinnedStudyIds} />
         ) : null
       )}
       {isStreaming && !(segments || []).length && (

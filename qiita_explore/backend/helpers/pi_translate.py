@@ -42,10 +42,14 @@ _TURN_STARTED_EVENTS = frozenset({
 
 
 def _tool_step_name(tool_name: str, tool_call_id: str) -> str:
-    """Byte-identical to helpers/agent.py:29 — this string is the
-    call<->result correlation key on both the server reducer and
-    app_state.js. Get it right and the frontend needs no changes."""
-    return f"tool_{tool_name}_{(tool_call_id or '')[:6]}"
+    """The call<->result correlation key used by both the server reducer and
+    app_state.js's segment matcher. NOT truncated to a prefix the way
+    helpers/agent.py:29 truncates OpenAI/Anthropic call ids — pi's own ids are
+    shaped "tool:<epoch-ms>:<rand>", so a [:6] prefix is "tool:1" for every
+    call until the year 2286, and two calls to the same tool in one turn would
+    collide onto one correlation key. `name` is never rendered (frontend only
+    matches on it), so there is no reason to keep it short."""
+    return f"tool_{tool_name}_{tool_call_id or ''}"
 
 
 def _first_text(result: dict) -> str:
