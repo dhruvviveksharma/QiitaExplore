@@ -467,7 +467,14 @@ function useAppState() {
       return { ...m, segments: segs };
     });
 
-  // The four handlers every agentic stream needs, as one unit — spread by both
+  // Chat-level, not per-message: the composer subtext names the runtime that
+  // served the most recent turn. Every chat path emits `runtime` first — pi and
+  // legacy, project and global — so this is wired for all of them, including
+  // the non-agentic legacy project path that never emits agent_start.
+  const onRuntime = (chatId) => ({ runtime }) =>
+    patchChat(chatId, () => ({ runtime }));
+
+  // The five handlers every agentic stream needs, as one unit — spread by both
   // call sites so they cannot drift. They did once: project chat used a raw
   // content-appending onToken, which renders blank, because agent_start flips
   // app_render.js to AgentMessageBubble and that reads only `segments`.
@@ -476,6 +483,7 @@ function useAppState() {
     onAgentStart:        onAgentStart(chatId),
     onSegmentToolCall:   onSegmentToolCall(chatId),
     onSegmentToolResult: onSegmentToolResult(chatId),
+    onRuntime:           onRuntime(chatId),
   });
 
   const unpinStudy = async (chatId, studyId) => {

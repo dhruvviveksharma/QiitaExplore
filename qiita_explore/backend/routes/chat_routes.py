@@ -150,6 +150,7 @@ def api_chat_message_stream(project_id, chat_id):
                 # as global chat, but every tool call is hard-scoped server-side
                 # to this project's studies (helpers/project_scope.py) — not a
                 # prompt request, an enforced boundary.
+                yield _sse("runtime", {"runtime": "pi"})
                 deep_ctx = yield from _stream_deep_context(user_content, proj, chat)
                 manifest = _build_workspace_manifest(proj)
                 combined_ctx = "\n\n".join(x for x in (manifest, deep_ctx) if x) or None
@@ -169,6 +170,7 @@ def api_chat_message_stream(project_id, chat_id):
                 # Legacy non-agentic path: context-stuffed, no tools. Flip
                 # PI_BACKEND_PROJECT to cut over without a deploy if pi-path
                 # parity issues turn up after global chat has already shipped.
+                yield _sse("runtime", {"runtime": "legacy"})
                 num_proj_studies = len((proj or {}).get("studies") or [])
                 yield _sse("step_start", {"name": "build_context", "label": "Loading study context…"})
                 study_ctx = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))

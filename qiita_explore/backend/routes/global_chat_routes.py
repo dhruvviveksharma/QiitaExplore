@@ -126,6 +126,13 @@ def api_global_chat_message_stream(chat_id):
                     # pinned/selected-study context rides in per-turn via
                     # context_block (context.ts hook, never persisted to the pi
                     # session) rather than baked into the system prompt.
+                    #
+                    # `runtime` is its own event rather than a field on
+                    # agent_start: the legacy project path is non-agentic and
+                    # never emits agent_start (see pi_translate.py — announcing
+                    # it flips the frontend into segments mode), so only a
+                    # separate event can label all four branches uniformly.
+                    yield _sse("runtime", {"runtime": "pi"})
                     sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
                     combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
                     tool_token = mint_scope_token(
@@ -162,6 +169,7 @@ def api_global_chat_message_stream(chat_id):
                     # function (a per-request error, not a crash), which is
                     # an acceptable failure mode for a case nothing in
                     # ALLOWED_MODELS currently produces.
+                    yield _sse("runtime", {"runtime": "legacy"})
                     sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
                     combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
                     # Accumulate segments for persistence

@@ -568,6 +568,9 @@ function renderApp(s) {
             </div>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}
+          {isChat && view.chatId && chatCache[view.chatId]?.runtime && (
+            <div className="composer-runtime">using the {chatCache[view.chatId].runtime} backend</div>
+          )}
         </div>}
       </div>
 

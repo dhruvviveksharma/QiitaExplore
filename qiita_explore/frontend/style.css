@@ -790,6 +790,7 @@ input, textarea { font-family: var(--sans); }
 .composer-send:hover:not(:disabled) { background: var(--accent-h); }
 .composer-send:disabled { opacity: .35; cursor: not-allowed; }
 .composer-error { max-width: var(--chat-max-w); margin: 5px auto 0; font-size: 12px; color: var(--accent); }
+.composer-runtime { max-width: var(--chat-max-w); margin: 5px auto 0; font-size: 11px; color: var(--text-3); }
 
 /* "+" quick-action menu (floats above the composer) */
 .plus-menu {
@@ -1506,6 +1507,7 @@ input, textarea { font-family: var(--sans); }
   .chat-messages,
   .composer,
   .composer-error,
+  .composer-runtime,
   .composer-pins,
   .slash-menu { max-width: 100%; }
 }
