@@ -3,15 +3,64 @@ import json
 import os
 import re
 
+import pytest
 import requests
 
 _JUDGE_MODEL = "kimi"
 _JUDGE_BASE_URL = "https://ellm.nrp-nautilus.io/v1"
 
+E2E_PRINCIPAL_IDX = 990001
+E2E_USER_ID = str(E2E_PRINCIPAL_IDX)
+
+_session = None
+
+
+def authed_session():
+    """A requests.Session carrying a real login: session cookie + CSRF header.
+
+    Every route now resolves the caller from g.user_id (helpers/auth_middleware),
+    so the `user_id` these helpers used to put in request bodies is ignored and
+    an unauthenticated call just 401s. That is what made the whole e2e tier
+    green-via-skip (TKT-046): the health check saw the 401 and reported the
+    backend unhealthy, so no assertion in this directory had run in a long time.
+
+    Requires this process to share the backend's SQLite — same host, same
+    QIITA_EXPERIMENT_DB_PATH. It writes the session row directly rather than
+    going through /api/auth/connect, which would need a real Qiita PAT.
+    """
+    global _session
+    if _session is not None:
+        return _session
+
+    try:
+        from store.auth_store import upsert_user, create_session
+        import config
+    except Exception as exc:  # pragma: no cover - environment problem, not a test failure
+        pytest.skip(f"cannot import the backend's auth store from this process: {exc}")
+
+    try:
+        upsert_user(principal_idx=E2E_PRINCIPAL_IDX, email="e2e@example.invalid",
+                    system_role="user", scopes=[], profile_complete=True)
+        raw_token, csrf_token = create_session(
+            user_id=E2E_USER_ID, pat_encrypted="e2e-placeholder-not-a-real-pat",
+            source="paste",
+        )
+    except Exception as exc:
+        pytest.skip(
+            "could not create an e2e session row — this process must share the "
+            f"backend's SQLite (QIITA_EXPERIMENT_DB_PATH): {exc}"
+        )
+
+    s = requests.Session()
+    s.cookies.set(config.SESSION_COOKIE_NAME, raw_token)
+    s.headers["X-CSRF-Token"] = csrf_token
+    _session = s
+    return s
+
 
 def search_ids(backend_url: str, query: str) -> set:
     """POST /api/search and return set of study_id ints from results."""
-    r = requests.post(
+    r = authed_session().post(
         f"{backend_url}/api/search",
         json={"query": query},
         timeout=30,
@@ -51,7 +100,7 @@ def stream_chat(
     if deep_search:
         body["deep_search"] = True
 
-    r = requests.post(
+    r = authed_session().post(
         f"{backend_url}/api/global-chats/{chat_id}/message/stream",
         json=body,
         stream=True,
@@ -147,18 +196,21 @@ def chat_search_ids(backend_url: str, query_plan: dict) -> set:
     return search_ids(backend_url, query)
 
 
-_REFUSAL_FALLBACK_RE = re.compile(
-    r"(not\s+(public|available|accessible)|private|no\s+(?:accessible\s+)?data|cannot\s+find|not\s+found)",
-    re.I,
-)
-
-
 def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL) -> bool:
     """Ask an LLM to evaluate whether the assistant's answer meets the rubric.
 
     Defaults to kimi (NRP). Pass model="claude-haiku-4-5" to use Anthropic.
     Returns True if the judge says YES, False for NO.
-    Falls back to a simple regex check if the endpoint is unreachable.
+
+    SKIPS rather than passing when it cannot actually judge. There used to be
+    three routes to a free True — no ANTHROPIC_API_KEY, no OPENAI_API_KEY, and
+    an `except Exception` that fell back to a regex matching
+    `\\b(yes|found|available|mention|recommend|compare|sample)\\b`, which almost
+    any answer contains. The cases that mattered most were the ones that broke:
+    the private-study containment assertions (test_blocked_studies) are written
+    as "the model refused", so a blanket True marked a full data leak as passing.
+
+    A test that cannot run must say so, not claim success.
     """
     prompt = (
         "You are evaluating whether an AI assistant's response achieved a specific goal.\n"
@@ -168,13 +220,13 @@ def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL
         "Answer only YES or NO. No explanation."
     )
 
+    anthropic_models = {"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"}
     try:
-        anthropic_models = {"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"}
         if model in anthropic_models:
             import anthropic
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key:
-                return True
+                pytest.skip(f"ANTHROPIC_API_KEY not set — cannot judge with {model}")
             client = anthropic.Anthropic(api_key=api_key, timeout=45.0)
             resp = client.messages.create(
                 model=model,
@@ -185,7 +237,7 @@ def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL
         else:
             api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
             if not api_key:
-                return True
+                pytest.skip(f"OPENAI_API_KEY/API_KEY not set — cannot judge with {model}")
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=_JUDGE_BASE_URL, timeout=45.0)
             resp = client.chat.completions.create(
@@ -194,6 +246,11 @@ def llm_judge(question: str, answer: str, rubric: str, model: str = _JUDGE_MODEL
                 max_tokens=5,
             )
             verdict = (resp.choices[0].message.content or "").strip().upper()
-        return verdict.startswith("YES")
-    except Exception:
-        return bool(re.search(r"\b(yes|found|available|mention|recommend|compare|sample)\b", answer, re.I))
+    except Exception as exc:
+        # pytest.skip raises Skipped, which derives from BaseException and so
+        # passes through this handler untouched.
+        pytest.skip(f"judge model {model} unreachable ({exc}) — not guessing a verdict")
+
+    if not verdict.startswith(("YES", "NO")):
+        pytest.skip(f"judge returned an unparseable verdict: {verdict!r}")
+    return verdict.startswith("YES")

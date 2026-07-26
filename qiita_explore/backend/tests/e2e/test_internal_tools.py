@@ -33,10 +33,15 @@ CHAT_ID = "e2e-internal-tools"
 
 
 def _call(tool_name, args, *, scope="global", **token_kwargs):
+    # BOTH gates. internal_tool_routes._guard() requires X-Pi-Secret before the
+    # scope token is even looked at, so a call sending only X-Tool-Token 401s
+    # unconditionally. These tests never noticed because the whole tier was
+    # skipping (TKT-046) — fixing the skip without this just turns silent passes
+    # into uniform 401s.
     token = mint_scope_token(user_id="e2e_tester", scope=scope, chat_id=CHAT_ID, **token_kwargs)
     r = requests.post(
         f"{BASE}/api/internal/tools/{tool_name}",
-        headers={"X-Tool-Token": token},
+        headers={"X-Tool-Token": token, "X-Pi-Secret": os.environ.get("PI_SIDECAR_SECRET", "")},
         json=args, timeout=30,
     )
     return r
@@ -52,8 +57,15 @@ def live_tools_endpoint():
     # connection failure means the backend itself is down.
     if r.status_code not in (200, 401):
         pytest.skip(f"barnacle backend unhealthy: {r.status_code}")
-    if not os.environ.get("PI_SCOPE_TOKEN_KEY"):
-        pytest.skip("PI_SCOPE_TOKEN_KEY not set — cannot mint a valid X-Tool-Token for this test process")
+    # Both secrets must match the running backend's, or every call 401s at
+    # _guard(). Named individually so the skip reason says which one is missing
+    # rather than leaving the operator to guess.
+    for var in ("PI_SCOPE_TOKEN_KEY", "PI_SIDECAR_SECRET"):
+        if not os.environ.get(var):
+            pytest.skip(
+                f"{var} not set in this test process — it must match the running "
+                "backend's value (source qiita_explore/.env before running)"
+            )
     return BASE
 
 
