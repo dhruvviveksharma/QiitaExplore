@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
+# Starts the pi sidecar. With --check, runs every validation below and exits 0
+# without starting the server — start_barnacle.sh uses that to fail before it
+# spawns gunicorn, so a bad interpreter or a broken install costs one clear
+# message instead of a stack that boots and then tears itself down.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+CHECK_ONLY=0
+if [ "${1:-}" = "--check" ]; then
+  CHECK_ONLY=1
+fi
 
 if [ -z "${PI_SIDECAR_SECRET:-}" ]; then
   echo "PI_SIDECAR_SECRET is not set — export it (must match config.py's PI_SIDECAR_SECRET) before starting." >&2
@@ -20,18 +29,13 @@ if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
-# >= 22, not >= 20. pi declares >= 22.19 and I previously treated that as a
-# support-policy floor with no technical teeth — that was wrong. On Node 20 the
-# undici bundled in pi's tree dies at import with
-# "webidl.util.markAsUncloneable is not a function", a stack trace that says
-# nothing about the Node version. 22.12 is verified working, so the check is a
-# major-version floor rather than the full 22.19.
-if ! "$NODE_BIN" -e 'const [a,b]=process.versions.node.split(".").map(Number); if (a<22) process.exit(1)'; then
-  echo "Node $("$NODE_BIN" -v) is too old for pi — need >= 22 (pi declares >= 22.19)." >&2
+# Cheap first gate: obviously-wrong interpreters get a fast, legible message
+# rather than a 500ms import failure.
+if ! "$NODE_BIN" -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)'; then
+  echo "Node $("$NODE_BIN" -v) is too old for pi — need >= 22." >&2
   echo "  which node: $(command -v "$NODE_BIN")" >&2
   echo "If this is conda's node shadowing a newer system one:" >&2
   echo "  conda install -n qiita-web -c conda-forge 'nodejs>=22.19' -y" >&2
-  echo "  rm -rf $SCRIPT_DIR/node_modules && npm --prefix $SCRIPT_DIR ci" >&2
   echo "…or point PI_NODE_BIN at the newer binary." >&2
   exit 1
 fi
@@ -51,6 +55,37 @@ if [ -f "$INSTALLED_WITH" ] && [ "$(cat "$INSTALLED_WITH")" != "$CURRENT_MAJOR" 
   exit 1
 fi
 printf '%s' "$CURRENT_MAJOR" > "$INSTALLED_WITH" 2>/dev/null || true
+
+# The authoritative gate: actually import pi. ~500ms, and it tests the thing
+# that breaks rather than a proxy for it.
+#
+# A major-version floor is NOT enough, which is the bug this replaces. Node
+# 22.6.0 passes `major >= 22` and still dies at import with
+# "webidl.util.markAsUncloneable is not a function" out of the undici bundled in
+# pi's tree — a stack trace naming neither pi nor the Node version, thrown after
+# gunicorn has already logged a clean boot. pi declares >= 22.19.0; 22.12.0 is
+# verified working; 22.6.0 is not. Rather than guess where in that range the
+# real floor sits — the guess is what produced this bug — just run the import.
+# It also catches the next incompatibility that isn't a version at all.
+PI_PKG_JSON="$SCRIPT_DIR/node_modules/@earendil-works/pi-coding-agent/package.json"
+if ! IMPORT_ERR="$("$NODE_BIN" --input-type=module \
+      -e 'await import("@earendil-works/pi-coding-agent")' 2>&1)"; then
+  DECLARED="$("$NODE_BIN" -e "process.stdout.write(require('$PI_PKG_JSON').engines?.node ?? 'unknown')" 2>/dev/null || echo "unknown")"
+  echo "pi failed to load under Node $("$NODE_BIN" -v) — it cannot run on this interpreter." >&2
+  echo "  which node: $(command -v "$NODE_BIN")" >&2
+  echo "  pi requires: $DECLARED   (22.12.0 is verified working; 22.6.0 is not)" >&2
+  echo "  error: $(printf '%s' "$IMPORT_ERR" | grep -m1 -E '^[A-Za-z]*(Error|Exception):' || printf '%s' "$IMPORT_ERR" | head -1)" >&2
+  echo "Upgrade Node, e.g.:" >&2
+  echo "  conda install -n qiita-web -c conda-forge 'nodejs>=22.19' -y" >&2
+  echo "…or point PI_NODE_BIN at a newer binary. If you change Node's MAJOR:" >&2
+  echo "  rm -rf $SCRIPT_DIR/node_modules && npm --prefix $SCRIPT_DIR ci" >&2
+  exit 1
+fi
+
+if [ "$CHECK_ONLY" = "1" ]; then
+  echo "pi sidecar pre-flight OK (node $("$NODE_BIN" -v), deps present, pi imports)."
+  exit 0
+fi
 
 export PI_SIDECAR_PORT="${PI_SIDECAR_PORT:-5100}"
 # Loopback by default so a dev box never exposes the sidecar. In the deployed

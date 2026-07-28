@@ -59,7 +59,10 @@ if ! python3 -c "import qiita_db" >/dev/null 2>&1; then
   echo "qiita_db not installed in this env — added $REPO_ROOT to PYTHONPATH."
 fi
 
-PORT="${QIITA_EXPLORE_PORT:-5001}"
+# NOTE: PORT is resolved further down, AFTER the .env block — QIITA_EXPLORE_PORT
+# is one of the keys read from there, and it used to be computed up here, 50
+# lines before .env was parsed, which made setting it in .env silently do
+# nothing.
 
 # Prefer the gunicorn binary; fall back to `python3 -m gunicorn` when it was
 # pip-installed with --user and its bin dir isn't on PATH.
@@ -117,7 +120,7 @@ if [ -f "$ENV_FILE" ]; then
   eval "$(python3 -c "
 import shlex
 from dotenv import dotenv_values
-wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','PI_NODE_BIN','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY')
+wanted = ('PI_SIDECAR_SECRET','PI_SIDECAR_PORT','PI_SIDECAR_HOST','PI_NODE_BIN','API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY','QIITA_EXPLORE_PORT')
 for k, v in dotenv_values('$ENV_FILE').items():
     if v and k in wanted:
         print(f'export {k}={shlex.quote(v)}')
@@ -129,6 +132,23 @@ if [ -z "${PI_SIDECAR_SECRET:-}" ]; then
   # on screen before four workers print it.
   echo "PI_SIDECAR_SECRET unset — pi is the chat backend and needs it." >&2
   echo "Set it in $ENV_FILE (openssl rand -base64 32)." >&2
+  exit 1
+fi
+
+# Resolved here, not earlier: QIITA_EXPLORE_PORT can come from .env (parsed just
+# above), and FLASK_INTERNAL_URL below derives from this.
+PORT="${QIITA_EXPLORE_PORT:-5001}"
+
+# Pre-flight the sidecar BEFORE gunicorn. It is started last (it needs Flask
+# answering for its model roster), but its prerequisites — Node version, deps,
+# and that pi actually imports — are knowable now. Checking them here is what
+# stops a bad interpreter presenting as "gunicorn booted cleanly, then the whole
+# stack died 9 seconds later": barnacle ran Node 22.6.0, which satisfied the old
+# major-version floor and then failed at import, and the die-together loop below
+# tore down a healthy Flask. start_sidecar.sh --check prints the actionable
+# message itself, so don't restate it here.
+if ! bash "$SCRIPT_DIR/pi_sidecar/start_sidecar.sh" --check; then
+  echo "pi sidecar pre-flight failed — not starting gunicorn." >&2
   exit 1
 fi
 
