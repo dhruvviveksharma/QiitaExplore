@@ -168,13 +168,19 @@ class TestStreamRoutesDoNotReadTheTranscript:
         assert "build_full_msgs(chat" not in src
 
     def test_history_is_loaded_lazily_by_the_paths_that_need_it(self):
-        """/pin and the two legacy runtimes are the only real consumers."""
+        """/pin is the only real consumer — pi owns history/compaction itself
+        for the streamed turn. Both routes delegate to the shared
+        helpers.chat_turn.stream_chat_turn, which is where that one call lives
+        now — the routes themselves never call load_history_for directly."""
         import inspect
         from routes import global_chat_routes, chat_routes
+        from helpers import chat_turn
         g = inspect.getsource(global_chat_routes.api_global_chat_message_stream)
         p = inspect.getsource(chat_routes.api_chat_message_stream)
-        assert g.count("load_history_for(") == 2, "expected /pin + stream_agent"
-        assert p.count("load_history_for(") == 2, "expected /pin + llm_chat_stream"
+        t = inspect.getsource(chat_turn.stream_chat_turn)
+        assert "load_history_for(" not in g
+        assert "load_history_for(" not in p
+        assert t.count("load_history_for(") == 1, "expected /pin only"
 
 
 class TestLoadHistoryForDispatch:

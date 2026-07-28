@@ -108,8 +108,8 @@ class TestTranslateSSESequence:
         assert "".join(tokens) == "Study 11043 (Wild mice gut microbiome survey) matches your query well."
 
     def test_no_done_event_is_ever_emitted(self, sample_events):
-        """translate() never emits done — exactly like stream_agent() today,
-        that's the route's job after the generator is exhausted."""
+        """translate() never emits done — that's the route's job after the
+        generator is exhausted."""
         names = [name for name, _ in translate(sample_events)]
         assert "done" not in names
 

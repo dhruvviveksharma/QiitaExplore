@@ -67,15 +67,12 @@ function makeContextInjectionExtension(contextRef) {
 }
 
 /**
- * One-search-per-user-message invariant. The Python loop enforces this by
- * removing search_studies from the tool schema after first use and leaving it
- * removed for the rest of that stream_agent() call (helpers/agent.py:196-198)
- * — i.e. scoped to the whole user message, not to one LLM round. pi has no
- * mid-run schema mutation (setActiveTools takes effect "on the next agent
- * turn"), so the `tool_call` block hook is the only mechanism available. A
- * blocked call still gets a tool_execution_start/end pair (isError:true,
- * reason as the result text) so the model sees why and proceeds with what it
- * already has.
+ * One-search-per-user-message invariant, scoped to the whole user message,
+ * not to one LLM round. pi has no mid-run schema mutation (setActiveTools
+ * takes effect "on the next agent turn"), so the `tool_call` block hook is
+ * the only mechanism available. A blocked call still gets a
+ * tool_execution_start/end pair (isError:true, reason as the result text) so
+ * the model sees why and proceeds with what it already has.
  *
  * Reset on `agent_start`, NOT `turn_start`: pi emits agent_start once per user
  * message but turn_start once per LLM round, so resetting on turn_start let

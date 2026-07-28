@@ -144,8 +144,13 @@ def create_project(user_id: str, name: str):
     return get_project(project_id, user_id)
 
 
-def get_project(project_id: str, user_id: str):
-    """Return the project only if it is owned by user_id — no cross-user fallback."""
+def get_project(project_id: str, user_id: str, include_chats: bool = True):
+    """Return the project only if it is owned by user_id — no cross-user fallback.
+
+    include_chats=False skips the chats fan-out (and its per-chat message
+    COUNT) for callers that only need studies, e.g. the internal tool route
+    re-checking workspace ownership on every pi tool call.
+    """
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
@@ -156,7 +161,8 @@ def get_project(project_id: str, user_id: str):
             return None
         project = _as_dict(row)
         project["studies"] = _load_project_studies(conn, project_id)
-        project["chats"] = _load_project_chats(conn, project_id)
+        if include_chats:
+            project["chats"] = _load_project_chats(conn, project_id)
         return project
 
 
@@ -403,8 +409,6 @@ def append_chat_messages(
             (now, project_id, resolved_user),
         )
         conn.commit()
-
-    return get_chat(project_id, resolved_user, chat_id)
 
 
 def delete_chat(project_id: str, user_id: str, chat_id: str):

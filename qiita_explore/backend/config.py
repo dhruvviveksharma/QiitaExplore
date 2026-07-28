@@ -49,10 +49,6 @@ def get_client(model: str):
     return client, "nrp"
 
 
-def model_supports_tools(model: str) -> bool:
-    return MODEL_METADATA.get(model or DEFAULT_MODEL, {}).get("supports_tools", False)
-
-
 def context_budget_chars(model: str) -> int:
     ctx_tokens = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])["context"]
     chars = int((ctx_tokens - 8_000) * 3.5)
@@ -145,33 +141,14 @@ PI_SCOPE_TOKEN_KEY = os.getenv("PI_SCOPE_TOKEN_KEY")
 
 PI_SCOPE_TOKEN_TTL_SECONDS = int(os.getenv("PI_SCOPE_TOKEN_TTL_SECONDS", "600"))
 
-# Per-chat-type flags. pi is now the DEFAULT runtime for both; the legacy
-# Python paths (helpers/agent.py :: stream_agent for global, llm_chat_stream for
-# project) remain reachable by setting either of these false, as a rollback that
-# needs no deploy.
-#
-# Because the default flipped, the legacy paths are no longer exercised by
-# anything in normal use and will drift. They are kept deliberately, not because
-# they are believed correct — re-verify before relying on one.
-def _flag(name: str, default: str = "true") -> bool:
-    return os.getenv(name, default).strip().lower() in ("1", "true", "yes")
-
-
-PI_BACKEND_GLOBAL = _flag("PI_BACKEND_GLOBAL")
-PI_BACKEND_PROJECT = _flag("PI_BACKEND_PROJECT")
-
-
 def pi_config_errors() -> list:
-    """Config that is only optional while pi is off. Returns human-readable
-    problems; empty list means the active configuration can actually serve chat.
+    """Returns human-readable problems with the pi configuration; empty list
+    means the active configuration can actually serve chat.
 
     Exists because the failure mode is otherwise invisible at boot and awful at
-    runtime: with pi as the default path and PI_SIDECAR_SECRET unset, Flask
-    starts clean, the UI loads, and every single chat turn dies on a 401 from
-    internal_tool_routes._guard() — which reads as "the chat is broken", not as
-    "a secret is missing"."""
-    if not (PI_BACKEND_GLOBAL or PI_BACKEND_PROJECT):
-        return []
+    runtime: with PI_SIDECAR_SECRET unset, Flask starts clean, the UI loads,
+    and every single chat turn dies on a 401 from internal_tool_routes._guard()
+    — which reads as "the chat is broken", not as "a secret is missing"."""
     problems = []
     if not PI_SIDECAR_SECRET:
         problems.append(

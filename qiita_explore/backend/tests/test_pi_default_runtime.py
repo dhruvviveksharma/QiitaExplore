@@ -1,9 +1,9 @@
-"""pi is the default chat runtime, so its configuration is no longer optional.
+"""pi is the only chat runtime, so its configuration is never optional.
 
-The failure this guards against is quiet: with PI_BACKEND_* defaulting true and
-PI_SIDECAR_SECRET unset, Flask starts clean, the UI loads, and every chat turn
-dies on a 401 from internal_tool_routes._guard(). That reads to an operator as
-"chat is broken", not "one variable is missing".
+The failure this guards against is quiet: with PI_SIDECAR_SECRET unset, Flask
+starts clean, the UI loads, and every chat turn dies on a 401 from
+internal_tool_routes._guard(). That reads to an operator as "chat is broken",
+not "one variable is missing".
 """
 import os
 import subprocess
@@ -15,22 +15,6 @@ import pytest
 BACKEND = Path(__file__).parent.parent
 
 
-class TestDefaults:
-    def test_both_flags_default_to_pi(self):
-        """The cutover. If this ever reads False again, chat silently reverts to
-        the legacy Python agent and nothing else in the suite would notice."""
-        import config
-        assert config.PI_BACKEND_GLOBAL is True
-        assert config.PI_BACKEND_PROJECT is True
-
-    def test_flags_are_still_overridable(self, monkeypatch):
-        import config
-        monkeypatch.setenv("PI_BACKEND_GLOBAL", "false")
-        assert config._flag("PI_BACKEND_GLOBAL") is False
-        monkeypatch.setenv("PI_BACKEND_GLOBAL", "0")
-        assert config._flag("PI_BACKEND_GLOBAL") is False
-
-
 class TestPiConfigErrors:
     def _errors(self, monkeypatch, **attrs):
         import config
@@ -40,37 +24,24 @@ class TestPiConfigErrors:
 
     def test_no_complaints_when_fully_configured(self, monkeypatch):
         assert self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=True, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
-        ) == []
-
-    def test_silent_when_pi_is_switched_off(self, monkeypatch):
-        """Missing pi secrets are fine on the legacy path — the check must not
-        block a deliberate rollback."""
-        assert self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=False, PI_BACKEND_PROJECT=False,
-            PI_SIDECAR_SECRET=None, PI_SCOPE_TOKEN_KEY=None,
+            monkeypatch, PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
         ) == []
 
     def test_missing_sidecar_secret_is_reported(self, monkeypatch):
         errs = self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=True, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET=None, PI_SCOPE_TOKEN_KEY="k",
+            monkeypatch, PI_SIDECAR_SECRET=None, PI_SCOPE_TOKEN_KEY="k",
         )
         assert len(errs) == 1 and "PI_SIDECAR_SECRET" in errs[0]
 
     def test_missing_scope_token_key_is_reported(self, monkeypatch):
         errs = self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=True, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY=None,
+            monkeypatch, PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY=None,
         )
         assert len(errs) == 1 and "PI_SCOPE_TOKEN_KEY" in errs[0]
 
-    def test_one_flag_on_is_enough_to_require_config(self, monkeypatch):
-        """Project chat alone on pi still needs the sidecar."""
+    def test_both_missing_is_reported(self, monkeypatch):
         errs = self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=False, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET=None, PI_SCOPE_TOKEN_KEY=None,
+            monkeypatch, PI_SIDECAR_SECRET=None, PI_SCOPE_TOKEN_KEY=None,
         )
         assert len(errs) == 2
 
@@ -81,8 +52,7 @@ class TestPiConfigErrors:
         monkeypatch.setenv("PI_SIDECAR_PORT", "5199")
         monkeypatch.delenv("PI_SIDECAR_URL", raising=False)
         errs = self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=True, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
+            monkeypatch, PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
         )
         assert len(errs) == 1 and "PI_SIDECAR_PORT" in errs[0]
 
@@ -90,8 +60,7 @@ class TestPiConfigErrors:
         monkeypatch.setenv("PI_SIDECAR_PORT", "5199")
         monkeypatch.setenv("PI_SIDECAR_URL", "http://127.0.0.1:5199")
         assert self._errors(
-            monkeypatch, PI_BACKEND_GLOBAL=True, PI_BACKEND_PROJECT=True,
-            PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
+            monkeypatch, PI_SIDECAR_SECRET="s", PI_SCOPE_TOKEN_KEY="k",
         ) == []
 
 
@@ -124,48 +93,19 @@ class TestBootRefusal:
         assert "Refusing to start" in p.stderr
         assert "PI_SIDECAR_SECRET" in p.stderr
 
-    def test_the_refusal_names_the_way_out(self):
-        """An error that stops the backend must say how to proceed, or the
-        operator's only option is to read this source file."""
-        p = self._import_run({"PI_SIDECAR_SECRET": "", "PI_SCOPE_TOKEN_KEY": ""})
-        assert "PI_BACKEND_GLOBAL=false" in p.stderr
-
-    # The two cases below assert the guard STAYS QUIET rather than that the
-    # process exits 0: a full `import run` also pulls in qiita_db, which needs a
-    # real Qiita install and data dir that this sandbox does not have. Asserting
-    # returncode here would test the sandbox, not the guard.
-
-    def test_guard_stays_quiet_on_the_legacy_path(self):
-        """The rollback must remain usable with no pi secrets present at all."""
-        p = self._import_run({
-            "PI_SIDECAR_SECRET": "", "PI_SCOPE_TOKEN_KEY": "",
-            "PI_BACKEND_GLOBAL": "false", "PI_BACKEND_PROJECT": "false",
-        })
-        assert "Refusing to start" not in p.stderr, p.stderr
-
     def test_guard_stays_quiet_when_fully_configured(self):
         p = self._import_run({"PI_SIDECAR_SECRET": "s", "PI_SCOPE_TOKEN_KEY": "k"})
         assert "Refusing to start" not in p.stderr, p.stderr
 
 
 class TestStartScript:
-    """PI_SKIP_SIDECAR=1 is an explicit 'Flask alone' switch. With pi as the
-    default it must also switch the app off pi, or it produces a backend that
-    boots cleanly and 500s on every chat turn."""
-
     SCRIPT = BACKEND.parent / "start_barnacle.sh"
 
     def test_script_parses(self):
         assert subprocess.run(["bash", "-n", str(self.SCRIPT)]).returncode == 0
 
-    def test_skip_sidecar_forces_both_flags_off(self):
-        body = self.SCRIPT.read_text()
-        skip_block = body.split('if [ "${PI_SKIP_SIDECAR:-}" = "1" ]')[1].split("elif")[0]
-        assert "export PI_BACKEND_GLOBAL=false" in skip_block
-        assert "export PI_BACKEND_PROJECT=false" in skip_block
-
     def test_pi_env_is_resolved_before_gunicorn_starts(self):
-        """gunicorn reads PI_BACKEND_* at import, so the decision has to be made
+        """gunicorn reads pi's config at import, so the decision has to be made
         before it is spawned — ordering is the whole correctness argument."""
         body = self.SCRIPT.read_text()
         assert body.index("START_SIDECAR=1") < body.index('"${GUNICORN[@]}"')
@@ -201,19 +141,14 @@ class TestStartScriptExitCodes:
         s.close()
 
     def test_busy_port_exits_nonzero_with_an_actionable_message(self, occupied_port):
-        p = self._run(occupied_port)
+        p = self._run(occupied_port, {"PI_SIDECAR_SECRET": "test-secret"})
         assert p.returncode == 1, "a refused start must not report success"
         assert "already in use" in p.stderr
         assert "pkill" in p.stderr, "the error must say how to clear the port"
 
     def test_gunicorn_dying_at_boot_exits_nonzero(self):
-        """Pre-existing hole: this path already printed 'gunicorn exited during
-        startup' and then exited 0. gunicorn cannot boot here (no Qiita config),
-        which makes it a usable fixture for the failure itself."""
-        p = self._run(5079, {"PI_SKIP_SIDECAR": "1"})
+        """gunicorn cannot boot here (no Qiita config), which makes it a usable
+        fixture for the failure itself."""
+        p = self._run(5079, {"PI_SIDECAR_SECRET": "test-secret", "PI_SCOPE_TOKEN_KEY": "test-key"})
         assert p.returncode == 1
         assert "gunicorn exited during startup" in p.stderr
-
-    def test_skip_sidecar_announces_the_legacy_path(self):
-        p = self._run(5079, {"PI_SKIP_SIDECAR": "1"})
-        assert "forcing the legacy chat path" in p.stdout

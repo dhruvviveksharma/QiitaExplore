@@ -57,8 +57,9 @@ async function fetchNrpModels({ flaskUrl, piSecret }) {
 }
 
 // Anthropic models pass straight through to pi's built-in provider, which reads
-// ANTHROPIC_API_KEY from the environment on its own — no registration needed here.
-export const ANTHROPIC_PROVIDER_ID = "anthropic";
+// ANTHROPIC_API_KEY from the environment on its own — no registration needed
+// here. Flask (helpers/pi_client.py) sends "anthropic/<model>" for those, so
+// resolveModel's own provider-prefix split below already routes it correctly.
 
 /**
  * Build a ModelRuntime isolated to the sidecar's own agentDir (never touches

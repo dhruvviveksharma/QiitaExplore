@@ -1,11 +1,8 @@
 """Pure reducer: pi AgentSessionEvents -> the existing 10-event SSE contract
 and the persisted segments list.
 
-Single source of truth for both, closing the dual-authoring hazard
-docs/06-streaming-and-chat.md calls its headline risk (today the segment
-array is built independently in Python and JS from a Python-specific event
-shape). The SSE events and segments emitted here are byte-identical to what
-helpers/agent.py + global_chat_routes.py produce, so the frontend needs no
+Single source of truth for both — the SSE events and segments emitted here
+are byte-identical to the pre-existing contract, so the frontend needs no
 changes.
 
 Segments are derived from the SSE events, not from a second walk over the pi
@@ -18,8 +15,8 @@ Turn completion: the sidecar only closes the NDJSON stream after the turn has
 fully settled (agent_settled, not agent_end's own willRetry-agnostic
 resolution) — see pi_sidecar/sessions.mjs. So by the time the caller's event
 iterable is exhausted, the turn is done; nothing here needs to reason about
-pi's retry/settlement semantics. Callers emit `done` themselves afterward,
-exactly as helpers/agent.py's stream_agent() never does — that's the route's job.
+pi's retry/settlement semantics. Callers emit `done` themselves afterward —
+that's the route's job.
 """
 
 import logging
@@ -43,12 +40,11 @@ _TURN_STARTED_EVENTS = frozenset({
 
 def _tool_step_name(tool_name: str, tool_call_id: str) -> str:
     """The call<->result correlation key used by both the server reducer and
-    app_state.js's segment matcher. NOT truncated to a prefix the way
-    helpers/agent.py:29 truncates OpenAI/Anthropic call ids — pi's own ids are
-    shaped "tool:<epoch-ms>:<rand>", so a [:6] prefix is "tool:1" for every
-    call until the year 2286, and two calls to the same tool in one turn would
-    collide onto one correlation key. `name` is never rendered (frontend only
-    matches on it), so there is no reason to keep it short."""
+    app_state.js's segment matcher. Not truncated to a prefix: pi's own ids are
+    shaped "tool:<epoch-ms>:<rand>", so a [:6] prefix would be "tool:1" for
+    every call until the year 2286, and two calls to the same tool in one turn
+    would collide onto one correlation key. `name` is never rendered (frontend
+    only matches on it), so there is no reason to keep it short."""
     return f"tool_{tool_name}_{tool_call_id or ''}"
 
 
@@ -60,8 +56,7 @@ def _first_text(result: dict) -> str:
 
 
 def _detail_with_elapsed(base: str, dt) -> str:
-    """`{base} · {dt:.1f}s`, degrading cleanly when either half is missing.
-    helpers/agent.py:41-46 builds the same suffix from its own perf_counter."""
+    """`{base} · {dt:.1f}s`, degrading cleanly when either half is missing."""
     if dt is None:
         return base
     return f"{base} · {dt:.1f}s" if base else f"{dt:.1f}s"

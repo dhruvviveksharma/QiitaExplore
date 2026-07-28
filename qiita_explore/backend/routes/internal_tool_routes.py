@@ -41,7 +41,7 @@ from helpers.project_scope import (
     enforce_project_get_report,
     enforce_project_pin,
 )
-from store import get_project, get_project_studies_only
+from store import get_project
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +115,11 @@ def _run_project_scoped(name, args, claims):
     through to execute_tool() with args already validated/trimmed to
     project members (get_study_report, pin_study)."""
     project_id = claims.get('project_id')
-    # Independent of whatever minted this token: re-check ownership here too,
-    # since get_project_studies_only() itself performs no user_id filtering
-    # (store/crud.py) — this route must not simply trust the token's claims.
-    if not get_project(project_id, claims['user_id']):
-        return jsonify({'error': 'project not found'}), 404
-    proj = get_project_studies_only(project_id)
+    # Independent of whatever minted this token: re-check ownership here too —
+    # this route must not simply trust the token's claims. get_project filters
+    # on user_id; include_chats=False skips the per-chat COUNT fan-out this
+    # route has no use for.
+    proj = get_project(project_id, claims['user_id'], include_chats=False)
     if not proj:
         return jsonify({'error': 'project not found'}), 404
     member_ids = project_member_study_ids(proj)

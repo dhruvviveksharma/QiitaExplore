@@ -4,8 +4,8 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 // pi's ToolDefinition.label is a static per-tool string, not per-call — pi's own
 // tool_execution_start/end events carry only {toolCallId, toolName, args}, no label.
 // The dynamic, per-call label the frontend shows ("Searching: mouse, wild…") is
-// computed server-side by pi_translate.py, which imports the REAL
-// helpers.agent._tool_label(name, args) directly — no JS port, no drift risk.
+// computed server-side by pi_translate.py, which imports
+// helpers.tool_labels._tool_label(name, args) directly — no JS port, no drift risk.
 function staticLabel(name) {
   return name
     .split("_")
@@ -110,8 +110,8 @@ export async function loadTools({ flaskUrl, piSecret, getToolToken, onToolResult
         });
         if (!res.ok) {
           // pi's contract: throw on failure, never encode errors as content.
-          // The Flask translator maps this to the same failure segment_tool_result
-          // shape helpers/agent.py:34-40 emits today.
+          // The Flask translator (pi_translate.py) maps this into a
+          // segment_tool_result event with isError text.
           throw new Error(`${fn.name} failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
         }
         const r = await res.json(); // {text, label, detail, ui_payload, executed}

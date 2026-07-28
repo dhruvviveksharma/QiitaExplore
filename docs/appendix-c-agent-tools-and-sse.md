@@ -1,18 +1,18 @@
 # Appendix C — Agent Tools and the SSE Protocol
 
-*The exact tool schemas the model sees, and the exact wire protocol the browser receives — the two halves of a contract that only holds together if `agent_tools.py`, `agent.py`, `global_chat_routes.py`, and the frontend segments model change in lockstep.*
+*The exact tool schemas the model sees, and the exact wire protocol the browser receives — the two halves of a contract that only holds together if `agent_tools.py`, `pi_translate.py`, the two chat routes, and the frontend segments model change in lockstep.*
 
 ---
 
-## Scope: global chat only
+## Scope: both chat types, one tool surface
 
-Agentic tool-calling exists in exactly one place: `POST /api/global-chats/<chat_id>/message/stream`, handled by `backend/routes/global_chat_routes.py`. Project chat (`backend/routes/chat_routes.py :: api_chat_message_stream`) has no agentic branch at all — it always runs `_build_project_study_context` → `llm_chat_stream`, regardless of which model is selected. Everything in this appendix that says "agentic path" means global chat with a tool-capable model; there is no equivalent surface in project chat.
+Agentic tool-calling runs on both streaming endpoints — `POST /api/global-chats/<chat_id>/message/stream` (`backend/routes/global_chat_routes.py`) and `POST /api/projects/<project_id>/chats/<chat_id>/message/stream` (`backend/routes/chat_routes.py`) — through the identical sub-generator, `helpers/pi_turn.py :: stream_pi_turn`. There used to be an asymmetry here: project chat had no agentic branch at all and always ran a context-stuffed, non-agentic prompt path. That asymmetry is gone. The only real difference left between the two chat types is *scope* — a project-chat tool call is hard-bounded server-side to that project's own studies (`helpers/project_scope.py`), where a global-chat call searches the whole database — and that boundary is enforced by which `scope` claim a request's signed tool token carries, not by which route ran. See [`05-agent.md`](05-agent.md#the-hard-scope-boundary).
 
 ---
 
 ## Tool schema conventions
 
-`backend/helpers/agent_tools.py :: TOOL_SCHEMAS` is a list of five entries in OpenAI function-calling format:
+`backend/helpers/agent_tools.py :: TOOL_SCHEMAS` is a list of **four** entries in OpenAI function-calling format:
 
 ```json
 { "type": "function",
@@ -20,62 +20,51 @@ Agentic tool-calling exists in exactly one place: `POST /api/global-chats/<chat_
                 "parameters": { "type": "object", "properties": {...}, "required": [...] } } }
 ```
 
-This list is passed directly as `tools=` to `client.chat.completions.create(...)` for every NRP-Nautilus (`provider: "nrp"`) model. For Anthropic models (`provider: "anthropic"` in `config.py :: MODEL_METADATA`), `backend/helpers/agent.py :: _openai_tools_to_anthropic` reshapes each entry into `{"name", "description", "input_schema"}` — `input_schema` is the OpenAI `parameters` object, passed through unchanged. No field is added, dropped, or renamed in translation, so the JSON Schema itself — types, the `required` list, and every prose description the model reads to decide what synonyms to fill in — is identical between providers. The translation runs once per turn, at the top of `_stream_anthropic_agent`, not once per loop iteration.
+This is served verbatim to the pi sidecar from `GET /api/internal/tools/schemas` (`routes/internal_tool_routes.py :: api_internal_tool_schemas`) at session-creation time. `pi_sidecar/tools.mjs :: jsonSchemaToTypeBox` converts each entry's plain JSON-Schema `parameters` object into pi's native TypeBox schema shape — recursively, for `object`/`array`/`string`/`integer`/`number`/`boolean`, degrading anything else to `Type.Unknown()`. No field is dropped or renamed in that conversion; `agent_tools.TOOL_SCHEMAS` remains the single source of truth, so a schema change on the Python side needs no sidecar edit.
 
-Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. This applies to the legacy in-process loop; on the pi path (the default — see [`05-agent.md`](05-agent.md)) the sidecar registers providers itself, from the roster `/api/internal/models` serves.
+Provider selection for the *agent loop* itself is now pi's problem, not this codebase's: `helpers/pi_client.py :: stream_chat` prefixes Anthropic model ids (e.g. `"anthropic/claude-sonnet-4-6"`) so pi resolves them against its own built-in Anthropic provider, and NRP models are registered from the roster `GET /api/internal/models` serves — filtered to `provider: "nrp"` entries whose `MODEL_METADATA["supports_tools"]` is `True`. `config.py :: get_client(model)` still exists, still returns `(client, provider)`, and is still used — but its only remaining caller is `helpers/llm_helpers.py :: llm_chat_stream`, which backs the non-agentic `/pin` acknowledgment flow, not any tool-calling path.
 
-`model_supports_tools(model)` (also in `config.py`) used to gate whether the agentic path ran at all. **Every configured model now returns `True`**, so it gates nothing; it survives because `/api/internal/models` filters the pi roster on it, and pi has no per-model tool flag of its own — a model that cannot call tools must never be offered to it. `gemma-small` was the one `False`, and that was wrong: checked against the live NRP endpoint, it does support tool calls.
+### The one-search-per-message gate
 
-### The `active_tools` mutation
+`search_studies` is designed to run at most once per user message. This used to be enforced by mutating the tool schema mid-loop in Python (removing `search_studies` from the list handed back to the model once it had been called); pi has no equivalent hook, so the gate now lives entirely in `pi_sidecar/sessions.mjs :: makeSearchOncePerMessageExtension` — a `tool_call` block hook that refuses a second `search_studies` call for the rest of the message, reset on `agent_start`, with a same-file refund (`makeSearchBudgetRefunder`) reading `agent_tools.ToolResult.executed` so a call rejected for empty input doesn't permanently spend the budget. [`05-agent.md`](05-agent.md#the-one-search-per-message-invariant) covers the full mechanics and the reasoning behind the optimistic-charge-then-refund design; this appendix defers to it rather than duplicating it.
 
-`search_studies` is designed to run at most once per turn. Both provider loops track a local `search_already_done` flag, set when `_execute_tool_call` returns `is_search=True` (i.e. `name == "search_studies"`), and once set, filter the schema handed to the model on every subsequent round:
-
-- OpenAI path (`stream_agent`): `active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]`
-- Anthropic path (`_stream_anthropic_agent`): `curr_tools = [t for t in anth_tools if t["name"] != "search_studies"]`
-
-This is enforced at the schema level, not just by the tool's own description ("Issue EXACTLY ONE call per user request…") — after the first call, the model cannot see `search_studies` as an option at all. The other four tools remain available on every iteration up to `max_iters` (default `4` in `stream_agent`; the CLI harness raises it to `8`). [`05-agent.md`](05-agent.md#the-one-search-invariant) calls this the *one-search invariant* and covers the design rationale (schema mutation over prompt instruction); this appendix covers only the mechanics.
+The other three tools remain available on every round pi's own agent loop chooses to run — this codebase has no `max_iters` ceiling of its own any more; how many rounds a turn takes, and whether it forces a closing answer if a round ends on a bare tool result, is internal to pi.
 
 ### Running label vs. completion label
 
 Every tool call surfaces two distinct human-readable labels, computed by two unrelated functions, at two different points in the call's lifecycle:
 
-| Tool | In-flight label (`agent.py :: _tool_label`, on `segment_tool_call`) | Completion label (`ToolResult.label`, on `segment_tool_result`) |
+| Tool | In-flight label (`helpers/tool_labels.py :: _tool_label`, on `segment_tool_call`) | Completion label (`ToolResult.label`, on `segment_tool_result`) |
 |---|---|---|
 | `search_studies` | `"Searching: {first 3 of organism\|keywords\|qualifier\|body_site}…"`, or `"Searching Qiita…"` if none of those slots is filled | `"Searched Qiita database"` / `"Deep-searched Qiita database"` |
 | `get_study_report` | `"Loading report for study {study_id}…"` | `f"Loaded study {id} report"` or `f"Study {id}"` on failure |
 | `pin_study` | `"Pinning {n} study/studies…"` | `"Studies pinned"` or `"Pin studies"` on failure |
 | `search_by_sample` | `"Sample search: {first 2 field=value pairs}, {first 2 keywords}…"`, or `"Searching sample metadata…"` if empty | `"Searched sample metadata"` |
-| `compute_diversity` | `"Computing diversity…"` | `"Diversity (unavailable)"` |
 
 The in-flight label is derived purely from the model's **arguments** — it exists so the user sees *what* is being searched for while the tool is still running, before any result exists. The completion label is fixed per tool (with `search_studies` the only one branching on an execution detail, `deep_search`) and says nothing about *what* was searched — only that a result is ready. A `_tool_label` fallback of `f"Running {name}…"` exists for any future tool name that reaches the function without a matching branch, but every currently registered tool has an explicit case.
 
+`helpers/tool_labels.py` is a standalone module with no `agent_tools`/`pg_pool`/`qiita_core` imports, deliberately: `pi_translate.py` (a pure reducer with no database dependency) needs `_tool_label` to build `segment_tool_call` payloads, and importing it from `agent_tools.py` directly would drag in that module's whole Postgres-touching import chain (`agent_tools → study_service → pg_pool → qiita_core`) just to format a label string.
+
 ### Testing tool schemas without a live model
 
-`backend/agent_harness.py --tool <name> --args '<json>'` calls `execute_tool` directly — the same dispatcher `stream_agent` uses — with no LLM in the loop at all. It prints the tool's full `ToolResult.text` (what the model would have read), `label`, `detail`, and elapsed time, via a traced wrapper (`_traced_execute_tool`) that the harness monkey-patches over `agent_mod.execute_tool`. This is the fastest way to check a schema or tool-body change against real data: `bash run_agent_harness.sh --tool search_studies --args '{"organism":["mouse"]}'` exercises the full text-search + sample-probe path and prints the exact string the LLM would receive, without spending an LLM call or needing a tool-capable model configured at all.
+There is no offline CLI driver any more — `backend/agent_harness.py`, which used to call `execute_tool` directly from the command line and print the tool's full `ToolResult` without an LLM in the loop, was deleted along with the Python agent loop it drove (`run_agent_harness.sh` went with it). The closest equivalent today is calling `execute_tool` (or, for project scope, the `helpers/project_scope.py` functions `internal_tool_routes.py` dispatches to instead) directly from a test — `backend/tests/test_internal_tools_scope.py` is the existing pattern, and it is deliberately Postgres-free: every case there either short-circuits before any Qiita DB call or resolves entirely from the local SQLite `project_studies` mirror.
 
-### How a tool call is assembled from streaming deltas
+### How a tool call reaches Python
 
-Neither provider hands `stream_agent` a complete tool call in one piece — both stream it in fragments that have to be accumulated before `execute_tool` can run.
+pi hands this codebase an **already-assembled** tool call — `{toolCallId, toolName, args}` on `tool_execution_start` — not a stream of fragments to reconstruct. There is no argument-accumulation step on the Python side any more: the deleted Python loop used to reassemble a tool call from `delta.tool_calls[].function.arguments` fragments (OpenAI-compatible models) or `input_json_delta`/`partial_json` chunks (Anthropic), keyed by chunk index or content-block id respectively, and `json.loads` the concatenated string once the stream ended — with a `try/except json.JSONDecodeError` swallowing a malformed result down to `{}`. All of that lived inside `stream_agent`/`_stream_anthropic_agent` and no longer exists; `helpers/pi_translate.py :: TurnTranslator._handle` reads `event.get("args") or {}` straight off the `tool_execution_start` event.
 
-**OpenAI-compatible path** (`stream_agent`'s main loop): each chunk's `delta.tool_calls` is a list of partial updates keyed by `tc.index`, not by call ID — `tool_call_map[idx]` starts as `{"id": "", "name": "", "arguments": ""}` and is mutated in place as chunks arrive: `tc.id` (once, when present), `fn.name` and `fn.arguments` are **concatenated** onto the running strings on every chunk that carries them, since providers may split a function name or a JSON arguments string across multiple deltas. Only after the stream ends (`finish_reason == "tool_calls"`) does the loop `json.loads(tc["arguments"] or "{}")` each accumulated string, in index order.
-
-**Anthropic path** (`_stream_anthropic_agent`): a `content_block_start` event with `cb.type == "tool_use"` opens `current_block = {"id": cb.id, "name": cb.name}` and resets `current_json = ""`; subsequent `content_block_delta` events of type `input_json_delta` append `d.partial_json` to `current_json`; `content_block_stop` parses the fully-accumulated string and appends `{"id", "name", "args"}` to `tool_uses`. Unlike the OpenAI path, the tool's `name` arrives whole in one event rather than being built incrementally.
-
-**Both paths swallow a malformed-JSON arguments string the same way** — `json.loads(...)` wrapped in `try/except json.JSONDecodeError`, defaulting to `{}` rather than raising. A tool call with unparseable arguments still executes with empty args; for tools with required parameters (`get_study_report`, `pin_study`, `compute_diversity`), the tool's own coercion (e.g. `int(args.get("study_id") or 0)` → `0`) or emptiness check then produces that tool's normal failure `ToolResult` rather than crashing the turn.
-
-**A fixed, provider-asymmetric token cap.** Every Anthropic call in this module — both the main loop's `messages.stream(...)` and the forced-synthesis fallback — passes `max_tokens=4096` explicitly; the Anthropic SDK requires it. The OpenAI-compatible `client.chat.completions.create(...)` calls pass no `max_tokens` at all, deferring entirely to the endpoint's own default. A very long synthesized answer can therefore be cut off mid-sentence on an Anthropic model in a way it structurally cannot be on an NRP-Nautilus model, purely because of this asymmetry — nothing in the SSE wire format signals that a `token` stream ended because of a length cap versus a natural stop.
+The call is dispatched to Flask over HTTP as `POST /api/internal/tools/<name>` with `args` as the JSON body (`pi_sidecar/tools.mjs`), authenticated with the per-turn scope token described in [`05-agent.md`](05-agent.md#the-hard-scope-boundary); `execute_tool(name, args, ...)` (`agent_tools.py`) or the project-scoped equivalents run exactly as before, and the tool's `ToolResult` is serialized back (`dataclasses.asdict`) as the HTTP response body, which pi surfaces on `tool_execution_end` as `result.details`.
 
 ---
 
 ## Per-tool reference
 
-| Tool | Required params | Auto-pins? | Single-shot per turn? |
+| Tool | Required params | Auto-pins? | Single-shot per message? |
 |---|---|---|---|
-| `search_studies` | none | no | **yes** — removed from schema after first call |
-| `get_study_report` | `study_id` | **yes** (silent failure on cap) | no |
+| `search_studies` | none | no | **yes** — blocked by the sidecar's `tool_call` hook after the first call |
+| `get_study_report` | `study_id` | no | no |
 | `pin_study` | `study_ids` | yes (explicit, surfaced) | no |
 | `search_by_sample` | none (but needs ≥1 of `field_filters`/`keywords`) | no | no |
-| `compute_diversity` | `study_ids` | no | no — but always a stub response regardless |
 
 ### search_studies
 
@@ -91,7 +80,7 @@ Full-text and sample-metadata search over public Qiita studies. No parameter is 
 | `keywords` | `array<string>` | no | Catch-all for terms outside the typed slots, or flat keyword queries. |
 | `data_types` | `array<string>` | no | AND filter over 10 valid values (`16S`, `Metagenomic`, …) — only when the user explicitly names a sequencing type. |
 | `investigation_types` | `array<string>` | no | Narrower sub-filter (~18 studies matched); discouraged by its own description. |
-| `limit` | `integer` | no | Clamped to 1–20 server-side; schema default 8. |
+| `limit` | `integer` | no | Clamped to 1–20 server-side; schema default 10. |
 
 **Example call args**, as the model might fill them for "wild mice gut microbiome":
 
@@ -101,7 +90,7 @@ Full-text and sample-metadata search over public Qiita studies. No parameter is 
   "body_site": ["gut", "fecal", "stool"], "limit": 8 }
 ```
 
-**What the model sees back:** `_tool_search_studies` runs a text search (`search_studies_with_sql`) and a sample-metadata probe (`search_studies_by_sample_meta`) on every call — see [`04-search.md`](04-search.md) for how those are bounded and merged — then renders the merged, re-ranked, limit-trimmed list through `_format_discovery_study_list` (8,000-char budget) as `ToolResult.text`. An empty result set returns the literal string `"No matching public studies found for those keywords."` instead of an empty list.
+**What the model sees back:** `_tool_search_studies` runs a text search (`search_studies_with_sql`) and a sample-metadata probe (`search_studies_by_sample_meta`) on every call — see [`04-search.md`](04-search.md) for how those are bounded and merged — then renders the merged, re-ranked, limit-trimmed list through `_format_discovery_study_list` (24,000-char budget) as `ToolResult.text`. An empty result set returns the literal string `"No matching public studies found for those keywords."` instead of an empty list.
 
 The merge step itself is worth naming explicitly, since it determines what `via` ends up being in `ui_payload`: text-search hits (`text_studies`) and sample-metadata hits (`sample_studies`, already excluding any `study_id` the text search already found) are concatenated with text first, deduplicated by `study_id` on first occurrence — so a study appearing in both lists is tagged `via: "text"` — then re-sorted by a Python-side score (`title` match = 3, `abstract` match = 1 per keyword) and trimmed to `limit`. Sample-metadata probing prefers `organism` slot terms over the full pooled `raw_kws` when `organism` is non-empty, on the theory that the probed host-identity fields (`host_scientific_name`, etc.; see [`04-search.md`](04-search.md#the-probe)) are organism-specific and noisy against unrelated qualifier/condition terms.
 
@@ -123,13 +112,13 @@ The merge step itself is worth naming explicitly, since it determines what `via`
 
 **Side effects:** none — no pin, no write. Bounding rules (candidate caps, thread pool ≤ 16, per-statement timeout) live in `helpers/sample_search.py`; see [`04-search.md`](04-search.md).
 
-**`deep_search` is invisible to the model.** It is not a property in this tool's JSON schema at all — the model cannot set it, request it, or even see that it exists. It originates as a plain boolean in the `/message/stream` POST body (set by the `/deepsearch` slash command or a UI toggle), threads through `stream_agent(..., deep_search=deep_search)` as a Python keyword argument, and reaches `_tool_search_studies` via `execute_tool(..., deep_search=deep_search)`. Its only effects are widening the sample-search candidate cap (`SAMPLE_SEARCH_DEEP_CANDIDATES=500` vs. `SAMPLE_SEARCH_DEFAULT_CANDIDATES=40`) and switching the completion label to `"Deep-searched Qiita database"`. Every other tool ignores it — `execute_tool`'s signature accepts `deep_search` for all tools uniformly, but only `_tool_search_studies` reads it.
+**`deep_search` is invisible to the model.** It is not a property in this tool's JSON schema at all — the model cannot set it, request it, or even see that it exists. It originates as a plain boolean in the `/message/stream` POST body (set by the `/deepsearch` slash command or a UI toggle), but no longer travels as a plain function argument through the turn: `global_chat_routes.py` folds it into the signed scope token (`mint_scope_token(..., deep_search=deep_search, ...)`), and `routes/internal_tool_routes.py` reads it back off the *verified* token (`claims.get('deep_search')`) when dispatching a global-scope call — `execute_tool(name, args, scope='global', chat_id=..., deep_search=bool(claims.get('deep_search')))`. `helpers/pi_client.py :: stream_chat` deliberately does **not** accept it as a body field: the scope token is the only place it needs to live, and a second copy would just be an unused, potentially-stale duplicate. Its only effects are widening the sample-search candidate cap (`SAMPLE_SEARCH_DEEP_CANDIDATES=500` vs. `SAMPLE_SEARCH_DEFAULT_CANDIDATES=40`) and switching the completion label to `"Deep-searched Qiita database"`. Every other tool ignores it — `execute_tool`'s signature accepts `deep_search` for all tools uniformly, but only `_tool_search_studies` reads it. Project-scoped search (`helpers/project_scope.py`) has no `deep_search` concept at all — its scope token never carries one, and its search functions don't accept the parameter.
 
 ---
 
 ### get_study_report
 
-Loads full sample-level metadata for one study and auto-pins it.
+Loads full sample-level metadata for one study. It does not pin the study — an earlier version auto-pinned as a side effect (wrapped in a bare `try: / except Exception: pass`, so a pin silently rejected at the 10-study cap left the model with a full report and no indication the pin had failed); that auto-pin call has been removed from `_tool_get_study_report` entirely. Pinning now only ever happens through an explicit `pin_study` call.
 
 | Name | Type | Required | Description |
 |---|---|---|---|
@@ -137,11 +126,9 @@ Loads full sample-level metadata for one study and auto-pins it.
 
 **What the model sees back:** `_build_full_samples_block(study_id, budget_chars=4_000)` — a compact per-sample metadata block, budget-clipped — prefixed with a one-line sample count summary.
 
-**ui_payload:** unlike the other three non-stub tools, this is **not** wrapped in a `{"kind": "tool_call", ...}` envelope. It is the raw return of `_build_samples_report_payload(study_id)` — `{"kind": "samples_report", "study_id": int, "header": {study_id, study_title, study_abstract, pi_name, pi_affiliation, num_samples, data_types, num_preps}, "samples": [...]}`. This is the same payload shape emitted by the `/report` slash-command path (`helpers/request_utils.py :: stream_samples_report`) via the `ui` SSE event — `get_study_report` reuses it verbatim so one frontend renderer (`SamplesReportBubble`) serves both entry points.
+**ui_payload:** unlike the other two non-search tools, this is **not** wrapped in a `{"kind": "tool_call", ...}` envelope. It is the raw return of `_build_samples_report_payload(study_id)` — `{"kind": "samples_report", "study_id": int, "header": {study_id, study_title, study_abstract, pi_name, pi_affiliation, num_samples, data_types, num_preps}, "samples": [...]}`. This is the same payload shape emitted by the `/report` slash-command path (`helpers/request_utils.py :: stream_samples_report`) via the `ui` SSE event — `get_study_report` reuses it verbatim so one frontend renderer (`SamplesReportBubble`) serves both entry points.
 
-**Side effect — silent pin.** After building the payload, the tool calls `_pin_studies_validated(chat_id, scope, [study_id])` wrapped in a bare `try: / except Exception: pass`. If the chat is already at the 10-study pin cap, the pin is silently rejected — the model gets a full report, the frontend never learns the pin failed, and there is no `rejected` count surfaced anywhere in this tool's output (contrast with `pin_study` below, which does surface it).
-
-**Failure mode:** `_build_samples_report_payload` raises `ValueError` when the study is private or has zero samples/preps. Caught in `_tool_get_study_report`, which returns `text="Study {id} is private or has no accessible data in Qiita."`, `label=f"Study {id}"`, `detail="private or not found"`, and `ui_payload` left at the dataclass default of `None`. No pin is attempted on this path.
+**Failure mode:** `_build_samples_report_payload` raises `ValueError` when the study is private or has zero samples/preps. Caught in `_tool_get_study_report`, which returns `text="Study {id} is private or has no accessible data in Qiita."`, `label=f"Study {id}"`, `detail="private or not found"`, and `ui_payload` left at the dataclass default of `None`.
 
 ---
 
@@ -210,16 +197,7 @@ Every entry's `via` is hardcoded to `"sample_metadata"` — unlike `search_studi
 
 ---
 
-### compute_diversity
-
-> **Stub.** `_tool_compute_diversity` ignores its arguments entirely — the parameter is named `_args` to signal this in the source — and always returns the same canned, non-computed response. It is present in `TOOL_SCHEMAS` and fully callable; nothing in the schema or system prompt currently discourages the model from selecting it. Treat any description of this tool as aspirational until TKT-010 (BIOM/OTU ingestion) lands.
-
-| Name | Type | Required | Description |
-|---|---|---|---|
-| `study_ids` | `array<integer>` | **yes** | Study IDs to compute diversity for. Accepted by the schema; never read. |
-| `metric` | `string` | no | e.g. `"shannon"`, `"bray_curtis"`. Accepted by the schema; never read. |
-
-**Always returns:** `text="Diversity analysis is not yet available. BIOM/OTU ingestion is pending (TKT-010). …"`, `label="Diversity (unavailable)"`, `detail="pending TKT-010"`, `ui_payload=None`. No branch of this function can produce a different result.
+There is no fifth tool. An earlier `compute_diversity` — a hard stub, live in `TOOL_SCHEMAS` and fully callable, always returning the same canned "not yet available" response regardless of arguments — has been removed entirely from both `TOOL_SCHEMAS` and `execute_tool`. Diversity computation remains unimplemented pending BIOM/OTU ingestion, tracked in [`11-roadmap.md`](11-roadmap.md).
 
 ---
 
@@ -284,67 +262,66 @@ Bare `: keepalive\n\n` comment lines — no `event:`, no `data:` — are interle
 They appear at a fixed set of call sites, all before a step that can take multiple seconds:
 
 - `global_chat_routes.py`, immediately as `generate()` starts — before anything else is computed, so the connection has output before the client even finishes its `fetch`.
-- `global_chat_routes.py`, right after the `pinned_reports` `step_done` (before the agentic-vs-legacy fork).
-- `global_chat_routes.py`, legacy path only — after `query_plan`, after `build_context`'s `step_done` in the non-`skip_search` branch.
-- `chat_routes.py`, after `build_context`'s `step_done` and after `deep_context`'s `step_done`.
+- `global_chat_routes.py`, right after the `pinned_reports` `step_done` (when the chat has pinned studies), before the `runtime` event and the call into `stream_pi_turn`.
+- `chat_routes.py`, immediately as `generate()` starts, same reasoning.
+- `chat_routes.py` (via `_stream_deep_context`), after the `deep_context` `step_done`, when there are mentioned or pinned studies to fetch — skipped entirely when there are none.
 - `pin_flow.py :: stream_pin_flow`, after `deep_context`'s `step_done`, shared by both routes' pin flow.
 
-Notably, the agentic path itself (`stream_agent`'s tool loop) has **no** keepalive between tool calls — `token`, `segment_tool_call`, and `segment_tool_result` events are frequent enough during an agent turn that an idle-timeout gap is not expected to occur there.
+Notably, the pi turn itself (`stream_pi_turn` / `TurnTranslator`) has **no** keepalive between tool calls — `token`, `segment_tool_call`, and `segment_tool_result` events are frequent enough during an agent turn that an idle-timeout gap is not expected to occur there. A long tool call on the Postgres side (a slow sample-metadata probe, say) rides inside the gap between one `segment_tool_call` and its `segment_tool_result`, same as before.
 
 ---
 
 ## All 10 events
 
-The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site against `parseSSE`'s dispatch table — there are exactly 10, no more:
+The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site (including the ones `TurnTranslator` drives dynamically through `stream_pi_turn`) against `parseSSE`'s dispatch table — there are exactly 10, no more:
 
 | Event | Emitted by | Purpose |
 |---|---|---|
-| `agent_start` | Agentic path only | Switches the frontend message into segments mode. |
-| `segment_tool_call` | Agentic path only | A tool is being invoked; carries name/label/args. |
-| `segment_tool_result` | Agentic path only | A tool call finished; carries label/detail/ui_payload. |
-| `token` | Both paths | One chunk of streamed assistant text. |
-| `step_start` | Legacy path + pin/report flows (both routes) | A named non-tool step began. |
-| `step_done` | Legacy path + pin/report flows (both routes) | A named step finished. |
-| `query_plan` | Legacy path only | The keyword plan `llm_plan_query` produced. |
-| `ui` | Legacy path (`/report` flow) only | A structured payload to render inline (samples report). |
-| `done` | Both paths | Terminal event for a successful turn. |
-| `error` | Both paths | Terminal event for a failed turn. |
+| `agent_start` | pi turns | Switches the frontend message into segments mode. |
+| `segment_tool_call` | pi turns | A tool is being invoked; carries name/label/args. |
+| `segment_tool_result` | pi turns | A tool call finished; carries label/detail/ui_payload. |
+| `token` | pi turns, and the `/pin` acknowledgment flow | One chunk of streamed assistant text. |
+| `runtime` | Both chat routes, every normal-branch turn | Names which runtime served the turn — always `{"runtime": "pi"}` today. |
+| `step_start` | pi turns (compaction/retry) + pin/report flows (both routes) | A named non-tool step began. |
+| `step_done` | pi turns (compaction/retry) + pin/report flows (both routes) | A named step finished. |
+| `ui` | The `/report` flow (both routes) | A structured payload to render inline (samples report). |
+| `done` | Every branch, both routes | Terminal event for a successful turn. |
+| `error` | Every branch, both routes | Terminal event for a failed turn. |
 
 #### event-agent_start
 
-Emitted once, immediately after `stream_agent` yields its first event, only when `model_supports_tools(model)` is true. Payload: `{}` (empty object — no fields). Client: `parseSSE` dispatches to `onAgentStart`, wired in `app_state.js` to `onAgentStart(chatId) → patchLast(chatId, m => ({...m, segments: []}))`. This is the sole trigger that flips a message from `segments: null` (legacy rendering) to `segments: []` (agent rendering) — nothing else in the frontend sets `segments` to a non-null value.
+Synthesized by `TurnTranslator._handle` on the *first* of several pi events that indicate the model has actually started working (`agent_start`, `turn_start`, `message_start`, `message_update`, `tool_execution_start`, `compaction_start`, `auto_retry_start`) — not necessarily on pi's own literal `agent_start` event, and not on the very first event of any kind, so that a sidecar failing before the model speaks (`sidecar_error` only) doesn't flip the frontend into segments mode and hide the error text in an empty bubble. Payload: `{}` (empty object — no fields). Client: `parseSSE` dispatches to `onAgentStart`, wired in `app_state.js` to `onAgentStart(chatId) → patchLast(chatId, m => ({...m, segments: []}))`. This is the sole trigger that flips a message from `segments: null` to `segments: []` — nothing else in the frontend sets `segments` to a non-null value. Both chat routes wire the same handler set (`agentHandlers(chatId)` in `app_state.js`), so this applies identically to project chat and global chat.
 
 #### event-segment_tool_call
 
-Emitted by `_execute_tool_call` in `agent.py` before a tool runs. Payload: `{"name": str, "label": str, "args": dict}`. `name` is the synthetic, call-id-suffixed identifier `f"tool_{name}_{call_id[:6]}"` — see the uniqueness note under **Ordering guarantees** below. `label` comes from `agent.py :: _tool_label(name, args)`, a per-tool human-readable string. Client: `onSegmentToolCall(chatId)` closes any open trailing text segment (marks it `done: true`) and appends `{type: 'tool', name, label, args, done: false, result: null}` to `m.segments`.
+Emitted by `TurnTranslator._handle` on pi's `tool_execution_start`. Payload: `{"name": str, "label": str, "args": dict}`. `args` is `event.get("args") or {}` — already-assembled by pi, no fragment accumulation on the Python side. `label` comes from `helpers/tool_labels.py :: _tool_label(toolName, args)`, a per-tool human-readable string.
 
-Example synthetic `name` values, given a provider `call_id` of `"call_a1b2c3d4e5"`:
+`name` is the correlation key `helpers/pi_translate.py :: _tool_step_name(tool_name, tool_call_id)` builds: `f"tool_{tool_name}_{tool_call_id}"` — the **full** `toolCallId` pi assigned the call, not a truncated slice. This changed from an earlier `[:6]`-prefix scheme specifically because pi's own call ids are shaped `"tool:<epoch-ms>:<rand>"`: every id created in the same year shares the same leading digits, so a six-character prefix would read as `"tool:1"` for every call until the year 2286, and two calls to the same tool within one turn would collide onto a single correlation key. See the uniqueness note under **Ordering guarantees** below. Client: `onSegmentToolCall(chatId)` closes any open trailing text segment (marks it `done: true`) and appends `{type: 'tool', name, label, args, done: false, result: null}` to `m.segments`.
+
+Example `name` values, given a real pi `toolCallId` of `"tool:1784970149356:aaaaaaaaaaa"`:
 
 | Tool | `name` in `segment_tool_call` |
 |---|---|
-| `search_studies` | `tool_search_studies_a1b2c3` |
-| `get_study_report` | `tool_get_study_report_a1b2c3` |
-| `pin_study` | `tool_pin_study_a1b2c3` |
-| `search_by_sample` | `tool_search_by_sample_a1b2c3` |
-| `compute_diversity` | `tool_compute_diversity_a1b2c3` |
-
-`call_id[:6]` takes the first six characters of whatever ID the provider assigned that call — OpenAI-compatible providers and Anthropic both generate their own opaque call IDs, so the six-character slice is provider format, not a value this codebase controls.
+| `search_studies` | `tool_search_studies_tool:1784970149356:aaaaaaaaaaa` |
+| `get_study_report` | `tool_get_study_report_tool:1784970149356:aaaaaaaaaaa` |
+| `pin_study` | `tool_pin_study_tool:1784970149356:aaaaaaaaaaa` |
+| `search_by_sample` | `tool_search_by_sample_tool:1784970149356:aaaaaaaaaaa` |
 
 #### event-segment_tool_result
 
-Emitted by `_execute_tool_call` after the tool returns (or raises). Payload: `{"name": str, "label": str, "detail": str, "ui_payload": dict|null}`. `name` matches the `segment_tool_call` that preceded it. On a caught exception, `label` is `f"{name} failed"` and `detail` is `f"{str(exc)[:60]} · {dt:.1f}s"`, with `ui_payload: null` — the tool loop does not crash the whole turn on a single tool exception; it feeds `f"Tool {name} failed: {exc}"` back to the model as the tool result and continues. On success, `detail` is the tool's own `ToolResult.detail` with an appended `· {elapsed:.1f}s`. Client: `onSegmentToolResult(chatId)` maps over `m.segments`, completing every tool segment matching `s.type === 'tool' && s.name === name && !s.done` — see the first-match-vs-every-match asymmetry below.
+Emitted by `TurnTranslator._handle` on pi's `tool_execution_end`. Payload: `{"name": str, "label": str, "detail": str, "ui_payload": dict|null}`. `name` matches the `segment_tool_call` that preceded it (same `_tool_step_name` correlation key). When `event["isError"]` is true, `label` is `f"{toolName} failed"` and `detail` is the first 60 characters of the tool's own error text with a `· {dt:.1f}s` suffix (`_detail_with_elapsed`), `ui_payload: null` — a failed tool does not crash the turn; pi's own tool wrapper (`pi_sidecar/tools.mjs`) reports the failure as a normal tool result the model can read and recover from. On success, `label`/`detail`/`ui_payload` come from `result.details` — the `dataclasses.asdict()` of whatever `ToolResult` `execute_tool()` (or the project-scoped equivalent) returned — with the same elapsed-time suffix appended to `detail`. The elapsed time itself is measured on the Python side: `TurnTranslator` starts a `time.perf_counter()` clock on the matching `tool_execution_start` and reads it back here, live — not in a later replay pass, which is what used to make every persisted card read `"· 0.0s"`. Client: `onSegmentToolResult(chatId)` maps over `m.segments`, completing every tool segment matching `s.type === 'tool' && s.name === name && !s.done` — see the first-match-vs-every-match asymmetry below.
 
 #### event-token
 
-Emitted by both the legacy and agentic paths, once per streamed content chunk. Payload: `{"token": str}`. Client dispatch depends on which `onToken` handler the call site wired: project chat and the legacy global-chat branch use a plain handler that appends straight to `m.content`; the agentic global-chat branch uses `onTokenAgent(chatId)`, which checks `m.segments`. If `segments` is `null` (should not happen mid-agent-turn, since `agent_start` always precedes it) it falls back to appending to `m.content`; otherwise it appends to the last segment if that segment is `{type: 'text', done: false}`, or opens a new text segment. This is also the mechanism that closes a tool segment's implicit "gap" — a token arriving right after a `segment_tool_result` always starts a fresh text segment rather than resuming the pre-tool one.
+Emitted on pi's `message_update` events where `assistantMessageEvent.type == "text_delta"`, once per chunk. Payload: `{"token": str}`. Both chat routes now wire the identical `onTokenAgent(chatId)` handler (`app_state.js :: agentHandlers`) — there is no more separate "plain content-append" handler for one chat type and a segments-aware one for the other. `onTokenAgent` checks `m.segments`: if `null` (a defensive branch that should not fire in practice, since `agent_start` always precedes `token`) it falls back to appending to `m.content`; otherwise it appends to the last segment if that segment is `{type: 'text', done: false}`, or opens a new text segment. This is also the mechanism that closes a tool segment's implicit "gap" — a token arriving right after a `segment_tool_result` always starts a fresh text segment rather than resuming the pre-tool one.
+
+#### event-runtime
+
+Emitted by both `chat_routes.py` and `global_chat_routes.py`, once per normal-branch turn (not the pin or report branches), immediately before the call into `stream_pi_turn`. Payload: `{"runtime": "pi"}` — always, unconditionally; there is no other value it can take today. Client: `onRuntime(chatId)` (`app_state.js`) patches the *chat*, not the message (`patchChat(chatId, () => ({ runtime }))`), so the composer can name which runtime served the most recent turn. This event predates the deletion of the legacy Python loop, when its value genuinely varied; it is kept now as a debugging signal, not removed, even though nothing reads it to branch — see [`05-agent.md`](05-agent.md#the-runtime-pi-and-only-pi).
 
 #### event-step_start / event-step_done
 
-Two events, documented together because they always pair. Emitted by the legacy path (`translate_query`, `search_db`, `build_context`, `llm_generate` steps in `global_chat_routes.py`), by project chat's context-building steps (`chat_routes.py`), and by the shared pin/report flows (`pin_flow.py :: stream_pin_flow`, `request_utils.py :: stream_samples_report`). Payload for `step_start`: `{"name": str, "label": str}`. Payload for `step_done`: `{"name": str, "label": str, "detail": str}` (detail sometimes omitted). Client: `onStepStart` sets `m.pendingStep = {name, label}`; `onStepDone` clears `pendingStep` and appends `{name, label, detail}` to `m.steps`. Neither touches `m.segments` — these are the "legacy" rendering fields, and a message using them keeps `segments: null` for its whole lifetime.
-
-#### event-query_plan
-
-Emitted once, by the legacy path only, right after `llm_plan_query` returns. Payload: `{"description": str, "keywords": list[str], "match_mode": "OR", "sql_where": str}`. `sql_where` is a **display-only** approximation built by joining keywords with `ILIKE` fragments in `global_chat_routes.py` — it is not the SQL that `search_studies_with_sql` actually executes (which uses parameterized `%s` placeholders; see [`04-search.md`](04-search.md#parameter-binding-order-is-load-bearing)). Client: `onQueryPlan` sets `m.queryPlan = payload` verbatim; nothing else reads or clears this field.
+Two events, documented together because they always pair. Emitted from three places: `helpers/pi_translate.py :: TurnTranslator` (pi's own `compaction_start`/`compaction_end` and `auto_retry_start`/`auto_retry_end`, translated to a `"compaction"` or `"retry"` named step), each route's own pinned/deep-context building (`pinned_reports` in `global_chat_routes.py`, `deep_context` in `chat_routes.py`'s `_stream_deep_context`), and the shared pin/report flows (`pin_flow.py :: stream_pin_flow`'s `pin_studies`/`deep_context`/`llm_generate` steps, `request_utils.py :: stream_samples_report`'s `load_samples` step). Payload for `step_start`: `{"name": str, "label": str}`. Payload for `step_done`: `{"name": str, "label": str, "detail": str}` (detail sometimes omitted). Client: `onStepStart` sets `m.pendingStep = {name, label}`; `onStepDone` clears `pendingStep` and appends `{name, label, detail}` to `m.steps`. Neither touches `m.segments`, and both can appear on an otherwise fully agentic message — a pi turn that triggers compaction mid-stream gets both a `step_start`/`step_done` pair *and* `segment_tool_call`/`segment_tool_result` pairs in the same turn.
 
 #### event-ui
 
@@ -352,50 +329,37 @@ Emitted by the shared `/report` flow (`request_utils.py :: stream_samples_report
 
 #### event-done
 
-Terminal event for a successful turn, on both paths. Payload always includes `{"chat_id": str, "persisted": true}`; global chat additionally includes `"pinned_studies": [...]` whenever the turn touched pins — either the pin-flow's `all_pinned` result, or (for agent turns specifically) a fresh `list_pinned_studies(chat_id, SCOPE_GLOBAL)` re-read after the fact, because `get_study_report` and `pin_study` may have pinned studies mid-turn without any other event reporting the updated list. Client: `onDone` calls `applyStreamDone(chatId, title, payload?.pinned_studies ?? null)` — this is also where segments get frozen into `m.ui`; see below.
+Terminal event for a successful turn, on every branch of both routes. Payload always includes `{"chat_id": str, "persisted": true}`; both chat types additionally include `"pinned_studies": [...]` whenever the turn touched pins — either the pin-flow's `all_pinned` result, or, for a turn whose `ui_payload.kind == "agent_segments"`, a fresh `list_pinned_studies(chat_id, scope)` re-read after the fact, because `get_study_report`/`pin_study` may have pinned or (via `get_study_report`, historically) attempted to pin studies mid-turn without any other event reporting the updated list. A report-only turn or a plain agent turn with no tool activity omits `pinned_studies` entirely rather than sending an empty list — the frontend leaves existing pins untouched when the key is absent. Client: `onDone` calls `applyStreamDone(chatId, title, payload?.pinned_studies ?? null)` — this is also where segments get frozen into `m.ui`; see below.
 
 #### event-error
 
-Terminal event for a failed turn, on both paths, from the single `except Exception` wrapping the whole `generate()` body in both route handlers — including exceptions raised deep inside `stream_agent`'s tool loop, since nothing there catches beyond the per-tool `try/except` in `_execute_tool_call`. Payload: `{"error": str}`, built by `helpers/llm_helpers.py :: friendly_llm_error(e, model)`, which rewrites three classes of exception into a user-facing sentence before falling back to `str(exc)`:
+Terminal event for a failed turn, on every branch of both routes, from the single `except Exception` wrapping the whole `generate()` body in both route handlers — including exceptions raised inside `stream_pi_turn` (a sidecar HTTP failure, a translation bug, anything `TurnTranslator` doesn't itself catch). Payload: `{"error": str}`, built by `helpers/llm_helpers.py :: friendly_llm_error(e, model)`, which rewrites known exception shapes into a user-facing sentence before falling back to `str(exc)`:
 
 | Match | Resulting message |
 |---|---|
+| `helpers.pi_client.PiSidecarError` | `"The chat service is not responding. This is a backend problem, not a model one — switching models will not help."` |
 | `anthropic.RateLimitError` | `"{model} rate limit reached. Please wait a moment and try again."` |
 | `anthropic.APIConnectionError` / `APIStatusError` | `"{model} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."` |
 | Substring match on `"upstream connect error"`, `"connection refused"`, `"remote connection failure"`, `"delayed connect error"`, `"connection reset"`, `"service unavailable"`, `"502"`, `"503"`, `"504"` (case-insensitive) | `"{model} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."` |
 | Anything else | `str(exc)` or `exc.__class__.__name__`, verbatim |
 
+The `PiSidecarError` check runs first, before the connection-marker substring match, precisely because a dead sidecar's own error text (`"sidecar unreachable: connection refused"`) would otherwise match those markers and wrongly suggest switching models — every model routes through the same sidecar, so that advice would be useless.
+
 Client: `onError` sets the global `compErr` state and patches the last message to `isStreaming: false` with a `⚠️`-prefixed fallback `content` if none was streamed. No `done` event follows an `error` event — they are mutually exclusive terminals.
 
-**A turn that errors is not persisted at all.** `append_global_chat_messages(...)` is called exactly once per `generate()` invocation, immediately after the streaming work finishes successfully — and it is inside the same `try` block the error handler wraps. If any exception (from `stream_agent`, from a context-building step, from anything) is raised before that call is reached, the `except` block yields `error` and returns; the call to persist the turn never happens. This means a mid-stream failure discards **both** the user's message and any partial assistant output — nothing about the failed turn survives a reload, only the transient frontend state (`compErr`, and whatever segments were built live in `m.segments`, left unfrozen since `applyStreamDone` never runs on this path).
-
----
-
-## `stream_agent` yield types vs. SSE events
-
-`stream_agent` (and `_stream_anthropic_agent`) yield five typed dict shapes internally. Only four are ever translated onto the wire:
-
-| `stream_agent` yield `"type"` | SSE event emitted | Where |
-|---|---|---|
-| `agent_start` | `agent_start` | `global_chat_routes.py` |
-| `token` | `token` | `global_chat_routes.py` |
-| `segment_tool_call` | `segment_tool_call` | `global_chat_routes.py` |
-| `segment_tool_result` | `segment_tool_result` | `global_chat_routes.py` |
-| `reasoning` | **none** | not translated by any route |
-
-**The gap.** `reasoning` is yielded whenever an OpenAI-compatible reasoning model (e.g. `minimax-m2`) returns a non-empty `delta.reasoning_content` chunk — visible in `stream_agent`'s main loop. No route — not `global_chat_routes.py`, not any other — has a branch that forwards `"reasoning"` events onto the SSE wire, and `parseSSE` has no `onReasoning` handler to receive one even if it did. The **only** consumer of this yield type in the entire codebase is `backend/agent_harness.py`, the CLI debugging tool, which patches `agent_mod.execute_tool` and prints reasoning tokens dimmed to the terminal. In the web product, a reasoning model's thinking is silently dropped — the user sees only the tool-call segments and the final synthesized answer, with no indication that reasoning happened at all. Note also that `_stream_anthropic_agent` has no equivalent branch — it never yields `"reasoning"` in the first place, since Claude's streaming API does not expose a comparable field through this integration.
+**A turn that errors is not persisted at all.** `append_global_chat_messages(...)` / `append_chat_messages(...)` is called exactly once per `generate()` invocation, immediately after the streaming work finishes successfully — and it is inside the same `try` block the error handler wraps. If any exception (from `stream_pi_turn`, from a context-building step, from anything) is raised before that call is reached, the `except` block yields `error` and returns; the call to persist the turn never happens. This means a mid-stream failure discards **both** the user's message and any partial assistant output — nothing about the failed turn survives a reload, only the transient frontend state (`compErr`, and whatever segments were built live in `m.segments`, left unfrozen since `applyStreamDone` never runs on this path).
 
 ---
 
 ## The persisted `ui_payload` shape
 
-On `done`, an agent turn's accumulated segments are frozen into one JSON structure and written to the `ui_payload` column of `global_chat_messages` (see [Appendix B](appendix-b-sqlite-schema.md#table-global_chat_messages)):
+On `done`, an agent turn's accumulated segments are frozen into one JSON structure and written to the `ui_payload` column of `global_chat_messages` / `project_chat_messages` (see [Appendix B](appendix-b-sqlite-schema.md#table-global_chat_messages)):
 
 ```json
 { "kind": "agent_segments",
   "segments": [
     {"type": "text", "content": "Here's what I found...", "done": true},
-    {"type": "tool", "name": "tool_search_studies_a1b2c3", "label": "Searched Qiita database",
+    {"type": "tool", "name": "tool_search_studies_tool:1784970149356:aaaaaaaaaaa", "label": "Searched Qiita database",
      "args": {"keywords": ["mouse", "gut"]}, "done": true,
      "result": {"label": "Searched Qiita database", "detail": "top 8 results · 1.2s",
                 "ui_payload": {"kind": "tool_call", "tool": "search_studies", "...": "..."}}}
@@ -411,30 +375,29 @@ On `done`, an agent turn's accumulated segments are frozen into one JSON structu
 | `get_study_report` | `"samples_report"` (no `"tool_call"` envelope) | no — `null` on private/not-found |
 | `pin_study` | `"tool_call"` | no — `null` on no valid IDs |
 | `search_by_sample` | `"tool_call"` (reduced fields if no criteria) | yes — reduced shape, not `null` |
-| `compute_diversity` | — | always `null`, every call |
 
 A frontend renderer switching on `result.ui_payload.kind` must therefore handle `"tool_call"`, `"samples_report"`, and `null`/absent as three genuinely distinct cases per tool, not just success vs. failure.
 
-> **This shape is built twice, independently, and must be kept in agreement by hand.** Server-side, `global_chat_routes.py`'s `generate()` closure assembles `segments_list` as SSE events stream through, and writes it via `append_global_chat_messages(..., assistant_ui_payload=ui_payload)`. Client-side, `app_state.js :: applyStreamDone` builds the identical structure from the live `m.segments` React state and freezes it into `m.ui` for the current render — this is what the user sees immediately, before any reload. As of this writing the two agree field-for-field, including `args`. If you touch either assembly site, touch both, and re-verify by hydrating a reloaded page — see [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for the full round-trip.
+> **This shape used to be built twice, independently, in two languages — now it is built once, in Python, from one pass.** `helpers/pi_translate.py :: TurnTranslator` accumulates `.segments` as it walks pi's event stream (the same walk that drives the live SSE frames), and `helpers/pi_turn.py :: stream_pi_turn` returns `{"kind": "agent_segments", "segments": translator.segments}` for both `chat_routes.py` and `global_chat_routes.py` to persist via `append_chat_messages(..., assistant_ui_payload=ui_payload)` / `append_global_chat_messages(...)`. Client-side, `app_state.js :: applyStreamDone` still independently re-derives the same structure from the live `m.segments` React state and freezes it into `m.ui` — that half of the dual-authoring hazard is unchanged, because the frontend has no way to receive the server's already-built copy before the stream ends. `tests/test_pi_translate.py` is the parity test for the *server* half, fed a real captured pi event stream. See [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for the full round-trip and what's left of the hazard.
 
-**The first-match-vs-every-match asymmetry.** On `segment_tool_result`, the two assemblies use different matching strategies over an otherwise-identical loop:
+**The first-match-vs-every-match asymmetry — still present, on different code.** On `segment_tool_result`, the server and client still use different matching strategies over an otherwise-identical loop:
 
-- **Server** (`global_chat_routes.py`): a plain `for seg in segments_list: if ... : ...; break` — completes the **first** not-done tool segment whose `name` matches, then stops.
+- **Server** (`helpers/pi_translate.py :: TurnTranslator._close_tool_segment`): `for seg in self.segments: if ... : ...; break` — completes the **first** not-done tool segment whose `name` matches, then stops.
 - **Client** (`app_state.js :: onSegmentToolResult`): `(m.segments || []).map(s => ... ? {...} : s)` — completes **every** not-done tool segment whose `name` matches.
 
-These produce identical output today **only because** the synthetic `name` (`f"tool_{name}_{call_id[:6]}"`) is suffixed with the LLM's tool-call ID and is therefore unique per invocation — there is never more than one not-done segment with a given `name` for either loop to find. If tool naming ever changes to something non-unique (e.g. dropping the call-id suffix, or reusing names across a synthesized multi-call batch), the two implementations diverge silently: the server would keep completing only the oldest open call of that name, while the client would complete all open calls of that name at once, and a page reload would render differently than the live stream did. Treat call-id-suffixed uniqueness as a load-bearing invariant of this whole subsystem, not an implementation detail.
+These still produce identical output, but the reason changed. It used to hold because tool calls executed strictly sequentially (at most one open call at any time) *and* the correlation name was call-id-suffixed; now the sequencing guarantee is weaker to state (see **Ordering guarantees** below), so the invariant that matters is narrower and stronger: `_tool_step_name` correlates on pi's **full**, provider-assigned `toolCallId` rather than a `[:6]` prefix, which is unique per call by construction — two concurrent or interleaved calls to the *same* tool in one turn get two distinct names regardless of execution order, so there is never more than one not-done segment sharing a `name` for either loop to find. `tests/test_pi_translate.py :: test_distinct_calls_to_the_same_tool_do_not_collide` pins exactly this case (two `get_study_report` calls open at once) and asserts each result correlates back to its own call. If tool naming ever again collapses toward non-uniqueness, the two implementations would diverge silently, the same way they always could.
 
 ---
 
 ## Event ordering guarantees
 
-- `agent_start` always precedes any `segment_tool_call` or `segment_tool_result` in a given turn — it is the first event `stream_agent` yields, unconditionally, before entering the tool loop.
-- Every `segment_tool_call` is eventually paired with a `segment_tool_result` carrying the same `name`, **or** the turn terminates via `done`/`error` first (a client or server crash mid-tool-call, or the generator raising past `_execute_tool_call`'s own `try/except`, leaves an orphaned `done: false` tool segment in the frontend's in-memory state — `applyStreamDone` does not force-close it, it only force-closes trailing **text** segments).
+- `agent_start` always precedes any `segment_tool_call` or `segment_tool_result` in a given turn — `TurnTranslator` synthesizes it on the first "the model started" pi event, before any tool-call event can occur.
+- Every `segment_tool_call` is eventually paired with a `segment_tool_result` carrying the same `name`, **or** the turn terminates via `done`/`error` first (a sidecar crash or a dropped connection mid-tool-call leaves an orphaned `done: false` tool segment in the frontend's in-memory state — `applyStreamDone` does not force-close it, it only force-closes trailing **text** segments).
 - `token` events may interleave freely with `segment_tool_call`/`segment_tool_result` pairs — the model can emit narrative text before, between, and after tool calls in the same turn, and each such run becomes its own `{type: 'text', ...}` segment, split wherever a tool call interrupts it.
-- **Multiple tool calls within one LLM round never interleave with each other.** If a single completion requests several tools at once (e.g. `pin_study` alongside `get_study_report`), `_execute_tool_call` is invoked once per call, in a strict `for` loop — order-preserved via `sorted(tool_call_map)` by chunk index on the OpenAI path, or plain list order (the order `content_block_stop` events arrived) on the Anthropic path. Call *N*'s `segment_tool_result` is always emitted before call *N+1*'s `segment_tool_call` — there is no concurrent tool execution and no possibility of two open (`done: false`) tool segments coexisting from the same round, which is part of why the call-id-suffixed uniqueness discussed above is sufficient rather than merely convenient.
-- `step_start`/`step_done` pairs (legacy path, and the pin/report flows on both paths) always nest correctly — the codebase never emits two consecutive `step_start` events for different `name`s without an intervening `step_done`.
+- **Multiple tool calls within one turn are not guaranteed to execute (or be reported) strictly sequentially any more.** The deleted Python loop ran each call in a `for` loop, one at a time, so a call's `segment_tool_result` was always emitted before the next call's `segment_tool_call`. That guarantee was specific to a loop this codebase no longer runs — tool iteration now happens inside pi, which this codebase does not control or fully observe from the outside. `pi_translate.py`'s own test suite exercises the case where two `tool_execution_start` events for the same tool name arrive before either `tool_execution_end` (see the asymmetry note above), and the translator is correct under that ordering because correlation is by full call id, not by there being at most one open call. Whether pi's real runtime ever actually overlaps two tool calls in production is not something this codebase asserts either way — only that the translator no longer *depends* on it not happening.
+- `step_start`/`step_done` pairs (pi's compaction/retry translation, and the pin/report flows on both routes) always nest correctly — the codebase never emits two consecutive `step_start` events for different `name`s without an intervening `step_done`.
 - `done` is always the last event of a successful turn; `error` is always the last event of a failed one. The two are mutually exclusive per turn, and no event of any kind follows either.
-- **Forced synthesis can emit `token` events after the last `segment_tool_result` with no intervening tool call.** Both `stream_agent` and `_stream_anthropic_agent` track whether the LLM's final round produced any text (`final_had_synthesis`). If the loop exits — either because `max_iters` was exhausted while the model was still requesting tools, or because the model's very last round was pure tool-calling with no accompanying text — and the last message on the running transcript is a tool result, the code issues one extra, non-streaming-tools completion call solely to obtain closing prose, and re-emits its `token` events on the wire. This means a turn's `token` events are not guaranteed to be contiguous with the round that triggered them; a client cannot assume "no more text is coming" just because the most recent event was `segment_tool_result`. Hitting `max_iters` itself is only logged server-side (`logger.warning("agent hit max_iters=%d without stopping", max_iters)`) — no SSE event reports it, so a turn that silently truncated its own tool-calling loop looks, from the wire, identical to one that finished normally.
+- Whatever decides to emit closing prose after a tool-only round, or to give up after too many rounds without concluding — the equivalents of the deleted loop's "forced synthesis" and `max_iters` ceiling — is now internal to pi. This codebase has no visibility into whether a given turn's `token` events came from an ordinary round or from pi recovering a bare tool result into an answer; there is no server-side log line or SSE event that reports it either way.
 
 ---
 
@@ -446,11 +409,11 @@ All are read from `backend/config.py` and documented fully in [`appendix-d-confi
 |---|---|---|
 | `SAMPLE_SEARCH_DEFAULT_CANDIDATES` | `40` | Sample-probe candidate cap, `deep_search=False` |
 | `SAMPLE_SEARCH_DEEP_CANDIDATES` | `500` | Sample-probe candidate cap, `deep_search=True` |
-| `PINNED_STUDIES_PER_CHAT_CAP` (`store/cache.py`) | `10` | `pin_study` and the `get_study_report` auto-pin |
-| `max_iters` (`stream_agent` parameter) | `4` (route) / `8` (CLI harness) | Tool-loop round ceiling before forced synthesis |
-| `max_tokens` (Anthropic calls only) | `4096` | Hard cap on one completion's output, both main-loop and forced-synthesis calls |
-| Tool-count in `TOOL_SCHEMAS` | `5` | Fixed — adding a sixth tool requires touching every file this appendix describes |
+| `PINNED_STUDIES_PER_CHAT_CAP` (`store/cache.py`) | `10` | `pin_study`'s cap |
+| `PI_SCOPE_TOKEN_TTL_SECONDS` | `600` | How long a minted scope token authorizes tool calls for one turn |
+| `max_tokens` (Anthropic calls only, `/pin` flow) | `4096` | Hard cap on one `llm_chat_stream` completion's output — this is the non-agentic pin-acknowledgment path, not the tool-calling loop, which pi controls internally |
+| Tool-count in `TOOL_SCHEMAS` | `4` | Fixed — adding a fifth tool requires touching every file this appendix describes |
 
 ---
 
-*See also: [`05-agent.md`](05-agent.md) for how the model is prompted to fill tool arguments and choose between dimensions, and the design rationale behind the one-search invariant and forced synthesis · [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for the full SSE-to-hydration round trip, the dual-authoring hazard, and the segment tri-state · [`04-search.md`](04-search.md) for how `search_studies` and `search_by_sample` bound their underlying queries · [`appendix-d-configuration.md`](appendix-d-configuration.md) for `MODEL_METADATA`, `model_supports_tools`, and the sample-search candidate caps.*
+*See also: [`05-agent.md`](05-agent.md) for how the model is prompted to fill tool arguments and choose between dimensions, and the design rationale behind the one-search-per-message invariant · [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for the full SSE-to-hydration round trip, the dual-authoring hazard, and the segment tri-state · [`04-search.md`](04-search.md) for how `search_studies` and `search_by_sample` bound their underlying queries · [`appendix-d-configuration.md`](appendix-d-configuration.md) for `MODEL_METADATA` and the sample-search candidate caps.*

@@ -11,7 +11,7 @@
 This matters more than it looks. The backend runs under gunicorn as a service (`qiita_explore/start_barnacle.sh`), and a service inherits essentially nothing from the shell you were sitting in when you configured something. Exporting a variable in your terminal, or putting it in `~/.bashrc`, has no effect on the running backend. Two consequences:
 
 - **To change a setting, edit `qiita_explore/.env` and restart gunicorn.** There is one exception, documented below (`ANTHROPIC_API_KEY`).
-- **The only variables that legitimately live in the shell are the ones the start scripts export themselves** — `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` in `start_barnacle.sh`, plus `AGENT_DEBUG` / `HARNESS_LOG_FP` in `run_agent_harness.sh`. Everything else belongs in the `.env` file. (A shell export of a `.env` name still wins, because `load_dotenv()` does not override variables already present in the environment — but relying on that is how configuration drift starts.)
+- **The only variables that legitimately live in the shell are the ones the start scripts export themselves** — `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` in `start_barnacle.sh`, which also re-exports a handful of pi/LLM secrets read out of `.env` (`PI_SIDECAR_SECRET`, `PI_SIDECAR_PORT`, `PI_SIDECAR_HOST`, `PI_NODE_BIN`, `API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) so the Node sidecar — which cannot read `.env` itself — can see them. Everything else belongs in the `.env` file. (A shell export of a `.env` name still wins, because `load_dotenv()` does not override variables already present in the environment — but relying on that is how configuration drift starts.)
 
 Because `config.py` reads every variable at import time, **the restart column below is "yes" for every variable except one**. There is no reload endpoint and no file watcher.
 
@@ -89,10 +89,10 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `QIITA_PUBLIC_LOGIN_URL` | *computed* — falls back to `QIITA_CONTROL_PLANE_URL` | `backend/routes/auth_routes.py` | Base URL the user's **browser** is redirected to for login. Separate from the above because in a split-tunnel deployment (backend reaches Qiita over a reverse SSH tunnel, browser reaches it directly) the two addresses differ. | Yes |
 | `QIITA_LOGINROCKET_URL` | `""` → disabled | `backend/routes/auth_routes.py` | When set, `/api/auth/login-url` wraps the control-plane login in a LoginRocket `/logout?redirect_uri=…` so a cached AuthRocket session cannot hijack login. **Leave unset** — see traps. | Yes |
 | `QIITA_WHOAMI_TIMEOUT_SECONDS` | `5` (parsed as float) | `backend/helpers/qiita_client.py :: whoami` | httpx timeout for the whoami call. Timeouts are classified `transient_error=True` and do **not** destroy the local session. | Yes |
-| `QIITA_CONFIG_FP` | *(none)* | vendored `qiita_core/configuration_manager.py` | Path to the Qiita config file supplying **PostgreSQL credentials** (user, password, database, host, port). Read via `environ["QIITA_CONFIG_FP"]` — a hard `KeyError` if absent. Not read by `config.py`; exported by both start scripts. | Yes |
+| `QIITA_CONFIG_FP` | *(none)* | vendored `qiita_core/configuration_manager.py` | Path to the Qiita config file supplying **PostgreSQL credentials** (user, password, database, host, port). Read via `environ["QIITA_CONFIG_FP"]` — a hard `KeyError` if absent. Not read by `config.py`; exported by `start_barnacle.sh`. | Yes |
 | `QIITA_BASE_DATA_DIR` | `""` | `backend/helpers/qiita_fetch.py`, `backend/helpers/artifact_graph.py`, `backend/helpers/biom_samples.py` | Prefix prepended to **relative** artifact filepaths from the Qiita DB. Empty means paths are used as-is — fine when the DB stores absolute paths, broken when it does not. | Yes |
 
-`QIITA_CONFIG_FP` is the one variable that is hardcoded to an absolute path in checked-in scripts (`/home/d4sharma/qiita-web/qiita_config.cfg` in both `start_barnacle.sh` and `run_agent_harness.sh`). It is machine-specific and will not resolve on another host.
+`QIITA_CONFIG_FP` defaults to an absolute path baked into `start_barnacle.sh` (`/home/d4sharma/qiita-web/qiita_config.cfg`), overridable from the environment — machine-specific and unlikely to resolve unedited on another host.
 
 ### Storage & pooling
 
@@ -152,20 +152,14 @@ Note that the overall LLM context budget is **not** an environment variable. `ba
 
 The merge executor is explicitly dev-only. Its module docstring carries a `TODO (before merging to master)` to replace the local `subprocess` path with an SFTP+SSH pipeline. Both variables above configure a code path that will not work on a remote deployment regardless of their values.
 
-### Debug / dev / harness
+### Debug / dev
 
 <a id="env-QIITA_EXPLORE_DEBUG_ERRORS"></a>
-<a id="env-AGENT_DEBUG"></a>
-<a id="env-HARNESS_LOG_FP"></a>
-<a id="env-HARNESS_TEXT_PREVIEW"></a>
 <a id="env-BARNACLE_URL"></a>
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
 | `QIITA_EXPLORE_DEBUG_ERRORS` | `false` | `backend/routes/auth_routes.py` | When truthy (`1` / `true` / `yes`), an unexpected exception in `POST /auth/connect` returns its type and message **in the JSON response body**, not only the server log. | Yes |
-| `AGENT_DEBUG` | unset | `backend/agent_harness.py` | Any truthy value sets the harness log level to `DEBUG` instead of `INFO`. Exported unconditionally by `run_agent_harness.sh`. Harness only — the gunicorn backend ignores it. | n/a (CLI) |
-| `HARNESS_LOG_FP` | unset | `backend/agent_harness.py` | File the harness tees ANSI-stripped stdout into. `run_agent_harness.sh` sets it to `logs/harness_<timestamp>.log`. | n/a (CLI) |
-| `HARNESS_TEXT_PREVIEW` | `2000` | `backend/agent_harness.py` | Characters of each tool result the harness prints. | n/a (CLI) |
 | `BARNACLE_URL` | `http://localhost:5001` | `backend/tests/e2e/conftest.py` | Base URL the end-to-end test suite points at. Test-only. | n/a (tests) |
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `API_KEY` are additionally read directly from `os.environ` by `backend/tests/e2e/parity_helpers.py`, bypassing `config.py`. `QIITA_EXPERIMENT_DB_PATH` is *written* by `backend/tests/test_auth.py` to redirect the suite at a temporary database.
@@ -177,26 +171,22 @@ The merge executor is explicitly dev-only. Its module docstring carries a `TODO 
 <a id="env-PI_ALLOWED_TOOL_CALLERS"></a>
 <a id="env-PI_SCOPE_TOKEN_KEY"></a>
 <a id="env-PI_SCOPE_TOKEN_TTL_SECONDS"></a>
-<a id="env-PI_BACKEND_GLOBAL"></a>
-<a id="env-PI_BACKEND_PROJECT"></a>
 
-The pi-backed agent runtime (`qiita_explore/pi_sidecar/`, a standalone Node process — see [`05-agent.md`](05-agent.md#pi-backend-2026-behind-feature-flags)). All seven read by `backend/config.py`, same restart rules as everything else on this page.
+The pi-backed agent runtime (`qiita_explore/pi_sidecar/`, a standalone Node process — see [`05-agent.md`](05-agent.md)) is the only chat runtime; there is no flag to select something else. All five read by `backend/config.py`, same restart rules as everything else on this page.
 
 In the deployed topology the sidecar runs on the **intermediate node** and Flask on **barnacle**, so `/api/internal/tools/*` is a real cross-machine boundary, not a loopback convenience. It has three independent gates — source IP, shared secret, scope token — so that no single leaked value is sufficient. The localhost defaults below are for local development only.
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
 | `PI_SIDECAR_URL` | `http://127.0.0.1:5100` | `backend/helpers/pi_client.py` | Base URL of the pi sidecar HTTP service. The localhost default is a dev convenience — set it explicitly to the intermediate node in deployment. | Yes |
-| `PI_SIDECAR_SECRET` | *(none)* | `backend/helpers/pi_client.py`, `backend/routes/internal_tool_routes.py`, sidecar's own `PI_SIDECAR_SECRET` env | Shared secret the sidecar presents (`X-Pi-Secret`) on **every** internal tool request — schema reads *and* tool calls. Must be set identically on both processes. No insecure fallback: unset fails closed and 401s everything. | Yes (both processes) |
+| `PI_SIDECAR_SECRET` | *(none)* | `backend/helpers/pi_client.py`, `backend/routes/internal_tool_routes.py`, sidecar's own `PI_SIDECAR_SECRET` env | Shared secret the sidecar presents (`X-Pi-Secret`) on **every** internal tool request — schema reads *and* tool calls. Must be set identically on both processes. No insecure fallback: unset fails closed and 401s everything. **Always required** — `start_barnacle.sh` and `run.py` both refuse to boot without it. | Yes (both processes) |
 | `PI_ALLOWED_TOOL_CALLERS` | *(empty — no IP restriction)* | `backend/routes/internal_tool_routes.py` | Comma-separated exact remote addresses permitted to call `/api/internal/tools/*` (the intermediate node). Empty is correct for local dev; **always set it in deployment** so a leaked `PI_SIDECAR_SECRET` is not usable from an arbitrary host. | Yes |
-| `PI_SCOPE_TOKEN_KEY` | *(none)* | `backend/helpers/scope_token.py` | HMAC key signing the short-lived per-turn scope token that authorizes a tool call's `POST /api/internal/tools/<name>`. This — not the sidecar, not `PI_SIDECAR_SECRET` — is what makes project-chat scoping a hard boundary. No insecure fallback; `mint_scope_token`/`verify_scope_token` raise if unset. | Yes |
+| `PI_SCOPE_TOKEN_KEY` | *(none)* | `backend/helpers/scope_token.py` | HMAC key signing the short-lived per-turn scope token that authorizes a tool call's `POST /api/internal/tools/<name>`. This — not the sidecar, not `PI_SIDECAR_SECRET` — is what makes project-chat scoping a hard boundary. No insecure fallback; `mint_scope_token`/`verify_scope_token` raise if unset. **Always required**, same as `PI_SIDECAR_SECRET`. | Yes |
 | `PI_SCOPE_TOKEN_TTL_SECONDS` | `600` | `backend/routes/global_chat_routes.py`, `backend/routes/chat_routes.py` | How long a minted scope token is valid — long enough to cover one slow, tool-heavy turn, short enough that a leaked token is useless well before the next one is minted. | Yes |
-| `PI_BACKEND_GLOBAL` | **`true`** | `backend/routes/global_chat_routes.py` | pi is the default runtime. Set `false` to revert global chat to the in-process `stream_agent` loop — a rollback needing no deploy. Independent of `PI_BACKEND_PROJECT`. | Yes |
-| `PI_BACKEND_PROJECT` | **`true`** | `backend/routes/chat_routes.py` | pi is the default runtime. Project chat is agentic, with every tool call hard-scoped to the project (`backend/helpers/project_scope.py`). Set `false` to revert to the non-agentic, context-stuffed path. | Yes |
 
 The sidecar itself is a separate Node process, started independently (`qiita_explore/pi_sidecar/start_sidecar.sh`), with its own env vars — `PI_SIDECAR_PORT` (default `5100`), `PI_SIDECAR_HOST` (default `127.0.0.1`), `FLASK_INTERNAL_URL` (default `http://127.0.0.1:5001`), `PI_SIDECAR_STATE_DIR` (default `pi_sidecar/.state`), plus `OPENAI_API_KEY`/`API_KEY` (reused for the NRP provider) and `ANTHROPIC_API_KEY` (picked up by pi's built-in Anthropic provider). It refuses to start without `PI_SIDECAR_SECRET`, without Node ≥ 22, or without `node_modules`.
 
-**Because both `PI_BACKEND_*` now default to true, `PI_SIDECAR_SECRET` and `PI_SCOPE_TOKEN_KEY` are effectively required.** `backend/config.py :: pi_config_errors()` checks them (plus a `PI_SIDECAR_PORT` set without a matching `PI_SIDECAR_URL`) and `run.py` **refuses to boot** if any are missing. Previously the backend would start fine and every chat turn would 401 — which reads as "chat is broken", not "one variable is unset". To run without the sidecar at all, use `PI_SKIP_SIDECAR=1 bash qiita_explore/start_barnacle.sh`: that exports both flags `false` for the run, so "Flask alone" means the legacy chat path rather than a backend that 500s on every message.
+**`PI_SIDECAR_SECRET` and `PI_SCOPE_TOKEN_KEY` are unconditionally required — there is no flag that makes them optional.** `backend/config.py :: pi_config_errors()` checks both (plus a `PI_SIDECAR_PORT` set without a matching `PI_SIDECAR_URL`) and `run.py` **refuses to boot** if either is missing; `start_barnacle.sh` checks `PI_SIDECAR_SECRET` on its own before even starting gunicorn, for the same reason. This used to be conditional on a pair of feature flags (`PI_BACKEND_GLOBAL`/`PI_BACKEND_PROJECT`) that gated whether pi was in use at all — a backend without the secret would start fine and every chat turn would 401, which read as "chat is broken", not "one variable is unset". Both flags, and the non-agentic fallback they gated, have been deleted; pi is simply how chat works now, and there is no supported way to run the backend without a correctly configured sidecar.
 
 **Deploying across two hosts** means changing four of these together, and getting a subset right leaves you with a sidecar Flask cannot reach or a tool route the sidecar cannot call:
 
@@ -229,7 +219,6 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 
 | Variable | Group | Default |
 |---|---|---|
-| [`AGENT_DEBUG`](#env-AGENT_DEBUG) | Debug/harness | unset |
 | [`ANTHROPIC_API_KEY`](#env-ANTHROPIC_API_KEY) | LLM | `""` |
 | [`API_KEY`](#env-API_KEY) | LLM | *(none)* |
 | [`AUTH_PAT_REVERIFY_INTERVAL_SECONDS`](#env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS) | Auth | `900` |
@@ -238,19 +227,15 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`BARNACLE_URL`](#env-BARNACLE_URL) | Tests | `http://localhost:5001` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_BROAD`](#env-GLOBAL_SEARCH_SQL_LIMIT_BROAD) | Search | `120` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_NARROW`](#env-GLOBAL_SEARCH_SQL_LIMIT_NARROW) | Search | `50` |
-| [`HARNESS_LOG_FP`](#env-HARNESS_LOG_FP) | Debug/harness | unset |
-| [`HARNESS_TEXT_PREVIEW`](#env-HARNESS_TEXT_PREVIEW) | Debug/harness | `2000` |
 | [`MERGE_CONDA_ENV`](#env-MERGE_CONDA_ENV) | Merge | `qiita` |
 | [`MERGE_RESULTS_DIR`](#env-MERGE_RESULTS_DIR) | Merge | computed |
 | [`OPENAI_API_KEY`](#env-OPENAI_API_KEY) | LLM | *(none)* |
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | Storage | `8` |
 | [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `2` |
 | [`PI_ALLOWED_TOOL_CALLERS`](#env-PI_ALLOWED_TOOL_CALLERS) | pi sidecar | *(empty — no IP restriction)* |
-| [`PI_BACKEND_GLOBAL`](#env-PI_BACKEND_GLOBAL) | pi sidecar | `true` |
-| [`PI_BACKEND_PROJECT`](#env-PI_BACKEND_PROJECT) | pi sidecar | `true` |
-| [`PI_SCOPE_TOKEN_KEY`](#env-PI_SCOPE_TOKEN_KEY) | pi sidecar | **required if either PI_BACKEND_\* is true** |
+| [`PI_SCOPE_TOKEN_KEY`](#env-PI_SCOPE_TOKEN_KEY) | pi sidecar | **always required** |
 | [`PI_SCOPE_TOKEN_TTL_SECONDS`](#env-PI_SCOPE_TOKEN_TTL_SECONDS) | pi sidecar | `600` |
-| [`PI_SIDECAR_SECRET`](#env-PI_SIDECAR_SECRET) | pi sidecar | **required if either PI_BACKEND_\* is true** |
+| [`PI_SIDECAR_SECRET`](#env-PI_SIDECAR_SECRET) | pi sidecar | **always required** |
 | [`PI_SIDECAR_URL`](#env-PI_SIDECAR_URL) | pi sidecar | `http://127.0.0.1:5100` |
 | [`PINNED_REPORT_CONTEXT_MAX_CHARS`](#env-PINNED_REPORT_CONTEXT_MAX_CHARS) | Context | `40000` |
 | [`PINNED_REPORT_MIN_PER_STUDY`](#env-PINNED_REPORT_MIN_PER_STUDY) | Context | `2000` |
@@ -271,7 +256,7 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`SAMPLE_SEARCH_DEFAULT_CANDIDATES`](#env-SAMPLE_SEARCH_DEFAULT_CANDIDATES) | Search | `40` |
 | [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `8000` |
 
-Forty names in total: thirty-eight read by `config.py` or backend helpers (including the six `PI_*` pi-sidecar variables), plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
+Thirty-five names in total: thirty-three read by `config.py` or backend helpers (including the five `PI_*` pi-sidecar variables), plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
 
 ---
 
@@ -316,15 +301,15 @@ Eleven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`back
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
 
-**`supports_tools` is a routing decision, not a capability note** — but as of the pi cutover every configured model returns `True`, so it no longer routes anything. `backend/routes/global_chat_routes.py` still branches on `model_supports_tools(model)`, and `/api/internal/models` filters the pi roster on it, so a future model that cannot emit streaming tool calls must still set it `False`. The branch it used to select — an LLM-planned query followed by keyword search — has been deleted; there is no third path any more.
+**`supports_tools` used to be a routing decision; now it's purely a roster filter.** There is no more standalone `model_supports_tools()` accessor in `config.py` — it, the `_flag()` helper, and the feature flags it fed have all been deleted along with the Python agent loop. The `supports_tools` key inside `MODEL_METADATA` itself still exists, and every configured model's entry has it `True` today. Its one remaining reader is `routes/internal_tool_routes.py :: api_internal_models`, which filters the roster served to the sidecar (`provider == "nrp" and supports_tools`) — a future NRP model that genuinely cannot emit streaming tool calls would need it set `False` so pi is never offered it. There is no other branch left for it to gate: chat has exactly one runtime.
 
 `gemma-small` was the one model with `supports_tools: False`, on the basis that it could not emit streaming tool calls. Checked against the live NRP endpoint and corrected: it can. Its size and context window were wrong in the same row (`~8B` / 131,072; actually 12B / 262,144), as was `glm-5`'s context (202,752; actually 524,288 — pi compacts at `contextWindow − 16384`, so glm-5 was truncating at ~186k of a real ~508k window).
 
-`provider` splits along a second axis. On the pi path it decides how the sidecar registers the model: `provider: "nrp"` models are the ones `/api/internal/models` serves, registered against the NRP OpenAI-compatible endpoint, while `anthropic` models pass through to pi's own built-in provider (which reads `ANTHROPIC_API_KEY` from the sidecar's environment). On the legacy path `backend/config.py :: get_client` returns the shared NRP `OpenAI` client or a freshly constructed `anthropic.Anthropic`, and the agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
+`provider` splits along a second axis, and it now matters for pi's model routing rather than for a second Python loop: `provider: "nrp"` models are the ones `/api/internal/models` serves, registered against the NRP OpenAI-compatible endpoint, while `anthropic` models pass through to pi's own built-in provider (which reads `ANTHROPIC_API_KEY` from the sidecar's environment; `helpers/pi_client.py :: stream_chat` is what prefixes the model id, e.g. `"anthropic/claude-sonnet-4-6"`, so pi resolves it there instead of trying the NRP roster). `backend/config.py :: get_client(model)` still exists and still returns `(client, provider)` — the shared NRP `OpenAI` client, or a freshly constructed `anthropic.Anthropic` reading a possibly-overridden key from SQLite — but its only remaining caller is `helpers/llm_helpers.py :: llm_chat_stream`, which backs the non-agentic `/pin` acknowledgment flow. There is no tool-calling loop left in Python for it to dispatch into.
 
 The roster is hand-maintained by decision. `test_context_windows_match_config_exactly` proves Flask and the sidecar agree **with each other**, not that either matches NRP — this table drifted once already and will again the next time NRP changes a window.
 
-Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in all three helpers (`get_client`, `model_supports_tools`, `context_budget_chars`), with one asymmetry worth knowing: `model_supports_tools` defaults an unrecognized name to `False`, routing it to the legacy path rather than raising.
+Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in both remaining helpers (`get_client`, `context_budget_chars`).
 
 ---
 
@@ -332,10 +317,10 @@ Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in all three 
 
 These are literals in source. They cannot be changed without an edit and a restart. The narrative chapters explain *why* each value is what it is; this table only records what it is and where to find it.
 
+There is no `max_iters`-style tool-round ceiling in this codebase any more. The deleted Python agent loop had one (`4` for the web route, `8` for the deleted CLI harness); pi now owns iteration and stopping internally, and this codebase has no equivalent constant to tune — see [`05-agent.md`](05-agent.md).
+
 | Constant | Value | Where defined | What it bounds |
 |---|---|---|---|
-| `max_iters` | `4` | `backend/helpers/agent.py :: stream_agent` (keyword default) | Tool-call iterations per agent turn, both provider paths. Exhausting it logs `agent hit max_iters=%d without stopping`. |
-| `max_iters` (harness) | `8` | `backend/agent_harness.py` | The CLI harness passes a larger budget than the web path. Harness runs are not representative of production turn limits. |
 | `PINNED_STUDIES_PER_CHAT_CAP` | `10` | `backend/store/cache.py` | Studies pinnable to one chat. `pin_study_to_chat` returns `False` past the cap rather than raising. |
 | keyword expansion cap | `80` | `backend/services/study_service.py :: expand_keyword_variants` (`return expanded[:80]`) | Applied **after** plural/singular expansion. Since most terms yield two variants, the effective input ceiling is roughly 40 terms. |
 | `_MAX_KEYWORDS_PER_PROBE` | `10` | `backend/helpers/sample_search.py` | Keywords and field filters per per-study JSONB probe; both lists are sliced to it. |
@@ -343,17 +328,17 @@ These are literals in source. They cannot be changed without an edit and a resta
 | sample-search candidates | `40` / `500` | `backend/config.py`, via `SAMPLE_SEARCH_DEFAULT_CANDIDATES` / `SAMPLE_SEARCH_DEEP_CANDIDATES` | Normal vs. deep fan-out width. Also env-tunable. |
 | probe `pool_size` | `16` | `backend/helpers/sample_search.py` (function default) | Ceiling on probe concurrency; actual workers are `min(len(candidate_ids), pool_size)`. Independent of `PG_POOL_MAX_CONN` — this pool is created per call. |
 | probe wall-clock timeout | `max(30, len(candidate_ids) * 0.4)` s | `backend/helpers/sample_search.py` | Computed, not literal — scales with candidate count, floored at 30 seconds. |
-| conversation history window | `10` | `backend/helpers/llm_helpers.py :: _normalize_messages` (`messages[-10:]`) | Most recent messages sent to the LLM. Older turns are dropped before the context budget is even applied. |
+| conversation history window | `10` | `backend/helpers/llm_helpers.py :: _normalize_messages` (`messages[-10:]`) | Most recent messages sent to the non-agentic `/pin` acknowledgment call. Pi turns don't go through this — pi owns conversation history itself (see [`05-agent.md`](05-agent.md)). |
 | `_STUDY_HEADER_TTL_SECONDS` | `3600` | `backend/helpers/qiita_fetch.py` | TTL on the in-process memo of study headers. Per gunicorn worker — 4 workers means up to 4 independent caches. |
 | `_STUDY_DETAIL_CACHE_TTL_HOURS` | `6` | `backend/store/cache.py` | TTL on the SQLite `study_detail_cache` table. Hardcoded; there is no env override. |
 | `REPORT_SAMPLE_LIMIT` | `200` | `backend/config.py` | Samples per study report. Defined among the env-driven constants but is a plain literal — the only one in that block. |
 | `_MAX_STUDIES` | `5` | `backend/store/merge_crud.py` | Studies per merge workspace. `add_study_to_workspace` returns `None` past it; the route turns that into `400 "Workspace already has 5 studies (maximum)"`. |
 | merge subprocess timeout | `600` s | `backend/helpers/merge_executor.py` | Wall clock for the `conda run` merge subprocess. |
-| search tool result limit | `8`, clamped `1…20` | `backend/helpers/agent_tools.py` | Default and bounds for the `limit` argument the model may pass to `search_studies` / `get_study_report`. |
+| `search_studies` result limit | `10`, clamped `1…20` | `backend/helpers/agent_tools.py` | Default and bounds for the `limit` argument the model may pass to `search_studies`. `search_by_sample` has its own default of `8`, same `1…20` clamp; `get_study_report` takes no `limit` parameter. |
 | LLM client timeout | `300.0` s | `backend/config.py` | Applied to both the NRP `OpenAI` client and every `anthropic.Anthropic` client. |
 | `SESSION_COOKIE_NAME` | `qe_sid` | `backend/config.py` | Session cookie name. Not configurable. |
-| gunicorn topology | 4 workers × 2 threads, `gthread`, 120 s timeout | `qiita_explore/start_barnacle.sh` | Process model. Multiplies every per-worker cache and pool above. |
-| nginx proxy read timeout | `120` s | `qiita_explore/nginx.conf` | Must stay ≥ the gunicorn timeout or long SSE streams are cut by the proxy. `proxy_buffering off` is what makes SSE stream at all. |
+| gunicorn topology | 4 workers × 2 threads, `gthread`, 300 s timeout | `qiita_explore/start_barnacle.sh` | Process model. Multiplies every per-worker cache and pool above. Timeout raised from 120s when pi became the only runtime — a turn can include pi's own compaction plus several tool round-trips to the sidecar. |
+| nginx proxy read timeout | `300` s | `qiita_explore/nginx.conf` | Must stay ≥ the gunicorn timeout or long SSE streams are cut by the proxy. `proxy_buffering off` is what makes SSE stream at all. |
 
 ---
 
@@ -363,9 +348,9 @@ Two prompts live as module-level string literals at the bottom of `backend/confi
 
 **`CHAT_SYSTEM_PROMPT`** — project-scoped chat. Consumed by `backend/helpers/llm_helpers.py`. Its work is anti-hallucination: never invent study IDs, titles, sample counts, metadata fields, or external accessions; use only what appears in the supplied project context; say "unavailable" rather than guess; answer conceptually when no studies are loaded. It also fixes the output contract (Markdown, no SQL unless asked).
 
-**`GLOBAL_CHAT_SYSTEM_PROMPT`** — global discovery chat. Consumed by `backend/routes/global_chat_routes.py` and by `backend/agent_harness.py`. It is substantially longer because it carries the agent's operating manual: how to fill `search_studies`' typed dimension slots (`organism`, `qualifier`, `body_site`, `condition_or_intervention`, `project_or_pi`, `keywords`), how to map colloquial sequencing terms to `data_types`, the "exactly one `search_studies` call per request" rule, the top-20 result table format, and the closing refinement section.
+**`GLOBAL_CHAT_SYSTEM_PROMPT`** — global discovery chat. Consumed by `backend/routes/global_chat_routes.py`. It is substantially longer because it carries the agent's operating manual: how to fill `search_studies`' typed dimension slots (`organism`, `qualifier`, `body_site`, `condition_or_intervention`, `project_or_pi`, `keywords`), how to map colloquial sequencing terms to `data_types`, the "exactly one `search_studies` call per request" rule, the top-20 result table format, and the closing refinement section.
 
-**The distinction that matters: prompt instructions are advisory; the tool schema is mechanical.** "Issue EXACTLY ONE call per user request" is a request the model may ignore. What actually enforces it is code — `stream_agent` sets `search_already_done` after the first search and **removes `search_studies` from the tool list** on subsequent iterations, so a second call is not merely discouraged but unrepresentable. The same split applies throughout: the prompt asks for a `limit`, `backend/helpers/agent_tools.py` clamps it to `1…20`; the prompt asks the model not to over-narrow, the backend pools all slots into one ranked query regardless. When behavior must hold, look for it in the schema and the loop, not the prose. See [`05-agent.md`](05-agent.md).
+**The distinction that matters: prompt instructions are advisory; the enforcement is mechanical.** "Issue EXACTLY ONE call per user request" is a request the model may ignore. What actually enforces it is code — but that code no longer lives in this Python module. `pi_sidecar/sessions.mjs :: makeSearchOncePerMessageExtension` blocks a second `search_studies` call for the rest of the message via a `tool_call` hook, so a repeat call is refused rather than merely discouraged (see [`05-agent.md`](05-agent.md#the-one-search-per-message-invariant)). The same split applies throughout: the prompt asks for a `limit`, `backend/helpers/agent_tools.py` clamps it to `1…20`; the prompt asks the model not to over-narrow, the backend pools all slots into one ranked query regardless. When behavior must hold, look for it in the schema and the enforcement code, not the prose.
 
 Both prompts are import-time constants. Editing them requires a restart, and neither is exposed through any API.
 

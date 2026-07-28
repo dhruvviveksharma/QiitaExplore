@@ -1,7 +1,10 @@
 """Shared pin-and-acknowledge SSE flow for project and global chat streams."""
 
+from flask import jsonify
+
 from helpers.llm_helpers import _sse, llm_chat_stream
 from helpers.qiita_fetch import _build_pinned_reports_context, _pin_studies_validated
+from store import list_pinned_studies, unpin_study_from_chat
 
 
 def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, system_prompt=None):
@@ -53,3 +56,17 @@ def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, sy
     persist(assistant_content)
 
     return all_pinned
+
+
+def pin_toggle(chat, chat_id, scope, study_id, *, pin):
+    """Shared body of the four pin/unpin REST endpoints — they differ only in
+    the getter used to fetch `chat` (project chat's needs project_id too) and
+    the scope constant, both resolved by the caller before this is called."""
+    if not chat:
+        return jsonify({'error': 'Chat not found'}), 404
+    if pin:
+        _, _, _, all_pinned = _pin_studies_validated(chat_id, scope, [study_id])
+    else:
+        unpin_study_from_chat(chat_id, scope, study_id)
+        all_pinned = list_pinned_studies(chat_id, scope)
+    return jsonify({'ok': True, 'pinned_studies': all_pinned})

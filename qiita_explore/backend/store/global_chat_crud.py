@@ -154,8 +154,6 @@ def append_global_chat_messages(
         )
         conn.commit()
 
-    return get_global_chat(resolved_user, chat_id)
-
 
 def delete_global_chat(user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)

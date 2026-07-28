@@ -5,7 +5,6 @@
 # down rather than leaving half a stack up.
 #
 #   bash qiita_explore/start_barnacle.sh
-#   PI_SKIP_SIDECAR=1 bash qiita_explore/start_barnacle.sh   # Flask alone
 #   QIITA_EXPLORE_PORT=5002 bash ...                         # dev port
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,10 +103,10 @@ trap 'shutdown 0' INT TERM
 trap shutdown EXIT
 
 # ── pi configuration, resolved BEFORE gunicorn ──────────────────────────────
-# Order matters: gunicorn reads PI_BACKEND_* at import, so the decision about
-# which chat runtime this process serves has to be made before it is spawned.
-# Validating first also means a misconfiguration costs one clear message rather
-# than four worker tracebacks.
+# Order matters: gunicorn reads PI_SIDECAR_SECRET/PI_SCOPE_TOKEN_KEY at import
+# (config.pi_config_errors(), called from run.py) and refuses to boot without
+# them. Validating first means a misconfiguration costs one clear message here
+# rather than four worker tracebacks.
 #
 # The sidecar is Node and cannot read .env itself, so its secrets are exported
 # here. Parsed with python-dotenv (a declared backend dep, requirements.txt)
@@ -125,27 +124,15 @@ for k, v in dotenv_values('$ENV_FILE').items():
 ")"
 fi
 
-START_SIDECAR=1
-if [ "${PI_SKIP_SIDECAR:-}" = "1" ]; then
-  # An explicit "Flask alone" request. pi is the default runtime, so this must
-  # also switch the app off it — otherwise this flag produces a backend that
-  # boots cleanly and 500s on every chat turn, which is the opposite of what
-  # anyone reaches for it to do.
-  echo "PI_SKIP_SIDECAR=1 — Flask alone, forcing the legacy chat path."
-  export PI_BACKEND_GLOBAL=false
-  export PI_BACKEND_PROJECT=false
-  START_SIDECAR=0
-elif [ -z "${PI_SIDECAR_SECRET:-}" ]; then
-  # Hard failure now that pi is the default runtime. This used to print
-  # "legacy chat path only" and carry on, which was true while PI_BACKEND_*
-  # defaulted false and is a lie now: Flask would come up, the UI would load,
-  # and every chat turn would 401. run.py refuses to boot in this state too —
-  # this check just puts the reason on screen before four workers print it.
-  echo "PI_SIDECAR_SECRET unset, but pi is the default chat backend." >&2
-  echo "Set it in $ENV_FILE (openssl rand -base64 32), or run the legacy path with:" >&2
-  echo "  PI_SKIP_SIDECAR=1 bash qiita_explore/start_barnacle.sh" >&2
+if [ -z "${PI_SIDECAR_SECRET:-}" ]; then
+  # run.py refuses to boot in this state too — this check just puts the reason
+  # on screen before four workers print it.
+  echo "PI_SIDECAR_SECRET unset — pi is the chat backend and needs it." >&2
+  echo "Set it in $ENV_FILE (openssl rand -base64 32)." >&2
   exit 1
 fi
+
+START_SIDECAR=1
 
 # Refuse to hand the port to gunicorn if something already holds it. The
 # readiness probe below cannot tell "my child is up" from "a stale process

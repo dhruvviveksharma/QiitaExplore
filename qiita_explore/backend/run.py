@@ -24,17 +24,16 @@ import config
 from helpers.auth_middleware import register_auth_middleware
 
 # Refuse to start misconfigured rather than starting fine and failing every
-# chat turn. pi is the default runtime now, so its secrets are no longer
-# optional; without this the operator sees "chat is broken", four workers deep,
-# instead of the one line that says which variable is missing. Checked here
-# rather than only in start_barnacle.sh so it holds however Flask is launched.
+# chat turn. pi's secrets are not optional; without this the operator sees
+# "chat is broken", four workers deep, instead of the one line that says which
+# variable is missing. Checked here rather than only in start_barnacle.sh so
+# it holds however Flask is launched.
 _pi_problems = config.pi_config_errors()
 if _pi_problems:
     raise SystemExit(
-        "Refusing to start — pi is the active chat backend but is misconfigured:\n"
+        "Refusing to start — pi is misconfigured:\n"
         + "\n".join(f"  • {p}" for p in _pi_problems)
-        + "\n\nSet the variables in qiita_explore/.env, or set PI_BACKEND_GLOBAL=false"
-          " and PI_BACKEND_PROJECT=false to run the legacy chat path instead."
+        + "\n\nSet the variables in qiita_explore/.env."
     )
 
 app = Flask(__name__)

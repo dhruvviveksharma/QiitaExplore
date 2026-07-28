@@ -384,8 +384,8 @@ function useAppState() {
   }
 
   // Shared fetch+guard+parseSSE for a chat stream. `handlers.onToken`/`onDone`
-  // (and any agent-only extras like onQueryPlan) are supplied per call site;
-  // the step/ui/error handlers are identical across project and global chat.
+  // are supplied per call site; the step/ui/error handlers are identical
+  // across project and global chat.
   const streamChat = async (url, body, chatId, signal, handlers) => {
     const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body), signal });
     if (!res.ok || !res.body) {
@@ -621,53 +621,33 @@ function useAppState() {
       }
 
       // ── /report + regular messages ──────────────────────────────────────────
-      if (workView.type === 'project-chat') {
-        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
+      if (workView.type === 'project-chat' || workView.type === 'global-chat') {
+        const isGlobal = workView.type === 'global-chat';
+        const chatId   = await ensureChatId(workView, displayMsg.slice(0, 60));
         optimisticAppend(chatId, displayMsg);
-        await streamChat(
-          `${chatScopeUrl(workView, chatId)}/message/stream`,
-          {
-            message: msg,
-            model: selectedModel,
-            ...(reportStudyId != null && { report_study_id: reportStudyId }),
-            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
-          },
-          chatId, ctrl.signal,
-          {
-            // Project chat can emit agent_start/segment_* under PI_BACKEND_PROJECT;
-            // before that it never could, which is why these were unwired here.
-            ...agentHandlers(chatId),
-            onDone: (payload) => {
-              const title = displayMsg.slice(0, 60);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
-              setOpenProject(prev => prev ? {
-                ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
-              } : prev);
-            },
-          },
-        );
 
-      } else if (workView.type === 'global-chat') {
-        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
-        optimisticAppend(chatId, displayMsg);
-        const ctxToSend = studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || []);
+        const ctxToSend = isGlobal ? (studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || [])) : null;
+        const extraBody = {
+          ...(reportStudyId != null && { report_study_id: reportStudyId }),
+          ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+          ...(isGlobal && { selected_studies: ctxToSend, ...(isDeepSearch && { deep_search: true }) }),
+        };
+        const onTitleCommitted = (title) => isGlobal
+          ? setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c))
+          : setOpenProject(prev => prev ? {
+              ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
+            } : prev);
+
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
-          {
-            message: sendMsg,
-            model: selectedModel,
-            selected_studies: ctxToSend,
-            ...(reportStudyId != null && { report_study_id: reportStudyId }),
-            ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
-            ...(isDeepSearch            && { deep_search: true }),
-          },
+          { message: isGlobal ? sendMsg : msg, model: selectedModel, ...extraBody },
           chatId, ctrl.signal,
           {
             ...agentHandlers(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
-              setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
+              onTitleCommitted(title);
             },
           },
         );

@@ -410,7 +410,7 @@ Response:
 
 ### api_create_chat
 
-`POST /api/projects/<project_id>/chats` — session + CSRF. Body accepts `message` or `first_message`, plus optional `model` and `title`. **404** for an unknown project. When a first message is present the handler runs a **blocking, non-streaming** `llm_chat` turn with project study context and persists both messages before responding. Returns the full chat object. (`backend/routes/chat_routes.py :: api_create_chat`)
+`POST /api/projects/<project_id>/chats` — session + CSRF. Body accepts an optional `title`; **404** for an unknown project. Creates an empty chat and returns the full chat object — nothing is sent to an LLM at creation time. (An earlier version also accepted `message`/`first_message` and ran a blocking, non-streaming `llm_chat` turn synchronously before responding; the frontend never sent that field, so it was removed as dead code.) The first real turn is always a separate call to `api_chat_message_stream` below. (`backend/routes/chat_routes.py :: api_create_chat`)
 
 ### api_get_chat
 
@@ -435,17 +435,19 @@ One of the two streaming endpoints. Request:
 
 The generator opens with a keepalive and then takes exactly one of three branches:
 
-**Pin branch** (`pin_study_ids` present) — delegates to `stream_pin_flow` with `SCOPE_PROJECT`, which emits `step_start`/`step_done` for `pin_studies` and `deep_context`, then `llm_generate` plus `token` events. Terminates with `done` carrying `pinned_studies` and returns early.
+**Pin branch** (`pin_study_ids` present) — delegates to `stream_pin_flow` with `SCOPE_PROJECT`, which emits `step_start`/`step_done` for `pin_studies` and `deep_context`, then `llm_generate` plus `token` events (this branch is the one remaining non-agentic path — it's a fixed pin-and-acknowledge flow, not a tool-calling turn). Terminates with `done` carrying `pinned_studies` and returns early.
 
 **Report branch** (`report_study_id` present) — `stream_samples_report` emits `step_start` for `load_samples`, then either a `ui` event with the full sample-report payload, or, on `ValueError`, a `step_done` explaining the study is private. The `ui` payload is persisted as the message's `ui_payload`.
 
-**Normal branch** — emits `build_context`, builds project study context against `context_budget_chars(model)`, then merges study ids detected in the user's text (`_detect_mentioned_study_ids`) with the chat's existing pins, preserving order and dropping duplicates. If that merged list is non-empty it emits a `deep_context` step whose label distinguishes detected studies from pinned-only. Finally `llm_generate` and a `token` event per chunk.
+**Normal branch** — pi-backed and identical in shape to the global-chat normal branch below. Emits `runtime` (`{"runtime": "pi"}`), then builds `context_block` from a short workspace manifest (`_build_workspace_manifest`) plus, if there's anything to deep-fetch, a `deep_context` step (`_stream_deep_context`) covering study ids detected in the user's text (`_detect_mentioned_study_ids`) merged with the chat's existing pins — skipped entirely if neither produced anything. A per-turn scope token is minted (`mint_scope_token(scope=SCOPE_PROJECT, project_id=project_id, ...)`) and the turn is delegated to `stream_pi_turn`, which streams `agent_start`/`token`/`segment_tool_call`/`segment_tool_result` events exactly as global chat does — every project-chat tool call is hard-scoped server-side to this project's own studies (`helpers/project_scope.py`), enforced by the scope claim inside that token, not by anything client-supplied.
 
-All branches converge on persisting the joined assistant text and emitting:
+All branches converge on persisting the joined assistant text and emitting `done`:
 
 ```json
-{ "chat_id": "a1b2c3d4", "persisted": true }
+{ "chat_id": "a1b2c3d4", "persisted": true, "pinned_studies": [10317] }
 ```
+
+`pinned_studies` is included only when the turn's `ui_payload.kind == "agent_segments"` (a fresh `list_pinned_studies(chat_id, SCOPE_PROJECT)` read, since a `pin_study` tool call may have changed pins mid-turn) — the report branch and a tool-free agent turn omit it.
 
 Exceptions inside the generator are logged and surfaced as an `error` event carrying `friendly_llm_error(e, model)`. Because headers are already sent, the HTTP status stays 200.
 
@@ -495,21 +497,17 @@ The second streaming endpoint, and the most branch-heavy handler in the codebase
 
 Shares `parse_chat_stream_body` with the project stream, so the same **400** cases apply; **404** for an unknown chat.
 
-Pinned context is built once up front (emitting a `pinned_reports` step) and reused by every downstream path. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
+Pinned context is built once up front (emitting a `pinned_reports` step, only when the chat has pinned studies) and reused by every downstream path. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
 
-The normal branch forks on `model_supports_tools(model)`:
-
-**Agentic path.** Delegates to `stream_agent`, translating its events onto the wire: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. In parallel the handler accumulates a `segments_list` — text runs are flushed into `{"type": "text", ...}` entries whenever a tool call interrupts them, and each tool segment is matched back to its result by scanning for the first not-yet-`done` segment with the same `name`. On completion the segments are frozen into the persisted `ui_payload`:
+There is a single normal branch — no fork. It emits `runtime` (`{"runtime": "pi"}`), builds `context_block` from the user-selected browse chips (`merge_global_chat_context`, only if `selected_studies` is non-empty) plus the pinned-reports context built above, mints a per-turn scope token (`mint_scope_token(scope=SCOPE_GLOBAL, deep_search=deep_search, ...)` — `deep_search` rides into the token rather than a separate body field), and delegates to `stream_pi_turn`. That sub-generator (`helpers/pi_turn.py`, shared with project chat) translates pi's native event stream onto the wire via `helpers/pi_translate.py :: TurnTranslator`: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. The same pass that yields those SSE events also accumulates the segment list the turn will persist — there is no separate accumulation step in the route itself any more. On completion the segments are frozen into the persisted `ui_payload`:
 
 ```json
 { "kind": "agent_segments", "segments": [ {"type": "text"}, {"type": "tool"} ] }
 ```
 
-That matching-by-name rule is worth noting: if the same tool is called twice concurrently, results attach to the earliest open segment rather than to the specific invocation.
+There used to be a second, non-agentic branch here — selected by whether the model supported tool calls, running an LLM-planned keyword search (`llm_plan_query`) and emitting a `query_plan` event with a display-only `sql_where` string. That branch, the predicate that selected it, and the event are gone; every model now runs the same pi-backed path.
 
-**Legacy path** (models without tool support). Emits `translate_query`, runs `llm_plan_query`, and emits a `query_plan` event containing a display-only `sql_where` string built from the keywords — it is for UI display and is not the SQL actually executed. If the plan sets `skip_search`, the search is bypassed entirely and the answer is generated from conversation context plus any selected/pinned studies. Otherwise it pages the search at `PAGE_SIZE = 50` using `plan["page"]` as the offset multiplier, emits `search_db` and `build_context` steps, and streams tokens. A failing search is swallowed and degrades to an empty result list.
-
-The terminal `done` event differs by path: agent turns re-read the pin list so the frontend can sync, other turns do not.
+The terminal `done` event differs by whether the turn produced agent segments: turns whose `ui_payload.kind == "agent_segments"` re-read the pin list (`list_pinned_studies`) so the frontend can sync any mid-turn `pin_study`/`get_study_report` activity; the report branch does not.
 
 ```json
 { "chat_id": "a1b2c3d4", "persisted": true, "pinned_studies": [10317] }

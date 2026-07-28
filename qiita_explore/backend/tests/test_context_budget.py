@@ -77,43 +77,25 @@ class TestSelectedStudiesAllArrive:
 
     def test_the_reported_case_two_chips(self):
         """The exact bug: 2 attached, 1 delivered."""
-        ctx = merge_global_chat_context([study(1), study(2)], [], "summarise these", self.QWEN3)
+        ctx = merge_global_chat_context([study(1), study(2)], "summarise these", self.QWEN3)
         assert rendered(ctx) == 2
         assert "1001" in ctx and "1002" in ctx
 
     @pytest.mark.parametrize("n", [1, 2, 3, 4, 10, 50])
     def test_every_chip_count_renders_in_full(self, n):
-        ctx = merge_global_chat_context([study(i) for i in range(n)], [], "q", self.QWEN3)
+        ctx = merge_global_chat_context([study(i) for i in range(n)], "q", self.QWEN3)
         assert rendered(ctx) == n
 
     def test_no_truncation_notice_when_nothing_was_dropped(self):
-        ctx = merge_global_chat_context([study(i) for i in range(10)], [], "q", self.QWEN3)
+        ctx = merge_global_chat_context([study(i) for i in range(10)], "q", self.QWEN3)
         assert "showing" not in ctx
 
     def test_scales_with_a_smaller_model_too(self):
         """gpt-oss has a 131k-token window; 20 chips must still fit."""
         ctx = merge_global_chat_context(
-            [study(i) for i in range(20)], [], "q", context_budget_chars("gpt-oss")
+            [study(i) for i in range(20)], "q", context_budget_chars("gpt-oss")
         )
         assert rendered(ctx) == 20
-
-
-class TestDatabaseResultsKeepRoom:
-    """budget // 2 is the guard that replaced the old hardcoded ceiling."""
-
-    def test_many_chips_do_not_starve_the_search_half(self):
-        db = [study(500 + i) for i in range(8)]
-        ctx = merge_global_chat_context(
-            [study(i) for i in range(50)], db, "gut microbiome", context_budget_chars("qwen3")
-        )
-        assert "DATABASE SEARCH RESULTS" in ctx
-        for s in db:
-            assert str(s["study_id"]) in ctx, "search results must survive alongside 50 chips"
-
-    def test_a_tiny_budget_still_leaves_both_sections(self):
-        ctx = merge_global_chat_context([study(1), study(2)], [study(9)], "q", 8_000)
-        assert "USER-SELECTED BROWSE CONTEXT" in ctx
-        assert "DATABASE SEARCH RESULTS" in ctx
 
 
 class TestHeaderTellsTheTruth:

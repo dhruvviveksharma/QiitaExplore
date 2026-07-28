@@ -60,12 +60,20 @@ def stream_chat(*, scope, chat_id, user_id, model, system_prompt, message,
     # session_file lets it reopen the transcript with SessionManager.open()
     # instead of scanning the session directory. None for chats predating the
     # pi_session_file column, which fall back to the scan.
+    #
+    # pi resolves a bare model id against its default (NRP) provider. Anthropic
+    # models must say so explicitly or the sidecar 404s trying to find e.g.
+    # "claude-sonnet-4-6" in the NRP roster. pi ships a built-in Anthropic
+    # provider with this repo's three configured models already in its
+    # catalog — no registration needed on the sidecar side, just the prefix.
+    meta = config.MODEL_METADATA.get(model, {})
+    sidecar_model = f"{meta['provider']}/{model}" if meta.get("provider") == "anthropic" else model
     body = {
         "scope": scope,
         "chat_id": chat_id,
         "user_id": user_id,
         "session_file": session_file,
-        "model": model,
+        "model": sidecar_model,
         "system_prompt": system_prompt,
         "message": message,
         "context_block": context_block,
@@ -111,11 +119,7 @@ def delete_session(*, scope, chat_id, user_id, timeout_seconds=3.0):
     failures are logged, not raised — a leaked pi session file is a cleanup
     debt, not a reason to fail the user's delete.
 
-    Skips only when pi is not configured at all. Callers must NOT gate this on
-    PI_BACKEND_GLOBAL/PI_BACKEND_PROJECT: those flags say "route new turns
-    through pi", not "pi sessions exist". A chat created with the flag on and
-    deleted after it was flipped off still has a JSONL to clean up, and gating
-    on the flag is what left those orphaned (docs/09-operations.md)."""
+    Skips only when pi is not configured at all (PI_SIDECAR_SECRET unset)."""
     if not config.PI_SIDECAR_SECRET:
         return
     url = f"{config.PI_SIDECAR_URL}/session/delete"

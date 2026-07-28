@@ -83,8 +83,6 @@ def _app(tmp_path_factory):
     import config
     config.PI_SIDECAR_SECRET = "test-pi-secret"
     config.PI_SCOPE_TOKEN_KEY = "test-scope-token-key"
-    config.PI_BACKEND_PROJECT = True
-    config.PI_BACKEND_GLOBAL = True
     config.PAT_ENCRYPTION_KEY = Fernet.generate_key().decode()
     config.SESSION_COOKIE_SECURE = False
     return run.app
@@ -237,42 +235,8 @@ class TestProjectChatPiStream:
         # the deep-context block (only the workspace manifest should be there).
         assert "PINNED STUDY REPORTS" not in (call_kwargs["context_block"] or "")
 
-    def test_legacy_path_used_when_flag_is_off(self, client, mock_whoami, sample_pi_events, _app):
-        import config
-        import store.crud as crud
-        headers, user_id = _connect(client, mock_whoami, "qk_pi_stream_3", 403)
-        project_id = _make_project_with_study(user_id=user_id)
-        chat = crud.create_chat(project_id, user_id, "hi")
-
-        config.PI_BACKEND_PROJECT = False
-        try:
-            with patch("helpers.pi_turn.pi_stream_chat") as mock_stream:
-                with patch("routes.chat_routes.llm_chat_stream", return_value=iter(["legacy ", "response"])):
-                    resp = client.post(
-                        f"/api/projects/{project_id}/chats/{chat['chat_id']}/message/stream",
-                        json={"message": "hello", "model": "qwen3"},
-                        headers=headers,
-                    )
-                    assert resp.status_code == 200
-                    body = resp.get_data(as_text=True)
-                    # Tokens are streamed as separate SSE data lines, not
-                    # concatenated — check both fragments rather than the
-                    # joined string.
-                    assert '"token": "legacy '  in body
-                    assert '"token": "response"' in body
-                    # The non-agentic legacy path never emits agent_start, so
-                    # `runtime` is the only signal the composer subtext can use.
-                    assert '"runtime": "legacy"' in body
-            mock_stream.assert_not_called()
-        finally:
-            config.PI_BACKEND_PROJECT = True  # restore for the rest of this module
-
 
 class TestGlobalChatRuntimeEvent:
-    """The same label on the global-chat side. Both branches are covered here
-    because the pi/legacy choice is per-turn and server-side — the frontend
-    must never re-derive `model_supports_tools(model) and PI_BACKEND_GLOBAL`."""
-
     def _new_global_chat(self, user_id):
         import store.global_chat_crud as gcc
         return gcc.create_global_chat(user_id, "hi")["chat_id"]
@@ -292,29 +256,3 @@ class TestGlobalChatRuntimeEvent:
 
         assert '"runtime": "pi"' in body
         assert body.index("event: runtime") < body.index("event: agent_start")
-
-    def test_legacy_path_reports_legacy(self, client, mock_whoami):
-        """Reached by turning PI_BACKEND_GLOBAL off — not by model choice.
-        Every entry in MODEL_METADATA has supports_tools=True now, so
-        model_supports_tools() alone can no longer select this branch."""
-        import config
-        headers, user_id = _connect(client, mock_whoami, "qk_gc_runtime_2", 405)
-        chat_id = self._new_global_chat(user_id)
-
-        config.PI_BACKEND_GLOBAL = False
-        try:
-            fake_events = [{"type": "agent_start"},
-                           {"type": "token", "token": "legacy answer"}]
-            with patch("routes.global_chat_routes.stream_agent", return_value=iter(fake_events)):
-                resp = client.post(
-                    f"/api/global-chats/{chat_id}/message/stream",
-                    json={"message": "hello", "model": "qwen3"},
-                    headers=headers,
-                )
-                assert resp.status_code == 200
-                body = resp.get_data(as_text=True)
-
-            assert '"runtime": "legacy"' in body
-            assert '"runtime": "pi"' not in body
-        finally:
-            config.PI_BACKEND_GLOBAL = True  # restore for the rest of this module

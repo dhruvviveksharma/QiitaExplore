@@ -461,8 +461,9 @@ class TestProjectScopeEnforcement:
         assert "no studies" in resp.get_json()["text"].lower()
 
     def test_scope_token_cannot_be_forged_across_users(self, client, crud_mod, db_mod):
-        """get_project_studies_only() itself performs no user_id filtering
-        (store/crud.py) — the route must independently re-check ownership."""
+        """The route must independently re-check ownership rather than trust
+        the token's claims — get_project(project_id, claims['user_id']) is
+        where that check actually lives."""
         project_id = self._make_project_with_study(crud_mod, db_mod, user_id="owner")
         forged_tok = _mint(user_id="attacker", scope="project", chat_id="c1", project_id=project_id)
         resp = client.post("/api/internal/tools/search_studies", headers=_hdrs(forged_tok),

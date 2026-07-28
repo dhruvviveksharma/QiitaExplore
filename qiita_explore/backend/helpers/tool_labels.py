@@ -1,10 +1,9 @@
 """In-flight human-readable labels for tool calls, keyed by tool name.
 
-Extracted from helpers/agent.py (which still imports it, for zero
-behavioral change) so pi_translate.py — a pure module that must not drag in
-agent.py's Postgres-touching import chain (agent_tools -> study_service ->
-pg_pool -> qiita_core) just to format a label string — can share the exact
-same logic instead of porting a second copy that could drift.
+A standalone module with no agent_tools/pg_pool/qiita_core imports, so
+pi_translate.py — a pure module — can format tool labels without dragging in
+agent_tools's Postgres-touching import chain (agent_tools -> study_service ->
+pg_pool -> qiita_core) just to format a label string.
 """
 
 

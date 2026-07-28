@@ -182,8 +182,8 @@ class TestProjectScopeBoundary:
             session.delete(f"{BASE}/api/projects/{project_id}", timeout=10)
 
     def test_scope_token_cannot_target_a_project_the_user_does_not_own(self, project_with_one_study, e2e_session):
-        """T4.8 — get_project_studies_only() itself performs no user_id
-        check; the route must independently re-verify ownership."""
+        """T4.8 — the route must independently re-verify ownership rather
+        than trust the token's claims."""
         project_id, _owner_user_id = project_with_one_study
         forged_token = mint_scope_token(
             user_id="some-other-user-entirely", scope="project",
