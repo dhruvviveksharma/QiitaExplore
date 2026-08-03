@@ -67,8 +67,13 @@ SAMPLE_SEARCH_PROBE_TIMEOUT_MS   = int(os.getenv("SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 PG_POOL_MIN_CONN                = int(os.getenv("PG_POOL_MIN_CONN", "2"))
 PG_POOL_MAX_CONN                = int(os.getenv("PG_POOL_MAX_CONN", "8"))
 REPORT_SAMPLE_LIMIT             = 200
-PINNED_REPORT_CONTEXT_MAX_CHARS = int(os.getenv("PINNED_REPORT_CONTEXT_MAX_CHARS", "40000"))
-PINNED_REPORT_MIN_PER_STUDY     = int(os.getenv("PINNED_REPORT_MIN_PER_STUDY", "2000"))
+
+# Pinned-study context. Chars, not sample counts: chars/sample varies ~4x across
+# studies, so a sample cap doesn't bound cost. Only the first
+# PINNED_INLINE_STUDIES are inlined; the rest are listed as one-line manifest
+# entries the model can expand with get_study_report(<id>).
+PINNED_CHARS_PER_STUDY          = int(os.getenv("PINNED_CHARS_PER_STUDY", "60000"))
+PINNED_INLINE_STUDIES           = int(os.getenv("PINNED_INLINE_STUDIES", "5"))
 
 # ── Qiita PAT authentication ────────────────────────────────────────────────
 SESSION_COOKIE_NAME = "qe_sid"

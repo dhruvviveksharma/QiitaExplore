@@ -19,12 +19,11 @@ from store import (
 from helpers.llm_helpers import (
     _sse,
     _build_global_search_context,
-    merge_global_chat_context,
     llm_chat_stream,
     llm_plan_query,
     friendly_llm_error,
 )
-from helpers.qiita_fetch import _build_pinned_reports_context
+from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
     parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
@@ -65,10 +64,9 @@ def api_delete_global_chat(chat_id):
 
 @app.route('/api/global-chats/<chat_id>/message/stream', methods=['POST'])
 def api_global_chat_message_stream(chat_id):
-    data             = request.get_json() or {}
-    user_id          = g.user_id
-    deep_search      = bool(data.get("deep_search"))
-    selected_studies = data.get("selected_studies") or []
+    data        = request.get_json() or {}
+    user_id     = g.user_id
+    deep_search = bool(data.get("deep_search"))
     user_content, model, report_study_id, pin_study_ids, err_response = parse_chat_stream_body(data)
     if err_response is not None:
         return err_response
@@ -100,22 +98,21 @@ def api_global_chat_message_stream(chat_id):
             if report_study_id is not None:
                 assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
             else:
-                budget    = context_budget_chars(model)
-                n_sel     = len(selected_studies) if selected_studies else 0
+                budget = context_budget_chars(model)
 
-                # Build pinned context once — reused across all paths
+                # Pinned studies are the single source of attached-study context
+                # (browse "+ Pin" writes here too, via the pin endpoint).
                 pinned_studies = chat.get("pinned_studies") or []
                 pinned_ctx     = None
                 if pinned_studies:
                     yield _sse("step_start", {"name": "pinned_reports", "label": "Loading pinned study data…"})
-                    pinned_ctx = _build_pinned_reports_context(pinned_studies)
+                    pinned_ctx = _build_pinned_reports_context(pinned_studies, model)
                     yield _sse("step_done", {"name": "pinned_reports", "label": "Pinned reports ready", "detail": f"{len(pinned_studies)} studies"})
                     yield ': keepalive\n\n'
 
                 if model_supports_tools(model):
                     # Agentic path: the model decides what to search and when
-                    sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget) if selected_studies else None
-                    combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
+                    combined_ctx = pinned_ctx
                     # Accumulate segments for persistence
                     segments_list = []
                     current_text  = []
@@ -176,11 +173,7 @@ def api_global_chat_message_stream(chat_id):
 
                     if skip_search:
                         yield _sse("step_done", {"name": "search_db", "label": "Filtering from conversation context", "detail": "no new search"})
-                        if selected_studies:
-                            sel_ctx = merge_global_chat_context(selected_studies, [], user_content, budget)
-                            combined_ctx = "\n\n".join(x for x in (sel_ctx, pinned_ctx) if x) or None
-                        else:
-                            combined_ctx = pinned_ctx
+                        combined_ctx = pinned_ctx
                         yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
                         for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, model=model):
                             assistant_parts.append(token)
@@ -195,19 +188,12 @@ def api_global_chat_message_stream(chat_id):
                             studies = search_studies_with_sql(where, search_params, limit=PAGE_SIZE, offset=offset)
                         except Exception:
                             studies = []
-                        s_detail = f"{len(studies)} studies found"
-                        if n_sel:
-                            s_detail += f" · merged with {n_sel} context {'studies' if n_sel != 1 else 'study'}"
-                        yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": s_detail})
+                        yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": f"{len(studies)} studies found"})
                         yield ': keepalive\n\n'
 
                         yield _sse("step_start", {"name": "build_context", "label": "Building context…"})
-                        if selected_studies:
-                            study_ctx = merge_global_chat_context(selected_studies, studies, user_content, budget)
-                            yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{n_sel} selected + {len(studies)} from search"})
-                        else:
-                            study_ctx = _build_global_search_context(studies, user_content, budget)
-                            yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{len(studies)} studies"})
+                        study_ctx = _build_global_search_context(studies, user_content, budget)
+                        yield _sse("step_done", {"name": "build_context", "label": "Context ready", "detail": f"{len(studies)} studies"})
                         yield ': keepalive\n\n'
 
                         combined_ctx = "\n\n".join(x for x in (study_ctx, pinned_ctx) if x) or None

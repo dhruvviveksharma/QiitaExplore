@@ -21,10 +21,8 @@ from helpers.llm_helpers import (
     llm_chat_stream,
     friendly_llm_error,
 )
-from helpers.qiita_fetch import (
-    _build_pinned_reports_context,
-    _detect_mentioned_study_ids,
-)
+from helpers.qiita_fetch import _detect_mentioned_study_ids
+from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
     parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
@@ -120,7 +118,7 @@ def api_chat_message_stream(project_id, chat_id):
                         fetch_label = "Loading pinned study data…"
                         done_label  = "Pinned reports ready"
                     yield _sse("step_start", {"name": "deep_context", "label": fetch_label})
-                    deep_ctx = _build_pinned_reports_context(deep_ids)
+                    deep_ctx = _build_pinned_reports_context(deep_ids, model)
                     yield _sse("step_done", {"name": "deep_context", "label": done_label, "detail": f"{len(deep_ids)} studies"})
                     yield ': keepalive\n\n'
                 combined_ctx = "\n\n".join(x for x in (study_ctx, deep_ctx) if x) or None

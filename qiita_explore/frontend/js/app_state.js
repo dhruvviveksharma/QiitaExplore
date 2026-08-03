@@ -391,8 +391,27 @@ function useAppState() {
     }
   };
 
-  const removeCtxStudyFromChat = (chatId, studyId) => {
-    patchChat(chatId, cur => ({ ctxStudies: (cur.ctxStudies || []).filter(s => s.study_id !== studyId) }));
+  // Browse "+ Pin" stages studies before any chat exists; once the chat is
+  // created they become real pins. Sequential on purpose — the 10-pin cap is
+  // enforced per request, so parallel POSTs would race it.
+  const pinStagedStudies = async (chatId, studies) => {
+    const rejected = [];
+    let last = null;
+    for (const s of studies) {
+      try {
+        const res  = await apiPost(`/global-chats/${chatId}/pinned/${s.study_id}`, {});
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) last = data;
+        else rejected.push(data.error || `Study ${s.study_id} could not be pinned`);
+      } catch (_) {
+        rejected.push(`Study ${s.study_id} could not be pinned (network error)`);
+      }
+    }
+    if (last) applyPinResult(chatId, last);
+    if (rejected.length) {
+      setCompErr(rejected.length === 1 ? rejected[0]
+        : `${rejected.length} of ${studies.length} studies could not be pinned. ${rejected[0]}`);
+    }
   };
 
   const completeSlash = (item) => {
@@ -419,11 +438,19 @@ function useAppState() {
     return chat;
   };
 
-  const createGlobalChatAndSeed = async (title, extraCacheFields = {}) => {
+  const createGlobalChatAndSeed = async (title) => {
     const res = await apiPost('/global-chats', {});
     if (!res.ok) throw new Error('Failed to create chat');
     const chat = await res.json();
-    setChatCache(prev => ({ ...prev, [chat.chat_id]: { messages: [], title, ...extraCacheFields } }));
+    setChatCache(prev => ({
+      ...prev,
+      [chat.chat_id]: {
+        messages: [],
+        title,
+        pinnedStudies: chat.pinned_studies || [],
+        pinnedStudyMeta: chat.pinned_study_meta || [],
+      },
+    }));
     setGlobalChats(prev => [chat, ...prev]);
     return chat;
   };
@@ -468,16 +495,15 @@ function useAppState() {
 
     try {
       // ── Normalize browse → new global chat ──────────────────────────────────
-      let workView   = view;
-      let studiesCtx = null; // null means read from cache; set when coming from browse
+      let workView = view;
 
       if (view.type === 'browse') {
-        const snapCtx = [...ctxStudies];
-        const chat = await createGlobalChatAndSeed(displayMsg.slice(0, 60), { ctxStudies: snapCtx });
-        workView   = { type: 'global-chat', chatId: chat.chat_id };
+        const staged = [...ctxStudies];
+        const chat   = await createGlobalChatAndSeed(displayMsg.slice(0, 60));
+        workView     = { type: 'global-chat', chatId: chat.chat_id };
         setView(workView);
         setCtxStudies([]);
-        studiesCtx = snapCtx;
+        if (staged.length) await pinStagedStudies(chat.chat_id, staged);
       }
 
       // ── /systems ────────────────────────────────────────────────────────────
@@ -523,13 +549,11 @@ function useAppState() {
       } else if (workView.type === 'global-chat') {
         const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
         optimisticAppend(chatId, displayMsg);
-        const ctxToSend = studiesCtx !== null ? studiesCtx : (chatCache[chatId]?.ctxStudies || []);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
           {
             message: sendMsg,
             model: selectedModel,
-            selected_studies: ctxToSend,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
             ...(isDeepSearch            && { deep_search: true }),
@@ -635,7 +659,7 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    removeCtxStudyFromChat, completeSlash,
+    completeSlash,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,

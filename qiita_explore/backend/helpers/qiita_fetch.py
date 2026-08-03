@@ -5,12 +5,11 @@ import logging
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 from helpers.pg_pool import pooled_fetchall
 from helpers.llm_helpers import _truncate
 
-from config import REPORT_SAMPLE_LIMIT, PINNED_REPORT_CONTEXT_MAX_CHARS, PINNED_REPORT_MIN_PER_STUDY
+from config import REPORT_SAMPLE_LIMIT
 from store import (
     get_study_detail_cache,
     upsert_study_detail_cache,
@@ -246,13 +245,20 @@ def _fetch_sample_context_text(study_id: int, max_chars: int = 3500) -> str:
 
 
 def _get_or_fetch_full_samples(study_id: int, limit: int = REPORT_SAMPLE_LIMIT):
-    """Return cached full sample rows for a study, falling back to a Qiita fetch + cache write."""
+    """Return cached full sample rows for a study, falling back to a Qiita fetch + cache write.
+
+    The cache is written at whatever limit the *first* caller used, so it is only
+    reused when it already holds enough rows for this request (or the whole
+    study) — otherwise an early small fetch would cap every later one.
+    """
     cached = get_study_detail_cache(study_id)
     if cached and cached.get("full_samples_json"):
         try:
             samples = json.loads(cached["full_samples_json"])
             if isinstance(samples, list):
-                return samples
+                total = ((_fetch_study_header_cached(study_id) or {}).get("num_samples")) or 0
+                if len(samples) >= limit or (total and len(samples) >= total):
+                    return samples[:limit]
         except Exception:
             pass
     samples = _fetch_full_sample_metadata(study_id, limit=limit)
@@ -279,66 +285,6 @@ def _fetch_study_header_cached(study_id: int):
     _study_header_cache[sid] = (now, header)
     return header
 
-
-def _build_full_samples_block(study_id: int, budget_chars: int):
-    """Compact full-metadata block for one pinned study, clipped to budget_chars."""
-    header      = _fetch_study_header_cached(study_id)
-    samples     = _get_or_fetch_full_samples(study_id)
-    title       = (header or {}).get("study_title") or "Untitled study"
-    num_samples = (header or {}).get("num_samples") or (len(samples) if samples else 0)
-    data_types  = (header or {}).get("data_types") or ""
-
-    lines = [
-        f"### Study {study_id}: {_truncate(title, 140)}",
-        f"  Data Types: {data_types or 'Not available'} | Total samples: {num_samples} | In report: {len(samples)}",
-    ]
-    if not samples:
-        lines.append("  _No sample metadata available._")
-        return "\n".join(lines)
-
-    skip_fields = {"qiita_study_id"}
-    empty_vals  = {"none", "null", "nan", "not applicable", "not provided", ""}
-    budget      = max(500, int(budget_chars))
-    out         = "\n".join(lines) + "\n"
-    truncated_at = None
-    for idx, sample in enumerate(samples):
-        sid    = sample.get("sample_id", "?")
-        fields = sample.get("fields") or {}
-        parts  = []
-        for k, v in sorted(fields.items()):
-            if k in skip_fields or v is None:
-                continue
-            val = str(v).strip()
-            if not val or val.lower() in empty_vals:
-                continue
-            parts.append(f"{k}={_truncate(val, 120)}")
-        line = f"  {sid}: " + ", ".join(parts) + "\n"
-        if len(out) + len(line) > budget:
-            truncated_at = idx
-            break
-        out += line
-    if truncated_at is not None:
-        out += f"  _(truncated: showed {truncated_at} of {len(samples)} samples due to context budget)_\n"
-    return out.rstrip()
-
-
-def _build_pinned_reports_context(study_ids):
-    """Build a 'PINNED STUDY REPORTS' context block from the given pinned study IDs."""
-    if not study_ids:
-        return None
-    per_study = max(PINNED_REPORT_MIN_PER_STUDY, PINNED_REPORT_CONTEXT_MAX_CHARS // max(1, len(study_ids)))
-    with ThreadPoolExecutor(max_workers=min(len(study_ids), 4)) as pool:
-        blocks = list(pool.map(lambda sid: _build_full_samples_block(sid, per_study), study_ids))
-    header = (
-        "PINNED STUDY REPORTS (full sample-level metadata for studies the user attached via /report):\n"
-        "Use these for per-sample questions and cross-study comparisons.\n"
-    )
-    body = "\n\n".join(b for b in blocks if b)
-    text = header + body
-    if len(text) > PINNED_REPORT_CONTEXT_MAX_CHARS:
-        cut  = text.rfind("\n", 0, PINNED_REPORT_CONTEXT_MAX_CHARS - 40)
-        text = text[: max(cut, PINNED_REPORT_CONTEXT_MAX_CHARS - 40)] + "\n...(pinned context truncated)"
-    return text
 
 
 def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):

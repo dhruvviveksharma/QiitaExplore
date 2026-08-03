@@ -364,23 +364,17 @@ input, textarea { font-family: var(--sans); }
   align-items: center;
   gap: 6px;
   margin: 0 12px;
-  padding: 8px 20px 20px;
+  /* 16px left matches .topbar's padding so the label lines up with the title
+     above it; no mask, so the fill reaches its rounded bottom edge instead of
+     dissolving halfway down. */
+  padding: 8px 16px 10px;
   border-radius: 0 0 var(--radius-m) var(--radius-m);
   background: var(--accent-soft);
-  mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
 }
 .sources-label {
   font-size: 10.5px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .06em;
   color: var(--accent); flex-shrink: 0;
-}
-.sources-hint {
-  font-size: 10px;
-  color: var(--text-3);
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
 }
 .src-chip {
   font-size: 11.5px;

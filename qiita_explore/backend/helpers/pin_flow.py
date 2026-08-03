@@ -1,7 +1,8 @@
 """Shared pin-and-acknowledge SSE flow for project and global chat streams."""
 
 from helpers.llm_helpers import _sse, llm_chat_stream
-from helpers.qiita_fetch import _build_pinned_reports_context, _pin_studies_validated
+from helpers.qiita_fetch import _pin_studies_validated
+from helpers.pinned_context import _build_pinned_reports_context
 
 
 def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, system_prompt=None):
@@ -26,7 +27,7 @@ def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, sy
     deep_ctx = None
     if all_pinned:
         yield _sse("step_start", {"name": "deep_context", "label": "Loading pinned study data…"})
-        deep_ctx = _build_pinned_reports_context(all_pinned)
+        deep_ctx = _build_pinned_reports_context(all_pinned, model)
         yield _sse("step_done", {"name": "deep_context", "label": "Pinned reports ready", "detail": f"{len(all_pinned)} studies"})
         yield ': keepalive\n\n'
 

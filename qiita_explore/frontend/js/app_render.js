@@ -18,13 +18,13 @@ function renderApp(s) {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    removeCtxStudyFromChat, completeSlash,
+    completeSlash,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,
   } = s;
 
   const hasSourcesBar = (view.type === 'project-chat' && openProject?.studies?.length > 0) ||
-    (view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0);
+    (view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0);
 
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
@@ -360,16 +360,19 @@ function renderApp(s) {
                   ))}
                 </div>
               )}
-              {view.type === 'global-chat' && (chatCache[view.chatId]?.ctxStudies || []).length > 0 && (
+              {view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
                 <div className="sources-bar">
-                  <span className="sources-label">Context</span>
-                  <span className="sources-hint">Merged with DB search on send</span>
-                  {(chatCache[view.chatId]?.ctxStudies || []).map(s => (
-                    <button key={s.study_id} className="src-chip removable"
-                      onClick={() => removeCtxStudyFromChat(view.chatId, s.study_id)}>
-                      {(s.study_title||'Untitled').slice(0,40)} ×
-                    </button>
-                  ))}
+                  <span className="sources-label">Pinned</span>
+                  {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
+                    const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
+                      .find(p => p.study_id === sid)?.study_title;
+                    return (
+                      <button key={sid} className="src-chip removable" title={title || `Study ${sid}`}
+                        onClick={() => unpinStudy(view.chatId, sid)}>
+                        {title ? `${sid} · ${title.slice(0, 40)}` : `Study ${sid}`}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 

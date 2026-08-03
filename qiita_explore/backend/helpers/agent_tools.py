@@ -10,12 +10,10 @@ from services.study_service import (
 )
 from helpers.llm_helpers import _format_discovery_study_list
 from helpers.sample_search import search_studies_by_sample_meta, search_studies_by_field_filters
-from helpers.qiita_fetch import (
-    _build_samples_report_payload,
-    _build_full_samples_block,
-    _pin_studies_validated,
-)
-from config import SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDATES
+from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_validated
+from helpers.pinned_context import _build_full_samples_block
+from config import (SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDATES,
+                    PINNED_CHARS_PER_STUDY)
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +404,9 @@ def _tool_get_study_report(args: dict, *, scope: str, chat_id: str) -> ToolResul
     try:
         ui_payload  = _build_samples_report_payload(study_id)
         num_samples = (ui_payload.get("header") or {}).get("num_samples") or len(ui_payload.get("samples") or [])
-        text_block  = _build_full_samples_block(study_id, budget_chars=4_000)
+        # Same budget an inlined pinned study gets — this tool is the escape
+        # hatch the pinned-context manifest points at.
+        text_block  = _build_full_samples_block(study_id, budget_chars=PINNED_CHARS_PER_STUDY)
         return ToolResult(
             text=f"Full sample report for study {study_id} ({num_samples} samples):\n{text_block}",
             label=f"Loaded study {study_id} report",
