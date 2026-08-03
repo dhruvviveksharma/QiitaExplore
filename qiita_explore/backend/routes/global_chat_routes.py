@@ -14,7 +14,7 @@ from store import (
     get_global_chat,
     list_global_chats,
     list_pinned_studies,
-    unpin_study_from_chat,
+    list_pinned_study_meta,
 )
 from helpers.llm_helpers import (
     _sse,
@@ -24,12 +24,12 @@ from helpers.llm_helpers import (
     llm_plan_query,
     friendly_llm_error,
 )
-from helpers.qiita_fetch import (
-    _build_pinned_reports_context,
-    _pin_studies_validated,
-)
+from helpers.qiita_fetch import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
-from helpers.request_utils import parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report
+from helpers.request_utils import (
+    parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
+    pin_toggle_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,8 @@ def api_global_chat_message_stream(chat_id):
                     system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT,
                     persist=lambda ac: append_global_chat_messages(user_id, chat_id, user_content, ac),
                 )
-                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned,
+                                    "pinned_study_meta": list_pinned_study_meta(chat_id, SCOPE_GLOBAL)})
                 return
             if report_study_id is not None:
                 assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
@@ -219,7 +220,8 @@ def api_global_chat_message_stream(chat_id):
             # For agent turns, send the full current pinned list so the frontend can sync
             if ui_payload and ui_payload.get("kind") == "agent_segments":
                 final_pinned = list_pinned_studies(chat_id, SCOPE_GLOBAL)
-                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": final_pinned})
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": final_pinned,
+                                    "pinned_study_meta": list_pinned_study_meta(chat_id, SCOPE_GLOBAL)})
             else:
                 yield _sse("done", {"chat_id": chat_id, "persisted": True})
         except Exception as e:
@@ -231,17 +233,13 @@ def api_global_chat_message_stream(chat_id):
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_global_chat_study(chat_id, study_id):
-    chat = get_global_chat(g.user_id, chat_id)
-    if not chat:
+    if not get_global_chat(g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_GLOBAL, [study_id])
-    return jsonify({'ok': True, 'pinned_studies': all_pinned})
+    return pin_toggle_response(chat_id, SCOPE_GLOBAL, study_id, pin=True)
 
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_global_chat_study(chat_id, study_id):
-    chat = get_global_chat(g.user_id, chat_id)
-    if not chat:
+    if not get_global_chat(g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    unpin_study_from_chat(chat_id, SCOPE_GLOBAL, study_id)
-    return jsonify({'ok': True, 'pinned_studies': list_pinned_studies(chat_id, SCOPE_GLOBAL)})
+    return pin_toggle_response(chat_id, SCOPE_GLOBAL, study_id, pin=False)

@@ -3,7 +3,13 @@
 from flask import Response, jsonify, stream_with_context
 
 from helpers.llm_helpers import _sse
-from helpers.qiita_fetch import _build_samples_report_payload
+from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_validated
+from store import (
+    PINNED_STUDIES_PER_CHAT_CAP,
+    list_pinned_studies,
+    list_pinned_study_meta,
+    unpin_study_from_chat,
+)
 
 
 def parse_chat_stream_body(data):
@@ -36,6 +42,40 @@ def build_full_msgs(messages, user_content):
     full_msgs = [{"role": m.get("role"), "content": m.get("content")} for m in (messages or [])]
     full_msgs.append({"role": "user", "content": user_content})
     return full_msgs
+
+
+def pin_toggle_response(chat_id: str, scope: str, study_id: int, pin: bool):
+    """Pin or unpin one study and build the JSON body both chat scopes return.
+
+    A pin that doesn't land answers 409 with a reason. The `200 {'ok': True}`
+    this replaces was returned even when the study was silently rejected, so a
+    failed pin was indistinguishable from a successful one until the chip
+    disappeared on the next reload.
+    """
+    if not pin:
+        unpin_study_from_chat(chat_id, scope, study_id)
+        return jsonify({
+            'ok': True,
+            'pinned_studies': list_pinned_studies(chat_id, scope),
+            'pinned_study_meta': list_pinned_study_meta(chat_id, scope),
+        })
+
+    _, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, scope, [study_id])
+    body = {
+        'ok': study_id in all_pinned,
+        'pinned_studies': all_pinned,
+        'pinned_study_meta': list_pinned_study_meta(chat_id, scope),
+        'invalid': invalid,
+        'rejected': rejected,
+    }
+    if body['ok']:
+        return jsonify(body)
+    body['error'] = (
+        f"Study {study_id} is private, not found, or has no accessible data"
+        if study_id in invalid
+        else f"Pin limit reached ({PINNED_STUDIES_PER_CHAT_CAP} studies per chat)"
+    )
+    return jsonify(body), 409
 
 
 def sse_response(generate):

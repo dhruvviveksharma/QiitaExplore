@@ -130,6 +130,7 @@ function useAppState() {
           messages,
           title: d.title,
           pinnedStudies: d.pinned_studies || [],
+          pinnedStudyMeta: d.pinned_study_meta || [],
           totalStudiesInProject: d.total_studies_in_project,
         },
       }));
@@ -252,7 +253,7 @@ function useAppState() {
       };
     });
 
-  const applyStreamDone = (chatId, title, pinnedList) => {
+  const applyStreamDone = (chatId, title, pinnedList, pinnedMeta) => {
     patchLast(chatId, m => {
       const next = { ...m, isStreaming: false, pendingStep: null };
       if (m.segments !== null) {
@@ -264,9 +265,9 @@ function useAppState() {
     });
     setChatCache(prev => {
       const cur = prev[chatId] || {};
-      const pins = cur.pinnedStudies || [];
-      const nextPins = pinnedList != null ? pinnedList : pins;
-      return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins } };
+      const nextPins = pinnedList != null ? pinnedList : (cur.pinnedStudies || []);
+      const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
+      return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins, pinnedStudyMeta: nextMeta } };
     });
   };
 
@@ -333,31 +334,61 @@ function useAppState() {
       return { ...m, segments: segs };
     });
 
+  // The server is the source of truth for pins. Both handlers below apply an
+  // optimistic patch for responsiveness, then either adopt the server's list or
+  // roll the patch back and surface why — a pin that only ever existed in local
+  // state looks identical to a persisted one until the next reload.
+  const applyPinResult = (chatId, data) =>
+    patchChat(chatId, () => ({
+      pinnedStudies: data.pinned_studies || [],
+      pinnedStudyMeta: data.pinned_study_meta || [],
+    }));
+
   const unpinStudy = async (chatId, studyId) => {
-    patchChat(chatId, cur => ({ pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId) }));
+    const before = chatCache[chatId];
+    patchChat(chatId, cur => ({
+      pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId),
+      pinnedStudyMeta: (cur.pinnedStudyMeta || []).filter(p => p.study_id !== studyId),
+    }));
     const base = chatScopeUrl(view, chatId);
     if (!base) return;
     try {
-      await apiDel(`${base}/pinned/${studyId}`);
-    } catch (_) {}
+      const res = await apiDel(`${base}/pinned/${studyId}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Unpin failed (${res.status})`);
+      applyPinResult(chatId, data);
+    } catch (e) {
+      patchChat(chatId, () => ({
+        pinnedStudies: before?.pinnedStudies || [],
+        pinnedStudyMeta: before?.pinnedStudyMeta || [],
+      }));
+      setCompErr(e.message || 'Could not unpin that study');
+    }
   };
 
   const pinStudy = async (chatId, study) => {
     const studyId = study.study_id;
+    const before = chatCache[chatId];
     patchChat(chatId, cur => (cur.pinnedStudies || []).includes(studyId)
       ? null
-      : { pinnedStudies: [...(cur.pinnedStudies || []), studyId] });
+      : {
+          pinnedStudies: [...(cur.pinnedStudies || []), studyId],
+          pinnedStudyMeta: [...(cur.pinnedStudyMeta || []), { study_id: studyId, study_title: study.study_title }],
+        });
     const base = chatScopeUrl(view, chatId);
     if (!base) return;
     try {
       const res = await apiPost(`${base}/pinned/${studyId}`, {});
-      if (res?.ok) {
-        const data = await res.json();
-        if (data.pinned_studies) {
-          setChatCache(prev => ({ ...prev, [chatId]: { ...(prev[chatId] || {}), pinnedStudies: data.pinned_studies } }));
-        }
-      }
-    } catch (_) {}
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Pin failed (${res.status})`);
+      applyPinResult(chatId, data);
+    } catch (e) {
+      patchChat(chatId, () => ({
+        pinnedStudies: before?.pinnedStudies || [],
+        pinnedStudyMeta: before?.pinnedStudyMeta || [],
+      }));
+      setCompErr(e.message || 'Could not pin that study');
+    }
   };
 
   const removeCtxStudyFromChat = (chatId, studyId) => {
@@ -381,6 +412,7 @@ function useAppState() {
         messages: [],
         title,
         pinnedStudies: chat.pinned_studies || [],
+        pinnedStudyMeta: chat.pinned_study_meta || [],
         totalStudiesInProject: chat.total_studies_in_project,
       },
     }));
@@ -480,7 +512,7 @@ function useAppState() {
             onToken: ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
+              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
               setOpenProject(prev => prev ? {
                 ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
               } : prev);
@@ -511,7 +543,7 @@ function useAppState() {
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null);
+              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
               setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
             },
           },

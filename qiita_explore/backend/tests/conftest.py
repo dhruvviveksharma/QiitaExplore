@@ -7,6 +7,49 @@ from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+_FAKE_QIITA_DB_STUBBED = False
+
+
+def stub_qiita_db_and_core():
+    """qiita_db/qiita_core are vendored classic-Qiita packages this sandbox
+    can't resolve. Stub them so importing `run` (or anything reaching
+    helpers/pg_pool.py) succeeds; tests that use this never touch those paths."""
+    global _FAKE_QIITA_DB_STUBBED
+    if _FAKE_QIITA_DB_STUBBED:
+        return
+    import importlib.metadata
+    import types
+
+    class _FakeTRN:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def add(self, *a, **k): pass
+        def execute_fetchindex(self): return []
+
+    fake_sql_connection = types.ModuleType("qiita_db.sql_connection")
+    fake_sql_connection.TRN = _FakeTRN()
+    fake_qiita_db = types.ModuleType("qiita_db")
+    fake_qiita_db.sql_connection = fake_sql_connection
+    sys.modules["qiita_db"] = fake_qiita_db
+    sys.modules["qiita_db.sql_connection"] = fake_sql_connection
+
+    class _FakeConfig:
+        pass
+
+    fake_qiita_settings = types.ModuleType("qiita_core.qiita_settings")
+    fake_qiita_settings.qiita_config = _FakeConfig()
+    fake_qiita_core = types.ModuleType("qiita_core")
+    fake_qiita_core.qiita_settings = fake_qiita_settings
+    sys.modules["qiita_core"] = fake_qiita_core
+    sys.modules["qiita_core.qiita_settings"] = fake_qiita_settings
+
+    # Flask 2.2.5's test client reads werkzeug.__version__, removed upstream.
+    import werkzeug
+    if not hasattr(werkzeug, "__version__"):
+        werkzeug.__version__ = importlib.metadata.version("werkzeug")
+
+    _FAKE_QIITA_DB_STUBBED = True
+
 
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):

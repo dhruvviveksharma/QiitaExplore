@@ -124,3 +124,41 @@ class TestChatMessages:
 
         full_chat = crud.get_chat(project_id, sample_user_id, chat_id)
         assert len(full_chat["messages"]) == 2
+
+
+class TestPinnedStudiesSurviveReload:
+    """Regression: pins vanished on restart because nothing asserted that a
+    re-fetched chat still carries them. These are the assertions that would
+    have caught it."""
+
+    def test_global_chat_pins_survive_refetch(self, global_chat_crud, sample_user_id):
+        import store.cache as cache
+        chat_id = global_chat_crud.create_global_chat(sample_user_id)["chat_id"]
+        cache.pin_study_to_chat(chat_id, cache.SCOPE_GLOBAL, 11043, "Wild mouse gut")
+
+        # Re-fetch exactly as the frontend does on a cold load.
+        reloaded = global_chat_crud.get_global_chat(sample_user_id, chat_id)
+        assert reloaded["pinned_studies"] == [11043]
+        assert reloaded["pinned_study_meta"] == [
+            {"study_id": 11043, "study_title": "Wild mouse gut"}
+        ]
+
+    def test_project_chat_pins_survive_refetch(self, crud, sample_user_id):
+        import store.cache as cache
+        project_id = crud.create_project(sample_user_id, "Pin Project")["project_id"]
+        chat_id = crud.create_chat(project_id, sample_user_id)["chat_id"]
+        cache.pin_study_to_chat(chat_id, cache.SCOPE_PROJECT, 101, "Soil survey")
+
+        reloaded = crud.get_chat(project_id, sample_user_id, chat_id)
+        assert reloaded["pinned_studies"] == [101]
+        assert reloaded["pinned_study_meta"][0]["study_title"] == "Soil survey"
+
+    def test_unpin_clears_both_views(self, global_chat_crud, sample_user_id):
+        import store.cache as cache
+        chat_id = global_chat_crud.create_global_chat(sample_user_id)["chat_id"]
+        cache.pin_study_to_chat(chat_id, cache.SCOPE_GLOBAL, 11043, "Wild mouse gut")
+        cache.unpin_study_from_chat(chat_id, cache.SCOPE_GLOBAL, 11043)
+
+        reloaded = global_chat_crud.get_global_chat(sample_user_id, chat_id)
+        assert reloaded["pinned_studies"] == []
+        assert reloaded["pinned_study_meta"] == []

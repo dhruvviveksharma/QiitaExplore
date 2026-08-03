@@ -926,6 +926,7 @@ input, textarea { font-family: var(--sans); }
   background: var(--sidebar-bg);
   border-radius: 12px;
   color: var(--text-2);
+  cursor: pointer;
 }
 .composer-pin-x {
   border: none;

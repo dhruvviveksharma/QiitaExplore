@@ -186,8 +186,28 @@ def _load_pinned_studies(conn, chat_id: str, scope: str):
     return [int(r["study_id"]) for r in rows]
 
 
-def pin_study_to_chat(chat_id: str, scope: str, study_id: int):
-    """Attach a study to a chat. Caps at PINNED_STUDIES_PER_CHAT_CAP."""
+def _load_pinned_study_meta(conn, chat_id: str, scope: str):
+    """Same rows as _load_pinned_studies, but carrying the denormalized title.
+
+    `study_title` is NULL for rows pinned before the column existed; callers
+    fall back to the bare study ID.
+    """
+    rows = conn.execute(
+        """
+        SELECT study_id, study_title FROM chat_pinned_studies
+        WHERE chat_id = ? AND chat_scope = ? ORDER BY pinned_at ASC
+        """,
+        (chat_id, _normalize_scope(scope)),
+    ).fetchall()
+    return [{"study_id": int(r["study_id"]), "study_title": r["study_title"]} for r in rows]
+
+
+def pin_study_to_chat(chat_id: str, scope: str, study_id: int, study_title: str = None):
+    """Attach a study to a chat. Caps at PINNED_STUDIES_PER_CHAT_CAP.
+
+    `study_title` is denormalized here so the composer chip can name the study
+    without a Postgres round-trip every time a chat is opened.
+    """
     scope = _normalize_scope(scope)
     with _conn() as conn:
         existing = _load_pinned_studies(conn, chat_id, scope)
@@ -197,10 +217,10 @@ def pin_study_to_chat(chat_id: str, scope: str, study_id: int):
             return False
         conn.execute(
             """
-            INSERT OR IGNORE INTO chat_pinned_studies(chat_id, chat_scope, study_id, pinned_at)
-            VALUES(?, ?, ?, ?)
+            INSERT OR IGNORE INTO chat_pinned_studies(chat_id, chat_scope, study_id, study_title, pinned_at)
+            VALUES(?, ?, ?, ?, ?)
             """,
-            (chat_id, scope, int(study_id), _now()),
+            (chat_id, scope, int(study_id), study_title, _now()),
         )
         conn.commit()
     return True
@@ -219,3 +239,8 @@ def unpin_study_from_chat(chat_id: str, scope: str, study_id: int):
 def list_pinned_studies(chat_id: str, scope: str):
     with _conn() as conn:
         return _load_pinned_studies(conn, chat_id, scope)
+
+
+def list_pinned_study_meta(chat_id: str, scope: str):
+    with _conn() as conn:
+        return _load_pinned_study_meta(conn, chat_id, scope)

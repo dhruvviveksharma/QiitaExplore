@@ -57,4 +57,5 @@ from .cache import (  # noqa: F401
     pin_study_to_chat,
     unpin_study_from_chat,
     list_pinned_studies,
+    list_pinned_study_meta,
 )

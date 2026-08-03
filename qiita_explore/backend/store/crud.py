@@ -282,7 +282,7 @@ def list_chats(project_id: str, user_id: str, limit: int = 200):
 
 
 def get_chat(project_id: str, user_id: str, chat_id: str):
-    from store.cache import SCOPE_PROJECT, _load_pinned_studies
+    from store.cache import SCOPE_PROJECT, _load_pinned_studies, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
@@ -298,6 +298,7 @@ def get_chat(project_id: str, user_id: str, chat_id: str):
         chat = _as_dict(row)
         chat["messages"] = _load_project_chat_messages(conn, chat_id)
         chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_PROJECT)
+        chat["pinned_study_meta"] = _load_pinned_study_meta(conn, chat_id, SCOPE_PROJECT)
         total = conn.execute(
             "SELECT COUNT(1) AS c FROM project_studies WHERE project_id = ?",
             (project_id,),

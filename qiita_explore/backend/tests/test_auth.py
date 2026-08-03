@@ -2,7 +2,6 @@
 legacy-claim, and full Flask route behavior with a mocked Qiita whoami (no
 network dependency — see test_auth_smoke.py for the real-control-plane check).
 """
-import importlib.metadata
 import os
 import sys
 import time
@@ -11,49 +10,9 @@ from datetime import datetime, timedelta
 import pytest
 from cryptography.fernet import Fernet
 
+from .conftest import stub_qiita_db_and_core
+
 # ── module-scoped Flask app wired to its own isolated SQLite file ───────────
-
-_FAKE_QIITA_DB_STUBBED = False
-
-
-def _stub_qiita_db_and_core():
-    """qiita_db/qiita_core are vendored classic-Qiita packages this sandbox
-    can't resolve (unrelated to auth — see qiita_fetch.py's TRN usage). Stub
-    them so `import run` succeeds; auth tests never touch these code paths."""
-    global _FAKE_QIITA_DB_STUBBED
-    if _FAKE_QIITA_DB_STUBBED:
-        return
-    import types
-
-    class _FakeTRN:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def add(self, *a, **k): pass
-        def execute_fetchindex(self): return []
-
-    fake_sql_connection = types.ModuleType("qiita_db.sql_connection")
-    fake_sql_connection.TRN = _FakeTRN()
-    fake_qiita_db = types.ModuleType("qiita_db")
-    fake_qiita_db.sql_connection = fake_sql_connection
-    sys.modules["qiita_db"] = fake_qiita_db
-    sys.modules["qiita_db.sql_connection"] = fake_sql_connection
-
-    class _FakeConfig:
-        pass
-
-    fake_qiita_settings = types.ModuleType("qiita_core.qiita_settings")
-    fake_qiita_settings.qiita_config = _FakeConfig()
-    fake_qiita_core = types.ModuleType("qiita_core")
-    fake_qiita_core.qiita_settings = fake_qiita_settings
-    sys.modules["qiita_core"] = fake_qiita_core
-    sys.modules["qiita_core.qiita_settings"] = fake_qiita_settings
-
-    # Flask 2.2.5's test client reads werkzeug.__version__, removed upstream.
-    import werkzeug
-    if not hasattr(werkzeug, "__version__"):
-        werkzeug.__version__ = importlib.metadata.version("werkzeug")
-
-    _FAKE_QIITA_DB_STUBBED = True
 
 
 @pytest.fixture(scope="module")
@@ -70,7 +29,7 @@ def _app(tmp_path_factory):
         if name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.") or "sql_store" in name:
             del sys.modules[name]
 
-    _stub_qiita_db_and_core()
+    stub_qiita_db_and_core()
 
     import run
     # config.py freezes these at first import of config, which may have

@@ -1345,7 +1345,47 @@ not just green-via-skip.
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-07-18*
+## TKT-047: Unit Tests Fail Unless `QIITA_EXPLORE_ALLOWED_ORIGINS` Is Manually Cleared
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`qiita_explore/backend/tests/test_auth.py` fails 15 of its 41 tests on a normal developer
+checkout, with every failure reading `{'error': 'origin not allowed'}` / `403`. Nothing is
+wrong with the code — it's environmental:
+
+- `config.py:6` calls `load_dotenv()`, which picks up `qiita_explore/.env`.
+- That file sets `QIITA_EXPLORE_ALLOWED_ORIGINS` to the dev origins
+  (`http://127.0.0.1:5503`, `http://localhost:5503`, `http://127.0.0.1:3000`,
+  `http://localhost:3000`).
+- `_origin_allowed()` (`routes/auth_routes.py:39`) therefore requires a matching `Origin`
+  header, and Flask's test client sends none → every `POST /api/auth/connect` 403s, which
+  cascades through `TestAuthRoutes`, `TestPeriodicReverify` and `TestCrossUserIsolation`.
+
+`QIITA_EXPLORE_ALLOWED_ORIGINS="" pytest tests/` passes 103/103. The failure mode is
+confusing (it looks like an auth regression), and it silently punishes anyone who runs the
+suite the obvious way.
+
+### Plan
+
+- Pin the origin config inside the `_app` fixture the same way it already pins
+  `PAT_ENCRYPTION_KEY` / `SESSION_COOKIE_SECURE` (`tests/test_auth.py:81-83`):
+  `config.ALLOWED_ORIGINS = []`. That makes the suite independent of whatever `.env`
+  happens to be on the machine.
+- Consider whether `load_dotenv()` should be skipped under pytest entirely — several other
+  config values are equally environment-sensitive.
+
+### Files
+
+- `qiita_explore/backend/tests/test_auth.py` (`_app` fixture)
+- `qiita_explore/backend/config.py:6, 104-107`
+- `qiita_explore/.env` (untracked, local)
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-08-03*
 
 ---
 

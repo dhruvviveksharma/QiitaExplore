@@ -12,8 +12,7 @@ from store import (
     get_chat,
     get_project,
     get_project_studies_only,
-    list_pinned_studies,
-    unpin_study_from_chat,
+    list_pinned_study_meta,
 )
 from helpers.llm_helpers import (
     _sse,
@@ -25,10 +24,12 @@ from helpers.llm_helpers import (
 from helpers.qiita_fetch import (
     _build_pinned_reports_context,
     _detect_mentioned_study_ids,
-    _pin_studies_validated,
 )
 from helpers.pin_flow import stream_pin_flow
-from helpers.request_utils import parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report
+from helpers.request_utils import (
+    parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
+    pin_toggle_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,8 @@ def api_chat_message_stream(project_id, chat_id):
                     model=model,
                     persist=lambda ac: append_chat_messages(project_id, user_id, chat_id, user_content, ac),
                 )
-                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned})
+                yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned,
+                                    "pinned_study_meta": list_pinned_study_meta(chat_id, SCOPE_PROJECT)})
                 return
             if report_study_id is not None:
                 assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
@@ -138,17 +140,13 @@ def api_chat_message_stream(project_id, chat_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_project_chat_study(project_id, chat_id, study_id):
-    chat = get_chat(project_id, g.user_id, chat_id)
-    if not chat:
+    if not get_chat(project_id, g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    _, _, _, all_pinned = _pin_studies_validated(chat_id, SCOPE_PROJECT, [study_id])
-    return jsonify({'ok': True, 'pinned_studies': all_pinned})
+    return pin_toggle_response(chat_id, SCOPE_PROJECT, study_id, pin=True)
 
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_project_chat_study(project_id, chat_id, study_id):
-    chat = get_chat(project_id, g.user_id, chat_id)
-    if not chat:
+    if not get_chat(project_id, g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    unpin_study_from_chat(chat_id, SCOPE_PROJECT, study_id)
-    return jsonify({'ok': True, 'pinned_studies': list_pinned_studies(chat_id, SCOPE_PROJECT)})
+    return pin_toggle_response(chat_id, SCOPE_PROJECT, study_id, pin=False)

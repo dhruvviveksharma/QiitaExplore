@@ -501,12 +501,20 @@ function renderApp(s) {
           {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
             <div className="composer-pins">
               <span className="composer-pins-label">Pinned:</span>
-              {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => (
-                <span key={sid} className="composer-pin-chip">
-                  Study {sid}
-                  <button className="composer-pin-x" title="Unpin" onClick={() => unpinStudy(view.chatId, sid)}>×</button>
-                </span>
-              ))}
+              {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
+                // Titles come from pinned_study_meta; rows pinned before that
+                // column existed have none, so fall back to the bare ID.
+                const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
+                  .find(p => p.study_id === sid)?.study_title;
+                return (
+                  <span key={sid} className="composer-pin-chip" title={title || `Study ${sid}`}
+                    onClick={() => openStudyModal({ study_id: sid, study_title: title })}>
+                    {title ? `${sid} · ${title.length > 38 ? title.slice(0, 38) + '…' : title}` : `Study ${sid}`}
+                    <button className="composer-pin-x" title="Unpin"
+                      onClick={e => { e.stopPropagation(); unpinStudy(view.chatId, sid); }}>×</button>
+                  </span>
+                );
+              })}
               {(() => {
                 const cur    = chatCache[view.chatId] || {};
                 const pinned = (cur.pinnedStudies || []).length;

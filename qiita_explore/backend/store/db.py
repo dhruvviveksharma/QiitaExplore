@@ -272,6 +272,7 @@ def _create_schema(conn):
         ("merge_workspace_studies", "chosen_artifact_ids", "TEXT"),
         ("project_chat_messages", "ui_payload", "TEXT"),
         ("global_chat_messages", "ui_payload", "TEXT"),
+        ("chat_pinned_studies", "study_title", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")

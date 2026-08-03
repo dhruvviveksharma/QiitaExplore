@@ -133,6 +133,9 @@ def _qiita_fetch(sql, params=(), default=None):
         rows = pooled_fetchall(sql, list(params))
         return rows if rows else (default if default is not None else [])
     except Exception:
+        # Never silently: a Postgres failure here is otherwise indistinguishable
+        # from "no rows", which is how a broken pin path stayed invisible.
+        logger.exception("_qiita_fetch failed: %s", " ".join(sql.split())[:160])
         return default if default is not None else []
 
 
@@ -353,9 +356,10 @@ def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):
     for sid in deduped:
         header = _fetch_study_header_cached(sid)
         if header is None or ((header.get("num_samples") or 0) == 0 and (header.get("num_preps") or 0) == 0):
+            logger.warning("pin rejected study=%s: header=%s", sid, "missing" if header is None else "no samples/preps")
             invalid.append(sid)
         else:
-            ok = pin_study_to_chat(chat_id, scope, sid)
+            ok = pin_study_to_chat(chat_id, scope, sid, header.get("study_title"))
             (pinned_now if ok else rejected).append(sid)
     all_pinned = list_pinned_studies(chat_id, scope)
     return pinned_now, invalid, rejected, all_pinned

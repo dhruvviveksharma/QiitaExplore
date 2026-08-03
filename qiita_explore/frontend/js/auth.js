@@ -135,6 +135,7 @@ function LegacyClaimBanner({ onDone }) {
   const [counts,  setCounts]  = useState(null);
   const [visible, setVisible] = useState(true);
   const [busy,    setBusy]    = useState(false);
+  const [error,   setError]   = useState('');
 
   useEffect(() => {
     apiFetch('/auth/legacy-default')
@@ -143,14 +144,21 @@ function LegacyClaimBanner({ onDone }) {
       .catch(() => setVisible(false));
   }, []);
 
+  // Only dismiss the banner on a confirmed claim. Hiding it unconditionally
+  // reported a 403/409 as success and left the data stranded under 'default'
+  // with no way back to the banner short of a reload.
   const claim = async () => {
-    setBusy(true);
+    setBusy(true); setError('');
     try {
-      await apiPost('/auth/claim-default', {});
-    } finally {
-      setBusy(false);
+      const res = await apiPost('/auth/claim-default', {});
+      const d   = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || `Claim failed (${res.status})`);
       setVisible(false);
       onDone();
+    } catch (e) {
+      setError(e.message || 'Could not claim your earlier data.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -161,6 +169,7 @@ function LegacyClaimBanner({ onDone }) {
   return (
     <div className="auth-claim-banner">
       <span>Found {total} existing item{total === 1 ? '' : 's'} from before login was added. Claim {total === 1 ? 'it' : 'them'} as yours?</span>
+      {error && <span className="auth-error">{error}</span>}
       <button className="merge-btn-ghost" onClick={() => setVisible(false)}>Not now</button>
       <button className="merge-btn-primary" disabled={busy} onClick={claim}>
         {busy ? 'Claiming…' : 'Claim'}
