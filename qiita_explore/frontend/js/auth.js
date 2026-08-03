@@ -178,7 +178,7 @@ function LegacyClaimBanner({ onDone }) {
   );
 }
 
-function AccountBar({ identity, onLogout }) {
+function AccountBar({ identity, onLogout, theme, onToggleTheme }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const label = identity.email || identity.user_id;
@@ -205,7 +205,11 @@ function AccountBar({ identity, onLogout }) {
           <div className="auth-account-menu-id">
             <span className="auth-account-email">{label}</span>
           </div>
-          <button className="auth-account-menu-out" onClick={onLogout}>Log out</button>
+          <button className="auth-account-menu-item" onClick={onToggleTheme}>
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+          </button>
+          <button className="auth-account-menu-item" onClick={onLogout}>Log out</button>
         </div>
       )}
     </div>

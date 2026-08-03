@@ -2,9 +2,10 @@ function AuthenticatedApp({ identity, onLogout, onClaimDone }) {
   const state = useAppState();
   return (
     <>
-      <AccountBar identity={identity} onLogout={onLogout} />
       <LegacyClaimBanner onDone={onClaimDone} />
-      {renderApp(state)}
+      {/* AccountBar renders inside the topbar (see app_render.js) so flex
+          centers it, rather than floating over the page on fixed coordinates. */}
+      {renderApp(state, { identity, onLogout })}
     </>
   );
 }

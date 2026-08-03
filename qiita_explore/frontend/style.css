@@ -329,7 +329,9 @@ input, textarea { font-family: var(--sans); }
   gap: 10px;
   flex-shrink: 0;
 }
-.topbar.has-sources-bar { border-radius: var(--radius-m) var(--radius-m) 0 0; }
+/* With a pinned bar below, the two stack into one shape: square the join and
+   drop the border that would otherwise draw a line across the middle. */
+.topbar.has-sources-bar { border-radius: var(--radius-m) var(--radius-m) 0 0; border-bottom: none; }
 .topbar-title { font-size: 14px; font-weight: 500; color: var(--text); }
 .topbar-nav {
   padding: 4px 12px; font-size: 13px; font-weight: 500;
@@ -344,15 +346,6 @@ input, textarea { font-family: var(--sans); }
   border-radius: 999px; padding: 2px 8px;
 }
 .topbar-spacer { flex: 1; }
-.theme-toggle {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 15px;
-  color: var(--text-2);
-  transition: color var(--t), background var(--t);
-}
-.theme-toggle:hover { background: var(--sidebar-bg); color: var(--text); }
 
 /* Content scroll area */
 .content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; display: flex; flex-direction: column; }
@@ -364,6 +357,11 @@ input, textarea { font-family: var(--sans); }
   align-items: center;
   gap: 6px;
   margin: 0 12px;
+  /* Side borders continue .topbar's, and under border-box they inset this fill
+     by the same 1px the topbar's border insets its own — without them the
+     orange overhangs the white by 1px on each side. */
+  border: 1px solid var(--border-soft);
+  border-top: none;
   /* 16px left matches .topbar's padding so the label lines up with the title
      above it; no mask, so the fill reaches its rounded bottom edge instead of
      dissolving halfway down. */
@@ -1798,11 +1796,11 @@ input, textarea { font-family: var(--sans); }
 .auth-error { color: #b02a2a; font-size: 0.8rem; }
 .dark .auth-error { color: #e08080; }
 
-.auth-account-bar {
-  /* top:15px centers the 30px avatar on the topbar row (margin 8 + height 44
-     → row center 30 → 30 − 15) rather than sitting 3px high */
-  position: fixed; top: 15px; right: 16px; z-index: 150;
-}
+/* A flex child of .topbar — its align-items:center does the vertical centering
+   and its padding does the spacing, so there are no coordinates to re-derive
+   when the topbar's height or margin changes. Positioned only so the dropdown
+   below can anchor to it. */
+.auth-account-bar { position: relative; z-index: 150; flex-shrink: 0; }
 .auth-avatar {
   width: 30px; height: 30px; border-radius: 50%;
   background: var(--accent); color: #fff;
@@ -1813,7 +1811,9 @@ input, textarea { font-family: var(--sans); }
 }
 .auth-avatar:hover { background: var(--accent-h); }
 .auth-account-menu {
-  position: absolute; top: 38px; right: 0;
+  /* No longer escapes clipping via position:fixed, so it needs its own z-index
+     to clear the pinned bar sitting directly beneath the topbar. */
+  position: absolute; top: 38px; right: 0; z-index: 150;
   width: 224px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-l);
@@ -1826,11 +1826,12 @@ input, textarea { font-family: var(--sans); }
 .auth-account-email {
   font-size: 12.5px; color: var(--text); font-weight: 500; word-break: break-all;
 }
-.auth-account-menu-out {
+.auth-account-menu-item {
   width: 100%; text-align: left; padding: 9px 14px;
   font-size: 12.5px; color: var(--text-2);
+  display: flex; align-items: center; gap: 9px;
 }
-.auth-account-menu-out:hover { background: var(--accent-soft); color: var(--accent-h); }
+.auth-account-menu-item:hover { background: var(--accent-soft); color: var(--accent-h); }
 
 .auth-claim-banner {
   position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 150;

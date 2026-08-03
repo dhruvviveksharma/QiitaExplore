@@ -1,4 +1,4 @@
-function renderApp(s) {
+function renderApp(s, account) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
     setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
@@ -202,11 +202,11 @@ function renderApp(s) {
               <MergeIcon /> Merge
             </button>
           )}
-          <button className="theme-toggle"
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </button>
+          <AccountBar
+            identity={account.identity}
+            onLogout={account.onLogout}
+            theme={theme}
+            onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
         </div>
 
         <div className={`content${showMergePanel ? ' merge-open' : ''}`}>
