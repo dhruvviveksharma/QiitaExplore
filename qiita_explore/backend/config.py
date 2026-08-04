@@ -103,8 +103,12 @@ QIITA_LOGINROCKET_URL = os.getenv("QIITA_LOGINROCKET_URL", "").rstrip("/")
 PAT_ENCRYPTION_KEY = os.getenv("QIITA_EXPLORE_PAT_ENCRYPTION_KEY")
 
 AUTH_PAT_REVERIFY_INTERVAL_SECONDS = int(os.getenv("AUTH_PAT_REVERIFY_INTERVAL_SECONDS", str(15 * 60)))
-AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SECONDS", str(30 * 24 * 3600)))
-AUTH_SESSION_IDLE_TTL_SECONDS      = int(os.getenv("AUTH_SESSION_IDLE_TTL_SECONDS", str(7 * 24 * 3600)))
+
+# A single hard ceiling, and no idle timeout: a session ends when it hits this,
+# when the user logs out, or when Qiita gives a definitive answer that the PAT is
+# no longer valid — never because the app sat unused for a while. An idle timeout
+# under a 24-hour ceiling would only reintroduce the mid-session logout.
+AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SECONDS", str(24 * 3600)))
 
 # Comma-separated exact origins allowed for credentialed cross-origin dev
 # requests (e.g. frontend on a different port than the backend). Leave unset

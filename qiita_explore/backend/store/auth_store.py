@@ -93,8 +93,12 @@ def create_session(*, user_id: str, pat_encrypted: str, source: str,
 
 
 def get_session_by_token(raw_token: str):
-    """Return the session row for a raw token, or None if missing, revoked,
-    idle-expired, or past its absolute expiry."""
+    """Return the session row for a raw token, or None if missing, revoked, or
+    past its absolute expiry.
+
+    There is deliberately no idle check: sitting unused is not a reason to sign
+    someone out, and under a 24-hour ceiling it only cost mid-session logouts.
+    """
     session_hash = _hash_token(raw_token)
     with _conn() as conn:
         row = conn.execute(
@@ -106,22 +110,28 @@ def get_session_by_token(raw_token: str):
     if sess.get("revoked_at"):
         return None
 
-    now = datetime.utcnow()
     try:
-        if _parse_iso(sess["absolute_expires_at"]) < now:
-            return None
-        idle_deadline = _parse_iso(sess["last_seen_at"]) + timedelta(
-            seconds=config.AUTH_SESSION_IDLE_TTL_SECONDS
-        )
-        if idle_deadline < now:
+        if _parse_iso(sess["absolute_expires_at"]) < datetime.utcnow():
             return None
     except (KeyError, ValueError):
         return None
     return sess
 
 
-def touch_session(session_hash: str):
-    """Update last_seen_at only — must never extend absolute_expires_at."""
+# last_seen_at is informational now that nothing expires on it, so it is not
+# worth an UPDATE per request — that was 8 concurrent writers against one WAL
+# file under `gunicorn -w 4 --threads 2`.
+_TOUCH_THROTTLE_SECONDS = 300
+
+
+def touch_session(session_hash: str, last_seen_at: str = None):
+    """Refresh last_seen_at if it is stale — never extends absolute_expires_at."""
+    if last_seen_at:
+        try:
+            if (datetime.utcnow() - _parse_iso(last_seen_at)).total_seconds() < _TOUCH_THROTTLE_SECONDS:
+                return
+        except ValueError:
+            pass
     with _conn() as conn:
         conn.execute(
             "UPDATE auth_sessions SET last_seen_at = ? WHERE session_hash = ?",

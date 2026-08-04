@@ -90,7 +90,7 @@ def register_auth_middleware(app):
                 return None
             mark_session_verified(row["session_hash"])
 
-        touch_session(row["session_hash"])
+        touch_session(row["session_hash"], row["last_seen_at"])
         g.user_id = row["user_id"]
         g.session_row = row
         return None

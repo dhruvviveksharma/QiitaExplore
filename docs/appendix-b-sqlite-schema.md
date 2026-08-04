@@ -500,13 +500,14 @@ Server-side sessions. Each row holds a Fernet-encrypted Qiita Personal Access To
 
 **Writes owned by:** `backend/store/auth_store.py` — `create_session`, `touch_session`, `mark_session_verified`, `revoke_session`, `purge_expired_sessions`.
 
-**Lifecycle — three independent expiry mechanisms:**
+**Lifecycle — two independent expiry mechanisms:**
 
-1. **Absolute** — `absolute_expires_at`, set at creation to now + `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` (default 30 days). `touch_session` carries an explicit comment that it must never extend this.
-2. **Idle** — `last_seen_at` + `AUTH_SESSION_IDLE_TTL_SECONDS` (default 7 days), computed on read. `touch_session` slides this window forward on each request.
-3. **Revocation** — `revoked_at` set by logout.
+1. **Absolute** — `absolute_expires_at`, set at creation to now + `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` (default 24 hours). `touch_session` carries an explicit comment that it must never extend this.
+2. **Revocation** — `revoked_at`, set by logout or by the middleware when Qiita gives a *definitive* answer that the PAT is no longer a valid identity (a 401, or a 200 whose `kind` is not `human`). Ambiguous upstream failures — 403, redirects, 5xx, timeouts — are transient and must never revoke.
 
-All three are evaluated read-side in `get_session_by_token`, which returns `None` for any of them. Notably, a malformed or missing timestamp also returns `None` (`except (KeyError, ValueError)`) — the auth path fails closed, unlike the study cache's TTL check, which fails open.
+There is deliberately **no idle expiry**. It previously logged users out mid-use, and under a 24-hour ceiling it bought nothing. `last_seen_at` survives as an informational column only, and `touch_session` throttles its writes (~5 min) rather than issuing an `UPDATE` on every request.
+
+Both mechanisms are evaluated read-side in `get_session_by_token`, which returns `None` for either. Notably, a malformed or missing timestamp also returns `None` (`except (KeyError, ValueError)`) — the auth path fails closed, unlike the study cache's TTL check, which fails open.
 
 `purge_expired_sessions` hard-deletes rows past absolute expiry but **preserves revoked rows** (`AND revoked_at IS NULL`) so logouts remain auditable.
 

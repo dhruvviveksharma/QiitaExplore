@@ -51,7 +51,6 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 <a id="env-QIITA_EXPLORE_PAT_ENCRYPTION_KEY"></a>
 <a id="env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS"></a>
 <a id="env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS"></a>
-<a id="env-AUTH_SESSION_IDLE_TTL_SECONDS"></a>
 <a id="env-QIITA_EXPLORE_COOKIE_SECURE"></a>
 <a id="env-QIITA_EXPLORE_ALLOWED_ORIGINS"></a>
 <a id="env-QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX"></a>
@@ -60,8 +59,7 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 |---|---|---|---|---|
 | `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` | **none — no fallback** | `backend/config.py` → `backend/helpers/pat_crypto.py :: _get_fernet` | Fernet key encrypting PATs at rest in `auth_sessions.pat_encrypted`. **Required.** | Yes |
 | `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | `900` (computed as `15 * 60`) | `backend/helpers/auth_middleware.py` | How stale a session's `last_verified_at` may get before the middleware re-calls Qiita `whoami` to confirm the PAT is still valid. | Yes |
-| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `2592000` (computed as `30 * 24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime; also the session cookie's `max_age`. | Yes |
-| `AUTH_SESSION_IDLE_TTL_SECONDS` | `604800` (computed as `7 * 24 * 3600`) | `backend/store/auth_store.py` | Idle expiry — a session unused for this long is dead even if inside the absolute TTL. | Yes |
+| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `86400` (computed as `24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime; also the session cookie's `max_age`. The only clock that ends a session — there is deliberately no idle timeout. | Yes |
 | `QIITA_EXPLORE_COOKIE_SECURE` | `true` | `backend/routes/auth_routes.py :: _cookie_kwargs` | `Secure` flag on the session cookie. Anything in `false` / `0` / `no` (case-insensitive) disables it. | Yes |
 | `QIITA_EXPLORE_ALLOWED_ORIGINS` | `""` → empty list | `backend/run.py` (Flask-CORS), `backend/routes/auth_routes.py` | Comma-separated **exact** origins allowed to make credentialed cross-origin requests. Empty means no CORS, which is correct for a same-origin deployment behind nginx. | Yes |
 | `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX` | unset → `None` | `backend/store/legacy_claim.py` | The one Qiita `principal_idx` permitted to claim legacy `'default'`-owned data via `POST /api/auth/claim-default`. Unset disables claiming entirely. Non-numeric values are silently treated as unset (`_claimant_raw.isdigit()` guard). | Yes |
@@ -195,7 +193,6 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`API_KEY`](#env-API_KEY) | LLM | *(none)* |
 | [`AUTH_PAT_REVERIFY_INTERVAL_SECONDS`](#env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS) | Auth | `900` |
 | [`AUTH_SESSION_ABSOLUTE_TTL_SECONDS`](#env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS) | Auth | `2592000` |
-| [`AUTH_SESSION_IDLE_TTL_SECONDS`](#env-AUTH_SESSION_IDLE_TTL_SECONDS) | Auth | `604800` |
 | [`BARNACLE_URL`](#env-BARNACLE_URL) | Tests | `http://localhost:5001` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_BROAD`](#env-GLOBAL_SEARCH_SQL_LIMIT_BROAD) | Search | `120` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_NARROW`](#env-GLOBAL_SEARCH_SQL_LIMIT_NARROW) | Search | `50` |

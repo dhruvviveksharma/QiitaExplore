@@ -44,6 +44,18 @@ function useAuth() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Any 401 from any endpoint means the session is gone — drop straight to the
+  // sign-in screen. Without this the app stays in 'authenticated' and every pane
+  // silently renders empty, which is indistinguishable from losing your data.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      clearCsrfToken();
+      setIdentity(null);
+      setStatus('anonymous');
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await apiPost('/auth/logout', {});

@@ -34,12 +34,16 @@ def whoami(pat: str) -> WhoAmIResult:
 
     Returns:
       - ok=True, identity=<dict>            for a valid human principal
-      - ok=False, transient_error=False     for 401 / anonymous / service kind
-                                             (the PAT is definitively bad —
-                                             callers should fail closed)
-      - ok=False, transient_error=True      for timeout/connect-error/5xx
-                                             (callers should give a bounded
-                                             availability grace, not log out)
+      - ok=False, transient_error=False     ONLY for 401, or a 200 whose kind is
+                                             anonymous/service — the two answers
+                                             that definitively say this PAT is
+                                             not a valid identity. Callers may
+                                             revoke on these.
+      - ok=False, transient_error=True      for everything else: timeouts,
+                                             connect errors, 5xx, and any other
+                                             unexpected status. Callers give a
+                                             bounded availability grace and must
+                                             NOT log the user out.
     """
     url = f"{config.QIITA_CONTROL_PLANE_URL}/api/v1/auth/whoami"
     try:
@@ -58,8 +62,11 @@ def whoami(pat: str) -> WhoAmIResult:
         logger.warning("whoami upstream 5xx: %s", resp.status_code)
         return WhoAmIResult(ok=False, transient_error=True)
     if resp.status_code != 200:
-        logger.warning("whoami unexpected status: %s", resp.status_code)
-        return WhoAmIResult(ok=False, transient_error=False)
+        # Transient, NOT definitive. Only a 401 means "this PAT is bad"; a 403,
+        # a redirect, or a proxy error says nothing about the credential, and
+        # treating those as definitive silently destroyed live sessions.
+        logger.warning("whoami unexpected status: %s (treating as transient)", resp.status_code)
+        return WhoAmIResult(ok=False, transient_error=True)
 
     try:
         body = resp.json()

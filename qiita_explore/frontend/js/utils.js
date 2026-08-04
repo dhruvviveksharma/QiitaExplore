@@ -38,13 +38,26 @@ let _csrfToken = null;
 const setCsrfToken   = (token) => { _csrfToken = token || null; };
 const clearCsrfToken = () => { _csrfToken = null; };
 
-const apiFetch = (path, opts = {}) => {
+// A dead session must not look like empty data. Handled here rather than at each
+// call site: every request goes through apiFetch, and the callers that check
+// `res.ok` at all mostly do nothing on failure, so a 401 used to render as a
+// blank pane. auth.js registers the handler; see useAuth.
+let _onUnauthorized = null;
+const setUnauthorizedHandler = (fn) => { _onUnauthorized = fn; };
+
+const apiFetch = async (path, opts = {}) => {
   const method  = (opts.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (_csrfToken && _STATE_CHANGING_METHODS.has(method)) {
     headers['X-CSRF-Token'] = _csrfToken;
   }
-  return fetch(`${API}${path}`, { ...opts, headers, credentials: 'include' });
+  const res = await fetch(`${API}${path}`, { ...opts, headers, credentials: 'include' });
+  // /auth/connect legitimately 401s on a bad token — routing that through the
+  // handler would fight the sign-in screen it is trying to render.
+  if (res.status === 401 && !path.startsWith('/auth/') && _onUnauthorized) {
+    _onUnauthorized();
+  }
+  return res;
 };
 const apiPost  = (path, body) => apiFetch(path, { method: 'POST',   body: JSON.stringify(body) });
 const apiPatch = (path, body) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body) });

@@ -135,14 +135,12 @@ stateDiagram-v2
 
     Active --> Reverifying: last_verified_at > 15 min
     Reverifying --> Active: whoami ok
-    Reverifying --> Active: transient error<br/>(503 to client, session kept)
-    Reverifying --> Revoked: 401 / principal mismatch / decrypt failure
+    Reverifying --> Active: transient error<br/>(403/5xx/timeout — 503 to client, session kept)
+    Reverifying --> Revoked: 401 / non-human kind<br/>principal mismatch / decrypt failure
 
-    Active --> IdleExpired: last_seen_at + 7d elapsed
-    Active --> AbsoluteExpired: created_at + 30d elapsed
+    Active --> AbsoluteExpired: created_at + 24h elapsed
     Active --> Revoked: POST /auth/logout
 
-    IdleExpired --> [*]
     AbsoluteExpired --> [*]
     Revoked --> [*]
 ```
@@ -150,8 +148,9 @@ stateDiagram-v2
 | Bound | Default | Variable | Extended by activity? |
 |---|---|---|---|
 | PAT re-verification | 15 min | `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | n/a |
-| Idle expiry | 7 days | `AUTH_SESSION_IDLE_TTL_SECONDS` | **Yes** — `touch_session` |
-| Absolute expiry | 30 days | `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | **No** — hard ceiling |
+| Absolute expiry | 24 hours | `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | **No** — hard ceiling |
+
+There is no idle expiry: a session ends at the absolute ceiling, at logout, or when Qiita definitively rejects the PAT — never because the app sat unused. Re-verification only revokes on a **401** or a `kind` that isn't `human`; every other upstream outcome is transient and yields a `503` with the session intact.
 
 > **Known gap.** `backend/store/auth_store.py :: purge_expired_sessions` hard-deletes rows past absolute expiry (deliberately keeping revoked rows for audit). **It is never called** — no route, no scheduler, no startup hook invokes it. Expired session rows therefore accumulate indefinitely. This is a storage-growth issue rather than a security one: `get_session_by_token` correctly rejects expired sessions regardless of whether their rows still exist. Worth wiring up, and worth a ticket.
 

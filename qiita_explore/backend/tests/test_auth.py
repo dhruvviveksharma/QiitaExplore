@@ -141,6 +141,19 @@ class TestQiitaClientWhoami:
         assert result.ok is False
         assert result.transient_error is False
 
+    @pytest.mark.parametrize("status", [403, 404, 302, 400, 429])
+    def test_ambiguous_status_is_transient(self, monkeypatch, status):
+        """Only a 401 (or a 200 with a non-human kind) definitively says the PAT
+        is bad. Treating every other status as definitive is what silently
+        destroyed live sessions — a 403 or a proxy redirect says nothing about
+        the credential, so callers must not revoke on it."""
+        import httpx
+        from helpers import qiita_client
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: _FakeHttpxResponse(status, {}))
+        result = qiita_client.whoami("qk_x")
+        assert result.ok is False
+        assert result.transient_error is True, f"{status} must not be treated as a definitive rejection"
+
     def test_5xx_is_transient(self, monkeypatch):
         import httpx
         from helpers import qiita_client
@@ -223,21 +236,41 @@ class TestAuthStore:
         time.sleep(1.2)
         assert get_session_by_token(raw) is None
 
-    def test_idle_expiry_enforced(self, fresh_db, monkeypatch):
-        import config
+    def test_idle_session_still_resolves(self, fresh_db):
+        """Sitting unused is not a reason to sign someone out.
+
+        This is the inverse of the old idle-TTL test: a session untouched for
+        12 hours used to survive, but the 7-day rule it relied on is exactly what
+        logged people out mid-use. Only absolute expiry, revocation, or a
+        definitive Qiita answer may end a session now."""
         from store.auth_store import upsert_user, create_session, get_session_by_token
         from store.db import _conn
-        monkeypatch.setattr(config, "AUTH_SESSION_IDLE_TTL_SECONDS", 1)
         uid = upsert_user(principal_idx=4, email="a@b", system_role="user", scopes=[], profile_complete=True)
         raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
         sess = get_session_by_token(raw)
-        # Simulate last_seen_at 2s in the past without waiting in real time.
-        stale = (datetime.utcnow() - timedelta(seconds=2)).isoformat() + "Z"
+        stale = (datetime.utcnow() - timedelta(hours=12)).isoformat() + "Z"
         with _conn() as conn:
             conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE session_hash = ?",
                          (stale, sess["session_hash"]))
             conn.commit()
-        assert get_session_by_token(raw) is None
+        assert get_session_by_token(raw) is not None
+
+    def test_touch_is_throttled(self, fresh_db):
+        """last_seen_at is informational now, so it must not cost a write per
+        request — that was 8 concurrent writers against one WAL file."""
+        from store.auth_store import upsert_user, create_session, get_session_by_token, touch_session
+        uid = upsert_user(principal_idx=9, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        sess = get_session_by_token(raw)
+
+        # Fresh last_seen_at → no write.
+        touch_session(sess["session_hash"], sess["last_seen_at"])
+        assert get_session_by_token(raw)["last_seen_at"] == sess["last_seen_at"]
+
+        # Stale last_seen_at → write.
+        stale = (datetime.utcnow() - timedelta(hours=1)).isoformat() + "Z"
+        touch_session(sess["session_hash"], stale)
+        assert get_session_by_token(raw)["last_seen_at"] != sess["last_seen_at"]
 
     def test_touch_does_not_extend_absolute_expiry(self, fresh_db, monkeypatch):
         import config

@@ -117,24 +117,28 @@ function useAppState() {
   const hydrateChatCache = async (view, chatId) => {
     if (chatCache[chatId]) return;
     const res = await apiFetch(chatScopeUrl(view, chatId));
-    if (res.ok) {
-      const d = await res.json();
-      const messages = (d.messages || []).map(m => ({
-        ...m,
-        ...(m.ui_payload && { ui: m.ui_payload }),
-        segments: null,
-      }));
-      setChatCache(prev => ({
-        ...prev,
-        [chatId]: {
-          messages,
-          title: d.title,
-          pinnedStudies: d.pinned_studies || [],
-          pinnedStudyMeta: d.pinned_study_meta || [],
-          totalStudiesInProject: d.total_studies_in_project,
-        },
-      }));
+    if (!res.ok) {
+      // A 401 already routed to the sign-in screen via apiFetch; anything else
+      // must say so rather than render as a chat with no messages.
+      if (res.status !== 401) setCompErr(`Couldn't load this chat (${res.status})`);
+      return;
     }
+    const d = await res.json();
+    const messages = (d.messages || []).map(m => ({
+      ...m,
+      ...(m.ui_payload && { ui: m.ui_payload }),
+      segments: null,
+    }));
+    setChatCache(prev => ({
+      ...prev,
+      [chatId]: {
+        messages,
+        title: d.title,
+        pinnedStudies: d.pinned_studies || [],
+        pinnedStudyMeta: d.pinned_study_meta || [],
+        totalStudiesInProject: d.total_studies_in_project,
+      },
+    }));
   };
 
   // ─── project actions ──────────────────────────────────────────────────────────
