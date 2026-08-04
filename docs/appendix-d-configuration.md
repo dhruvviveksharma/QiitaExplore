@@ -126,14 +126,14 @@ Sample search is bounded on three independent axes, and all three must be unders
 
 ### Context budgeting
 
-<a id="env-PINNED_REPORT_CONTEXT_MAX_CHARS"></a>
-<a id="env-PINNED_REPORT_MIN_PER_STUDY"></a>
+<a id="env-PINNED_CHARS_PER_STUDY"></a>
+<a id="env-PINNED_INLINE_STUDIES"></a>
 <a id="env-PROJECT_SUMMARY_GEN_LIMIT"></a>
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
-| `PINNED_REPORT_CONTEXT_MAX_CHARS` | `40000` | `backend/helpers/qiita_fetch.py` | Total character ceiling for the "PINNED STUDY REPORTS" block injected into chat context. The assembled text is truncated to this. | Yes |
-| `PINNED_REPORT_MIN_PER_STUDY` | `2000` | `backend/helpers/qiita_fetch.py` | Floor on each pinned study's share. The per-study allowance is `max(MIN_PER_STUDY, MAX_CHARS // len(study_ids))`, so with many pins the floor wins and the total can exceed the ceiling before the final truncate. | Yes |
+| `PINNED_CHARS_PER_STUDY` | `60000` | `backend/helpers/pinned_context.py` | Characters each inlined pinned study may spend, clamped by `int(context_budget_chars(model) * 0.65) // n_inline` so the constant can't overflow a small context window. The clamp fires only on the 131k-token models. | Yes |
+| `PINNED_INLINE_STUDIES` | `5` | `backend/helpers/pinned_context.py` | How many pinned studies are inlined in full. The rest become one-line manifest entries naming `get_study_report(<id>)` — but only when the caller actually has tools; without them every pinned study is inlined and the budget is split across all of them. | Yes |
 | `PROJECT_SUMMARY_GEN_LIMIT` | `5` | **nothing** | Defined in `backend/config.py` and imported nowhere. Dead configuration. | n/a |
 
 Note that the overall LLM context budget is **not** an environment variable. `backend/config.py :: context_budget_chars` derives it from the selected model's context window — see the model roster.
@@ -192,7 +192,7 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`ANTHROPIC_API_KEY`](#env-ANTHROPIC_API_KEY) | LLM | `""` |
 | [`API_KEY`](#env-API_KEY) | LLM | *(none)* |
 | [`AUTH_PAT_REVERIFY_INTERVAL_SECONDS`](#env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS) | Auth | `900` |
-| [`AUTH_SESSION_ABSOLUTE_TTL_SECONDS`](#env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS) | Auth | `2592000` |
+| [`AUTH_SESSION_ABSOLUTE_TTL_SECONDS`](#env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS) | Auth | `86400` |
 | [`BARNACLE_URL`](#env-BARNACLE_URL) | Tests | `http://localhost:5001` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_BROAD`](#env-GLOBAL_SEARCH_SQL_LIMIT_BROAD) | Search | `120` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_NARROW`](#env-GLOBAL_SEARCH_SQL_LIMIT_NARROW) | Search | `50` |
@@ -203,8 +203,6 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`OPENAI_API_KEY`](#env-OPENAI_API_KEY) | LLM | *(none)* |
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | Storage | `8` |
 | [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `2` |
-| [`PINNED_REPORT_CONTEXT_MAX_CHARS`](#env-PINNED_REPORT_CONTEXT_MAX_CHARS) | Context | `40000` |
-| [`PINNED_REPORT_MIN_PER_STUDY`](#env-PINNED_REPORT_MIN_PER_STUDY) | Context | `2000` |
 | [`PROJECT_SUMMARY_GEN_LIMIT`](#env-PROJECT_SUMMARY_GEN_LIMIT) | Context (dead) | `5` |
 | [`QIITA_BASE_DATA_DIR`](#env-QIITA_BASE_DATA_DIR) | Qiita | `""` |
 | [`QIITA_CONFIG_FP`](#env-QIITA_CONFIG_FP) | Qiita | *(none)* |

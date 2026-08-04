@@ -8,11 +8,15 @@ import pytest
 
 
 @pytest.fixture
-def pinned(fresh_db, monkeypatch):
-    from .conftest import stub_qiita_db_and_core
-    stub_qiita_db_and_core()
+def pinned(fresh_db):
     import helpers.pinned_context as pc
     return pc
+
+
+@pytest.fixture
+def qfetch(fresh_db):
+    import helpers.qiita_fetch as qf
+    return qf
 
 
 def _samples(n, chars_per_sample=900):
@@ -52,7 +56,7 @@ class TestPerStudyBudget:
 class TestInlineAndManifest:
     def test_seven_pins_inline_five_and_manifest_two(self, pinned, monkeypatch):
         monkeypatch.setattr(pinned, "_build_full_samples_block",
-                            lambda sid, budget_chars: f"### Study {sid}: inlined")
+                            lambda sid, budget_chars, **kw: f"### Study {sid}: inlined")
         monkeypatch.setattr(pinned, "_fetch_study_header_cached",
                             lambda sid: _header(42, title=f"Study {sid} title"))
 
@@ -69,12 +73,103 @@ class TestInlineAndManifest:
 
     def test_no_manifest_section_when_everything_is_inlined(self, pinned, monkeypatch):
         monkeypatch.setattr(pinned, "_build_full_samples_block",
-                            lambda sid, budget_chars: f"### Study {sid}")
+                            lambda sid, budget_chars, **kw: f"### Study {sid}")
         text = pinned._build_pinned_reports_context([1, 2], "gemma")
         assert "ALSO PINNED" not in text
 
     def test_empty_returns_none(self, pinned):
         assert pinned._build_pinned_reports_context([], "gemma") is None
+
+    def test_without_tools_every_study_is_inlined(self, pinned, monkeypatch):
+        """Project chat and /pin stream through llm_chat_stream with no tools, so
+        a manifest line telling the model to call get_study_report is an
+        instruction it cannot follow. All 7 must be inlined instead."""
+        monkeypatch.setattr(pinned, "_build_full_samples_block",
+                            lambda sid, budget_chars, **kw: f"### Study {sid}: inlined")
+        text = pinned._build_pinned_reports_context(
+            [1, 2, 3, 4, 5, 6, 7], "gemma", tools_available=False)
+
+        for sid in range(1, 8):
+            assert f"### Study {sid}: inlined" in text
+        assert "ALSO PINNED" not in text
+        assert "get_study_report" not in text
+
+    def test_without_tools_the_budget_is_split_across_all_studies(self, pinned, monkeypatch):
+        seen = []
+        monkeypatch.setattr(pinned, "_build_full_samples_block",
+                            lambda sid, budget_chars, **kw: seen.append(budget_chars) or "x")
+        pinned._build_pinned_reports_context([1, 2, 3, 4, 5, 6, 7], "gemma",
+                                             tools_available=False)
+        # 7 studies share the window, not 5 — otherwise 7 x 60k would be handed out.
+        assert len(seen) == 7
+        assert all(b == pinned._pinned_per_study_budget(7, "gemma") for b in seen)
+
+    def test_truncation_notice_omits_the_hatch_without_tools(self, pinned, monkeypatch):
+        monkeypatch.setattr(pinned, "_fetch_study_header_cached", lambda sid: _header(4736))
+        monkeypatch.setattr(pinned, "_get_or_fetch_full_samples",
+                            lambda sid, limit=None: _samples(400))
+        block = pinned._build_full_samples_block(13722, 20_000, tools_available=False)
+        assert "4736" in block, "the true total must still be stated"
+        assert "get_study_report" not in block
+
+
+# ── sample cache ─────────────────────────────────────────────────────────────
+
+class TestFullSamplesCache:
+    """The pinned path calls _get_or_fetch_full_samples 5x per turn, so a cache
+    that can't be reused is 5 wasted Postgres round-trips on every message.
+
+    The cache accessors are faked with a dict rather than exercised through
+    SQLite: `fresh_db` purges `store.*` but not `helpers.*`, so qiita_fetch keeps
+    its accessors bound to a stale store module. The sufficiency rule is the
+    thing under test here, and this pins it exactly.
+    """
+
+    @pytest.fixture
+    def cached(self, qfetch, monkeypatch):
+        import json
+        store = {}
+        monkeypatch.setattr(qfetch, "get_study_detail_cache", lambda sid: store.get(int(sid)))
+        def _upsert(sid, *a, full_samples_json=None, full_samples_limit=None, **kw):
+            store[int(sid)] = {"full_samples_json": full_samples_json,
+                               "full_samples_limit": full_samples_limit}
+        monkeypatch.setattr(qfetch, "upsert_study_detail_cache", _upsert)
+        return store
+
+    def test_small_study_is_served_from_cache_on_the_second_call(self, qfetch, cached, monkeypatch):
+        """The regression: sufficiency compared len(samples) against num_samples,
+        which counts the qiita_sample_column_names sentinel that this query
+        excludes. total was always larger, so any study below the limit
+        re-fetched from Postgres forever."""
+        calls = []
+        monkeypatch.setattr(qfetch, "_fetch_full_sample_metadata",
+                            lambda study_id, limit: calls.append(limit) or _samples(63))
+
+        first  = qfetch._get_or_fetch_full_samples(101, limit=500)
+        second = qfetch._get_or_fetch_full_samples(101, limit=500)
+
+        assert len(first) == 63 and len(second) == 63
+        assert calls == [500], f"expected one Postgres fetch, got {len(calls)}"
+
+    def test_a_larger_request_refetches_once_then_sticks(self, qfetch, cached, monkeypatch):
+        calls = []
+        monkeypatch.setattr(qfetch, "_fetch_full_sample_metadata",
+                            lambda study_id, limit: calls.append(limit) or _samples(limit))
+
+        qfetch._get_or_fetch_full_samples(101, limit=200)
+        qfetch._get_or_fetch_full_samples(101, limit=500)   # cache holds only 200
+        qfetch._get_or_fetch_full_samples(101, limit=500)   # now satisfied
+        assert calls == [200, 500]
+
+    def test_a_smaller_request_is_served_from_a_bigger_cache(self, qfetch, cached, monkeypatch):
+        calls = []
+        monkeypatch.setattr(qfetch, "_fetch_full_sample_metadata",
+                            lambda study_id, limit: calls.append(limit) or _samples(limit))
+
+        qfetch._get_or_fetch_full_samples(101, limit=500)
+        rows = qfetch._get_or_fetch_full_samples(101, limit=200)
+        assert calls == [500]
+        assert len(rows) == 200, "a smaller request must be trimmed from the cache"
 
 
 # ── per-study block ──────────────────────────────────────────────────────────
@@ -116,8 +211,6 @@ class TestFullSamplesBlock:
 class TestDiscoveryStubs:
     @pytest.fixture
     def fmt(self, fresh_db):
-        from .conftest import stub_qiita_db_and_core
-        stub_qiita_db_and_core()
         from helpers.llm_helpers import _format_discovery_study_list
         return _format_discovery_study_list
 
@@ -159,3 +252,13 @@ class TestDiscoveryStubs:
         studies[2]["study_abstract"] = "c"           # much smaller
         out = fmt(studies, "HEADER:", 1_500)
         assert "- ID 102:" in out, "the small last study must stay in the stub tail"
+
+    def test_without_tools_the_stubs_stay_but_the_hatch_goes(self, fmt):
+        """The legacy path (_build_global_search_context, gemma-small) has no
+        tools. The IDs are still worth listing — the model can say what it can't
+        see — but pointing it at get_study_report would be uncallable."""
+        out = fmt(self._studies(5), "HEADER (5 studies):", 1_500, tools_available=False)
+        for i in range(5):
+            assert f"ID {100 + i}:" in out
+        assert "not shown in full" in out
+        assert "get_study_report" not in out

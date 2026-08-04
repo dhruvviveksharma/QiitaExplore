@@ -33,8 +33,20 @@ def _load_global_messages(conn, chat_id):
     return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
 
 
+def global_chat_exists(user_id: str, chat_id: str) -> bool:
+    """Ownership check without loading the chat. get_global_chat decodes every
+    message's ui_payload — for agentic turns that is tens of KB of segments — so
+    callers that only need "does this exist and is it mine" use this instead."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM global_chats WHERE user_id = ? AND chat_id = ? LIMIT 1",
+            (_resolve_user(user_id), chat_id),
+        ).fetchone()
+    return row is not None
+
+
 def get_global_chat(user_id: str, chat_id: str):
-    from store.cache import SCOPE_GLOBAL, _load_pinned_studies, _load_pinned_study_meta
+    from store.cache import SCOPE_GLOBAL, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
@@ -45,8 +57,9 @@ def get_global_chat(user_id: str, chat_id: str):
             return None
         chat = _as_dict(row)
         chat["messages"] = _load_global_messages(conn, chat_id)
-        chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_GLOBAL)
-        chat["pinned_study_meta"] = _load_pinned_study_meta(conn, chat_id, SCOPE_GLOBAL)
+        meta = _load_pinned_study_meta(conn, chat_id, SCOPE_GLOBAL)
+        chat["pinned_study_meta"] = meta
+        chat["pinned_studies"] = [m["study_id"] for m in meta]
         return chat
 
 

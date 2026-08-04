@@ -265,6 +265,7 @@ def _create_schema(conn):
         ("project_studies", "num_preps", "INTEGER"),
         ("project_studies", "preps_json", "TEXT"),
         ("study_detail_cache", "full_samples_json", "TEXT"),
+        ("study_detail_cache", "full_samples_limit", "INTEGER"),
         ("study_detail_cache", "artifact_graph_json", "TEXT"),
         ("study_detail_cache", "prep_metadata_json", "TEXT"),
         ("study_detail_cache", "samples_json", "TEXT"),

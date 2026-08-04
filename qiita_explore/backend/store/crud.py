@@ -281,8 +281,18 @@ def list_chats(project_id: str, user_id: str, limit: int = 200):
     return [_as_dict(r) for r in rows]
 
 
+def project_chat_exists(project_id: str, user_id: str, chat_id: str) -> bool:
+    """Ownership check without loading the chat — see global_chat_exists."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM project_chats WHERE project_id = ? AND user_id = ? AND chat_id = ? LIMIT 1",
+            (project_id, _resolve_user(user_id), chat_id),
+        ).fetchone()
+    return row is not None
+
+
 def get_chat(project_id: str, user_id: str, chat_id: str):
-    from store.cache import SCOPE_PROJECT, _load_pinned_studies, _load_pinned_study_meta
+    from store.cache import SCOPE_PROJECT, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
@@ -297,8 +307,9 @@ def get_chat(project_id: str, user_id: str, chat_id: str):
             return None
         chat = _as_dict(row)
         chat["messages"] = _load_project_chat_messages(conn, chat_id)
-        chat["pinned_studies"] = _load_pinned_studies(conn, chat_id, SCOPE_PROJECT)
-        chat["pinned_study_meta"] = _load_pinned_study_meta(conn, chat_id, SCOPE_PROJECT)
+        meta = _load_pinned_study_meta(conn, chat_id, SCOPE_PROJECT)
+        chat["pinned_study_meta"] = meta
+        chat["pinned_studies"] = [m["study_id"] for m in meta]
         total = conn.execute(
             "SELECT COUNT(1) AS c FROM project_studies WHERE project_id = ?",
             (project_id,),

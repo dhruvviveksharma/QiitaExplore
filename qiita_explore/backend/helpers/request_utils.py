@@ -6,7 +6,6 @@ from helpers.llm_helpers import _sse
 from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_validated
 from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
-    list_pinned_studies,
     list_pinned_study_meta,
     unpin_study_from_chat,
 )
@@ -44,30 +43,33 @@ def build_full_msgs(messages, user_content):
     return full_msgs
 
 
-def pin_toggle_response(chat_id: str, scope: str, study_id: int, pin: bool):
-    """Pin or unpin one study and build the JSON body both chat scopes return.
+def pinned_payload(chat_id: str, scope: str) -> dict:
+    """The pinned-studies envelope every pin/unpin response carries.
 
-    A pin that doesn't land answers 409 with a reason. The `200 {'ok': True}`
-    this replaces was returned even when the study was silently rejected, so a
-    failed pin was indistinguishable from a successful one until the chip
-    disappeared on the next reload.
+    One read of chat_pinned_studies; the id list is derived, not re-queried.
     """
-    if not pin:
-        unpin_study_from_chat(chat_id, scope, study_id)
-        return jsonify({
-            'ok': True,
-            'pinned_studies': list_pinned_studies(chat_id, scope),
-            'pinned_study_meta': list_pinned_study_meta(chat_id, scope),
-        })
-
-    _, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, scope, [study_id])
-    body = {
-        'ok': study_id in all_pinned,
-        'pinned_studies': all_pinned,
-        'pinned_study_meta': list_pinned_study_meta(chat_id, scope),
-        'invalid': invalid,
-        'rejected': rejected,
+    meta = list_pinned_study_meta(chat_id, scope)
+    return {
+        'pinned_studies': [m["study_id"] for m in meta],
+        'pinned_study_meta': meta,
     }
+
+
+def unpin_response(chat_id: str, scope: str, study_id: int):
+    unpin_study_from_chat(chat_id, scope, study_id)
+    return jsonify({'ok': True, **pinned_payload(chat_id, scope)})
+
+
+def pin_response(chat_id: str, scope: str, study_id: int):
+    """Pin one study; answer 409 with a reason when it doesn't land.
+
+    The `200 {'ok': True}` this replaced was returned even when the study was
+    silently rejected, so a failed pin was indistinguishable from a successful
+    one until the chip disappeared on the next reload.
+    """
+    _, invalid, rejected, all_pinned = _pin_studies_validated(chat_id, scope, [study_id])
+    body = {'ok': study_id in all_pinned, 'invalid': invalid, 'rejected': rejected,
+            **pinned_payload(chat_id, scope)}
     if body['ok']:
         return jsonify(body)
     body['error'] = (

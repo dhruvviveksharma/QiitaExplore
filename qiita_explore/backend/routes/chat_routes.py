@@ -10,6 +10,7 @@ from store import (
     create_chat,
     delete_chat,
     get_chat,
+    project_chat_exists,
     get_project,
     get_project_studies_only,
     list_pinned_study_meta,
@@ -26,7 +27,7 @@ from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
     parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
-    pin_toggle_response,
+    pin_response, unpin_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,8 @@ def api_chat_message_stream(project_id, chat_id):
                         fetch_label = "Loading pinned study data…"
                         done_label  = "Pinned reports ready"
                     yield _sse("step_start", {"name": "deep_context", "label": fetch_label})
-                    deep_ctx = _build_pinned_reports_context(deep_ids, model)
+                    # Project chat streams via llm_chat_stream — no tools, ever.
+                    deep_ctx = _build_pinned_reports_context(deep_ids, model, tools_available=False)
                     yield _sse("step_done", {"name": "deep_context", "label": done_label, "detail": f"{len(deep_ids)} studies"})
                     yield ': keepalive\n\n'
                 combined_ctx = "\n\n".join(x for x in (study_ctx, deep_ctx) if x) or None
@@ -138,13 +140,13 @@ def api_chat_message_stream(project_id, chat_id):
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_project_chat_study(project_id, chat_id, study_id):
-    if not get_chat(project_id, g.user_id, chat_id):
+    if not project_chat_exists(project_id, g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    return pin_toggle_response(chat_id, SCOPE_PROJECT, study_id, pin=True)
+    return pin_response(chat_id, SCOPE_PROJECT, study_id)
 
 
 @app.route('/api/projects/<project_id>/chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_project_chat_study(project_id, chat_id, study_id):
-    if not get_chat(project_id, g.user_id, chat_id):
+    if not project_chat_exists(project_id, g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    return pin_toggle_response(chat_id, SCOPE_PROJECT, study_id, pin=False)
+    return unpin_response(chat_id, SCOPE_PROJECT, study_id)

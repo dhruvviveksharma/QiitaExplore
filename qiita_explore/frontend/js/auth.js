@@ -162,9 +162,7 @@ function LegacyClaimBanner({ onDone }) {
   const claim = async () => {
     setBusy(true); setError('');
     try {
-      const res = await apiPost('/auth/claim-default', {});
-      const d   = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || `Claim failed (${res.status})`);
+      await apiJson('/auth/claim-default', { method: 'POST', body: '{}' });
       setVisible(false);
       onDone();
     } catch (e) {

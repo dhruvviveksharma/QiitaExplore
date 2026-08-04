@@ -23,8 +23,12 @@ function renderApp(s, account) {
     activeMsgs, slashMatches,
   } = s;
 
-  const hasSourcesBar = (view.type === 'project-chat' && openProject?.studies?.length > 0) ||
-    (view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0);
+  // One list of {study_id, study_title}; ids are derived where a bare id is
+  // needed, rather than kept as a second array in lockstep.
+  const pinnedMeta         = chatCache[view.chatId]?.pinnedStudyMeta || [];
+  const hasProjectSources  = view.type === 'project-chat' && openProject?.studies?.length > 0;
+  const hasGlobalPins      = view.type === 'global-chat' && pinnedMeta.length > 0;
+  const hasSourcesBar      = hasProjectSources || hasGlobalPins;
 
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
@@ -213,29 +217,26 @@ function renderApp(s, account) {
             container and its width moves with its scrollbar and the merge
             panel's padding, so a bar inside it can neither stay flush with the
             pill nor stay put while you scroll. */}
-        {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
+        {hasProjectSources && (
           <div className="sources-bar">
             <span className="sources-label">Studies</span>
             {(openProject.studies||[]).map(s => (
               <button key={s.study_id} className="src-chip" onClick={() => openStudyModal(s)}>
-                {(s.study_title||'Untitled').slice(0,40)}
+                {(s.study_title||'Untitled').slice(0, CHIP_TITLE_MAX)}
               </button>
             ))}
           </div>
         )}
-        {view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
+        {hasGlobalPins && (
           <div className="sources-bar">
             <span className="sources-label">Pinned</span>
-            {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
-              const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
-                .find(p => p.study_id === sid)?.study_title;
-              return (
-                <button key={sid} className="src-chip removable" title={title || `Study ${sid}`}
-                  onClick={() => unpinStudy(view.chatId, sid)}>
-                  {title ? `${sid} · ${title.slice(0, 40)}` : `Study ${sid}`}
-                </button>
-              );
-            })}
+            {pinnedMeta.map(p => (
+              <button key={p.study_id} className="src-chip removable"
+                title={p.study_title || `Study ${p.study_id}`}
+                onClick={() => unpinStudy(view.chatId, p.study_id)}>
+                {pinChipLabel(p)}
+              </button>
+            ))}
           </div>
         )}
 
@@ -413,7 +414,7 @@ function renderApp(s, account) {
                           onPinStudy={study => pinStudy(view.chatId, study)}
                           onMergeStudy={study => { setPendingMergeStudy(study); setShowMergePanel(true); }}
                           onOpenStudy={openStudyModal}
-                          pinnedStudyIds={(chatCache[view.chatId]?.pinnedStudies || [])} />
+                          pinnedStudyIds={pinnedMeta.map(p => p.study_id)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
@@ -505,32 +506,17 @@ function renderApp(s, account) {
               onClose={() => setShowModelPicker(false)}
             />
           )}
-          {isChat && view.chatId && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
-            <div className="composer-pins">
-              <span className="composer-pins-label">Pinned:</span>
-              {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
-                // Titles come from pinned_study_meta; rows pinned before that
-                // column existed have none, so fall back to the bare ID.
-                const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
-                  .find(p => p.study_id === sid)?.study_title;
-                return (
-                  <span key={sid} className="composer-pin-chip" title={title || `Study ${sid}`}
-                    onClick={() => openStudyModal({ study_id: sid, study_title: title })}>
-                    {title ? `${sid} · ${title.length > 38 ? title.slice(0, 38) + '…' : title}` : `Study ${sid}`}
-                    <button className="composer-pin-x" title="Unpin"
-                      onClick={e => { e.stopPropagation(); unpinStudy(view.chatId, sid); }}>×</button>
-                  </span>
-                );
-              })}
-              {(() => {
-                const cur    = chatCache[view.chatId] || {};
-                const pinned = (cur.pinnedStudies || []).length;
-                const total  = cur.totalStudiesInProject;
-                return (total != null && total > pinned)
-                  ? <span className="composer-pins-hint">{pinned} of {total} studies in context</span>
+          {isChat && view.chatId && (
+            <PinnedBar
+              studies={pinnedMeta}
+              onRemove={sid => unpinStudy(view.chatId, sid)}
+              onOpen={openStudyModal}
+              hint={(() => {
+                const total = chatCache[view.chatId]?.totalStudiesInProject;
+                return (total != null && total > pinnedMeta.length)
+                  ? <span className="composer-pins-hint">{pinnedMeta.length} of {total} studies in context</span>
                   : null;
-              })()}
-            </div>
+              })()} />
           )}
           {view.type === 'browse' && (
             <PinnedBar studies={ctxStudies} onRemove={id => setCtxStudies(prev => prev.filter(s => s.study_id !== id))} />
@@ -547,7 +533,7 @@ function renderApp(s, account) {
               rows={1}
               placeholder={(() => {
                 if (!(isChat || view.type === 'browse')) return 'Open a chat to start messaging';
-                const pinned = (chatCache[view.chatId]?.pinnedStudies || []).length;
+                const pinned = pinnedMeta.length;
                 if (pinned > 0) return `Ask about ${pinned} pinned stud${pinned === 1 ? 'y' : 'ies'}…`;
                 return 'use "/" for commands, ask or search for studies';
               })()}

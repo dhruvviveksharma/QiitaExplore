@@ -1385,6 +1385,150 @@ suite the obvious way.
 
 ---
 
+---
+
+## TKT-048: Project Chat Derives Two Budgets From the Same Context Window
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+`routes/chat_routes.py:104` hands `_build_project_study_context` the **entire**
+`context_budget_chars(model)`, and then line 122 adds `_build_pinned_reports_context`,
+which allocates a further 65% of the *same* window via `_pinned_per_study_budget`. The two
+consumers never see each other's share. On `gpt-oss` (430,752 chars) that is up to
+430,752 + 279,985 = **710,737 chars into a 131k-token window**.
+
+`_pinned_per_study_budget`'s docstring claims the 0.65 factor prevents "fail at the API
+rather than degrade" — but the guarantee is asserted one level below where allocation
+actually happens, so it cannot hold.
+
+### Plan
+
+One allocator per request that splits `context_budget_chars(model)` into named shares
+(project / pinned / history) and passes each consumer its slice, instead of each consumer
+re-deriving from the total. Every future context consumer otherwise makes this worse
+silently.
+
+### Files
+
+- `qiita_explore/backend/routes/chat_routes.py:104,122`
+- `qiita_explore/backend/helpers/pinned_context.py :: _pinned_per_study_budget`
+- `qiita_explore/backend/helpers/llm_helpers.py :: _build_project_study_context`
+
+---
+
+## TKT-049: `_resolve_user` Silently Misfiles a Lost Identity Into the Legacy Bucket
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`store/db.py:31` `_resolve_user` maps an empty `user_id` to the literal `"default"` — the
+legacy pre-auth bucket. It is **not** currently a live second identity path: default-deny
+(`helpers/auth_middleware.py:107`) guarantees `g.user_id` is a real principal on every
+route, and `store/legacy_claim.py:12` addresses the legacy rows by their own literal.
+
+But it converts "identity was lost" from a crash into a silent write into another tenant's
+bucket, and `store/merge_crud.py` doesn't call it at all — so the store runs two ownership
+conventions side by side.
+
+### Plan
+
+Make `_resolve_user` raise on empty, or delete it and pass `user_id` through. The two tests
+that use `"default"` (`tests/test_auth.py:306,318`) pass it explicitly and are unaffected.
+Same for the `user_id: str = "default"` default arg at `helpers/llm_helpers.py:221` — both
+callers pass it. Decide one convention and apply it to `merge_crud.py` too.
+
+### Files
+
+- `qiita_explore/backend/store/db.py:30-31`, `store/merge_crud.py`, `helpers/llm_helpers.py:221`
+
+---
+
+## TKT-050: Pre-Migration Pinned Rows Can Never Get Their Title Backfilled
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`store/cache.py :: pin_study_to_chat` early-returns `True` when the study is already pinned,
+so a row written before the `study_title` column existed keeps `NULL` forever — re-pinning
+does not heal it. The frontend's "fall back to the bare study ID" path is therefore
+permanent for those rows rather than transitional.
+
+### Plan
+
+Replace the early return + `INSERT OR IGNORE` with
+`ON CONFLICT(chat_id, chat_scope, study_id) DO UPDATE SET study_title = COALESCE(excluded.study_title, study_title)`,
+keeping the cap check.
+
+### Files
+
+- `qiita_explore/backend/store/cache.py :: pin_study_to_chat`
+
+---
+
+## TKT-051: ~15 Frontend Call Sites Still Fail Silently
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`utils.js :: apiJson` now collapses the `res.ok` + `res.json().catch` + message-extraction
+pattern, and the four pin/claim sites use it. These still do `if (res.ok) { … }` with no
+else — the same "a failed request renders as empty data" bug that made an expired session
+look like a lost chat:
+
+`app_state.js` — `loadProjects`, `fetchProjectDetail`, `loadGlobalChats`, `loadFirstStudies`,
+`createProject`, `addStudyToProject`, `removeStudy`, `doSearch`.
+`merge_workspace.js` — lines 78, 90, 120, 134, 276, 393.
+
+### Plan
+
+Convert each to `apiJson` with a `setCompErr`/local error path. Mechanical, but a large
+diff — deliberately left out of the /simplify pass, which was scoped to the reviewed diff.
+
+### Files
+
+- `qiita_explore/frontend/js/app_state.js`, `qiita_explore/frontend/js/merge_workspace.js`
+
+---
+
+## TKT-052: Browse Staging Enforces No Pin Cap
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`app_render.js` appends to `ctxStudies` unboundedly, but the server enforces
+`PINNED_STUDIES_PER_CHAT_CAP` (10) per pin. A user can stage 15 studies in browse and only
+learn at send time that 5 were rejected — `pinStagedStudies` reports the failures, but after
+the fact.
+
+Related: `pinStagedStudies` issues N sequential POSTs before the stream opens, adding N
+round-trips to time-to-first-token. `helpers/qiita_fetch.py :: _pin_studies_validated`
+already accepts a **list** and already returns `(pinned_now, invalid, rejected, all_pinned)`
+— the exact aggregation the client rebuilds by hand.
+
+### Plan
+
+Expose the batch primitive: `POST /global-chats/<id>/pinned` with `{study_ids: [...]}`
+returning that 4-tuple, and have browse enforce the cap at stage time so rejection is
+immediate rather than deferred. Removes both the round-trip fan-out and the duplicated
+cap policy.
+
+### Files
+
+- `qiita_explore/backend/routes/global_chat_routes.py`, `qiita_explore/frontend/js/app_state.js`
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-08-03*
 
 ---

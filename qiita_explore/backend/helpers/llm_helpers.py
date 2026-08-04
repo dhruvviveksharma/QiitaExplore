@@ -183,34 +183,36 @@ def _study_discovery_compact_block(study: dict) -> str:
     )
 
 
-def _format_discovery_study_list(studies, header_line: str, max_chars: int):
+def _format_discovery_study_list(studies, header_line: str, max_chars: int,
+                                 *, tools_available: bool = True):
     """Fit as many compact study blocks as possible under max_chars.
 
     Studies that don't fit are listed as one-line stubs rather than dropped:
-    without its ID a study is invisible to the model, which cannot then reach it
-    with get_study_report either. Stubs are ~70 chars and sit outside max_chars,
-    which governs the full blocks.
+    without its ID a study is invisible to the model. Stubs are ~70 chars and sit
+    outside max_chars, which governs the full blocks.
+
+    `tools_available` reflects the CALLER's execution mode, not this renderer's:
+    pointing a model at get_study_report when the request carries no tools is an
+    instruction it cannot follow.
     """
     if not studies:
         return f"{header_line}\n(none)\n"
     chosen  = []
     running = len(header_line) + 2
-    cut     = len(studies)
-    for i, s in enumerate(studies):
+    for s in studies:
         block = _study_discovery_compact_block(s)
         gap   = 0 if not chosen else 2
         # break, not continue: keep relevance order rather than letting a later,
         # smaller study leapfrog one that was too big.
         if running + gap + len(block) > max_chars:
-            cut = i
             break
         running += gap + len(block)
         chosen.append(block)
     out = header_line.strip() + "\n\n" + "\n\n".join(chosen) if chosen else header_line.strip() + "\n"
-    omitted = studies[cut:]
+    omitted = studies[len(chosen):]
     if omitted:
-        out += (f"\n\n({len(omitted)} more not shown in full — "
-                f"call get_study_report(<id>) for any of them:)\n")
+        hatch = " — call get_study_report(<id>) for any of them" if tools_available else ""
+        out += f"\n\n({len(omitted)} more not shown in full{hatch}:)\n"
         out += "\n".join(
             f"- ID {s.get('study_id')}: {_truncate(s.get('study_title') or 'Untitled study', 140)}"
             for s in omitted
@@ -311,13 +313,18 @@ def _build_api_messages(messages, study_context_text: str, system_prompt: str = 
 
 
 def _build_global_search_context(studies, user_query: str, budget: int = 24_000):
-    """Build LLM context from auto-searched studies for global chat (compact rows)."""
+    """Build LLM context from auto-searched studies for global chat (compact rows).
+
+    tools_available=False is not a parameter because this builder *is* the legacy
+    path: its only caller is the `else` branch of `model_supports_tools` in
+    global_chat_routes, which streams via llm_chat_stream with no tools attached.
+    """
     if not studies:
         return f'A database search for "{user_query}" returned no matching studies in Qiita. Suggest rephrasing or broadening the query.'
     header = (
         f'The following {len(studies)} studies were retrieved from Qiita based on the query "{user_query}":'
     )
-    return _format_discovery_study_list(studies, header, budget)
+    return _format_discovery_study_list(studies, header, budget, tools_available=False)
 
 
 _QUERY_PLAN_SYSTEM = (

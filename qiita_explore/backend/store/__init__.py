@@ -14,6 +14,7 @@ from .crud import (  # noqa: F401
     remove_study_from_project,
     list_chats,
     get_chat,
+    project_chat_exists,
     create_chat,
     append_chat_messages,
     delete_chat,
@@ -22,6 +23,7 @@ from .crud import (  # noqa: F401
 from .global_chat_crud import (  # noqa: F401
     list_global_chats,
     get_global_chat,
+    global_chat_exists,
     create_global_chat,
     append_global_chat_messages,
     delete_global_chat,

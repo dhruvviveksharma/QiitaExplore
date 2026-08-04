@@ -686,17 +686,24 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
 }
 
 // ─── PinnedBar ────────────────────────────────────────────────────────────────
-function PinnedBar({ studies, onRemove }) {
+// The composer-level pin bar, used both for browse staging and for a chat's
+// pinned studies. `onOpen` and `hint` are optional so the two surfaces keep their
+// own behaviour without a second copy of this markup.
+function PinnedBar({ studies, onRemove, onOpen, hint }) {
   if (!studies || studies.length === 0) return null;
   return (
     <div className="composer-pins">
       <span className="composer-pins-label">Pinned:</span>
       {studies.map(s => (
-        <span key={s.study_id} className="composer-pin-chip">
-          {(s.study_title || 'Untitled').slice(0, 32)}
-          <button className="composer-pin-x" title="Unpin" onClick={() => onRemove(s.study_id)}>×</button>
+        <span key={s.study_id} className="composer-pin-chip"
+          title={s.study_title || `Study ${s.study_id}`}
+          onClick={onOpen ? () => onOpen(s) : undefined}>
+          {pinChipLabel(s)}
+          <button className="composer-pin-x" title="Unpin"
+            onClick={e => { e.stopPropagation(); onRemove(s.study_id); }}>×</button>
         </span>
       ))}
+      {hint}
     </div>
   );
 }

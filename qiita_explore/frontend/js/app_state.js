@@ -134,7 +134,6 @@ function useAppState() {
       [chatId]: {
         messages,
         title: d.title,
-        pinnedStudies: d.pinned_studies || [],
         pinnedStudyMeta: d.pinned_study_meta || [],
         totalStudiesInProject: d.total_studies_in_project,
       },
@@ -269,9 +268,8 @@ function useAppState() {
     });
     setChatCache(prev => {
       const cur = prev[chatId] || {};
-      const nextPins = pinnedList != null ? pinnedList : (cur.pinnedStudies || []);
       const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
-      return { ...prev, [chatId]: { ...cur, title, pinnedStudies: nextPins, pinnedStudyMeta: nextMeta } };
+      return { ...prev, [chatId]: { ...cur, title, pinnedStudyMeta: nextMeta } };
     });
   };
 
@@ -338,62 +336,43 @@ function useAppState() {
       return { ...m, segments: segs };
     });
 
-  // The server is the source of truth for pins. Both handlers below apply an
-  // optimistic patch for responsiveness, then either adopt the server's list or
-  // roll the patch back and surface why — a pin that only ever existed in local
-  // state looks identical to a persisted one until the next reload.
+  // The server is the source of truth for pins: `pinnedStudyMeta` is the whole
+  // list, and ids are derived where needed. Each mutation patches optimistically
+  // for responsiveness, then adopts the server's list or rolls back and says why
+  // — a pin that only ever existed in local state looks identical to a persisted
+  // one until the next reload.
   const applyPinResult = (chatId, data) =>
-    patchChat(chatId, () => ({
-      pinnedStudies: data.pinned_studies || [],
-      pinnedStudyMeta: data.pinned_study_meta || [],
-    }));
+    patchChat(chatId, () => ({ pinnedStudyMeta: data.pinned_study_meta || [] }));
 
-  const unpinStudy = async (chatId, studyId) => {
-    const before = chatCache[chatId];
-    patchChat(chatId, cur => ({
-      pinnedStudies: (cur.pinnedStudies || []).filter(id => id !== studyId),
-      pinnedStudyMeta: (cur.pinnedStudyMeta || []).filter(p => p.study_id !== studyId),
-    }));
+  const mutatePin = async (chatId, optimistic, request, failMsg) => {
+    const before = chatCache[chatId]?.pinnedStudyMeta;
+    patchChat(chatId, optimistic);
     const base = chatScopeUrl(view, chatId);
     if (!base) return;
     try {
-      const res = await apiDel(`${base}/pinned/${studyId}`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Unpin failed (${res.status})`);
-      applyPinResult(chatId, data);
+      applyPinResult(chatId, await request(base));
     } catch (e) {
-      patchChat(chatId, () => ({
-        pinnedStudies: before?.pinnedStudies || [],
-        pinnedStudyMeta: before?.pinnedStudyMeta || [],
-      }));
-      setCompErr(e.message || 'Could not unpin that study');
+      patchChat(chatId, () => ({ pinnedStudyMeta: before || [] }));
+      setCompErr(e.message || failMsg);
     }
   };
 
-  const pinStudy = async (chatId, study) => {
-    const studyId = study.study_id;
-    const before = chatCache[chatId];
-    patchChat(chatId, cur => (cur.pinnedStudies || []).includes(studyId)
+  const unpinStudy = (chatId, studyId) => mutatePin(
+    chatId,
+    cur => ({ pinnedStudyMeta: (cur.pinnedStudyMeta || []).filter(p => p.study_id !== studyId) }),
+    base => apiJson(`${base}/pinned/${studyId}`, { method: 'DELETE' }),
+    'Could not unpin that study',
+  );
+
+  const pinStudy = (chatId, study) => mutatePin(
+    chatId,
+    cur => (cur.pinnedStudyMeta || []).some(p => p.study_id === study.study_id)
       ? null
-      : {
-          pinnedStudies: [...(cur.pinnedStudies || []), studyId],
-          pinnedStudyMeta: [...(cur.pinnedStudyMeta || []), { study_id: studyId, study_title: study.study_title }],
-        });
-    const base = chatScopeUrl(view, chatId);
-    if (!base) return;
-    try {
-      const res = await apiPost(`${base}/pinned/${studyId}`, {});
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Pin failed (${res.status})`);
-      applyPinResult(chatId, data);
-    } catch (e) {
-      patchChat(chatId, () => ({
-        pinnedStudies: before?.pinnedStudies || [],
-        pinnedStudyMeta: before?.pinnedStudyMeta || [],
-      }));
-      setCompErr(e.message || 'Could not pin that study');
-    }
-  };
+      : { pinnedStudyMeta: [...(cur.pinnedStudyMeta || []),
+                            { study_id: study.study_id, study_title: study.study_title }] },
+    base => apiJson(`${base}/pinned/${study.study_id}`, { method: 'POST', body: '{}' }),
+    'Could not pin that study',
+  );
 
   // Browse "+ Pin" stages studies before any chat exists; once the chat is
   // created they become real pins. Sequential on purpose — the 10-pin cap is
@@ -403,12 +382,10 @@ function useAppState() {
     let last = null;
     for (const s of studies) {
       try {
-        const res  = await apiPost(`/global-chats/${chatId}/pinned/${s.study_id}`, {});
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) last = data;
-        else rejected.push(data.error || `Study ${s.study_id} could not be pinned`);
-      } catch (_) {
-        rejected.push(`Study ${s.study_id} could not be pinned (network error)`);
+        last = await apiJson(`/global-chats/${chatId}/pinned/${s.study_id}`,
+                             { method: 'POST', body: '{}' });
+      } catch (e) {
+        rejected.push(e.message || `Study ${s.study_id} could not be pinned`);
       }
     }
     if (last) applyPinResult(chatId, last);
@@ -434,7 +411,6 @@ function useAppState() {
       [chat.chat_id]: {
         messages: [],
         title,
-        pinnedStudies: chat.pinned_studies || [],
         pinnedStudyMeta: chat.pinned_study_meta || [],
         totalStudiesInProject: chat.total_studies_in_project,
       },
@@ -451,7 +427,6 @@ function useAppState() {
       [chat.chat_id]: {
         messages: [],
         title,
-        pinnedStudies: chat.pinned_studies || [],
         pinnedStudyMeta: chat.pinned_study_meta || [],
       },
     }));

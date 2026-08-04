@@ -27,7 +27,9 @@ def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, sy
     deep_ctx = None
     if all_pinned:
         yield _sse("step_start", {"name": "deep_context", "label": "Loading pinned study data…"})
-        deep_ctx = _build_pinned_reports_context(all_pinned, model)
+        # The ack below streams via llm_chat_stream with no tools, and it asks for
+        # a summary of every newly-pinned study — so none of them may be a stub.
+        deep_ctx = _build_pinned_reports_context(all_pinned, model, tools_available=False)
         yield _sse("step_done", {"name": "deep_context", "label": "Pinned reports ready", "detail": f"{len(all_pinned)} studies"})
         yield ': keepalive\n\n'
 

@@ -120,6 +120,7 @@ def upsert_study_detail_cache(
     prep_metadata_json: str = None,
     samples_json: str = None,
     total_samples: int = None,
+    full_samples_limit: int = None,
 ):
     """Cache study detail. Pass None for any field to preserve the existing value (COALESCE)."""
     with _conn() as conn:
@@ -127,8 +128,9 @@ def upsert_study_detail_cache(
             """
             INSERT INTO study_detail_cache(
                 study_id, preps_json, artifacts_json, samples_context, full_samples_json,
-                artifact_graph_json, prep_metadata_json, samples_json, total_samples, cached_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                artifact_graph_json, prep_metadata_json, samples_json, total_samples,
+                full_samples_limit, cached_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(study_id) DO UPDATE SET
                 preps_json          = COALESCE(excluded.preps_json,          study_detail_cache.preps_json),
                 artifacts_json      = COALESCE(excluded.artifacts_json,      study_detail_cache.artifacts_json),
@@ -138,10 +140,12 @@ def upsert_study_detail_cache(
                 prep_metadata_json  = COALESCE(excluded.prep_metadata_json,  study_detail_cache.prep_metadata_json),
                 samples_json        = COALESCE(excluded.samples_json,       study_detail_cache.samples_json),
                 total_samples       = COALESCE(excluded.total_samples,      study_detail_cache.total_samples),
+                full_samples_limit  = COALESCE(excluded.full_samples_limit, study_detail_cache.full_samples_limit),
                 cached_at           = excluded.cached_at
             """,
             (int(study_id), preps_json, artifacts_json, samples_context, full_samples_json,
-             artifact_graph_json, prep_metadata_json, samples_json, total_samples, _now()),
+             artifact_graph_json, prep_metadata_json, samples_json, total_samples,
+             full_samples_limit, _now()),
         )
         conn.commit()
     return True
@@ -178,19 +182,12 @@ def _normalize_scope(scope: str) -> str:
     return s if s in (SCOPE_PROJECT, SCOPE_GLOBAL) else SCOPE_PROJECT
 
 
-def _load_pinned_studies(conn, chat_id: str, scope: str):
-    rows = conn.execute(
-        "SELECT study_id FROM chat_pinned_studies WHERE chat_id = ? AND chat_scope = ? ORDER BY pinned_at ASC",
-        (chat_id, _normalize_scope(scope)),
-    ).fetchall()
-    return [int(r["study_id"]) for r in rows]
-
-
 def _load_pinned_study_meta(conn, chat_id: str, scope: str):
-    """Same rows as _load_pinned_studies, but carrying the denormalized title.
+    """Pinned studies for a chat, with the denormalized title.
 
-    `study_title` is NULL for rows pinned before the column existed; callers
-    fall back to the bare study ID.
+    The single read of this table — `_load_pinned_studies` derives from it rather
+    than running a second query over the same rows. `study_title` is NULL for rows
+    pinned before the column existed; callers fall back to the bare study ID.
     """
     rows = conn.execute(
         """
@@ -200,6 +197,10 @@ def _load_pinned_study_meta(conn, chat_id: str, scope: str):
         (chat_id, _normalize_scope(scope)),
     ).fetchall()
     return [{"study_id": int(r["study_id"]), "study_title": r["study_title"]} for r in rows]
+
+
+def _load_pinned_studies(conn, chat_id: str, scope: str):
+    return [m["study_id"] for m in _load_pinned_study_meta(conn, chat_id, scope)]
 
 
 def pin_study_to_chat(chat_id: str, scope: str, study_id: int, study_title: str = None):

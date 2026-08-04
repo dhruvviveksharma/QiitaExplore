@@ -12,6 +12,7 @@ from store import (
     create_global_chat,
     delete_global_chat,
     get_global_chat,
+    global_chat_exists,
     list_global_chats,
     list_pinned_studies,
     list_pinned_study_meta,
@@ -27,7 +28,7 @@ from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
     parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
-    pin_toggle_response,
+    pin_response, unpin_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,10 @@ def api_global_chat_message_stream(chat_id):
                 pinned_ctx     = None
                 if pinned_studies:
                     yield _sse("step_start", {"name": "pinned_reports", "label": "Loading pinned study data…"})
-                    pinned_ctx = _build_pinned_reports_context(pinned_studies, model)
+                    # This block feeds both branches below; only the agentic one
+                    # carries tools, so the escape hatch tracks that.
+                    pinned_ctx = _build_pinned_reports_context(
+                        pinned_studies, model, tools_available=model_supports_tools(model))
                     yield _sse("step_done", {"name": "pinned_reports", "label": "Pinned reports ready", "detail": f"{len(pinned_studies)} studies"})
                     yield ': keepalive\n\n'
 
@@ -219,13 +223,13 @@ def api_global_chat_message_stream(chat_id):
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['POST'])
 def api_pin_global_chat_study(chat_id, study_id):
-    if not get_global_chat(g.user_id, chat_id):
+    if not global_chat_exists(g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    return pin_toggle_response(chat_id, SCOPE_GLOBAL, study_id, pin=True)
+    return pin_response(chat_id, SCOPE_GLOBAL, study_id)
 
 
 @app.route('/api/global-chats/<chat_id>/pinned/<int:study_id>', methods=['DELETE'])
 def api_unpin_global_chat_study(chat_id, study_id):
-    if not get_global_chat(g.user_id, chat_id):
+    if not global_chat_exists(g.user_id, chat_id):
         return jsonify({'error': 'Chat not found'}), 404
-    return pin_toggle_response(chat_id, SCOPE_GLOBAL, study_id, pin=False)
+    return unpin_response(chat_id, SCOPE_GLOBAL, study_id)

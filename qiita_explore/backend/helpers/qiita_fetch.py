@@ -247,24 +247,29 @@ def _fetch_sample_context_text(study_id: int, max_chars: int = 3500) -> str:
 def _get_or_fetch_full_samples(study_id: int, limit: int = REPORT_SAMPLE_LIMIT):
     """Return cached full sample rows for a study, falling back to a Qiita fetch + cache write.
 
-    The cache is written at whatever limit the *first* caller used, so it is only
-    reused when it already holds enough rows for this request (or the whole
-    study) — otherwise an early small fetch would cap every later one.
+    Sufficiency is decided against the limit the cached rows were fetched at, not
+    against a row count from a different query. `num_samples` counts
+    `qiita.study_sample` including the `qiita_sample_column_names` sentinel, while
+    these rows exclude it and inner-join `sample_{id}` — so comparing the two made
+    the cache permanently unusable for any study below the limit.
     """
-    cached = get_study_detail_cache(study_id)
-    if cached and cached.get("full_samples_json"):
+    cached = get_study_detail_cache(study_id) or {}
+    if cached.get("full_samples_json"):
         try:
             samples = json.loads(cached["full_samples_json"])
-            if isinstance(samples, list):
-                total = ((_fetch_study_header_cached(study_id) or {}).get("num_samples")) or 0
-                if len(samples) >= limit or (total and len(samples) >= total):
-                    return samples[:limit]
+            cached_limit = cached.get("full_samples_limit") or 0
+            # Enough rows for this request, or the fetch that wrote them came back
+            # short of its own limit, meaning it exhausted the study.
+            if isinstance(samples, list) and (cached_limit >= limit or len(samples) < cached_limit):
+                return samples[:limit]
         except Exception:
             pass
     samples = _fetch_full_sample_metadata(study_id, limit=limit)
     if samples:
         try:
-            upsert_study_detail_cache(study_id, None, None, full_samples_json=json.dumps(samples))
+            upsert_study_detail_cache(study_id, None, None,
+                                      full_samples_json=json.dumps(samples),
+                                      full_samples_limit=limit)
         except Exception:
             pass
     return samples
@@ -284,7 +289,6 @@ def _fetch_study_header_cached(study_id: int):
     header                  = _fetch_study_header(sid)
     _study_header_cache[sid] = (now, header)
     return header
-
 
 
 def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):

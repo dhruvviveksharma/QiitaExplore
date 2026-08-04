@@ -10,10 +10,6 @@ def cache(fresh_db):
 
 @pytest.fixture
 def request_utils(fresh_db):
-    """helpers.request_utils pulls in qiita_fetch → pg_pool → qiita_core, which
-    this sandbox can't resolve; reuse test_auth's stub rather than duplicating it."""
-    from .conftest import stub_qiita_db_and_core
-    stub_qiita_db_and_core()
     import helpers.request_utils as ru
     return ru
 
@@ -81,8 +77,7 @@ class TestPinResponseSurfacesRejection:
         monkeypatch.setattr(request_utils, "_pin_studies_validated",
                             lambda *a, **k: ([], [999999], [], []))
         with self._ctx():
-            resp, status = request_utils.pin_toggle_response(
-                "chat-1", SCOPE_GLOBAL, 999999, pin=True)
+            resp, status = request_utils.pin_response("chat-1", SCOPE_GLOBAL, 999999)
         assert status == 409
         body = resp.get_json()
         assert body["ok"] is False
@@ -93,8 +88,7 @@ class TestPinResponseSurfacesRejection:
         monkeypatch.setattr(request_utils, "_pin_studies_validated",
                             lambda *a, **k: ([], [], [777], []))
         with self._ctx():
-            resp, status = request_utils.pin_toggle_response(
-                "chat-1", SCOPE_GLOBAL, 777, pin=True)
+            resp, status = request_utils.pin_response("chat-1", SCOPE_GLOBAL, 777)
         assert status == 409
         assert "limit" in resp.get_json()["error"].lower()
 
@@ -105,14 +99,16 @@ class TestPinResponseSurfacesRejection:
         a different module instance than a store fixture would."""
         monkeypatch.setattr(request_utils, "_pin_studies_validated",
                             lambda *a, **k: ([11043], [], [], [11043]))
+        monkeypatch.setattr(request_utils, "list_pinned_study_meta",
+                            lambda *a, **k: [{"study_id": 11043, "study_title": "Wild mouse gut"}])
         with self._ctx():
-            resp = request_utils.pin_toggle_response(
-                "chat-1", SCOPE_GLOBAL, 11043, pin=True)
+            resp = request_utils.pin_response("chat-1", SCOPE_GLOBAL, 11043)
         # a bare 200 response, not a (body, status) tuple
         body = resp.get_json()
         assert body["ok"] is True
+        assert body["pinned_study_meta"] == [{"study_id": 11043, "study_title": "Wild mouse gut"}]
+        # Derived from the meta, not a second query over the same rows.
         assert body["pinned_studies"] == [11043]
-        assert "pinned_study_meta" in body
 
 
 def test_scope_isolation(cache):

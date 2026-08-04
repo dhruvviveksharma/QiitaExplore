@@ -12,6 +12,16 @@ const formatDate = (dateStr) =>
 const splitTypes = (dataTypes) =>
   (dataTypes || '').split(',').map(t => t.trim()).filter(Boolean);
 
+// One label for every pinned/context chip. Three surfaces render these — the
+// topbar sources bar, the composer bar and the browse staging bar — and they had
+// drifted to 40/38/32 chars.
+const CHIP_TITLE_MAX = 38;
+const pinChipLabel = (s) => {
+  const t = s.study_title;
+  if (!t) return `Study ${s.study_id}`;
+  return `${s.study_id} · ${t.length > CHIP_TITLE_MAX ? t.slice(0, CHIP_TITLE_MAX) + '…' : t}`;
+};
+
 async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* fall through */ }
@@ -59,6 +69,16 @@ const apiFetch = async (path, opts = {}) => {
   }
   return res;
 };
+// Parsed body or throw. Collapses the res.ok + res.json().catch + message
+// extraction dance that every caller otherwise hand-writes — and half of them
+// skip, which is how a failed request renders as empty data.
+const apiJson = async (path, opts = {}) => {
+  const res  = await apiFetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+};
+
 const apiPost  = (path, body) => apiFetch(path, { method: 'POST',   body: JSON.stringify(body) });
 const apiPatch = (path, body) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body) });
 const apiDel   = (path)       => apiFetch(path, { method: 'DELETE' });

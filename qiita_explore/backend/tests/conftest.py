@@ -53,7 +53,12 @@ def stub_qiita_db_and_core():
 
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
-    """Each test gets a fresh temporary database."""
+    """Each test gets a fresh temporary database.
+
+    Also installs the qiita_db/qiita_core stubs, so any test module can simply
+    `import helpers.<mod>` — several fixtures used to repeat that dance.
+    """
+    stub_qiita_db_and_core()
     db_path = str(tmp_path / "test.db")
     monkeypatch.setenv("QIITA_EXPERIMENT_DB_PATH", db_path)
     # Force re-bootstrap with new path
