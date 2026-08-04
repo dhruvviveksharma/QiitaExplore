@@ -356,6 +356,10 @@ input, textarea { font-family: var(--sans); }
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  /* Sibling of .topbar inside .main, so it is sized by the same parent and
+     stays flush with the pill regardless of .content's scrollbar or the merge
+     panel's padding. flex-shrink:0 matches .topbar — it must not compress. */
+  flex-shrink: 0;
   margin: 0 12px;
   /* Side borders continue .topbar's, and under border-box they inset this fill
      by the same 1px the topbar's border insets its own — without them the
@@ -404,11 +408,6 @@ input, textarea { font-family: var(--sans); }
 .chat-messages:not(:has(.chat-empty)) {
   justify-content: flex-end;
 }
-.chat-messages.has-sources {
-  mask-image: linear-gradient(to bottom, transparent 0, black 48px, black 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 48px, black 100%);
-}
-
 .chat-empty {
   max-width: 520px;
   margin: 60px auto 0;

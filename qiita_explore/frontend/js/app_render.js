@@ -209,6 +209,36 @@ function renderApp(s, account) {
             onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
         </div>
 
+        {/* Sibling of .topbar, NOT a child of .content — .content is the scroll
+            container and its width moves with its scrollbar and the merge
+            panel's padding, so a bar inside it can neither stay flush with the
+            pill nor stay put while you scroll. */}
+        {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
+          <div className="sources-bar">
+            <span className="sources-label">Studies</span>
+            {(openProject.studies||[]).map(s => (
+              <button key={s.study_id} className="src-chip" onClick={() => openStudyModal(s)}>
+                {(s.study_title||'Untitled').slice(0,40)}
+              </button>
+            ))}
+          </div>
+        )}
+        {view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
+          <div className="sources-bar">
+            <span className="sources-label">Pinned</span>
+            {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
+              const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
+                .find(p => p.study_id === sid)?.study_title;
+              return (
+                <button key={sid} className="src-chip removable" title={title || `Study ${sid}`}
+                  onClick={() => unpinStudy(view.chatId, sid)}>
+                  {title ? `${sid} · ${title.slice(0, 40)}` : `Study ${sid}`}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className={`content${showMergePanel ? ' merge-open' : ''}`}>
 
           {/* ── MERGES ── */}
@@ -350,33 +380,7 @@ function renderApp(s, account) {
           {/* ── CHAT ── */}
           {isChat && (
             <>
-              {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
-                <div className="sources-bar">
-                  <span className="sources-label">Studies</span>
-                  {(openProject.studies||[]).map(s => (
-                    <button key={s.study_id} className="src-chip" onClick={() => openStudyModal(s)}>
-                      {(s.study_title||'Untitled').slice(0,40)}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {view.type === 'global-chat' && (chatCache[view.chatId]?.pinnedStudies || []).length > 0 && (
-                <div className="sources-bar">
-                  <span className="sources-label">Pinned</span>
-                  {(chatCache[view.chatId]?.pinnedStudies || []).map(sid => {
-                    const title = (chatCache[view.chatId]?.pinnedStudyMeta || [])
-                      .find(p => p.study_id === sid)?.study_title;
-                    return (
-                      <button key={sid} className="src-chip removable" title={title || `Study ${sid}`}
-                        onClick={() => unpinStudy(view.chatId, sid)}>
-                        {title ? `${sid} · ${title.slice(0, 40)}` : `Study ${sid}`}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div className={`chat-messages${hasSourcesBar ? ' has-sources' : ''}`}>
+              <div className="chat-messages">
                 {activeMsgs.length === 0 && chatLoading ? (
                   <div className="state-loading"><InfinityLoader w={100} h={62} /></div>
                 ) : activeMsgs.length === 0 ? (
