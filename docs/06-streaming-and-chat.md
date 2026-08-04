@@ -38,38 +38,44 @@ The buffer-and-split-on-blank-line detail matters: a frame can arrive across two
 
 ## The ten events
 
-| Event | Emitted by | Purpose |
-|---|---|---|
-| `agent_start` | agentic | Switches the message into segment mode |
-| `segment_tool_call` | agentic | A tool invocation began |
-| `segment_tool_result` | agentic | That invocation returned |
-| `token` | both | One chunk of assistant text |
-| `step_start` | legacy | A named phase began (`build_context`, `llm_generate`, …) |
-| `step_done` | legacy | That phase finished |
-| `query_plan` | legacy | The keyword plan and pseudo-WHERE clause |
-| `ui` | both | A structured render payload replaces the text body |
-| `done` | both | Turn complete; carries title and pinned studies |
-| `error` | both | Turn failed; carries a user-facing message |
+
+| Event                 | Emitted by | Purpose                                                  |
+| --------------------- | ---------- | -------------------------------------------------------- |
+| `agent_start`         | agentic    | Switches the message into segment mode                   |
+| `segment_tool_call`   | agentic    | A tool invocation began                                  |
+| `segment_tool_result` | agentic    | That invocation returned                                 |
+| `token`               | both       | One chunk of assistant text                              |
+| `step_start`          | legacy     | A named phase began (`build_context`, `llm_generate`, …) |
+| `step_done`           | legacy     | That phase finished                                      |
+| `query_plan`          | legacy     | The keyword plan and pseudo-WHERE clause                 |
+| `ui`                  | both       | A structured render payload replaces the text body       |
+| `done`                | both       | Turn complete; carries title and pinned studies          |
+| `error`               | both       | Turn failed; carries a user-facing message               |
+
 
 Exactly ten, and the set is symmetric: every event `_sse` emits has a handler in `parseSSE`, and every handler corresponds to an emitted event.
 
-With one exception, in the other direction. `stream_agent` yields a **`reasoning`** type for reasoning-capable models. No route translates it, and `parseSSE` has no handler for it. Reasoning tokens are generated and dropped; only `backend/agent_harness.py` sees them. See [`05-agent.md`](05-agent.md).
+With one exception, in the other direction. `stream_agent` yields a `reasoning` type for reasoning-capable models. No route translates it, and `parseSSE` has no handler for it. Reasoning tokens are generated and dropped; only `backend/agent_harness.py` sees them. See [`05-agent.md`](05-agent.md).
 
 ### The asymmetry between the two endpoints
 
 Project chats and global chats have diverged, and it is visible in which events each can emit:
 
-| | Project chat | Global chat |
-|---|---|---|
-| Agentic path | **never** | when `model_supports_tools` |
-| `agent_start` / `segment_*` | never | yes |
-| `step_start` / `step_done` | yes | legacy path only |
-| `query_plan` | no | legacy path only |
-| Frontend handlers wired | token accumulator only | all handlers |
+
+|                             | Project chat           | Global chat                 |
+| --------------------------- | ---------------------- | --------------------------- |
+| Agentic path                | **never**              | when `model_supports_tools` |
+| `agent_start` / `segment_*` | never                  | yes                         |
+| `step_start` / `step_done`  | yes                    | legacy path only            |
+| `query_plan`                | no                     | legacy path only            |
+| Frontend handlers wired     | token accumulator only | all handlers                |
+
 
 The frontend mirrors this: `sendMessage` wires `onAgentStart` / `onSegmentToolCall` / `onSegmentToolResult` / `onQueryPlan` for the **global** call site only. Even if a project chat somehow emitted a segment event, nothing would consume it.
 
 ---
+
+
 
 ## The segment model
 
@@ -115,11 +121,15 @@ stateDiagram-v2
     Hydrated --> AgentRender: falls back to m.ui.segments
 ```
 
-| State | Meaning | Renderer |
-|---|---|---|
-| `null` | Not an agent message | Legacy: markdown of `m.content` |
-| `[]` or populated | Live agent message | `AgentMessageBubble` over the array |
+
+
+
+| State                                            | Meaning               | Renderer                                  |
+| ------------------------------------------------ | --------------------- | ----------------------------------------- |
+| `null`                                           | Not an agent message  | Legacy: markdown of `m.content`           |
+| `[]` or populated                                | Live agent message    | `AgentMessageBubble` over the array       |
 | `null` **with** `m.ui.kind === 'agent_segments'` | Hydrated from history | `AgentMessageBubble` over `m.ui.segments` |
+
 
 The renderer's condition accepts either signal, and its data expression falls back across both:
 
@@ -134,16 +144,20 @@ That fallback is the entire reason a reloaded conversation looks identical to a 
 
 Four handlers, applied to the last message in the chat:
 
-| Event | Effect |
-|---|---|
-| `agent_start` | `segments = []`. **This is the switch** from legacy mode to agent mode. |
-| `token` | If `segments === null`, append to `m.content` (legacy). Otherwise append to the trailing open text segment, or push a new one. |
-| `segment_tool_call` | Mark a trailing open text segment `done`, then push a tool segment. |
-| `segment_tool_result` | Find the matching not-done tool segment by `name`; set `done` and attach `result`. |
+
+| Event                 | Effect                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `agent_start`         | `segments = []`. **This is the switch** from legacy mode to agent mode.                                                        |
+| `token`               | If `segments === null`, append to `m.content` (legacy). Otherwise append to the trailing open text segment, or push a new one. |
+| `segment_tool_call`   | Mark a trailing open text segment `done`, then push a tool segment.                                                            |
+| `segment_tool_result` | Find the matching not-done tool segment by `name`; set `done` and attach `result`.                                             |
+
 
 Every one of these goes through `patchLast`, a functional updater that copies the array but leaves every earlier message referentially identical — so React re-renders one bubble, not the transcript.
 
 ---
+
+
 
 ## The dual-authoring hazard
 
@@ -184,6 +198,8 @@ flowchart TB
 
     style R stroke-width:3px
 ```
+
+
 
 The live view comes from the client's construction. The reloaded view comes from the server's. **If the two ever disagree, a conversation renders one way while you watch it and a different way after refresh** — a bug that is invisible in development, since you rarely reload mid-conversation, and obvious to users.
 
@@ -228,6 +244,8 @@ With two not-done segments sharing a `name`, the server would complete one and t
 >
 > Making the client `break` on first match would remove the dependence on that invariant, at no cost.
 
+
+
 ### If you change this, change both
 
 A checklist, because the compiler cannot help here:
@@ -244,6 +262,8 @@ Then verify by having a real agentic conversation **and reloading the page**, co
 
 ---
 
+
+
 ## Persistence and hydration
 
 On `done`, the server persists the assistant message with `ui_payload` set to the segments object. The frontend independently freezes its own copy:
@@ -256,13 +276,15 @@ next.ui = { kind: 'agent_segments', segments: frozen };
 
 Marking every text segment `done` kills the streaming cursor; copying into `m.ui` produces the shape hydration will later supply.
 
-On reload, `hydrateChatCache` renames each message's `ui_payload` to `ui` and **sets `segments: null`** — so hydrated messages take the `m.ui.segments` fallback path described above. It is a no-op if the chat is already cached, so history is fetched once per chat per session.
+On reload, `hydrateChatCache` renames each message's `ui_payload` to `ui` and **sets** `segments: null` — so hydrated messages take the `m.ui.segments` fallback path described above. It is a no-op if the chat is already cached, so history is fetched once per chat per session.
 
 `done` also carries the chat title and the authoritative pinned-study list, which are reconciled into local state without a refetch. When `pinned_studies` is absent, existing pins are left untouched rather than cleared — the distinction between "no pins" and "not reported" is preserved.
 
 Two other `ui.kind` values round-trip through the same mechanism: `samples_report` (a study report bubble) and `systems_status`.
 
 ---
+
+
 
 ## Cancellation
 
@@ -272,4 +294,4 @@ Two other `ui.kind` values round-trip through the same mechanism: `samples_repor
 
 ---
 
-*See also: [`05-agent.md`](05-agent.md) for what produces these events · [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) for exact payload shapes · [`08-frontend.md`](08-frontend.md) for the render layer · [`10-testing.md`](10-testing.md) for the missing parity test.*
+*See also:* [`05-agent.md`](05-agent.md) *for what produces these events ·* [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) *for exact payload shapes ·* [`08-frontend.md`](08-frontend.md) *for the render layer ·* [`10-testing.md`](10-testing.md) *for the missing parity test.*

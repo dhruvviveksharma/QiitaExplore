@@ -25,6 +25,8 @@ This is historical: project chat predates the tool loop and already had its cont
 
 ---
 
+
+
 ## What `stream_agent` is
 
 `backend/helpers/agent.py :: stream_agent` is a **generator that yields typed dictionaries, not SSE strings**:
@@ -39,7 +41,7 @@ Keeping SSE formatting out of the agent is what allows `backend/agent_harness.py
 
 Five yield types: `agent_start`, `token`, `reasoning`, `segment_tool_call`, `segment_tool_result`.
 
-> **`reasoning` never reaches the browser.** Reasoning-capable models emit `delta.reasoning_content`, and `stream_agent` faithfully yields it as `{"type": "reasoning", ...}`. **No route translates it into an SSE event, and no browser handler exists for it.** The web path silently discards every reasoning token; only `agent_harness.py` consumes them. This is a gap, not a design choice — the plumbing exists on one end and stops halfway. Surfacing it would give users visibility into the model's deliberation at no backend cost.
+> `reasoning` **never reaches the browser.** Reasoning-capable models emit `delta.reasoning_content`, and `stream_agent` faithfully yields it as `{"type": "reasoning", ...}`. **No route translates it into an SSE event, and no browser handler exists for it.** The web path silently discards every reasoning token; only `agent_harness.py` consumes them. This is a gap, not a design choice — the plumbing exists on one end and stops halfway. Surfacing it would give users visibility into the model's deliberation at no backend cost.
 
 ---
 
@@ -75,6 +77,8 @@ stateDiagram-v2
     ForcedSynthesis: re-call model with NO tools,<br/>stream result as tokens
     ForcedSynthesis --> [*]
 ```
+
+
 
 Up to four iterations. Each one streams a completion, accumulating three things in parallel: prose content, reasoning content, and tool-call fragments — the last reassembled from streamed deltas into `tool_call_map[index] = {id, name, arguments}` by string-concatenating name and argument fragments as they arrive.
 
@@ -116,24 +120,30 @@ Note the interaction with `max_iters`: hitting the ceiling while still requestin
 
 ---
 
+
+
 ## Two providers, one loop
 
 `get_client(model)` returns `(client, provider)`, and `stream_agent` dispatches to `_stream_anthropic_agent` when the provider is Anthropic. The two implementations are parallel, not shared, because the streaming protocols differ structurally:
 
-| Concern | OpenAI / NRP-Nautilus | Anthropic |
-|---|---|---|
-| Tool schema | `{"type":"function","function":{name,description,parameters}}` | `{name, description, input_schema}` |
-| System prompt | A message with `role: "system"` | A separate `system=` parameter |
-| Tool arguments | `delta.tool_calls[].function.arguments` fragments | `input_json_delta` accumulating `partial_json` |
-| Continue signal | `finish_reason == "tool_calls"` | `stop_reason == "tool_use"` |
-| Tool results | `{"role": "tool", "tool_call_id": ...}` | A **user** message containing `[{"type":"tool_result", ...}]` |
-| Reasoning | `delta.reasoning_content` | not handled |
+
+| Concern         | OpenAI / NRP-Nautilus                                          | Anthropic                                                     |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| Tool schema     | `{"type":"function","function":{name,description,parameters}}` | `{name, description, input_schema}`                           |
+| System prompt   | A message with `role: "system"`                                | A separate `system=` parameter                                |
+| Tool arguments  | `delta.tool_calls[].function.arguments` fragments              | `input_json_delta` accumulating `partial_json`                |
+| Continue signal | `finish_reason == "tool_calls"`                                | `stop_reason == "tool_use"`                                   |
+| Tool results    | `{"role": "tool", "tool_call_id": ...}`                        | A **user** message containing `[{"type":"tool_result", ...}]` |
+| Reasoning       | `delta.reasoning_content`                                      | not handled                                                   |
+
 
 `_openai_tools_to_anthropic` performs the schema translation, so tools are declared once in OpenAI format and rewritten on demand.
 
 A third provider would need: schema translation, system-prompt placement, a streaming accumulator for tool arguments, the stop-signal mapping, the tool-result message shape — and both the search-gating and forced-synthesis behaviours, which are currently duplicated rather than factored out. That duplication is the maintenance cost of this design, and it is real: a fix applied to one path can silently miss the other. TKT-032 tracks consolidating it.
 
 ---
+
+
 
 ## The five tools
 
@@ -163,6 +173,8 @@ flowchart LR
     style K stroke-dasharray: 4 4
 ```
 
+
+
 A search for a mouse study cannot lose the word "mouse" to a flood of incidental terms. With one flat list, truncation order would be arbitrary.
 
 **Problem two: accidental filtering.** `_collect_terms` returns two lists. `raw_kws` is everything, used for matching. `detect_kws` is **the `keywords` slot only**, and it alone feeds `detect_data_types`, which maps synonyms like "shotgun" onto canonical data types and applies them as an **AND filter**.
@@ -191,6 +203,8 @@ Structured `{field, value}` filters against sample metadata, for when the user n
 
 ---
 
+
+
 ## What the LLM does not do
 
 Stated plainly, because the opposite is a reasonable assumption:
@@ -208,6 +222,8 @@ Letting the model author constrained SQL is genuine future work, with a real thr
 
 ---
 
+
+
 ## Observability
 
 Each iteration logs time-to-first-token, total elapsed time, content and reasoning lengths, finish reason, and tool-call count. Each tool execution logs its name, elapsed time, and result size, and appends a `· {n}s` suffix to the label the user sees — so tool timing is visible in the UI without opening logs.
@@ -216,8 +232,8 @@ Each iteration logs time-to-first-token, total elapsed time, content and reasoni
 
 `backend/agent_harness.py` runs the whole loop from the command line, which is the fastest way to iterate on prompts or tool schemas without a browser — and the only way to observe `reasoning` output.
 
-> **`AGENT_DEBUG` does not affect the server.** Its only reader is `agent_harness.py`. Setting it in the backend's `.env` has no effect on the Gunicorn process — a natural assumption that is wrong, and an easy few minutes lost. Server-side agent logging is whatever `logging.basicConfig(level=INFO)` in `run.py` produces.
+> `AGENT_DEBUG` **does not affect the server.** Its only reader is `agent_harness.py`. Setting it in the backend's `.env` has no effect on the Gunicorn process — a natural assumption that is wrong, and an easy few minutes lost. Server-side agent logging is whatever `logging.basicConfig(level=INFO)` in `run.py` produces.
 
 ---
 
-*See also: [`06-streaming-and-chat.md`](06-streaming-and-chat.md) for how these yields become browser state · [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) for the full schemas · [`04-search.md`](04-search.md) for what the tools query · [`appendix-d-configuration.md`](appendix-d-configuration.md) for the model roster.*
+*See also:* [`06-streaming-and-chat.md`](06-streaming-and-chat.md) *for how these yields become browser state ·* [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) *for the full schemas ·* [`04-search.md`](04-search.md) *for what the tools query ·* [`appendix-d-configuration.md`](appendix-d-configuration.md) *for the model roster.*

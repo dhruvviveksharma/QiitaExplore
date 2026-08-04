@@ -16,13 +16,17 @@ The bypasses that exist today are deliberate and few: `sample_search` and `artif
 
 ### The failure posture
 
-`qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default. `artifact_graph :: fetch_artifact_graph` logs and returns `[]` rather than raising. This is consistent across the data layer, and it is a deliberate choice: **a Qiita read failure degrades the response rather than failing the request.** A study card renders without its data types; a chat answers without prep detail.
+`qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default. `artifact_graph :: fetch_artifact_graph` logs and returns `[]` rather than raising. his is consistent across the data layer, and it is a deliberate choice: **a Qiita read failure degrades the response rather than failing the request.** A study card renders without its data types; a chat answers without prep detail.
 
 The cost is that a persistent upstream problem is invisible from the UI — it looks like missing data, not like an error. Diagnosis goes through the logs. This tension is tracked as TKT-002.
 
 ---
 
+
+
 ## Connection management
+
+
 
 ### The shared pool
 
@@ -53,15 +57,21 @@ Every other mention of `TRN` in the backend is a docstring explaining why that m
 
 ---
 
+
+
 ## Three cache layers
 
 The same study header can exist in three places at once, with three different lifetimes. Each layer solves a problem the others cannot.
 
-| Layer | Where | Scope | TTL | Invalidation | Survives restart? |
-|---|---|---|---|---|---|
-| **1. Header memo** | `_study_header_cache` dict | One gunicorn worker | 3600 s | Time only | No |
-| **2. Study detail** | SQLite `study_detail_cache` | All workers | 6 h (hardcoded) | Time, plus a staleness probe | Yes |
-| **3. BIOM sample IDs** | SQLite `biom_sample_cache` | All workers | **None — permanent** | Never | Yes |
+
+| Layer                  | Where                       | Scope               | TTL                  | Invalidation                 | Survives restart? |
+| ---------------------- | --------------------------- | ------------------- | -------------------- | ---------------------------- | ----------------- |
+| **1. Header memo**     | `_study_header_cache` dict  | One gunicorn worker | 3600 s               | Time only                    | No                |
+| **2. Study detail**    | SQLite `study_detail_cache` | All workers         | 6 h (hardcoded)      | Time, plus a staleness probe | Yes               |
+| **3. BIOM sample IDs** | SQLite `biom_sample_cache`  | All workers         | **None — permanent** | Never                        | Yes               |
+
+
+
 
 ### Layer 1 — the in-process memo
 
@@ -77,6 +87,8 @@ Beyond the TTL there is a **staleness probe**: `backend/routes/study_routes.py` 
 
 > **Known defect — the TTL check fails open.** `backend/store/cache.py :: get_study_detail_cache` wraps its age comparison in a bare `except Exception: pass`, so an unparseable `cached_at` yields a **cache hit** on an arbitrarily stale row rather than a miss. Compare `backend/store/auth_store.py :: get_session_by_token`, which fails *closed* on a malformed timestamp. The auth path gets this right; the cache path does not. Low impact today, but it is the wrong default.
 
+
+
 ### Layer 3 — `biom_sample_cache`
 
 Sample IDs read out of a BIOM file, cached **forever**, with no TTL and no invalidation path.
@@ -86,6 +98,8 @@ This is correct, and worth understanding rather than treating as an oversight: *
 `backend/helpers/biom_samples.py :: read_biom_sample_ids` reads `f["sample/ids"]` directly via h5py, falling back to a full `biom.load_table` only if that fails — the direct read avoids parsing the entire count matrix to get a list of names.
 
 ---
+
+
 
 ## The COALESCE upsert pattern
 
@@ -104,11 +118,13 @@ ON CONFLICT(study_id) DO UPDATE SET
     cached_at       = excluded.cached_at
 ```
 
-Now **passing `None` preserves whatever is already stored.** Any caller can write the one or two columns it computed, in any order, without coordinating with the others and without a read-modify-write cycle. `backend/store/cache.py :: upsert_study_detail_cache` applies this to every payload column.
+Now **passing** `None` **preserves whatever is already stored.** Any caller can write the one or two columns it computed, in any order, without coordinating with the others and without a read-modify-write cycle. `backend/store/cache.py :: upsert_study_detail_cache` applies this to every payload column.
 
 > **The pattern has a limit, and this row hits it.** `cached_at` is assigned **unconditionally** while the payload columns COALESCE. So writing one fresh column resets the six-hour clock for **all nine**. A row can therefore read as a valid cache hit while some of its payload is arbitrarily older than the TTL nominally permits — for example, a `samples_context` refresh silently extends the life of preps and artifacts fetched five hours earlier. Per-column freshness would require per-column timestamps, which is the real fix if this ever matters. Worth knowing before trusting the TTL as a correctness bound.
 
 ---
+
+
 
 ## Context budgeting
 
@@ -146,6 +162,8 @@ flowchart TB
     D -->|no| T3["<b>Tier 3</b> — study IDs only (first 60)<br/>+ cached project summary,<br/>hard-clipped to budget"]
 ```
 
+
+
 What a user loses at each step:
 
 - **Tier 1 → 2.** Studies past the 65% mark lose their sample-metadata context, prep detail, and PI information; they keep an ID, a truncated title, and a ~480-character summary. The model can still name them correctly but can no longer reason about their contents. Which studies survive is **order-dependent, not relevance-dependent** — it is whichever ones the project happens to list first.
@@ -153,17 +171,21 @@ What a user loses at each step:
 
 The 65% figure reserves the remaining 35% for the summary lines that the overflow generates — without it, Tier 2 could produce output larger than Tier 1.
 
-Pinned studies are budgeted separately by `_build_pinned_reports_context`, which divides `PINNED_REPORT_CONTEXT_MAX_CHARS` among the pinned set with a per-study floor, fetches them across a small thread pool, and clips at a newline boundary so the final block never ends mid-record.
+Pinned studies are budgeted separately by `_build_pinned_reports_context` (`backend/helpers/pinned_context.py`), which gives each inlined study a flat `PINNED_CHARS_PER_STUDY` clamped by the model's window, fetches them across a small thread pool, and — when the caller has tools — inlines only the first `PINNED_INLINE_STUDIES`, listing the rest as manifest lines the model can expand with `get_study_report`. Callers without tools (project chat, `/pin`) inline every pinned study and share the budget across all of them, since a manifest line would name a function they cannot call.
 
 ---
 
+
+
 ## The local store
+
+
 
 ### Shape and setup
 
 SQLite, at `QIITA_EXPERIMENT_DB_PATH` (default `backend/data/projects.db`), opened with `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. WAL matters here: it allows concurrent readers alongside a writer, which is what four Gunicorn workers against one file requires.
 
-**`_bootstrap()` runs at import time.** Importing anything from `store` creates and migrates the database as a side effect. This happens once per worker at startup. It is convenient and it means schema migration is never an explicit step anyone runs or can observe failing.
+`_bootstrap()` **runs at import time.** Importing anything from `store` creates and migrates the database as a side effect. This happens once per worker at startup. It is convenient and it means schema migration is never an explicit step anyone runs or can observe failing.
 
 Full schema in [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md).
 
@@ -173,7 +195,7 @@ Forward-only and additive. New columns arrive as `ALTER TABLE ... ADD COLUMN` st
 
 For a single-file local store this is a reasonable trade. Two consequences are worth naming:
 
-> **The bare `except Exception: pass` around each ALTER cannot distinguish "column already exists" from a real failure** — a locked database, a full disk, a corrupt file. In the failure case the application boots with a **silently incomplete schema** and fails later, somewhere unrelated. Catching only `sqlite3.OperationalError` and matching on the duplicate-column message would preserve idempotency without swallowing genuine errors. This is TKT-002 territory.
+> **The bare** `except Exception: pass` **around each ALTER cannot distinguish "column already exists" from a real failure** — a locked database, a full disk, a corrupt file. In the failure case the application boots with a **silently incomplete schema** and fails later, somewhere unrelated. Catching only `sqlite3.OperationalError` and matching on the duplicate-column message would preserve idempotency without swallowing genuine errors. This is TKT-002 territory.
 
 One migration is not additive. `backend/store/db.py :: _reconcile_legacy_users_table` handles a pre-authentication `users` table whose shape (`username`, `password_hash`, no `principal_idx`) `CREATE TABLE IF NOT EXISTS` cannot upgrade — the symptom was every `POST /auth/connect` failing with "no column named principal_idx". It guards on `auth_sessions` being empty, then renames the old table aside and drops `auth_sessions` so the schema script can recreate both correctly. It is non-destructive by rename rather than by drop, but it does execute DDL at import time on every boot.
 
@@ -183,4 +205,4 @@ One migration is not additive. `backend/store/db.py :: _reconcile_legacy_users_t
 
 ---
 
-*See also: [`04-search.md`](04-search.md) for the queries built on top of this layer · [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) for the full schema · [`appendix-d-configuration.md`](appendix-d-configuration.md) for pool sizes, TTLs, and budget variables · [`11-roadmap.md`](11-roadmap.md) for the migration off direct PostgreSQL.*
+*See also:* [`04-search.md`](04-search.md) *for the queries built on top of this layer ·* [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) *for the full schema ·* [`appendix-d-configuration.md`](appendix-d-configuration.md) *for pool sizes, TTLs, and budget variables ·* [`11-roadmap.md`](11-roadmap.md) *for the migration off direct PostgreSQL.*

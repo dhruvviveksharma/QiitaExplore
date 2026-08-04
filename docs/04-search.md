@@ -20,6 +20,8 @@ QiitaExplore answers both, and merges the results. That is what this chapter des
 
 ---
 
+
+
 ## Three paths, one builder
 
 ```mermaid
@@ -52,9 +54,13 @@ flowchart TB
     style PROBE stroke-width:2px
 ```
 
+
+
 Three entry points, three different ways of turning intent into terms, and then everything text-shaped converges on one parameterized builder.
 
 ---
+
+
 
 ## Path 1 — the browse box
 
@@ -73,6 +79,8 @@ What it actually does:
 The heuristic is crude and it is honest about being crude. Its weakness is the keyword truncation: a narrow query keeps only the **first two** surviving tokens in input order, with no notion of which are informative. "high fat diet mouse gut" narrows to `high AND fat`.
 
 ---
+
+
 
 ## Path 2 — the canonical SQL builder
 
@@ -99,12 +107,14 @@ Plus four correlated subqueries in the SELECT list: `num_samples`, `data_types`,
 
 `build_relevance_score` emits a summed CASE expression per keyword, weighted by where the match lands:
 
-| Field | Weight |
-|---|---|
-| `study_title` | 3 |
-| `study_alias` | 2 |
-| PI name | 2 |
-| `study_abstract` | 1 |
+
+| Field            | Weight |
+| ---------------- | ------ |
+| `study_title`    | 3      |
+| `study_alias`    | 2      |
+| PI name          | 2      |
+| `study_abstract` | 1      |
+
 
 Ordering is `relevance DESC, num_samples DESC NULLS LAST, s.study_id`. The sample-count tiebreak is a deliberate bias toward larger studies when relevance ties — usually what a researcher wants, occasionally not.
 
@@ -149,6 +159,8 @@ Two things to note. The cap applies *after* expansion, so it corresponds to roug
 
 ---
 
+
+
 ## Path 3 — sample-metadata search
 
 This is what makes QiitaExplore able to answer questions the Qiita web UI cannot.
@@ -162,7 +174,7 @@ flowchart LR
     A["candidate study IDs<br/>40 default · 500 deep<br/><i>data-type filtered, or<br/>top-N by sample count</i>"]
     B["per-call ThreadedConnectionPool<br/>statement_timeout = 8000 ms"]
     C["ThreadPoolExecutor<br/>≤ 16 workers"]
-    D["N × SELECT EXISTS(...)<br/>on qiita.sample_&#123;id&#125;"]
+    D["N × SELECT EXISTS(...)<br/>on qiita.sample_{id}"]
     E{"as_completed<br/>max(30, N×0.4) s"}
     F["complete result"]
     G["<b>partial result</b><br/>cancel stragglers,<br/>return what matched"]
@@ -171,6 +183,10 @@ flowchart LR
     E -->|all returned| F
     E -->|budget exhausted| G
 ```
+
+
+
+
 
 ### The probe
 
@@ -190,7 +206,7 @@ The OR matrix is **7 host fields × up to 10 keywords** (`_MAX_KEYWORDS_PER_PROB
 Two details:
 
 - **The table name is f-string interpolated**, because a table name cannot be a bound parameter. It is `int()`-cast immediately before interpolation, so it cannot carry injection. Values are always parameterized.
-- **`'qiita_sample_column_names'` is a sentinel row** Qiita stores in every per-study table, holding column names rather than sample data. Every probe and every full-metadata query excludes it. Forgetting to is a recurring source of phantom matches.
+- `'qiita_sample_column_names'` **is a sentinel row** Qiita stores in every per-study table, holding column names rather than sample data. Every probe and every full-metadata query excludes it. Forgetting to is a recurring source of phantom matches.
 
 `search_studies_by_field_filters` uses the same machinery for structured `field=value` filters, mixing `sample_values->>'{field}' ILIKE %s` for named fields with `sample_values::text ILIKE %s` for free-text.
 
@@ -212,15 +228,17 @@ The organism slot gets preference for probing: `probe_kws = organism_kws or raw_
 
 ---
 
+
+
 ## Known performance problem
 
-> **TKT-024 — `/api/search` latency ranges from 86 ms to 13.5 s** across the benchmark suite in `backend/tests/benchmarks/`. These are measured numbers, not estimates.
+> **TKT-024 —** `/api/search` **latency ranges from 86 ms to 13.5 s** across the benchmark suite in `backend/tests/benchmarks/`. These are measured numbers, not estimates.
 
 Three compounding causes:
 
-1. **Leading-wildcard `ILIKE` with no supporting index.** Every clause is `ILIKE '%term%'`, which no B-tree can serve. Each is a sequential scan over `qiita.study`.
+1. **Leading-wildcard** `ILIKE` **with no supporting index.** Every clause is `ILIKE '%term%'`, which no B-tree can serve. Each is a sequential scan over `qiita.study`.
 2. **Term count multiplies the work.** 80 expanded terms × 6 fields = 480 comparisons per row in the WHERE, plus 320 more in the relevance expression.
-3. **`SELECT DISTINCT` with `ORDER BY relevance` defeats LIMIT pushdown.** Both the relevance expression and the deduplication must be evaluated for the full matching set before any row can be discarded, so `LIMIT 8` does not reduce the work — it only reduces what is returned. The four correlated subqueries per surviving row add to that.
+3. `SELECT DISTINCT` **with** `ORDER BY relevance` **defeats LIMIT pushdown.** Both the relevance expression and the deduplication must be evaluated for the full matching set before any row can be discarded, so `LIMIT 8` does not reduce the work — it only reduces what is returned. The four correlated subqueries per surviving row add to that.
 
 The indicated fix is `pg_trgm` GIN trigram indexes on `study_title` and `study_abstract`, which are what make leading-wildcard matching indexable. That is the highest-leverage change available. Restructuring the query to select IDs first and hydrate afterward would address the pushdown issue separately.
 
@@ -229,6 +247,8 @@ The indicated fix is `pg_trgm` GIN trigram indexes on `study_title` and `study_a
 > That last point is the real constraint, and it is easy to miss: **QiitaExplore has read-only access to classic Qiita.** It cannot create these indexes itself. The fix requires a change on the Qiita side, by whoever owns that database.
 
 ---
+
+
 
 ## Where this is going
 
@@ -239,4 +259,4 @@ The indicated fix is `pg_trgm` GIN trigram indexes on `study_title` and `study_a
 
 ---
 
-*See also: [`05-agent.md`](05-agent.md) for how the model chooses search arguments · [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md#search_studies) for the tool schemas · [`appendix-d-configuration.md`](appendix-d-configuration.md) for candidate caps and timeouts · [`03-data-access-and-caching.md`](03-data-access-and-caching.md) for the connection model.*
+*See also:* [`05-agent.md`](05-agent.md) *for how the model chooses search arguments ·* [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md#search_studies) *for the tool schemas ·* [`appendix-d-configuration.md`](appendix-d-configuration.md) *for candidate caps and timeouts ·* [`03-data-access-and-caching.md`](03-data-access-and-caching.md) *for the connection model.*
