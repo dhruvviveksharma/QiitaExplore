@@ -518,11 +518,17 @@ input, textarea { font-family: var(--sans); }
 
 .tool-call-card {
   border-left: 2px solid var(--accent-muted, rgba(99,102,241,.3));
+  /* The card owns the inset from its own accent bar, so every child — banner,
+     SQL row, collapsible header and body — shares one left edge, and anything
+     added later gets it for free. */
+  padding-left: 10px;
   font-size: 11.5px;
 }
 .app.dark .tool-call-card { border-left-color: rgba(44,125,140,.35); }
 .tool-call-body {
-  padding: 4px 10px 8px;
+  /* No left padding of its own — .tool-call-card supplies it, otherwise this
+     panel would sit 10px deeper than its siblings. */
+  padding: 4px 0 8px;
   border-top: 1px solid var(--border, #e5e7eb);
 }
 .tool-call-args {
