@@ -180,8 +180,10 @@ function renderApp(s, account) {
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
                 onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
-              <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
-                onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
+              {SHOW_MERGES && (
+                <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
+                  onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
+              )}
               {view.type === 'merges' && (
                 <button
                   className="sidebar-toggle-btn"
@@ -199,7 +201,7 @@ function renderApp(s, account) {
             </>
           )}
           <span className="topbar-spacer" />
-          {view.type !== 'merges' && (
+          {SHOW_MERGES && view.type !== 'merges' && (
             <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
               title="Merge Workspace"
               onClick={() => setShowMergePanel(p => !p)}>
@@ -345,13 +347,15 @@ function renderApp(s, account) {
                                   {inCtx ? '✓ Pinned' : '+ Pin'}
                                 </button>
                               )}
-                              <button className="btn-card-merge"
-                                onClick={() => {
-                                  setPendingMergeStudy(study);
-                                  setShowMergePanel(true);
-                                }}>
-                                + Merge
-                              </button>
+                              {SHOW_MERGES && (
+                                <button className="btn-card-merge"
+                                  onClick={() => {
+                                    setPendingMergeStudy(study);
+                                    setShowMergePanel(true);
+                                  }}>
+                                  + Merge
+                                </button>
+                              )}
                             </div>
                           </div>
                           <div className="study-card-title">{study.study_title || 'Untitled study'}</div>

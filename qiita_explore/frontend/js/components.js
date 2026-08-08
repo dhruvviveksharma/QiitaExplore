@@ -451,7 +451,9 @@ function InlineStudyCard({ study, isPinned, onPin, onMerge, onOpen }) {
       <div className="isc-meta">{study.num_samples ?? '—'} samples · {study.pi_name || '—'}</div>
       <div className="isc-actions">
         <button className="btn-isc-pin" onClick={e => { e.stopPropagation(); onPin?.(study); }}>Pin</button>
-        <button className="btn-isc-merge" onClick={e => { e.stopPropagation(); onMerge?.(study); }}>Merge →</button>
+        {SHOW_MERGES && (
+          <button className="btn-isc-merge" onClick={e => { e.stopPropagation(); onMerge?.(study); }}>Merge →</button>
+        )}
       </div>
     </div>
   );

@@ -1,3 +1,7 @@
+// Single toggle for all merge-feature entry points (nav tab, floating
+// toggle, per-study "+ Merge", in-chat "Merge →"). Flip to true to restore.
+const SHOW_MERGES = false;
+
 function useAppState() {
   const [projects,    setProjects]    = useState([]);
   const [projLoading, setProjLoading] = useState(true);
