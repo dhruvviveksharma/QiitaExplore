@@ -13,8 +13,12 @@ function useAuth() {
   const [identity, setIdentity] = useState(null);
 
   const refresh = useCallback(async () => {
+    // A dead/hung connection (e.g. a stale SSH tunnel that accepts the socket
+    // but never answers) must not leave status stuck on 'loading' forever.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await apiFetch('/auth/me');
+      const res = await apiFetch('/auth/me', { signal: controller.signal });
       if (!res.ok) {
         clearCsrfToken();
         setIdentity(null);
@@ -35,6 +39,8 @@ function useAuth() {
       clearCsrfToken();
       setIdentity(null);
       setStatus('anonymous');
+    } finally {
+      clearTimeout(timer);
     }
   }, []);
 
