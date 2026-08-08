@@ -19,9 +19,9 @@ from parity_helpers import llm_judge, stream_chat
 class TestDeepSearchAGP:
     """Single-turn /deepsearch for the American Gut Project."""
 
-    def test_finds_agp_studies(self, backend, global_chat):
+    def test_finds_agp_studies(self, client, global_chat):
         result = stream_chat(
-            backend,
+            client,
             global_chat["chat_id"],
             "give me studies related to the American Gut Project",
             deep_search=True,
@@ -52,10 +52,10 @@ class TestDeepSearchWildMiceMultiTurn:
     to the LLM on turn 2, verifying cross-turn context continuity.
     """
 
-    def test_wild_mice_then_filter_shotgun(self, backend, global_chat):
+    def test_wild_mice_then_filter_shotgun(self, client, global_chat):
         # Turn 1: deepsearch for wild mice studies
         turn1 = stream_chat(
-            backend,
+            client,
             global_chat["chat_id"],
             "find me studies related to wild mice",
             deep_search=True,
@@ -69,7 +69,7 @@ class TestDeepSearchWildMiceMultiTurn:
 
         # Turn 2: filter using prior context — no deep_search flag needed
         turn2 = stream_chat(
-            backend,
+            client,
             global_chat["chat_id"],
             "filter to just the ones with shotgun metagenomics",
         )

@@ -4,7 +4,6 @@ Extend BLOCKED_STUDY_IDS as you validate more non-public study IDs.
 Tests 1.1–1.3 are parametrized over the list; 1.4–1.5 test chat specifically.
 """
 import pytest
-import requests
 
 from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
 
@@ -17,8 +16,8 @@ BLOCKED_STUDY_IDS = [16084]
 class TestDetailEndpointBlocked:
     """1.1 — /api/studies/<id>/detail returns 404 for non-public studies."""
 
-    def test_detail_endpoint_returns_404(self, backend, study_id):
-        r = requests.get(f"{backend}/api/studies/{study_id}/detail", timeout=10)
+    def test_detail_endpoint_returns_404(self, client, study_id):
+        r = client.get(f"/api/studies/{study_id}/detail")
         assert r.status_code == 404, (
             f"Expected 404 for non-public study {study_id}, got {r.status_code}"
         )
@@ -34,21 +33,21 @@ class TestDetailEndpointBlocked:
 class TestSearchNeverReturnsBlocked:
     """1.2 — /api/search never surfaces non-public studies regardless of query."""
 
-    def test_search_by_study_id_string(self, backend, study_id):
-        ids = search_ids(backend, str(study_id))
+    def test_search_by_study_id_string(self, client, study_id):
+        ids = search_ids(client, str(study_id))
         assert study_id not in ids, (
             f"Study {study_id} appeared in search results for query '{study_id}'"
         )
 
-    def test_search_by_study_id_phrase(self, backend, study_id):
-        ids = search_ids(backend, f"study {study_id}")
+    def test_search_by_study_id_phrase(self, client, study_id):
+        ids = search_ids(client, f"study {study_id}")
         assert study_id not in ids, (
             f"Study {study_id} appeared in search results for query 'study {study_id}'"
         )
 
-    def test_broad_search_excludes_blocked(self, backend, study_id):
+    def test_broad_search_excludes_blocked(self, client, study_id):
         # Broad query returns many studies — blocked one must not slip through.
-        ids = search_ids(backend, "microbiome human gut bacteria")
+        ids = search_ids(client, "microbiome human gut bacteria")
         assert study_id not in ids, (
             f"Study {study_id} appeared in broad search results"
         )
@@ -59,8 +58,8 @@ class TestSearchNeverReturnsBlocked:
 class TestFirstStudiesNeverReturnsBlocked:
     """1.3 — /api/studies/first never surfaces non-public studies."""
 
-    def test_first_studies_excludes_blocked(self, backend, study_id):
-        r = requests.get(f"{backend}/api/studies/first", params={"limit": 100}, timeout=15)
+    def test_first_studies_excludes_blocked(self, client, study_id):
+        r = client.get("/api/studies/first", params={"limit": 100})
         r.raise_for_status()
         ids = {int(row["study_id"]) for row in r.json().get("results", [])}
         assert study_id not in ids, (
@@ -74,13 +73,13 @@ class TestFirstStudiesNeverReturnsBlocked:
 class TestChatDoesNotSurfaceBlocked:
     """1.4 — Chat does not return data for non-public studies when asked directly."""
 
-    def test_chat_ask_about_blocked_study(self, backend, global_chat, study_id):
+    def test_chat_ask_about_blocked_study(self, client, global_chat, study_id):
         question = f"Tell me about study {study_id}. What samples does it have?"
-        result = stream_chat(backend, global_chat["chat_id"], question)
+        result = stream_chat(client, global_chat["chat_id"], question)
 
         # Deterministic check: the chat's SQL search step must not return the blocked study.
         if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
+            chat_ids = chat_search_ids(client, result["query_plan"])
             assert study_id not in chat_ids, (
                 f"Study {study_id} appeared in chat's own search step results"
             )
@@ -107,14 +106,14 @@ class TestChatDoesNotSurfaceBlocked:
 class TestChatSearchResultsExcludeBlocked:
     """1.5 — The chat's SQL search step itself excludes non-public studies."""
 
-    def test_chat_broad_query_excludes_blocked(self, backend, global_chat, study_id):
+    def test_chat_broad_query_excludes_blocked(self, client, global_chat, study_id):
         result = stream_chat(
-            backend,
+            client,
             global_chat["chat_id"],
             "List studies available in the database",
         )
         if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
+            chat_ids = chat_search_ids(client, result["query_plan"])
             assert study_id not in chat_ids, (
                 f"Study {study_id} appeared in chat's SQL search step for a broad query"
             )
@@ -126,12 +125,12 @@ class TestChatSearchResultsExcludeBlocked:
 class TestAgentToolsDoNotLeakBlocked:
     """1.6 — get_study_report and pin_study tool calls reject non-public studies."""
 
-    def test_get_study_report_tool_refuses_blocked(self, backend, global_chat, study_id):
+    def test_get_study_report_tool_refuses_blocked(self, client, global_chat, study_id):
         question = (
             f"Give me the full sample report for study {study_id}, "
             "including title, PI, and sample counts."
         )
-        result = stream_chat(backend, global_chat["chat_id"], question)
+        result = stream_chat(client, global_chat["chat_id"], question)
 
         # Deterministic: if get_study_report fired, its payload must not leak
         # a samples_report for this blocked study.
@@ -152,9 +151,9 @@ class TestAgentToolsDoNotLeakBlocked:
             f"provide the study title, PI name, or sample count for study {study_id}",
         ), f"Judge says assistant DID leak report data for study {study_id}.\nText: {text[:500]}"
 
-    def test_pin_study_tool_refuses_blocked(self, backend, global_chat, study_id):
+    def test_pin_study_tool_refuses_blocked(self, client, global_chat, study_id):
         question = f"Pin study {study_id} to this chat."
-        result = stream_chat(backend, global_chat["chat_id"], question)
+        result = stream_chat(client, global_chat["chat_id"], question)
 
         # Deterministic: the study must not end up in the chat's pinned list.
         assert study_id not in (result["pinned_studies"] or []), (

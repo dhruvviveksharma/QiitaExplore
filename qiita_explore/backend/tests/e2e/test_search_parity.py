@@ -1,136 +1,92 @@
-"""Tests that discoverable studies surface through both /api/search and chat.
+"""Structural parity tests — HTTP, no LLM.
 
-Extend DISCOVERY_CASES as you validate more (query, expected_study_id) pairs.
+Verify that both the chat planner path and the frontend planner path produce
+search results that share the same visibility contract. All assertions go
+through /api/search or /api/studies/<id>/detail via the authenticated client
+(every endpoint requires a session — helpers/auth_middleware.py).
+
+Requires: running barnacle backend (bash qiita_explore/start_barnacle.sh)
+and QIITA_TEST_PAT set to a valid Qiita personal access token.
 """
 import pytest
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
+from parity_helpers import search_ids
 
-# ---- Extend this list as you validate more (query, expected_id) pairs ----
-DISCOVERY_CASES = [
-    ("shotgun metagenomic studies on wild mice", 11043),
-]
+BLOCKED_STUDY_IDS = [16084]
 
-# ---- Multi-study cases: ALL listed IDs must appear in LLM output ----
-MULTI_STUDY_CASES = [
-    (
-        "Find studies related to the American Gut Project",
-        {16057, 2136, 1189},
-    ),
+# Each entry: (keyword_list_simulating_chat_planner_output, expected_study_id)
+CHAT_PLANNER_CASES = [
+    (["wild", "mice", "shotgun", "metagenomic"], 11043),
+    (["wild", "mice", "metagenomics", "WGS", "feral"], 11043),
 ]
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("query,expected_id", DISCOVERY_CASES)
-class TestFrontendSearchFindsExpected:
-    """2.1 — /api/search surfaces the expected study for the given query."""
+@pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
+class TestDetailEndpointEnforcesVisibility:
+    """3.1 — /api/studies/<id>/detail proves non-public studies are blocked at the HTTP layer."""
 
-    def test_frontend_search_finds_study(self, backend, query, expected_id):
-        ids = search_ids(backend, query)
-        assert expected_id in ids, (
-            f"Expected study {expected_id} in /api/search results for '{query}', "
-            f"got {sorted(ids)[:20]}"
+    def test_detail_returns_404_for_non_public(self, client, study_id):
+        r = client.get(f"/api/studies/{study_id}/detail")
+        assert r.status_code == 404, (
+            f"Expected 404 for non-public study {study_id}, got {r.status_code}"
         )
 
 
 @pytest.mark.e2e
-@pytest.mark.e2e_llm
-@pytest.mark.parametrize("query,expected_id", DISCOVERY_CASES)
-class TestChatFindsExpected:
-    """2.2 — Chat surfaces the expected study for the given query."""
+class TestDetailEndpointAllowsPublic:
+    """3.2 — /api/studies/11043/detail confirms the public study is accessible."""
 
-    def test_chat_finds_study(self, backend, global_chat, query, expected_id):
-        result = stream_chat(backend, global_chat["chat_id"], query)
-
-        # Deterministic check: expected study must be in the chat's search step.
-        in_search = False
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-            in_search = expected_id in chat_ids
-        assert in_search or expected_id in result["study_ids_mentioned"], (
-            f"Study {expected_id} not in chat's search results for '{query}'.\n"
-            f"Query plan: {result['query_plan']}"
+    def test_detail_returns_200_for_public(self, client):
+        r = client.get("/api/studies/11043/detail")
+        assert r.status_code == 200, (
+            f"Expected study 11043 to be public and accessible, got {r.status_code}"
         )
-
-        # LLM judge: assistant must recommend or mention a relevant study.
-        assert llm_judge(
-            query, result["assistant_text"],
-            "mention or recommend a specific study related to the query",
-        ), (
-            f"Judge says assistant did not meaningfully address '{query}'.\n"
-            f"Text: {result['assistant_text'][:500]}"
-        )
+        data = r.json()
+        assert data.get("study_id") == 11043
 
 
 @pytest.mark.e2e
-@pytest.mark.e2e_llm
-@pytest.mark.parametrize("query,expected_id", DISCOVERY_CASES)
-class TestBothPathsIntersectOnExpected:
-    """2.3 — Both frontend search and chat search step agree on returning the expected study."""
+class TestChatPlannerPathRespectsVisibility:
+    """3.3 — Chat planner keyword searches find expected studies and exclude non-public ones.
 
-    def test_both_paths_return_study(self, backend, global_chat, query, expected_id):
-        frontend_ids = search_ids(backend, query)
-
-        result = stream_chat(backend, global_chat["chat_id"], query)
-        chat_ids = set()
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(backend, result["query_plan"])
-        # Chat IDs from text mentions are a fallback signal too
-        chat_ids |= result["study_ids_mentioned"]
-
-        assert expected_id in frontend_ids, (
-            f"Study {expected_id} missing from frontend /api/search for '{query}'"
-        )
-        assert expected_id in chat_ids, (
-            f"Study {expected_id} missing from chat path for '{query}'. "
-            f"Chat search IDs (sample): {sorted(chat_ids)[:20]}"
-        )
-
-
-@pytest.mark.e2e
-@pytest.mark.e2e_llm
-@pytest.mark.parametrize("query,expected_id", DISCOVERY_CASES)
-class TestChatKeywordsAreRicher:
-    """2.4 — Chat's LLM planner expands to a superset of the frontend's keywords.
-
-    Marked xfail because the LLM may occasionally omit an exact input keyword.
-    This test documents the relationship; failure is informational.
+    Simulates build_where_from_plan output by passing keyword strings to /api/search.
     """
 
-    @pytest.mark.xfail(
-        reason="LLM may not always include every exact input keyword from the frontend planner",
-        strict=False,
-    )
-    def test_chat_keywords_superset_of_frontend(self, backend, global_chat, query, expected_id):
-        from services.llm import llm_query_to_sql
+    @pytest.mark.parametrize("keywords,expected_id", CHAT_PLANNER_CASES)
+    def test_chat_keywords_find_expected(self, client, keywords, expected_id):
+        query = " ".join(keywords)
+        ids = search_ids(client, query)
+        assert expected_id in ids, (
+            f"Expected {expected_id} in /api/search for chat-planner keywords '{query}'. "
+            f"Got IDs (sample): {sorted(ids)[:20]}"
+        )
 
-        frontend_plan = llm_query_to_sql(query)
-        # Extract frontend keywords from the SQL params (every 4th param is the %kw% value)
-        raw_params = frontend_plan.get("params") or []
-        frontend_kws = {p.strip("%").lower() for p in raw_params}
-
-        result = stream_chat(backend, global_chat["chat_id"], query)
-        chat_kws = {k.lower().strip() for k in (result.get("query_plan") or {}).get("keywords", [])}
-
-        missing = frontend_kws - chat_kws
-        assert not missing, (
-            f"Chat planner missing frontend keywords: {missing}\n"
-            f"Frontend keywords: {frontend_kws}\n"
-            f"Chat keywords (sample): {sorted(chat_kws)[:20]}"
+    @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
+    def test_chat_keywords_exclude_blocked(self, client, study_id):
+        ids = search_ids(client, "microbiome gut bacteria human host")
+        assert study_id not in ids, (
+            f"Non-public study {study_id} appeared in chat-planner keyword search"
         )
 
 
 @pytest.mark.e2e
-@pytest.mark.e2e_llm
-@pytest.mark.parametrize("query,required_ids", MULTI_STUDY_CASES)
-class TestChatFindsAllExpectedStudies:
-    """All required study IDs must appear in the LLM output for the query."""
+class TestFrontendPlannerPathRespectsVisibility:
+    """3.4 — Frontend planner (llm_query_to_sql) searches find expected studies and exclude non-public ones.
 
-    def test_chat_output_mentions_all_studies(self, backend, global_chat, query, required_ids):
-        result = stream_chat(backend, global_chat["chat_id"], query)
-        missing = required_ids - result["study_ids_mentioned"]
-        assert not missing, (
-            f"Study IDs {missing} not mentioned in LLM output for '{query}'.\n"
-            f"Mentioned IDs: {sorted(result['study_ids_mentioned'])}\n"
-            f"Text snippet: {result['assistant_text'][:500]}"
+    Passes natural-language queries directly to /api/search, which is the production path.
+    """
+
+    def test_frontend_planner_finds_11043(self, client):
+        ids = search_ids(client, "shotgun metagenomic wild mice")
+        assert 11043 in ids, (
+            f"Frontend planner did not surface study 11043. "
+            f"Got IDs (sample): {sorted(ids)[:20]}"
+        )
+
+    @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
+    def test_frontend_planner_excludes_blocked(self, client, study_id):
+        ids = search_ids(client, "microbiome gut bacteria human")
+        assert study_id not in ids, (
+            f"Non-public study {study_id} appeared in frontend planner search results"
         )

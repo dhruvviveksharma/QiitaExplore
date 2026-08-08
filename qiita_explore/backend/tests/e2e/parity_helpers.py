@@ -1,36 +1,39 @@
-"""Shared helper functions for e2e parity tests."""
+"""Shared helper functions for e2e parity tests.
+
+All HTTP calls go through an AuthedClient (auth_client.py) — every non-auth
+endpoint requires a logged-in session (helpers/auth_middleware.py), so a bare
+`requests` call here would 401.
+"""
 import json
 import os
 import re
-
-import requests
 
 _JUDGE_MODEL = "kimi"
 _JUDGE_BASE_URL = "https://ellm.nrp-nautilus.io/v1"
 
 
-def search_ids(backend_url: str, query: str) -> set:
+def search_ids(client, query: str) -> set:
     """POST /api/search and return set of study_id ints from results."""
-    r = requests.post(
-        f"{backend_url}/api/search",
-        json={"query": query},
-        timeout=30,
-    )
+    r = client.post("/api/search", json={"query": query})
     r.raise_for_status()
     data = r.json()
     return {int(row["study_id"]) for row in (data.get("results") or [])}
 
 
 def stream_chat(
-    backend_url: str,
+    client,
     chat_id: str,
     message: str,
     report_study_id: int = None,
     pin_study_ids: list = None,
     deep_search: bool = False,
     timeout: int = 120,
+    project_id: str = None,
+    model: str = None,
 ) -> dict:
-    """POST a message to a global chat and consume the SSE stream.
+    """POST a message to a chat and consume the SSE stream.
+
+    Global chat by default; pass project_id to target a project chat instead.
 
     Returns a dict with:
       query_plan          — the query_plan SSE event payload (or None)
@@ -42,8 +45,16 @@ def stream_chat(
       pinned_studies      — list from the done event's pinned_studies field (or [])
       step_done_details   — dict of {name: detail} from all step_done events
       tool_ui_payloads    — list of every non-null ui_payload from segment_tool_result events
+      persisted           — bool from the done event (False if the stream never reached done)
+      error               — the `error` SSE event's message, or None
     """
-    body = {"user_id": "parity_test", "message": message}
+    body = {"message": message}
+    # No test call site needs to pass model explicitly — run_full_suite.sh's
+    # --model flag exports QIITA_TEST_MODEL and every stream_chat call picks
+    # it up here.
+    model = model or os.environ.get("QIITA_TEST_MODEL")
+    if model:
+        body["model"] = model
     if report_study_id is not None:
         body["report_study_id"] = report_study_id
     if pin_study_ids is not None:
@@ -51,12 +62,12 @@ def stream_chat(
     if deep_search:
         body["deep_search"] = True
 
-    r = requests.post(
-        f"{backend_url}/api/global-chats/{chat_id}/message/stream",
-        json=body,
-        stream=True,
-        timeout=timeout,
-    )
+    if project_id is not None:
+        path = f"/api/projects/{project_id}/chats/{chat_id}/message/stream"
+    else:
+        path = f"/api/global-chats/{chat_id}/message/stream"
+
+    r = client.stream_post(path, json=body, timeout=timeout)
     r.raise_for_status()
 
     query_plan = None
@@ -68,6 +79,8 @@ def stream_chat(
     tokens = []
     result_study_ids = set()
     tool_ui_payloads = []
+    persisted = False
+    error = None
 
     current_event = None
     for raw_line in r.iter_lines(decode_unicode=True):
@@ -113,6 +126,9 @@ def stream_chat(
                         result_study_ids.add(int(sid))
             elif current_event == "done":
                 pinned_studies = data.get("pinned_studies") or []
+                persisted = bool(data.get("persisted"))
+            elif current_event == "error":
+                error = data.get("error")
 
     assistant_text = "".join(tokens).strip()
     mentioned = set(
@@ -131,10 +147,12 @@ def stream_chat(
         "step_done_details": step_done_details,
         "pinned_studies": pinned_studies,
         "tool_ui_payloads": tool_ui_payloads,
+        "persisted": persisted,
+        "error": error,
     }
 
 
-def chat_search_ids(backend_url: str, query_plan: dict) -> set:
+def chat_search_ids(client, query_plan: dict) -> set:
     """Re-run the chat's search step via /api/search using its planner keywords.
 
     Mirrors build_where_from_plan → search_studies_with_sql, but over HTTP
@@ -144,7 +162,7 @@ def chat_search_ids(backend_url: str, query_plan: dict) -> set:
     if not keywords:
         return set()
     query = " ".join(keywords[:10])
-    return search_ids(backend_url, query)
+    return search_ids(client, query)
 
 
 _REFUSAL_FALLBACK_RE = re.compile(

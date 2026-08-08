@@ -27,7 +27,10 @@ fail() { echo -e "${RED}✘ $*${NC}"; exit 1; }
 # ── step 1: check backend is up (skip for --unit) ───────────────────────────
 if [[ "$MODE" != "--unit" ]]; then
     echo "Checking barnacle backend at $BARNACLE_URL ..."
-    if ! curl -sf "$BARNACLE_URL/api/systems" -o /dev/null --max-time 5; then
+    # /api/auth/login-url is one of only 3 endpoints exempt from the session
+    # requirement (helpers/auth_middleware.py:32-36) — every other route,
+    # including /api/systems, now 401s without a logged-in session.
+    if ! curl -sf "$BARNACLE_URL/api/auth/login-url" -o /dev/null --max-time 5; then
         fail "Backend not reachable at $BARNACLE_URL. Start it with: bash qiita_explore/start_barnacle.sh"
     fi
     pass "Backend is up"
