@@ -477,35 +477,35 @@ Users authenticated against the Qiita control plane. One row per Qiita principal
 
 ### table-auth_sessions
 
-Server-side sessions. Each row holds a Fernet-encrypted Qiita Personal Access Token and the CSRF token bound to that session.
+Server-side sessions. Each row holds the CSRF token bound to that session. The Qiita PAT is verified once at login and is not stored.
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
 | `session_hash` | TEXT | no (PK) | — | `hashlib.sha256(raw_token).hexdigest()`. See below. |
 | `user_id` | TEXT | no | — | Session owner. |
-| `pat_encrypted` | TEXT | no | — | Fernet-encrypted Qiita PAT (`backend/helpers/pat_crypto.py`). |
+| `pat_encrypted` | TEXT | no | — | Legacy column; always `''`. Bootstrap scrubs any non-empty legacy ciphertext. |
 | `token_idx` | TEXT | yes | — | Control-plane token index, when the source provides one. |
-| `source` | TEXT | no | `'paste'` | How the PAT was obtained. |
-| `pat_expires_at` | TEXT | yes | — | Expiry of the underlying PAT, distinct from session expiry. |
+| `source` | TEXT | no | `'paste'` | How the session was created. |
+| `pat_expires_at` | TEXT | yes | — | Reserved; unused. |
 | `csrf_token` | TEXT | no | — | Per-session CSRF token, 32 bytes url-safe. |
 | `created_at` | TEXT | yes | — | Session start. |
-| `last_seen_at` | TEXT | yes | — | Drives the idle timeout. |
-| `last_verified_at` | TEXT | yes | — | Last successful revalidation against the control plane. |
+| `last_seen_at` | TEXT | yes | — | Informational; throttled updates only. |
+| `last_verified_at` | TEXT | yes | — | Legacy column; unused. |
 | `absolute_expires_at` | TEXT | no | — | Hard ceiling. Never extended. |
-| `revoked_at` | TEXT | yes | — | Set on logout. A non-null value fails the session lookup. |
+| `revoked_at` | TEXT | yes | — | Set on logout or session replacement. A non-null value fails the session lookup. |
 
 **Keys/constraints:** PK on `session_hash`. FK `user_id → users(user_id) ON DELETE CASCADE`.
 
-**The raw session token is never stored.** `backend/store/auth_store.py :: create_session` generates a 32-byte url-safe token, returns it to the caller for the cookie, and persists only its SHA-256 digest as the primary key. Lookup in `get_session_by_token` re-hashes the incoming cookie and probes by that digest. A database compromise therefore yields no usable session cookies — though it does yield encrypted PATs, whose safety rests on the Fernet key living outside the database.
+**The raw session token is never stored.** `backend/store/auth_store.py :: create_session` generates a 32-byte url-safe token, returns it to the caller for the cookie, and persists only its SHA-256 digest as the primary key. Lookup in `get_session_by_token` re-hashes the incoming cookie and probes by that digest. A database compromise therefore yields no usable session cookies.
 
-**Writes owned by:** `backend/store/auth_store.py` — `create_session`, `touch_session`, `mark_session_verified`, `revoke_session`, `purge_expired_sessions`.
+**Writes owned by:** `backend/store/auth_store.py` — `create_session`, `touch_session`, `revoke_session`, `purge_expired_sessions`.
 
-**Lifecycle — two independent expiry mechanisms:**
+**Lifecycle:**
 
-1. **Absolute** — `absolute_expires_at`, set at creation to now + `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` (default 24 hours). `touch_session` carries an explicit comment that it must never extend this.
-2. **Revocation** — `revoked_at`, set by logout or by the middleware when Qiita gives a *definitive* answer that the PAT is no longer a valid identity (a 401, or a 200 whose `kind` is not `human`). Ambiguous upstream failures — 403, redirects, 5xx, timeouts — are transient and must never revoke.
+1. **Absolute** — `absolute_expires_at`, set at creation to now + `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` (default 24 hours). `touch_session` must never extend this.
+2. **Revocation** — `revoked_at`, set by logout or when a successful re-login replaces the prior session.
 
-There is deliberately **no idle expiry**. It previously logged users out mid-use, and under a 24-hour ceiling it bought nothing. `last_seen_at` survives as an informational column only, and `touch_session` throttles its writes (~5 min) rather than issuing an `UPDATE` on every request.
+There is deliberately **no idle expiry** and **no periodic PAT re-verification**. `last_seen_at` is informational only; `touch_session` throttles its writes (~5 min) rather than issuing an `UPDATE` on every request.
 
 Both mechanisms are evaluated read-side in `get_session_by_token`, which returns `None` for either. Notably, a malformed or missing timestamp also returns `None` (`except (KeyError, ValueError)`) — the auth path fails closed, unlike the study cache's TTL check, which fails open.
 

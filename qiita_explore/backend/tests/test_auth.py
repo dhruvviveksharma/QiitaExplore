@@ -1,4 +1,4 @@
-"""Tests for the paste-PAT Qiita authentication system: crypto, sessions,
+"""Tests for the paste-PAT Qiita authentication system: sessions,
 legacy-claim, and full Flask route behavior with a mocked Qiita whoami (no
 network dependency — see test_auth_smoke.py for the real-control-plane check).
 """
@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from cryptography.fernet import Fernet
 
 from .conftest import stub_qiita_db_and_core
 
@@ -16,12 +15,16 @@ from .conftest import stub_qiita_db_and_core
 
 
 @pytest.fixture(scope="module")
-def _app(tmp_path_factory):
+def auth_db_path(tmp_path_factory):
+    return str(tmp_path_factory.mktemp("auth_test") / "test.db")
+
+
+@pytest.fixture(scope="module")
+def _app(auth_db_path):
     """Import run.app once per test module — expensive (imports every route
     module) and safe to share, since the Flask app itself holds no per-test
     state. Per-test isolation comes from api_client's fresh cookie jar below."""
-    db_path = str(tmp_path_factory.mktemp("auth_test") / "test.db")
-    os.environ["QIITA_EXPERIMENT_DB_PATH"] = db_path
+    os.environ["QIITA_EXPERIMENT_DB_PATH"] = auth_db_path
 
     # Purge any previously-imported instance so this module gets a clean,
     # deterministic bind to db_path regardless of test execution order.
@@ -32,12 +35,8 @@ def _app(tmp_path_factory):
     stub_qiita_db_and_core()
 
     import run
-    # config.py freezes these at first import of config, which may have
-    # already happened (by another test file, before this fixture set the
-    # env var) — set the attributes directly so this module's app is
-    # correctly configured regardless of import order.
     import config
-    config.PAT_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    config.ALLOWED_ORIGINS = []
     config.SESSION_COOKIE_SECURE = False
     config.QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = None
     return run.app
@@ -52,27 +51,27 @@ def api_client(_app):
 
 @pytest.fixture
 def mock_whoami(monkeypatch):
-    """Patch routes.auth_routes.whoami (and helpers.auth_middleware.whoami,
-    used for periodic reverification) to a controllable fake, keyed by token
+    """Patch routes.auth_routes.whoami to a controllable fake, keyed by token
     string -> WhoAmIResult, with no network call."""
     import routes.auth_routes as auth_routes
-    import helpers.auth_middleware as auth_middleware
     from helpers.qiita_client import WhoAmIResult
 
     responses = {}
+    call_count = {"n": 0}
 
     def _fake_whoami(pat):
+        call_count["n"] += 1
         if pat in responses:
             return responses[pat]
         return WhoAmIResult(ok=False, transient_error=False)
 
     monkeypatch.setattr(auth_routes, "whoami", _fake_whoami)
-    monkeypatch.setattr(auth_middleware, "whoami", _fake_whoami)
 
     def register(pat, result):
         responses[pat] = result
 
     register.WhoAmIResult = WhoAmIResult
+    register.call_count = call_count
     return register
 
 
@@ -175,44 +174,18 @@ class TestQiitaClientWhoami:
         assert result.transient_error is True
 
 
-# ── Unit: pat_crypto ─────────────────────────────────────────────────────────
-
-class TestPatCrypto:
-    def test_roundtrip(self, monkeypatch):
-        import config
-        from helpers.pat_crypto import encrypt_pat, decrypt_pat
-        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
-        ct = encrypt_pat("qk_secret")
-        assert decrypt_pat(ct) == "qk_secret"
-
-    def test_missing_key_raises(self, monkeypatch):
-        import config
-        from helpers import pat_crypto
-        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", None)
-        with pytest.raises(pat_crypto.PatCryptoError):
-            pat_crypto.encrypt_pat("qk_x")
-
-    def test_wrong_key_fails_to_decrypt(self, monkeypatch):
-        import config
-        from helpers import pat_crypto
-        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
-        ct = pat_crypto.encrypt_pat("qk_x")
-        monkeypatch.setattr(config, "PAT_ENCRYPTION_KEY", Fernet.generate_key().decode())
-        with pytest.raises(pat_crypto.PatCryptoError):
-            pat_crypto.decrypt_pat(ct)
-
-
 # ── Unit: auth_store sessions ────────────────────────────────────────────────
 
 class TestAuthStore:
     def test_session_create_and_lookup(self, fresh_db):
         from store.auth_store import upsert_user, create_session, get_session_by_token
         uid = upsert_user(principal_idx=1, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, csrf = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, csrf = create_session(user_id=uid, source="paste")
         sess = get_session_by_token(raw)
         assert sess is not None
         assert sess["user_id"] == uid
         assert sess["csrf_token"] == csrf
+        assert sess["pat_encrypted"] == ""
 
     def test_unknown_token_returns_none(self, fresh_db):
         from store.auth_store import get_session_by_token
@@ -221,7 +194,7 @@ class TestAuthStore:
     def test_revoked_session_rejected(self, fresh_db):
         from store.auth_store import upsert_user, create_session, get_session_by_token, revoke_session
         uid = upsert_user(principal_idx=2, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, _ = create_session(user_id=uid, source="paste")
         sess = get_session_by_token(raw)
         revoke_session(sess["session_hash"])
         assert get_session_by_token(raw) is None
@@ -231,22 +204,17 @@ class TestAuthStore:
         from store.auth_store import upsert_user, create_session, get_session_by_token
         monkeypatch.setattr(config, "AUTH_SESSION_ABSOLUTE_TTL_SECONDS", 1)
         uid = upsert_user(principal_idx=3, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, _ = create_session(user_id=uid, source="paste")
         assert get_session_by_token(raw) is not None
         time.sleep(1.2)
         assert get_session_by_token(raw) is None
 
     def test_idle_session_still_resolves(self, fresh_db):
-        """Sitting unused is not a reason to sign someone out.
-
-        This is the inverse of the old idle-TTL test: a session untouched for
-        12 hours used to survive, but the 7-day rule it relied on is exactly what
-        logged people out mid-use. Only absolute expiry, revocation, or a
-        definitive Qiita answer may end a session now."""
+        """Sitting unused is not a reason to sign someone out."""
         from store.auth_store import upsert_user, create_session, get_session_by_token
         from store.db import _conn
         uid = upsert_user(principal_idx=4, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, _ = create_session(user_id=uid, source="paste")
         sess = get_session_by_token(raw)
         stale = (datetime.utcnow() - timedelta(hours=12)).isoformat() + "Z"
         with _conn() as conn:
@@ -260,7 +228,7 @@ class TestAuthStore:
         request — that was 8 concurrent writers against one WAL file."""
         from store.auth_store import upsert_user, create_session, get_session_by_token, touch_session
         uid = upsert_user(principal_idx=9, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, _ = create_session(user_id=uid, source="paste")
         sess = get_session_by_token(raw)
 
         # Fresh last_seen_at → no write.
@@ -277,11 +245,20 @@ class TestAuthStore:
         from store.auth_store import upsert_user, create_session, get_session_by_token, touch_session
         monkeypatch.setattr(config, "AUTH_SESSION_ABSOLUTE_TTL_SECONDS", 1)
         uid = upsert_user(principal_idx=5, email="a@b", system_role="user", scopes=[], profile_complete=True)
-        raw, _ = create_session(user_id=uid, pat_encrypted="ct", source="paste")
+        raw, _ = create_session(user_id=uid, source="paste")
         sess = get_session_by_token(raw)
         touch_session(sess["session_hash"])
         time.sleep(1.2)
         assert get_session_by_token(raw) is None  # touch must not push past absolute expiry
+
+    def test_replace_session_revokes_prior(self, fresh_db):
+        from store.auth_store import upsert_user, create_session, get_session_by_token
+        uid = upsert_user(principal_idx=6, email="a@b", system_role="user", scopes=[], profile_complete=True)
+        raw_a, _ = create_session(user_id=uid, source="paste")
+        sess_a = get_session_by_token(raw_a)
+        raw_b, _ = create_session(user_id=uid, source="paste", replace_session_hash=sess_a["session_hash"])
+        assert get_session_by_token(raw_a) is None
+        assert get_session_by_token(raw_b) is not None
 
 
 # ── Unit: legacy_claim ───────────────────────────────────────────────────────
@@ -321,47 +298,96 @@ class TestLegacyClaim:
             claim_legacy_default("42")  # claim_eligible() now False -> ValueError, not the DB race path
 
 
-# ── Periodic PAT reverification ──────────────────────────────────────────────
+# ── Single-login behavior ────────────────────────────────────────────────────
 
-class TestPeriodicReverify:
-    def test_still_valid_pat_survives_reverify(self, api_client, mock_whoami, monkeypatch):
-        import config
-        headers, user_id = _connect(api_client, mock_whoami, "qk_reverify_ok", 301)
-        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
-        resp = api_client.get("/api/auth/me")
-        assert resp.get_json()["user_id"] == user_id
+class TestSingleLogin:
+    def test_whoami_called_only_at_connect(self, api_client, mock_whoami):
+        headers, _ = _connect(api_client, mock_whoami, "qk_once", 401)
+        assert mock_whoami.call_count["n"] == 1
+        api_client.get("/api/auth/me")
+        api_client.get("/api/projects", headers=headers)
+        assert mock_whoami.call_count["n"] == 1
 
-    def test_revoked_pat_invalidates_session(self, api_client, mock_whoami, monkeypatch):
-        import config
+    def test_connect_does_not_persist_pat(self, api_client, mock_whoami, auth_db_path):
+        import sqlite3
+        _connect(api_client, mock_whoami, "qk_nostore", 402)
+        conn = sqlite3.connect(auth_db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT pat_encrypted FROM auth_sessions").fetchone()
+        conn.close()
+        assert row["pat_encrypted"] == ""
+
+    def test_legacy_pat_ciphertext_scrubbed_on_bootstrap(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        db_path = str(tmp_path / "legacy_pat.db")
+        seed_conn = sqlite3.connect(db_path)
+        seed_conn.execute(
+            """
+            CREATE TABLE auth_sessions (
+                session_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                pat_encrypted TEXT NOT NULL,
+                token_idx TEXT,
+                source TEXT NOT NULL DEFAULT 'paste',
+                pat_expires_at TEXT,
+                csrf_token TEXT NOT NULL,
+                created_at TEXT,
+                last_seen_at TEXT,
+                last_verified_at TEXT,
+                absolute_expires_at TEXT NOT NULL,
+                revoked_at TEXT
+            )
+            """
+        )
+        future = (datetime.utcnow() + timedelta(hours=12)).isoformat() + "Z"
+        seed_conn.execute(
+            """
+            INSERT INTO auth_sessions(
+                session_hash, user_id, pat_encrypted, csrf_token,
+                created_at, last_seen_at, absolute_expires_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("hash1", "1", "gAAAAAlegacy", "csrf", "t", "t", future),
+        )
+        seed_conn.commit()
+        seed_conn.close()
+
+        monkeypatch.setenv("QIITA_EXPERIMENT_DB_PATH", db_path)
+        for mod_name in list(sys.modules.keys()):
+            if "sql_store" in mod_name or "store" in mod_name:
+                del sys.modules[mod_name]
+
+        import store.db as sql_store_db
+
+        with sql_store_db._conn() as conn:
+            row = conn.execute(
+                "SELECT pat_encrypted FROM auth_sessions WHERE session_hash = ?", ("hash1",)
+            ).fetchone()
+            assert row["pat_encrypted"] == ""
+
+    def test_relogin_replaces_prior_session(self, api_client, mock_whoami, _app):
+        _connect(api_client, mock_whoami, "qk_relogin_a", 501)
+        old_cookie = api_client.get_cookie("qe_sid").value
+        stale_client = _app.test_client()
+        stale_client.set_cookie("qe_sid", old_cookie)
+        assert stale_client.get("/api/auth/me").get_json()["user_id"] == "501"
+
+        mock_whoami("qk_relogin_b", _human(502))
+        resp = api_client.post("/api/auth/connect", json={"token": "qk_relogin_b"})
+        assert resp.status_code == 200
+        assert stale_client.get("/api/auth/me").get_json() == {"anonymous": True}
+        assert api_client.get("/api/auth/me").get_json()["user_id"] == "502"
+
+    def test_failed_relogin_preserves_current_session(self, api_client, mock_whoami):
         from helpers.qiita_client import WhoAmIResult
-        headers, _ = _connect(api_client, mock_whoami, "qk_reverify_revoke", 302)
-        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
-        mock_whoami("qk_reverify_revoke", WhoAmIResult(ok=False, transient_error=False))
-        resp = api_client.get("/api/auth/me")
-        assert resp.get_json() == {"anonymous": True}
-        assert api_client.get("/api/projects").status_code == 401
+        _, uid = _connect(api_client, mock_whoami, "qk_keep", 503)
 
-    def test_transient_failure_503_without_deleting_session(self, api_client, mock_whoami, monkeypatch):
-        import config
-        from helpers.qiita_client import WhoAmIResult
-        headers, user_id = _connect(api_client, mock_whoami, "qk_reverify_flaky", 303)
-        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
-        mock_whoami("qk_reverify_flaky", WhoAmIResult(ok=False, transient_error=True))
-        during_outage = api_client.get("/api/auth/me")
-        assert during_outage.status_code == 503
-        # Qiita recovers: the session must still be usable, no re-login needed.
-        mock_whoami("qk_reverify_flaky", _human(303))
-        recovered = api_client.get("/api/auth/me")
-        assert recovered.get_json()["user_id"] == user_id
-
-    def test_principal_mismatch_invalidates_session(self, api_client, mock_whoami, monkeypatch):
-        import config
-        headers, _ = _connect(api_client, mock_whoami, "qk_reverify_mismatch", 304)
-        monkeypatch.setattr(config, "AUTH_PAT_REVERIFY_INTERVAL_SECONDS", 0)
-        # Same token now resolves to a DIFFERENT principal_idx (e.g. rotated upstream).
-        mock_whoami("qk_reverify_mismatch", _human(999))
-        resp = api_client.get("/api/auth/me")
-        assert resp.get_json() == {"anonymous": True}
+        mock_whoami("qk_bad_relogin", WhoAmIResult(ok=False, transient_error=False))
+        resp = api_client.post("/api/auth/connect", json={"token": "qk_bad_relogin"})
+        assert resp.status_code == 401
+        me = api_client.get("/api/auth/me")
+        assert me.get_json()["user_id"] == uid
 
 
 # ── Route: connect / me / logout ─────────────────────────────────────────────

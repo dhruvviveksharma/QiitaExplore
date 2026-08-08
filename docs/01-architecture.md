@@ -134,15 +134,8 @@ sequenceDiagram
     M1->>M1: look up session by SHA-256(cookie)
     alt session invalid / expired / revoked
         M1-->>F: g.user_id stays None
-    else PAT reverify overdue (>15 min)
-        M1->>M1: decrypt PAT → whoami
-        alt transient upstream failure
-            M1-->>B: 503 (session PRESERVED)
-        else 401 or principal mismatch
-            M1->>M1: revoke session
-        else ok
-            M1->>M1: mark verified
-        end
+    else session valid
+        M1->>M1: touch_session (throttled)
     end
     M1->>M2: g.user_id set (or None)
     Note over M2: endpoint in PUBLIC_ENDPOINTS? → pass

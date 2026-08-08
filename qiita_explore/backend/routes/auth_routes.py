@@ -6,7 +6,6 @@ from flask import g, jsonify, request
 
 import config
 from run import app
-from helpers.pat_crypto import encrypt_pat, PatCryptoError
 from helpers.qiita_client import whoami
 from store.auth_store import create_session, get_user, revoke_session, upsert_user
 from store.legacy_claim import (
@@ -96,6 +95,7 @@ def api_auth_connect():
     if principal_idx is None:
         return jsonify({"error": "unexpected identity response from Qiita"}), 502
 
+    prior_hash = (g.session_row or {}).get("session_hash")
     try:
         user_id = upsert_user(
             principal_idx=principal_idx,
@@ -104,16 +104,12 @@ def api_auth_connect():
             scopes=identity.get("scopes") or [],
             profile_complete=identity.get("profile_complete", False),
         )
-        pat_encrypted = encrypt_pat(pat)
         raw_token, csrf_token = create_session(
             user_id=user_id,
-            pat_encrypted=pat_encrypted,
             source="paste",
+            replace_session_hash=prior_hash,
         )
         user_row = get_user(user_id)
-    except PatCryptoError:
-        logger.exception("PAT encryption failed — QIITA_EXPLORE_PAT_ENCRYPTION_KEY misconfigured")
-        return jsonify({"error": "server misconfiguration"}), 500
     except Exception as exc:
         logger.exception("unexpected error establishing session for principal_idx=%s", principal_idx)
         body = {"error": "unexpected error establishing session"}

@@ -48,8 +48,6 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 
 ### Authentication
 
-<a id="env-QIITA_EXPLORE_PAT_ENCRYPTION_KEY"></a>
-<a id="env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS"></a>
 <a id="env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS"></a>
 <a id="env-QIITA_EXPLORE_COOKIE_SECURE"></a>
 <a id="env-QIITA_EXPLORE_ALLOWED_ORIGINS"></a>
@@ -57,20 +55,12 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
-| `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` | **none — no fallback** | `backend/config.py` → `backend/helpers/pat_crypto.py :: _get_fernet` | Fernet key encrypting PATs at rest in `auth_sessions.pat_encrypted`. **Required.** | Yes |
-| `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | `900` (computed as `15 * 60`) | `backend/helpers/auth_middleware.py` | How stale a session's `last_verified_at` may get before the middleware re-calls Qiita `whoami` to confirm the PAT is still valid. | Yes |
-| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `86400` (computed as `24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime; also the session cookie's `max_age`. The only clock that ends a session — there is deliberately no idle timeout. | Yes |
+| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `86400` (computed as `24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime; also the session cookie's `max_age`. The only clock that ends a session — there is deliberately no idle timeout and no periodic PAT re-verification. | Yes |
 | `QIITA_EXPLORE_COOKIE_SECURE` | `true` | `backend/routes/auth_routes.py :: _cookie_kwargs` | `Secure` flag on the session cookie. Anything in `false` / `0` / `no` (case-insensitive) disables it. | Yes |
 | `QIITA_EXPLORE_ALLOWED_ORIGINS` | `""` → empty list | `backend/run.py` (Flask-CORS), `backend/routes/auth_routes.py` | Comma-separated **exact** origins allowed to make credentialed cross-origin requests. Empty means no CORS, which is correct for a same-origin deployment behind nginx. | Yes |
 | `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX` | unset → `None` | `backend/store/legacy_claim.py` | The one Qiita `principal_idx` permitted to claim legacy `'default'`-owned data via `POST /api/auth/claim-default`. Unset disables claiming entirely. Non-numeric values are silently treated as unset (`_claimant_raw.isdigit()` guard). | Yes |
 
 The session cookie name itself, `qe_sid`, is **not** configurable — it is the literal `SESSION_COOKIE_NAME` in `backend/config.py`.
-
-On `QIITA_EXPLORE_PAT_ENCRYPTION_KEY`: there is deliberately no development fallback and no auto-generated key. `backend/helpers/pat_crypto.py :: _get_fernet` raises `PatCryptoError` with generation instructions when the value is missing, and raises again if the value is not a valid Fernet key. Note the precise failure timing: **this raises on first PAT encrypt/decrypt — the first login or session verification — not at process start.** The process will boot happily and then fail every auth operation. Treat a missing key as a boot-blocking misconfiguration even though the process does not refuse to start. Generate one with:
-
-```
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
 
 ### Qiita connectivity
 
@@ -86,7 +76,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `QIITA_CONTROL_PLANE_URL` | `http://127.0.0.1:8080` | `backend/helpers/qiita_client.py :: whoami` | Base URL for **backend-to-Qiita** calls (identity only). Trailing slash stripped. | Yes |
 | `QIITA_PUBLIC_LOGIN_URL` | *computed* — falls back to `QIITA_CONTROL_PLANE_URL` | `backend/routes/auth_routes.py` | Base URL the user's **browser** is redirected to for login. Separate from the above because in a split-tunnel deployment (backend reaches Qiita over a reverse SSH tunnel, browser reaches it directly) the two addresses differ. | Yes |
 | `QIITA_LOGINROCKET_URL` | `""` → disabled | `backend/routes/auth_routes.py` | When set, `/api/auth/login-url` wraps the control-plane login in a LoginRocket `/logout?redirect_uri=…` so a cached AuthRocket session cannot hijack login. **Leave unset** — see traps. | Yes |
-| `QIITA_WHOAMI_TIMEOUT_SECONDS` | `5` (parsed as float) | `backend/helpers/qiita_client.py :: whoami` | httpx timeout for the whoami call. Timeouts are classified `transient_error=True` and do **not** destroy the local session. | Yes |
+| `QIITA_WHOAMI_TIMEOUT_SECONDS` | `5` (parsed as float) | `backend/helpers/qiita_client.py :: whoami` | httpx timeout for the login-time whoami call. Timeouts are classified `transient_error=True` and surface as connect **503**. | Yes |
 | `QIITA_CONFIG_FP` | *(none)* | vendored `qiita_core/configuration_manager.py` | Path to the Qiita config file supplying **PostgreSQL credentials** (user, password, database, host, port). Read via `environ["QIITA_CONFIG_FP"]` — a hard `KeyError` if absent. Not read by `config.py`; exported by both start scripts. | Yes |
 | `QIITA_BASE_DATA_DIR` | `""` | `backend/helpers/qiita_fetch.py`, `backend/helpers/artifact_graph.py`, `backend/helpers/biom_samples.py` | Prefix prepended to **relative** artifact filepaths from the Qiita DB. Empty means paths are used as-is — fine when the DB stores absolute paths, broken when it does not. | Yes |
 
@@ -174,7 +164,6 @@ The smallest file that produces a backend which boots, queries, authenticates, a
 
 ```
 API_KEY=<nrp-nautilus-key>
-QIITA_EXPLORE_PAT_ENCRYPTION_KEY=<fernet-key>
 QIITA_CONTROL_PLANE_URL=https://<qiita-control-plane>
 QIITA_PUBLIC_LOGIN_URL=https://<browser-reachable-qiita>
 QIITA_BASE_DATA_DIR=/path/to/qiita/data
@@ -182,7 +171,7 @@ QIITA_BASE_DATA_DIR=/path/to/qiita/data
 
 Plus `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` exported by `start_barnacle.sh`. Everything else has a default that is at least defensible.
 
-For comparison, the `.env` currently checked in at `qiita_explore/.env` sets four keys: `DIRECTORY` (read by nothing in the backend), `API_KEY`, `QIITA_CONTROL_PLANE_URL`, and `QIITA_PUBLIC_LOGIN_URL`. It does **not** set `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` — a backend started from it will fail on first login, in the deferred way described above.
+For comparison, the `.env` currently checked in at `qiita_explore/.env` sets four keys: `DIRECTORY` (read by nothing in the backend), `API_KEY`, `QIITA_CONTROL_PLANE_URL`, and `QIITA_PUBLIC_LOGIN_URL`.
 
 ### Alphabetical index
 
@@ -191,7 +180,6 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`AGENT_DEBUG`](#env-AGENT_DEBUG) | Debug/harness | unset |
 | [`ANTHROPIC_API_KEY`](#env-ANTHROPIC_API_KEY) | LLM | `""` |
 | [`API_KEY`](#env-API_KEY) | LLM | *(none)* |
-| [`AUTH_PAT_REVERIFY_INTERVAL_SECONDS`](#env-AUTH_PAT_REVERIFY_INTERVAL_SECONDS) | Auth | `900` |
 | [`AUTH_SESSION_ABSOLUTE_TTL_SECONDS`](#env-AUTH_SESSION_ABSOLUTE_TTL_SECONDS) | Auth | `86400` |
 | [`BARNACLE_URL`](#env-BARNACLE_URL) | Tests | `http://localhost:5001` |
 | [`GLOBAL_SEARCH_SQL_LIMIT_BROAD`](#env-GLOBAL_SEARCH_SQL_LIMIT_BROAD) | Search | `120` |
@@ -212,7 +200,6 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`QIITA_EXPLORE_ALLOWED_ORIGINS`](#env-QIITA_EXPLORE_ALLOWED_ORIGINS) | Auth | `""` |
 | [`QIITA_EXPLORE_COOKIE_SECURE`](#env-QIITA_EXPLORE_COOKIE_SECURE) | Auth | `true` |
 | [`QIITA_EXPLORE_DEBUG_ERRORS`](#env-QIITA_EXPLORE_DEBUG_ERRORS) | Debug | `false` |
-| [`QIITA_EXPLORE_PAT_ENCRYPTION_KEY`](#env-QIITA_EXPLORE_PAT_ENCRYPTION_KEY) | Auth | **required** |
 | [`QIITA_LOGINROCKET_URL`](#env-QIITA_LOGINROCKET_URL) | Qiita | `""` (keep unset) |
 | [`QIITA_PUBLIC_LOGIN_URL`](#env-QIITA_PUBLIC_LOGIN_URL) | Qiita | computed |
 | [`QIITA_WHOAMI_TIMEOUT_SECONDS`](#env-QIITA_WHOAMI_TIMEOUT_SECONDS) | Qiita | `5` |
@@ -228,9 +215,8 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 **Must be set for a healthy production boot:**
 
-1. **[`QIITA_EXPLORE_PAT_ENCRYPTION_KEY`](#env-QIITA_EXPLORE_PAT_ENCRYPTION_KEY)** — no fallback, and the failure is deferred to first login rather than to startup. A backend with this unset looks healthy and cannot authenticate anyone. It is absent from the checked-in `.env`.
-2. **[`QIITA_CONFIG_FP`](#env-QIITA_CONFIG_FP)** — without it the vendored config manager raises `KeyError`, and there is no database. The value baked into both start scripts is a hardcoded path on one specific machine.
-3. **[`OPENAI_API_KEY`](#env-OPENAI_API_KEY) or [`API_KEY`](#env-API_KEY)** — the OpenAI client is constructed with `api_key=None` if neither is set. Every NRP model call fails at request time.
+1. **[`QIITA_CONFIG_FP`](#env-QIITA_CONFIG_FP)** — without it the vendored config manager raises `KeyError`, and there is no database. The value baked into both start scripts is a hardcoded path on one specific machine.
+2. **[`OPENAI_API_KEY`](#env-OPENAI_API_KEY) or [`API_KEY`](#env-API_KEY)** — the OpenAI client is constructed with `api_key=None` if neither is set. Every NRP model call fails at request time.
 
 **Defaults that are wrong for production:**
 

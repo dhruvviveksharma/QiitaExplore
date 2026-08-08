@@ -51,16 +51,15 @@ sequenceDiagram
     BE->>CP: GET /api/v1/auth/whoami (Bearer PAT)
     CP-->>BE: { principal_idx, email, system_role, scopes, kind }
     BE->>BE: upsert_user(principal_idx) → user_id = str(principal_idx)
-    BE->>BE: encrypt_pat(PAT) — Fernet
     BE->>BE: create_session → raw_token, csrf_token
-    Note over BE: stores SHA-256(raw_token) as PK<br/>raw token is never persisted
+    Note over BE: PAT discarded after whoami<br/>stores SHA-256(raw_token) as PK
     BE-->>FE: Set-Cookie qe_sid=<raw_token><br/>body: { identity, csrf_token }
     Note over FE: PAT cleared from form state<br/>csrf_token → JS module variable
 ```
 
 Three properties of this flow are worth stating explicitly.
 
-**The PAT never persists client-side.** It lives only in the React form's `useState`, is POSTed once, and is cleared immediately on both success *and* failure. It is never placed in `localStorage`, `sessionStorage`, or a URL parameter.
+**The PAT never persists anywhere.** It lives only in the React form's `useState`, is POSTed once, verified by `whoami`, and discarded. It is never placed in `localStorage`, `sessionStorage`, SQLite, or a URL parameter.
 
 **The session PK is a hash, not the token.** `create_session` generates a 32-byte URL-safe token, stores `SHA-256(token)` as the primary key, and returns the plaintext exactly once for the cookie. Anyone with read access to the SQLite file — a backup, a stray copy, a log of a query — cannot replay a session. This is the same reasoning as password hashing, applied to session tokens.
 
@@ -72,15 +71,11 @@ Three properties of this flow are worth stating explicitly.
 
 Note its default: when `ALLOWED_ORIGINS` is **empty, the check passes**. That is correct for the production deployment, where the frontend and API are same-origin behind nginx and no `Origin` header is sent for same-origin requests. It does mean the check provides no protection in a misconfigured deployment that is cross-origin but has an empty allowlist. See `backend/routes/auth_routes.py :: _origin_allowed`.
 
-### PAT encryption at rest
+### The PAT is verified once, not stored
 
-`backend/helpers/pat_crypto.py` wraps Fernet. Two design choices matter:
+The Qiita PAT exists only in request memory long enough for `POST /api/auth/connect` to call `whoami`. After identity is confirmed, the backend creates a local session and **does not** write the PAT to SQLite, encrypt it, or retain it for later requests. A one-time bootstrap migration clears any legacy `pat_encrypted` ciphertext left by older builds.
 
-- The PAT must be retained, not discarded, because the session re-verifies it periodically (below). Storing it is a requirement, not an oversight.
-- The key lives in the environment, outside SQLite, so a leaked database file or backup does not also leak long-lived Qiita bearer credentials.
-- **There is no insecure fallback.** If `QIITA_EXPLORE_PAT_ENCRYPTION_KEY` is unset, `_get_fernet` raises `PatCryptoError` with key-generation instructions rather than storing plaintext.
-
-> **Failure timing is deferred, not at boot.** `config.py` reads the key with `os.getenv` and does not validate it, and `_get_fernet` raises only when first called. A backend with no encryption key configured therefore **starts cleanly** and then fails every authentication attempt — the first `POST /auth/connect` and every subsequent PAT re-verification. If logins fail on a fresh deployment while the process looks healthy, check this variable first.
+**Re-login replaces the prior session.** If the browser already holds a valid `qe_sid` cookie when connect succeeds, the new session is created and the prior one is revoked in the same transaction. A failed connect leaves the current session untouched.
 
 ---
 
@@ -90,22 +85,11 @@ Two `before_request` hooks in `backend/helpers/auth_middleware.py`. Flask short-
 
 ### Hook 1 — `_load_session`
 
-Resolves the cookie to an identity, and re-verifies the underlying PAT on a schedule.
+Resolves the cookie to an identity. No remote Qiita calls happen here.
 
-`get_session_by_token` rejects a session that is missing, revoked, past its absolute expiry, or idle beyond the idle TTL. Only if it survives all four checks does `g.user_id` get set.
+`get_session_by_token` rejects a session that is missing, revoked, or past its absolute expiry. Only if it survives those checks does `g.user_id` get set.
 
-The re-verification branch is the subtle part. If `last_verified_at` is older than `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` (default 15 minutes), the stored PAT is decrypted and re-checked against the control plane, with four distinct outcomes:
-
-| Outcome | Action | Reasoning |
-|---|---|---|
-| Decryption fails | **Revoke** | The stored ciphertext is unusable; the session cannot be maintained. |
-| `transient_error` | **503, session preserved** | Qiita is unreachable *right now*. Do not trust an unverified credential — but do not destroy a valid session over an upstream outage. |
-| Not ok (401) | **Revoke** | The PAT was revoked or expired upstream. |
-| `principal_idx` ≠ session's `user_id` | **Revoke** | The token now resolves to a *different person*. Treated as rotation or compromise. |
-
-The transient case is the one worth dwelling on. The naive implementation — treat "can't verify" as "not authenticated" — would log out every user in the building the moment the control plane restarted, and each would have to re-obtain and re-paste a PAT. Instead the request fails with 503, the session row is untouched, and the next successful re-verification resumes it with no user action. The frontend's matching `unavailable` state exists for exactly this (see [`08-frontend.md`](08-frontend.md)).
-
-Finally, `touch_session` updates `last_seen_at` **only**. Its docstring says it must never extend `absolute_expires_at`, and that is the sliding-window-vs-hard-cap distinction: activity extends the idle window, nothing extends the 30-day ceiling.
+`touch_session` updates `last_seen_at` **only**. Its docstring says it must never extend `absolute_expires_at`.
 
 ### Hook 2 — `_require_auth`
 
@@ -133,24 +117,22 @@ CSRF uses `hmac.compare_digest` rather than `==`, so the comparison is constant-
 stateDiagram-v2
     [*] --> Active: POST /auth/connect
 
-    Active --> Reverifying: last_verified_at > 15 min
-    Reverifying --> Active: whoami ok
-    Reverifying --> Active: transient error<br/>(403/5xx/timeout — 503 to client, session kept)
-    Reverifying --> Revoked: 401 / non-human kind<br/>principal mismatch / decrypt failure
-
-    Active --> AbsoluteExpired: created_at + 24h elapsed
+    Active --> AbsoluteExpired: absolute_expires_at elapsed
     Active --> Revoked: POST /auth/logout
+    Active --> Replaced: POST /auth/connect succeeds again
 
     AbsoluteExpired --> [*]
     Revoked --> [*]
+    Replaced --> [*]
 ```
 
 | Bound | Default | Variable | Extended by activity? |
 |---|---|---|---|
-| PAT re-verification | 15 min | `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` | n/a |
 | Absolute expiry | 24 hours | `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | **No** — hard ceiling |
 
-There is no idle expiry: a session ends at the absolute ceiling, at logout, or when Qiita definitively rejects the PAT — never because the app sat unused. Re-verification only revokes on a **401** or a `kind` that isn't `human`; every other upstream outcome is transient and yields a `503` with the session intact.
+There is no idle expiry and no periodic PAT re-verification. A session ends at the absolute ceiling, at logout, or when the user signs in again successfully. If a PAT is revoked upstream, the local session remains valid until one of those three events — an accepted tradeoff bounded by the 24-hour ceiling.
+
+Connect-time `whoami` can still return **503** when Qiita is unreachable during login; that error is shown in the connect form, not as a mid-session reconnecting state.
 
 > **Known gap.** `backend/store/auth_store.py :: purge_expired_sessions` hard-deletes rows past absolute expiry (deliberately keeping revoked rows for audit). **It is never called** — no route, no scheduler, no startup hook invokes it. Expired session rows therefore accumulate indefinitely. This is a storage-growth issue rather than a security one: `get_session_by_token` correctly rejects expired sessions regardless of whether their rows still exist. Worth wiring up, and worth a ticket.
 
@@ -214,18 +196,17 @@ Stated plainly, without overclaiming.
 **Defends against:**
 
 - Session token theft from the database at rest — only hashes are stored.
-- PAT disclosure from the database at rest — Fernet-encrypted, and the key is not in the database.
+- PAT disclosure from the database at rest — PATs are not stored; legacy ciphertext is scrubbed on bootstrap.
 - CSRF on state-changing requests — a constant-time-compared header token that a cross-site page cannot read.
 - A new endpoint accidentally shipping unauthenticated — default deny by exact endpoint name.
 - Horizontal privilege escalation on curational data (projects, chats, workspaces, jobs) — every ownership query filters on `g.user_id`.
-- A revoked or rotated upstream PAT continuing to grant access — bounded to the 15-minute re-verification window.
 - Silent account takeover via a cross-site token post — the Origin check on connect, where an allowlist is configured.
 
 **Does not defend against:**
 
-- An attacker who can read process memory or the encryption key.
+- An attacker who can read process memory during connect.
 - XSS. The CSRF token lives in a JS variable; script execution in the page defeats the protection. Model output is sanitized with DOMPurify (see [`08-frontend.md`](08-frontend.md)), which is the relevant mitigation, not an absolute one.
-- Anything within the 15-minute re-verification window after an upstream revocation.
+- A revoked upstream PAT continuing to grant access until logout, re-login, or the 24-hour session ceiling.
 - A cross-origin deployment that leaves `ALLOWED_ORIGINS` empty — the Origin check passes by default.
 - Session fixation beyond what a fresh random token per connect provides; there is no rotation on privilege change, because there are no privilege changes.
 - **One user reading another's LLM API key setting, or overwriting it** — see the settings gap above.

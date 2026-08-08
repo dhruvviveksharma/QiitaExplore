@@ -8,13 +8,7 @@
 // (success or failure) — never a URL param, localStorage, or sessionStorage.
 
 function useAuth() {
-  // 'loading' | 'anonymous' | 'authenticated' | 'unavailable'
-  // 'unavailable' means the backend couldn't verify the session right now
-  // (e.g. Qiita is momentarily unreachable during periodic PAT reverify —
-  // see helpers/auth_middleware.py's 503 handling). The session itself is
-  // NOT lost server-side, so this must not be treated as 'authenticated'
-  // (would run the app against a stale identity) or as 'anonymous' (would
-  // needlessly force the user to re-paste their PAT) — just retry shortly.
+  // 'loading' | 'anonymous' | 'authenticated'
   const [status,   setStatus]   = useState('loading');
   const [identity, setIdentity] = useState(null);
 
@@ -22,7 +16,9 @@ function useAuth() {
     try {
       const res = await apiFetch('/auth/me');
       if (!res.ok) {
-        setStatus('unavailable');
+        clearCsrfToken();
+        setIdentity(null);
+        setStatus('anonymous');
         return;
       }
       const d = await res.json();

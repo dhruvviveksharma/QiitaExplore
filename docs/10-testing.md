@@ -25,7 +25,7 @@ pytest>=7.0
 requests>=2.28
 ```
 
-`requests` is only used by the e2e and benchmark tiers. The unit tier additionally leans on packages that are already backend runtime dependencies — `cryptography` (Fernet, for `test_auth.py`), `httpx`, and Flask itself — so a working backend virtualenv plus these two is sufficient.
+`requests` is only used by the e2e and benchmark tiers. The unit tier additionally leans on packages that are already backend runtime dependencies — `httpx` and Flask itself — so a working backend virtualenv plus these two is sufficient.
 
 `backend/pytest.ini` declares only two markers, and that is the whole selection mechanism:
 
@@ -49,7 +49,7 @@ One line each, in the order a newcomer should read them.
 | `backend/tests/test_pin_command.py` | Store-level pinning: idempotent re-pin, the per-chat cap read from `PINNED_STUDIES_PER_CHAT_CAP`, unpin, and project/global scope isolation in both directions |
 | `backend/tests/test_agent_tool_call.py` | `helpers/agent.py :: _execute_tool_call` driven as a raw generator — the two yielded events, the synthetic `tool_{name}_{call_id[:6]}` name, the timing suffix on `detail`, the `is_search_studies` return flag, and that a raising tool yields a failure result instead of propagating |
 | `backend/tests/test_merge.py` | Artifact dedup preferring `.biom`, `_write_merged_sample_metadata` sample filtering and column union, and post-merge TSV trimming to BIOM sample IDs |
-| `backend/tests/test_auth.py` | The largest file in the suite — `whoami` classification, PAT crypto, session lifecycle, periodic reverification, route behaviour, CSRF, cross-user isolation, and the legacy `users` table migration |
+| `backend/tests/test_auth.py` | The largest file in the suite — `whoami` classification, session lifecycle, single-login behavior, route behaviour, CSRF, cross-user isolation, and the legacy `users` table migration |
 
 Two structural notes on how the unit tier achieves independence from the outside world.
 
@@ -233,13 +233,13 @@ TKT-015: the executor shipped to master in dev-only mode, running a local `conda
 
 | Path | Covered? |
 |---|---|
-| PAT reverify — transient upstream failure returns 503 **and preserves the session**, then recovers | Yes — `TestPeriodicReverify::test_transient_failure_503_without_deleting_session` |
-| PAT reverify — revoked upstream credential invalidates the session and protected routes 401 | Yes |
-| PAT reverify — principal mismatch (same token, different `principal_idx`) invalidates | Yes |
+| Single-login — `whoami` called only at connect, not on `/auth/me` or protected routes | Yes — `TestSingleLogin::test_whoami_called_only_at_connect` |
+| Single-login — PAT not persisted in SQLite | Yes — `TestSingleLogin::test_connect_does_not_persist_pat` |
+| Single-login — legacy `pat_encrypted` ciphertext scrubbed on bootstrap | Yes — `TestSingleLogin::test_legacy_pat_ciphertext_scrubbed_on_bootstrap` |
+| Single-login — successful re-login replaces prior session; failed re-login preserves current | Yes |
 | CSRF — missing token 403, wrong token 403, correct token 200 | Yes |
-| Session lifecycle — revoke, absolute expiry, idle expiry, and that `touch` does not extend absolute expiry | Yes, all four |
+| Session lifecycle — revoke, absolute expiry, and that `touch` does not extend absolute expiry | Yes |
 | `whoami` classification — human accepted; service and anonymous rejected; 401 non-transient; 5xx and `ConnectError` transient | Yes |
-| PAT crypto — roundtrip, missing key raises, wrong key fails | Yes |
 | Cross-user isolation — projects, global chats, merge-workspace mutations, and client-supplied `user_id` spoofing ignored | Yes |
 | Legacy pre-auth `users` table migration, and that a fresh DB is a no-op | Yes |
 

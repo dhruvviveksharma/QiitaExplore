@@ -1,7 +1,8 @@
 """User + session CRUD for Qiita-identity (paste-PAT) authentication.
 
-Sessions are looked up by SHA-256(raw token) — the plaintext token never
-touches SQLite. The PAT itself is stored Fernet-encrypted (helpers/pat_crypto).
+Sessions are looked up by SHA-256(raw token) — the plaintext session token
+never touches SQLite. The Qiita PAT is verified once at login and is not
+stored.
 """
 
 import hashlib
@@ -63,9 +64,13 @@ def get_user(user_id: str):
 
 # ── Sessions ─────────────────────────────────────────────────────────────────
 
-def create_session(*, user_id: str, pat_encrypted: str, source: str,
+def create_session(*, user_id: str, source: str, replace_session_hash: str = None,
                     token_idx: str = None, pat_expires_at: str = None):
-    """Create a new session row. Returns (raw_token, csrf_token)."""
+    """Create a new session row. Returns (raw_token, csrf_token).
+
+    When replace_session_hash is set, the prior session is revoked in the same
+    transaction — used when a user signs in again while already authenticated.
+    """
     raw_token = secrets.token_urlsafe(_SESSION_TOKEN_BYTES)
     csrf_token = secrets.token_urlsafe(_CSRF_TOKEN_BYTES)
     session_hash = _hash_token(raw_token)
@@ -81,13 +86,21 @@ def create_session(*, user_id: str, pat_encrypted: str, source: str,
                 session_hash, user_id, pat_encrypted, token_idx, source,
                 pat_expires_at, csrf_token, created_at, last_seen_at,
                 last_verified_at, absolute_expires_at, revoked_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ) VALUES(?, ?, '', ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
             """,
             (
-                session_hash, user_id, pat_encrypted, token_idx, source,
-                pat_expires_at, csrf_token, now, now, now, absolute_expires_at,
+                session_hash, user_id, token_idx, source,
+                pat_expires_at, csrf_token, now, now, absolute_expires_at,
             ),
         )
+        if replace_session_hash:
+            conn.execute(
+                """
+                UPDATE auth_sessions SET revoked_at = ?
+                WHERE session_hash = ? AND revoked_at IS NULL
+                """,
+                (now, replace_session_hash),
+            )
         conn.commit()
     return raw_token, csrf_token
 
@@ -135,15 +148,6 @@ def touch_session(session_hash: str, last_seen_at: str = None):
     with _conn() as conn:
         conn.execute(
             "UPDATE auth_sessions SET last_seen_at = ? WHERE session_hash = ?",
-            (_now(), session_hash),
-        )
-        conn.commit()
-
-
-def mark_session_verified(session_hash: str):
-    with _conn() as conn:
-        conn.execute(
-            "UPDATE auth_sessions SET last_verified_at = ? WHERE session_hash = ?",
             (_now(), session_hash),
         )
         conn.commit()

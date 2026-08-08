@@ -352,7 +352,7 @@ The same principle is not applied on the merge page, where `MergesTab` fetches f
 
 ## Auth in the UI
 
-`frontend/js/auth.js :: useAuth` is a four-state machine over a single `GET /api/auth/me`.
+`frontend/js/auth.js :: useAuth` is a three-state machine over a single `GET /api/auth/me`.
 
 ```mermaid
 stateDiagram-v2
@@ -360,37 +360,15 @@ stateDiagram-v2
 
     loading --> authenticated: 200, not anonymous<br/>setCsrfToken(d.csrf_token)
     loading --> anonymous: 200 + { anonymous: true }
-    loading --> unavailable: response not ok
-    loading --> anonymous: network throw
-
-    unavailable --> unavailable: retry every 4s
-    unavailable --> authenticated: recovered
-    unavailable --> anonymous: session actually gone
+    loading --> anonymous: response not ok or network throw
 
     authenticated --> anonymous: logout()
     anonymous --> authenticated: connect() succeeds
-
-    note right of unavailable
-        Neither authenticated
-        nor anonymous — and
-        that is the point.
-    end note
 ```
 
+After the initial load, authentication is binary: either the local session is valid and the app opens, or the connect screen is shown. There is no mid-session "reconnecting" state — periodic PAT re-verification was removed from the backend.
 
-
-
-
-### Why `unavailable` is its own state
-
-The backend returns **503 with the session row untouched** when it cannot re-verify a stored PAT against the control plane because the control plane is momentarily unreachable — the transient branch documented in [`02-authentication.md`](02-authentication.md). The frontend has to have a state that corresponds to it, and collapsing it into either neighbour is wrong in a specific way:
-
-- **Treating it as** `authenticated` would run the whole application against an identity the backend has explicitly declined to vouch for. Every subsequent request would fail anyway, and the user would see a working-looking UI that errors on contact.
-- **Treating it as** `anonymous` would drop the user onto the paste-your-PAT screen. Their session is *fine*; nothing was revoked. They would go find a token, paste it, and obtain a session they already had — because a service they do not know exists restarted.
-
-So `unavailable` renders its own screen ("Reconnecting to Qiita…") and `App` schedules `refresh` on a 4-second timer for as long as the state holds. When the control plane comes back, the next `/auth/me` succeeds and the user continues with no action taken. A backend restart is a few seconds of a reconnecting spinner rather than a re-authentication for everyone.
-
-Note the asymmetry in `refresh`: a non-ok *response* yields `unavailable`, but a thrown fetch (backend entirely unreachable, DNS failure, CORS rejection) yields `anonymous`. The reasoning is that a response, even a bad one, proves the backend is reachable and answering; a throw does not, and the connect screen is the more useful thing to show someone whose backend is not there at all.
+If `/auth/me` fails for any reason (backend down, session expired, etc.), the frontend clears local auth state and shows the connect screen. Login-time Qiita failures (invalid token, control plane unreachable) are errors inside the connect form only.
 
 ### The ordering guarantee
 

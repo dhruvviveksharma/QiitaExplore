@@ -96,18 +96,9 @@ QIITA_PUBLIC_LOGIN_URL = os.getenv("QIITA_PUBLIC_LOGIN_URL", "").rstrip("/") or 
 # (login goes straight to the control plane, exactly as before).
 QIITA_LOGINROCKET_URL = os.getenv("QIITA_LOGINROCKET_URL", "").rstrip("/")
 
-# Fernet key encrypting PATs at rest in auth_sessions.pat_encrypted. Required —
-# there is no insecure fallback; helpers/pat_crypto.py raises loudly if unset.
-# Generate with:
-#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-PAT_ENCRYPTION_KEY = os.getenv("QIITA_EXPLORE_PAT_ENCRYPTION_KEY")
-
-AUTH_PAT_REVERIFY_INTERVAL_SECONDS = int(os.getenv("AUTH_PAT_REVERIFY_INTERVAL_SECONDS", str(15 * 60)))
-
 # A single hard ceiling, and no idle timeout: a session ends when it hits this,
-# when the user logs out, or when Qiita gives a definitive answer that the PAT is
-# no longer valid — never because the app sat unused for a while. An idle timeout
-# under a 24-hour ceiling would only reintroduce the mid-session logout.
+# when the user logs out, or when the user signs in again. An idle timeout under
+# a 24-hour ceiling would only reintroduce the mid-session logout.
 AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SECONDS", str(24 * 3600)))
 
 # Comma-separated exact origins allowed for credentialed cross-origin dev

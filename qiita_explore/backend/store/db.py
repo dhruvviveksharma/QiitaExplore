@@ -280,6 +280,12 @@ def _create_schema(conn):
         except Exception:
             pass
 
+    # PATs are verified once at login and never stored. Scrub any legacy
+    # ciphertext left from earlier builds (idempotent).
+    conn.execute(
+        "UPDATE auth_sessions SET pat_encrypted = '' WHERE pat_encrypted != ''"
+    )
+
 
 def _bootstrap():
     with _conn() as conn:

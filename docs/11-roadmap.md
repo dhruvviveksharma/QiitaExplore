@@ -60,7 +60,7 @@ Note that `qiita_core.qiita_settings.qiita_config` is still needed after that, s
 
 ## Blocker 1 — no per-user access resolution
 
-QiitaExplore would like to hold **one service-account credential** and serve all users from it, rather than storing and re-verifying each user's PAT. That requires asking the platform a question it cannot currently answer:
+QiitaExplore would like to hold **one service-account credential** and serve all users from it, rather than calling the platform on behalf of each user. That requires asking the platform a question it cannot currently answer:
 
 > *"Does principal 4471 have at least READ access to study 812?"*
 
@@ -81,11 +81,11 @@ That is **create-time ownership assignment**, not read-path impersonation. It se
 
 | Approach | How it works | Cost |
 |---|---|---|
-| **Per-user PAT forwarding** *(what ships today)* | Store each user's PAT, call the platform as them | Must store and re-verify credentials; every user needs a PAT |
+| **Login-time identity only** *(what ships today)* | Verify PAT once at connect; authorize later requests with local session cookie | Cannot call platform APIs as the user after login; revoked PATs remain valid locally until session ends |
 | **New platform endpoint** | Add `GET /study/{idx}/access/{principal_idx}` or an `X-On-Behalf-Of` scope | Requires an upstream change and a security review — an impersonation surface is a serious thing to add |
 | **Cached access list** | Service account periodically syncs per-user grants into local storage | Stale-permission window; duplicates the platform's authorization model |
 
-**Recommendation: keep per-user PATs.** It is what works, the credential-handling cost is already paid (see [`02-authentication.md`](02-authentication.md)), and it has the property that QiitaExplore can never see more than the user can. The other two options either need upstream work or move authorization decisions into an application that should not be making them.
+**Recommendation: pursue a platform access-check endpoint.** QiitaExplore no longer stores per-user PATs (see [`02-authentication.md`](02-authentication.md)), so per-user PAT forwarding is not an option without redesigning auth again. A service-account model with an explicit on-behalf-of access check is the cleanest path for future platform API calls.
 
 ---
 

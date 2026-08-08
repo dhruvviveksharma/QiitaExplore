@@ -18,7 +18,7 @@ Backend runs under Gunicorn on port 5001 (`qiita_explore/start_barnacle.sh`). CO
 
 Two `before_request` hooks are registered together by `backend/helpers/auth_middleware.py :: register_auth_middleware`:
 
-1. `_load_session` — reads the `qe_sid` cookie, resolves it to a session row, and sets `g.user_id` / `g.session_row`. If the session's PAT has not been verified within `AUTH_PAT_REVERIFY_INTERVAL_SECONDS` (default 900), it decrypts the stored PAT and re-checks it against Qiita.
+1. `_load_session` — reads the `qe_sid` cookie, resolves it to a session row, and sets `g.user_id` / `g.session_row`. No remote Qiita calls.
 2. `_require_auth` — default-deny. Any endpoint not in the public set gets **401** when `g.user_id` is `None`.
 
 **Exactly three endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
@@ -31,9 +31,9 @@ Note that `api_auth_logout`, `api_auth_legacy_default`, and `api_auth_claim_defa
 
 `OPTIONS` requests bypass both hooks. Requests to unrouted paths (`request.endpoint is None`) fall through to Flask's normal 404.
 
-### Re-verification failures
+### Connect-time failures
 
-During `_load_session`, if Qiita is unreachable the hook short-circuits the whole request with **503** `{"error": "Qiita is temporarily unreachable, try again shortly"}`. The session is deliberately not destroyed — the next successful re-verify resumes it with no re-login. If the PAT is rejected, or now resolves to a different `principal_idx` than the session was created for, the session is revoked and the request proceeds as anonymous (and therefore usually 401s).
+`POST /api/auth/connect` calls `whoami` once. If Qiita is unreachable, connect returns **503** `{"error": "Qiita is temporarily unreachable, try again shortly"}`. If the PAT is invalid, connect returns **401**. Mid-session requests do not call Qiita.
 
 ### CSRF
 
@@ -185,7 +185,7 @@ Behavior, in order:
 1. **Origin check.** If `config.ALLOWED_ORIGINS` is non-empty, the `Origin` header must appear in it exactly, else **403** `{"error": "origin not allowed"}`. An empty allowlist means same-origin deployment behind the proxy and the check is skipped.
 2. Body must be a JSON object (**400**) with a non-empty `token` (**400**).
 3. `whoami(pat)` against Qiita. Transient failure → **503**; rejection → **401** `{"error": "invalid or unrecognized Qiita token"}`; a response with no `principal_idx` → **502** `{"error": "unexpected identity response from Qiita"}`.
-4. Upsert the user, encrypt the PAT, create the session. `PatCryptoError` (missing/bad `QIITA_EXPLORE_PAT_ENCRYPTION_KEY`) → **500** `{"error": "server misconfiguration"}`.
+4. Upsert the user and create the session. If a valid session cookie was already present, the prior session is revoked in the same transaction.
 
 On success, sets the `qe_sid` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` per `config.SESSION_COOKIE_SECURE`, `max_age = AUTH_SESSION_ABSOLUTE_TTL_SECONDS`) and returns the identity payload plus the CSRF token:
 
@@ -700,7 +700,7 @@ Behaviors that are easy to misread from the route names alone:
 
 ## See also
 
-- [`02-authentication.md`](02-authentication.md) — session model, PAT handling, re-verification, and the CSRF contract
+- [`02-authentication.md`](02-authentication.md) — session model, single-login PAT handling, and the CSRF contract
 - [`06-streaming-and-chat.md`](06-streaming-and-chat.md) — SSE contract and the frontend segments model
 - [`07-merge-and-biom.md`](07-merge-and-biom.md) — merge workspace lifecycle, BIOM resolution, and job execution
 - [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) — agent tool definitions and full SSE event payloads
