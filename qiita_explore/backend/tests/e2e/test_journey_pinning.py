@@ -24,6 +24,12 @@ def _get_chat(client, base_path):
     return r.json()
 
 
+def _add_study_to_project(client, project_id, study_id):
+    r = client.post(f"/api/projects/{project_id}/studies", json={"study_id": study_id})
+    r.raise_for_status()
+    return r.json()
+
+
 @pytest.mark.e2e
 class TestPinningGlobalScope:
     def test_pin_valid_study(self, client, global_chat, public_study_ids):
@@ -94,6 +100,7 @@ class TestPinningProjectScope:
     def test_pin_valid_study(self, client, project_chat, project, public_study_ids):
         base = f"/api/projects/{project['project_id']}/chats/{project_chat['chat_id']}"
         study_id = public_study_ids[0]
+        _add_study_to_project(client, project["project_id"], study_id)
 
         r = _pin(client, base, study_id)
         assert r.status_code == 200
@@ -101,6 +108,14 @@ class TestPinningProjectScope:
 
         chat = _get_chat(client, base)
         assert study_id in (chat.get("pinned_studies") or [])
+
+    def test_pin_foreign_study_rejected(self, client, project_chat, project, public_study_ids):
+        """Public study not saved in the project must be rejected."""
+        base = f"/api/projects/{project['project_id']}/chats/{project_chat['chat_id']}"
+        study_id = public_study_ids[0]
+        r = _pin(client, base, study_id)
+        assert r.status_code == 409
+        assert study_id in r.json()["invalid"]
 
     def test_pin_invalid_study_rejected(self, client, project_chat, project):
         base = f"/api/projects/{project['project_id']}/chats/{project_chat['chat_id']}"
@@ -111,6 +126,7 @@ class TestPinningProjectScope:
     def test_unpin_removes_study(self, client, project_chat, project, public_study_ids):
         base = f"/api/projects/{project['project_id']}/chats/{project_chat['chat_id']}"
         study_id = public_study_ids[0]
+        _add_study_to_project(client, project["project_id"], study_id)
         _pin(client, base, study_id)
 
         r = _unpin(client, base, study_id)

@@ -18,6 +18,7 @@ from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_vali
 from helpers.pinned_context import _build_full_samples_block
 from config import (SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDATES,
                     PINNED_CHARS_PER_STUDY)
+from store import SCOPE_PROJECT, SCOPE_GLOBAL, get_project_id_for_chat, get_project_studies_only
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +81,31 @@ def _collect_terms(args: dict) -> tuple:
     return raw_kws, detect_kws
 
 
+def _allowed_project_study_ids(project_id: str) -> set:
+    proj = get_project_studies_only(project_id) or {}
+    return {
+        int(s["study_id"])
+        for s in (proj.get("studies") or [])
+        if s.get("study_id") is not None
+    }
+
+
 def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
                  deep_search: bool = False) -> ToolResult:
     """Dispatch a tool call by name and return a ToolResult."""
+    if scope == SCOPE_GLOBAL:
+        return _execute_global_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+    if scope == SCOPE_PROJECT:
+        return _execute_project_tool(name, args, chat_id=chat_id)
+    return ToolResult(
+        text=f"Unknown scope: {scope}",
+        label=f"Tool error ({name})",
+        detail="unknown scope",
+    )
+
+
+def _execute_global_tool(name: str, args: dict, *, scope: str, chat_id: str,
+                         deep_search: bool = False) -> ToolResult:
     if name == "search_studies":
         return _tool_search_studies(args, deep_search=deep_search)
     if name == "get_study_report":
@@ -96,6 +119,99 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
         label=f"Tool error ({name})",
         detail="unknown tool",
     )
+
+
+def _execute_project_tool(name: str, args: dict, *, chat_id: str) -> ToolResult:
+    if name == "pin_study":
+        return _tool_pin_study(args, scope=SCOPE_PROJECT, chat_id=chat_id)
+    project_id = get_project_id_for_chat(chat_id)
+    if not project_id:
+        return ToolResult(
+            text="This chat is not attached to a project.",
+            label="Tool error",
+            detail="no project for chat",
+        )
+    if name == "search_project_studies":
+        return _tool_search_project_studies(args, project_id=project_id)
+    if name == "get_project_study_report":
+        return _tool_get_project_study_report(args, project_id=project_id)
+    return ToolResult(
+        text=f"Tool {name} is not available in project chat.",
+        label=f"Tool error ({name})",
+        detail="not permitted in project scope",
+    )
+
+
+def _score_project_study(study: dict, keywords: list) -> int:
+    if not keywords:
+        return 1
+    hay = " ".join(
+        str(study.get(k) or "")
+        for k in ("study_title", "study_abstract", "pi_name", "data_types", "summary_text")
+    ).lower()
+    return sum(1 for kw in keywords if kw.lower() in hay)
+
+
+def _tool_search_project_studies(args: dict, *, project_id: str) -> ToolResult:
+    proj = get_project_studies_only(project_id) or {}
+    studies = list(proj.get("studies") or [])
+    raw_kws = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
+    limit = max(1, min(20, int(args.get("limit") or 10)))
+
+    scored = [(s, _score_project_study(s, raw_kws)) for s in studies]
+    if raw_kws:
+        scored = [(s, sc) for s, sc in scored if sc > 0]
+    scored.sort(key=lambda x: (-x[1], int(x[0].get("study_id") or 0)))
+    merged = [s for s, _ in scored[:limit]]
+
+    if not merged:
+        text = "No matching studies found in this project for those keywords."
+    else:
+        header = f"search_project_studies returned {len(merged)} studies from this project:"
+        text = _format_discovery_study_list(
+            merged, header, 24_000, report_tool_name="get_project_study_report")
+
+    return ToolResult(
+        text=text,
+        label="Searched project studies",
+        detail=f"{len(merged)} results" if merged else "no matches",
+        ui_payload={
+            "kind":           "tool_call",
+            "tool":           "search_project_studies",
+            "args":           {"keywords": raw_kws, "limit": limit},
+            "result_summary": f"{len(merged)} studies" if merged else "no matches",
+            "result_studies": _result_studies(merged, via="project"),
+        },
+    )
+
+
+def _tool_get_project_study_report(args: dict, *, project_id: str) -> ToolResult:
+    study_id = int(args.get("study_id") or 0)
+    allowed = _allowed_project_study_ids(project_id)
+    if study_id not in allowed:
+        return ToolResult(
+            text=f"Study {study_id} is not part of this project.",
+            label=f"Study {study_id}",
+            detail="not in project",
+        )
+    try:
+        ui_payload  = _build_samples_report_payload(study_id)
+        num_samples = (ui_payload.get("header") or {}).get("num_samples") or len(ui_payload.get("samples") or [])
+        text_block  = _build_full_samples_block(
+            study_id, budget_chars=PINNED_CHARS_PER_STUDY,
+            report_tool_name="get_project_study_report")
+        return ToolResult(
+            text=f"Full sample report for study {study_id} ({num_samples} samples):\n{text_block}",
+            label=f"Loaded study {study_id} report",
+            detail=f"{num_samples} samples",
+            ui_payload=ui_payload,
+        )
+    except ValueError:
+        return ToolResult(
+            text=f"Study {study_id} is private or has no accessible data in Qiita.",
+            label=f"Study {study_id}",
+            detail="private or not found",
+        )
 
 
 def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult:
@@ -200,8 +316,6 @@ def _tool_get_study_report(args: dict, *, scope: str, chat_id: str) -> ToolResul
     try:
         ui_payload  = _build_samples_report_payload(study_id)
         num_samples = (ui_payload.get("header") or {}).get("num_samples") or len(ui_payload.get("samples") or [])
-        # Same budget an inlined pinned study gets — this tool is the escape
-        # hatch the pinned-context manifest points at.
         text_block  = _build_full_samples_block(study_id, budget_chars=PINNED_CHARS_PER_STUDY)
         return ToolResult(
             text=f"Full sample report for study {study_id} ({num_samples} samples):\n{text_block}",
@@ -295,4 +409,3 @@ def _tool_search_by_sample(args: dict) -> ToolResult:
             "result_studies": _result_studies(results, via="sample_metadata"),
         },
     )
-

@@ -262,10 +262,8 @@ class TestDiscoveryStubs:
         assert "- ID 102:" in out, "the small last study must stay in the stub tail"
 
     def test_without_tools_the_stubs_stay_but_the_hatch_goes(self, fmt):
-        """The legacy path (_build_global_search_context, for a non-tool-calling
-        model) has no tools. The IDs are still worth listing — the model can say
-        what it can't see — but pointing it at get_study_report would be
-        uncallable."""
+        """When tools_available=False, omitted studies still list their IDs but
+        must not instruct the model to call a report tool it cannot invoke."""
         out = fmt(self._studies(5), "HEADER (5 studies):", 1_500, tools_available=False)
         for i in range(5):
             assert f"ID {100 + i}:" in out

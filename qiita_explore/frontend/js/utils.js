@@ -103,7 +103,7 @@ async function fetchStudyDetail(studyId, { signal } = {}) {
   return p;
 }
 
-async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart, onStepDone, onQueryPlan,
+async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart, onStepDone,
                                     onAgentStart, onSegmentToolCall, onSegmentToolResult }, signal) {
   const reader = response.body.getReader();
   const dec    = new TextDecoder();
@@ -129,7 +129,6 @@ async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart,
       if (type === 'error'      && onError)     onError(payload);
       if (type === 'step_start'          && onStepStart)          onStepStart(payload);
       if (type === 'step_done'           && onStepDone)           onStepDone(payload);
-      if (type === 'query_plan'          && onQueryPlan)          onQueryPlan(payload);
       if (type === 'agent_start'         && onAgentStart)         onAgentStart(payload);
       if (type === 'segment_tool_call'   && onSegmentToolCall)    onSegmentToolCall(payload);
       if (type === 'segment_tool_result' && onSegmentToolResult)  onSegmentToolResult(payload);

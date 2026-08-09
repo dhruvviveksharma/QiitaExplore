@@ -1,5 +1,17 @@
 """OpenAI function-calling schemas for agent tools."""
 
+_PIN_STUDY_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "study_ids": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "description": "List of Qiita study IDs to pin.",
+        },
+    },
+    "required": ["study_ids"],
+}
+
 TOOL_SCHEMAS = [
     {
         "type": "function",
@@ -151,17 +163,7 @@ TOOL_SCHEMAS = [
                 "Attach one or more studies to this chat for persistent deep context. "
                 "Pinned studies are loaded in full on each message. Cap: 10 studies."
             ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "study_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "List of Qiita study IDs to pin.",
-                    },
-                },
-                "required": ["study_ids"],
-            },
+            "parameters": _PIN_STUDY_PARAMETERS,
         },
     },
     {
@@ -213,6 +215,67 @@ TOOL_SCHEMAS = [
                 },
                 "required": [],
             },
+        },
+    },
+]
+
+PROJECT_TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_project_studies",
+            "description": (
+                "Search studies saved in this project only. "
+                "Issue EXACTLY ONE call per user request. "
+                "Empty keywords lists all project studies. "
+                "You cannot search the public Qiita database from project chat."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Terms matched against title, abstract, PI, data types, and summary.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max studies to return (1–20, default 10).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_project_study_report",
+            "description": (
+                "Load full sample-level metadata for a study in this project. "
+                "Rejects study IDs not currently saved in the project."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "study_id": {
+                        "type": "integer",
+                        "description": "The Qiita study ID (must be in this project).",
+                    },
+                },
+                "required": ["study_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pin_study",
+            "description": (
+                "Attach one or more studies from this project to the chat for persistent deep context. "
+                "Only studies currently saved in the project can be pinned. Cap: 10 studies."
+            ),
+            "parameters": _PIN_STUDY_PARAMETERS,
         },
     },
 ]

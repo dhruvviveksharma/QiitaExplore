@@ -126,7 +126,7 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | POST | `/api/global-chats` | `api_create_global_chat` | session | Create a global chat |
 | GET | `/api/global-chats/<chat_id>` | `api_get_global_chat` | session | One global chat with messages |
 | DELETE | `/api/global-chats/<chat_id>` | `api_delete_global_chat` | session | Delete a global chat |
-| POST | `/api/global-chats/<chat_id>/message/stream` | `api_global_chat_message_stream` | session | **SSE** global chat turn (agentic or legacy) |
+| POST | `/api/global-chats/<chat_id>/message/stream` | `api_global_chat_message_stream` | session | **SSE** global chat turn (agentic) |
 | POST | `/api/global-chats/<chat_id>/pinned/<int:study_id>` | `api_pin_global_chat_study` | session | Pin a study to a global chat |
 | DELETE | `/api/global-chats/<chat_id>/pinned/<int:study_id>` | `api_unpin_global_chat_study` | session | Unpin a study |
 
@@ -442,15 +442,11 @@ The generator opens with a keepalive and then takes exactly one of three branche
 
 **Pin branch** (`pin_study_ids` present) — delegates to `stream_pin_flow` with `SCOPE_PROJECT`, which emits `step_start`/`step_done` for `pin_studies` and `deep_context`, then `llm_generate` plus `token` events. Terminates with `done` carrying `pinned_studies` and returns early.
 
-**Report branch** (`report_study_id` present) — `stream_samples_report` emits `step_start` for `load_samples`, then either a `ui` event with the full sample-report payload, or, on `ValueError`, a `step_done` explaining the study is private. The `ui` payload is persisted as the message's `ui_payload`.
+**Report branch** (`report_study_id` present) — rejects studies not in current `project_studies` membership with `step_start`/`step_done` and a streamed `token` refusal (no `ui` event). Member studies delegate to `stream_samples_report` as before.
 
-**Normal branch** — emits `build_context`, builds project study context against `context_budget_chars(model)`, then merges study ids detected in the user's text (`_detect_mentioned_study_ids`) with the chat's existing pins, preserving order and dropping duplicates. If that merged list is non-empty it emits a `deep_context` step whose label distinguishes detected studies from pinned-only. Finally `llm_generate` and a `token` event per chunk.
+**Normal branch** — emits `build_context`, builds project study context, merges detected/pinned study ids for deep context, then delegates to `stream_agent` with `PROJECT_TOOL_SCHEMAS` and `PROJECT_CHAT_SYSTEM_PROMPT`. Agent events (`agent_start`, `segment_*`, `token`) are accumulated into `agent_segments` for persistence. Agent turns include filtered `pinned_studies` and `pinned_study_meta` in `done`.
 
-All branches converge on persisting the joined assistant text and emitting:
-
-```json
-{ "chat_id": "a1b2c3d4", "persisted": true }
-```
+All branches converge on persisting the joined assistant text and emitting `done` with `persisted: true` (agent turns also carry pin metadata).
 
 Exceptions inside the generator are logged and surfaced as an `error` event carrying `friendly_llm_error(e, model)`. Because headers are already sent, the HTTP status stays 200.
 
@@ -500,11 +496,9 @@ The second streaming endpoint, and the most branch-heavy handler in the codebase
 
 Shares `parse_chat_stream_body` with the project stream, so the same **400** cases apply; **404** for an unknown chat.
 
-Pinned context is built once up front (emitting a `pinned_reports` step) and reused by every downstream path. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
+Pinned context is built once up front (emitting a `pinned_reports` step) when pinned studies exist. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
 
-The normal branch forks on `model_supports_tools(model)`:
-
-**Agentic path.** Delegates to `stream_agent`, translating its events onto the wire: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. In parallel the handler accumulates a `segments_list` — text runs are flushed into `{"type": "text", ...}` entries whenever a tool call interrupts them, and each tool segment is matched back to its result by scanning for the first not-yet-`done` segment with the same `name`. On completion the segments are frozen into the persisted `ui_payload`:
+The normal branch always delegates to `stream_agent` with `TOOL_SCHEMAS`, translating its events onto the wire: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. In parallel the handler accumulates a `segments_list` — text runs are flushed into `{"type": "text", ...}` entries whenever a tool call interrupts them, and each tool segment is matched back to its result by scanning for the first not-yet-`done` segment with the same `name`. On completion the segments are frozen into the persisted `ui_payload`:
 
 ```json
 { "kind": "agent_segments", "segments": [ {"type": "text"}, {"type": "tool"} ] }
@@ -512,9 +506,7 @@ The normal branch forks on `model_supports_tools(model)`:
 
 That matching-by-name rule is worth noting: if the same tool is called twice concurrently, results attach to the earliest open segment rather than to the specific invocation.
 
-**Legacy path** (models without tool support). Emits `translate_query`, runs `llm_plan_query`, and emits a `query_plan` event containing a display-only `sql_where` string built from the keywords — it is for UI display and is not the SQL actually executed. If the plan sets `skip_search`, the search is bypassed entirely and the answer is generated from conversation context plus any selected/pinned studies. Otherwise it pages the search at `PAGE_SIZE = 50` using `plan["page"]` as the offset multiplier, emits `search_db` and `build_context` steps, and streams tokens. A failing search is swallowed and degrades to an empty result list.
-
-The terminal `done` event differs by path: agent turns re-read the pin list so the frontend can sync, other turns do not.
+Agent turns re-read the pin list in `done` so the frontend can sync tool-triggered pins.
 
 ```json
 { "chat_id": "a1b2c3d4", "persisted": true, "pinned_studies": [10317] }

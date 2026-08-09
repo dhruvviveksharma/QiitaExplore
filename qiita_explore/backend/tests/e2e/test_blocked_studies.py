@@ -5,7 +5,7 @@ Tests 1.1–1.3 are parametrized over the list; 1.4–1.5 test chat specifically
 """
 import pytest
 
-from parity_helpers import search_ids, stream_chat, chat_search_ids, llm_judge
+from parity_helpers import search_ids, stream_chat, llm_judge
 
 # ---- Extend this list as you validate more non-public studies ----
 BLOCKED_STUDY_IDS = [16084]
@@ -46,7 +46,6 @@ class TestSearchNeverReturnsBlocked:
         )
 
     def test_broad_search_excludes_blocked(self, client, study_id):
-        # Broad query returns many studies — blocked one must not slip through.
         ids = search_ids(client, "microbiome human gut bacteria")
         assert study_id not in ids, (
             f"Study {study_id} appeared in broad search results"
@@ -77,14 +76,10 @@ class TestChatDoesNotSurfaceBlocked:
         question = f"Tell me about study {study_id}. What samples does it have?"
         result = stream_chat(client, global_chat["chat_id"], question)
 
-        # Deterministic check: the chat's SQL search step must not return the blocked study.
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(client, result["query_plan"])
-            assert study_id not in chat_ids, (
-                f"Study {study_id} appeared in chat's own search step results"
-            )
+        assert study_id not in result["result_study_ids"], (
+            f"Study {study_id} appeared in chat tool results"
+        )
 
-        # LLM judge: assistant must acknowledge the study is unavailable.
         text = result["assistant_text"]
         assert llm_judge(
             question, text,
@@ -103,25 +98,6 @@ class TestChatDoesNotSurfaceBlocked:
 @pytest.mark.e2e
 @pytest.mark.e2e_llm
 @pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
-class TestChatSearchResultsExcludeBlocked:
-    """1.5 — The chat's SQL search step itself excludes non-public studies."""
-
-    def test_chat_broad_query_excludes_blocked(self, client, global_chat, study_id):
-        result = stream_chat(
-            client,
-            global_chat["chat_id"],
-            "List studies available in the database",
-        )
-        if result["query_plan"]:
-            chat_ids = chat_search_ids(client, result["query_plan"])
-            assert study_id not in chat_ids, (
-                f"Study {study_id} appeared in chat's SQL search step for a broad query"
-            )
-
-
-@pytest.mark.e2e
-@pytest.mark.e2e_llm
-@pytest.mark.parametrize("study_id", BLOCKED_STUDY_IDS)
 class TestAgentToolsDoNotLeakBlocked:
     """1.6 — get_study_report and pin_study tool calls reject non-public studies."""
 
@@ -132,8 +108,6 @@ class TestAgentToolsDoNotLeakBlocked:
         )
         result = stream_chat(client, global_chat["chat_id"], question)
 
-        # Deterministic: if get_study_report fired, its payload must not leak
-        # a samples_report for this blocked study.
         for payload in result["tool_ui_payloads"]:
             if payload and payload.get("kind") == "samples_report":
                 assert payload.get("study_id") != study_id, (
@@ -155,7 +129,6 @@ class TestAgentToolsDoNotLeakBlocked:
         question = f"Pin study {study_id} to this chat."
         result = stream_chat(client, global_chat["chat_id"], question)
 
-        # Deterministic: the study must not end up in the chat's pinned list.
         assert study_id not in (result["pinned_studies"] or []), (
             f"Study {study_id} was pinned despite being non-public. "
             f"pinned_studies={result['pinned_studies']}"

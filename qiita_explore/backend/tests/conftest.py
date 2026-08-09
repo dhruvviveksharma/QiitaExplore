@@ -63,7 +63,9 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setenv("QIITA_EXPERIMENT_DB_PATH", db_path)
     # Force re-bootstrap with new path
     for mod_name in list(sys.modules.keys()):
-        if 'sql_store' in mod_name or 'store' in mod_name:
+        if 'sql_store' in mod_name or 'store' in mod_name or mod_name in (
+            'helpers.qiita_fetch', 'helpers.agent_tools',
+        ):
             del sys.modules[mod_name]
 
     # Re-import to get fresh schema

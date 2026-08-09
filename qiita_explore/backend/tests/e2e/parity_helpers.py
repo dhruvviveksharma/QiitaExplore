@@ -26,7 +26,7 @@ def stream_chat(
     message: str,
     report_study_id: int = None,
     pin_study_ids: list = None,
-    deep_search: bool = False,
+    deep_search: bool = True,
     timeout: int = 120,
     project_id: str = None,
     model: str = None,
@@ -36,7 +36,6 @@ def stream_chat(
     Global chat by default; pass project_id to target a project chat instead.
 
     Returns a dict with:
-      query_plan          — the query_plan SSE event payload (or None)
       search_count        — int from step_done/search_db detail (or None)
       assistant_text      — full assembled LLM reply
       study_ids_mentioned — set of ints found in the assistant text
@@ -49,9 +48,6 @@ def stream_chat(
       error               — the `error` SSE event's message, or None
     """
     body = {"message": message}
-    # No test call site needs to pass model explicitly — run_full_suite.sh's
-    # --model flag exports QIITA_TEST_MODEL and every stream_chat call picks
-    # it up here.
     model = model or os.environ.get("QIITA_TEST_MODEL")
     if model:
         body["model"] = model
@@ -59,8 +55,7 @@ def stream_chat(
         body["report_study_id"] = report_study_id
     if pin_study_ids is not None:
         body["pin_study_ids"] = pin_study_ids
-    if deep_search:
-        body["deep_search"] = True
+    body["deep_search"] = deep_search
 
     if project_id is not None:
         path = f"/api/projects/{project_id}/chats/{chat_id}/message/stream"
@@ -70,7 +65,6 @@ def stream_chat(
     r = client.stream_post(path, json=body, timeout=timeout)
     r.raise_for_status()
 
-    query_plan = None
     search_count = None
     ui_payload = None
     step_done_labels = []
@@ -99,9 +93,7 @@ def stream_chat(
             except json.JSONDecodeError:
                 continue
 
-            if current_event == "query_plan":
-                query_plan = data
-            elif current_event == "step_done":
+            if current_event == "step_done":
                 name = data.get("name") or ""
                 label = data.get("label") or ""
                 detail = data.get("detail") or ""
@@ -116,7 +108,6 @@ def stream_chat(
             elif current_event == "token":
                 tokens.append(data.get("token") or "")
             elif current_event == "segment_tool_result":
-                # agentic path: collect study IDs returned by the search tool
                 tool_payload = data.get("ui_payload")
                 if tool_payload:
                     tool_ui_payloads.append(tool_payload)
@@ -137,7 +128,6 @@ def stream_chat(
     )
 
     return {
-        "query_plan": query_plan,
         "search_count": search_count,
         "assistant_text": assistant_text,
         "study_ids_mentioned": mentioned,
@@ -150,19 +140,6 @@ def stream_chat(
         "persisted": persisted,
         "error": error,
     }
-
-
-def chat_search_ids(client, query_plan: dict) -> set:
-    """Re-run the chat's search step via /api/search using its planner keywords.
-
-    Mirrors build_where_from_plan → search_studies_with_sql, but over HTTP
-    so no direct Postgres connection is required in the caller.
-    """
-    keywords = query_plan.get("keywords") or []
-    if not keywords:
-        return set()
-    query = " ".join(keywords[:10])
-    return search_ids(client, query)
 
 
 _REFUSAL_FALLBACK_RE = re.compile(

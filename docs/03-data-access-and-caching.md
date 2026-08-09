@@ -171,7 +171,7 @@ What a user loses at each step:
 
 The 65% figure reserves the remaining 35% for the summary lines that the overflow generates — without it, Tier 2 could produce output larger than Tier 1.
 
-Pinned studies are budgeted separately by `_build_pinned_reports_context` (`backend/helpers/pinned_context.py`), which gives each inlined study a flat `PINNED_CHARS_PER_STUDY` clamped by the model's window, fetches them across a small thread pool, and — when the caller has tools — inlines only the first `PINNED_INLINE_STUDIES`, listing the rest as manifest lines the model can expand with `get_study_report`. Callers without tools (project chat, `/pin`) inline every pinned study and share the budget across all of them, since a manifest line would name a function they cannot call.
+Pinned studies are budgeted separately by `_build_pinned_reports_context` (`backend/helpers/pinned_context.py`), which gives each inlined study a flat `PINNED_CHARS_PER_STUDY` clamped by the model's window, fetches them across a small thread pool, and — when the caller has tools — inlines only the first `PINNED_INLINE_STUDIES`, listing the rest as manifest lines the model can expand with `get_study_report` or `get_project_study_report` (passed via `report_tool_name`). Callers without tools (`/pin` acknowledgement) inline every pinned study and share the budget across all of them, since a manifest line would name a function they cannot call. Project-scope pin reads join current `project_studies` membership; removing a study from a project purges its pins from every chat in that project.
 
 ---
 

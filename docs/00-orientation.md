@@ -120,16 +120,16 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | Term | Meaning |
 |---|---|
 | **Project** | A user-owned collection of studies, with its own chats. Local to QiitaExplore; never written back to Qiita. Sometimes called a "workspace" in the UI. |
-| **Project chat** | A conversation scoped to one project, with that project's studies as context. Uses the non-agentic path. |
-| **Global chat** | A conversation not scoped to any project, searching all of Qiita. The **only** path that uses the agentic tool loop. |
+| **Project chat** | A conversation scoped to one project. Uses the agentic path with `PROJECT_TOOL_SCHEMAS` — search/report/pin only against studies currently in that project. |
+| **Global chat** | A conversation not scoped to any project, searching all of Qiita via `TOOL_SCHEMAS`. |
 | **Pin** | Attaching a study to a chat so its full sample-level detail enters the LLM's context. Capped at 10 per chat. |
-| **Agentic path** | The tool-calling chat implementation, selected when `model_supports_tools(model)` is true. |
-| **Legacy path** | The older implementation: a regex query planner, one keyword search, then a plain streamed completion. Used for models without tool support. |
+| **Agentic path** | The tool-calling chat implementation used by both stream endpoints (`stream_agent`). |
+| **Legacy path** | Removed. Former regex planner + keyword search + plain stream; no longer emitted. |
 | **Segment** | One unit of an agent's streamed response — either a run of text or a tool call with its result. A message's segments are what render as the interleaved text/tool-card timeline. |
 | **`ui_payload`** | A structured render payload persisted alongside a chat message, so a reloaded conversation renders identically to the live stream. |
 | **Merge workspace** | A staging area holding up to 5 studies and their chosen artifacts, pending validation and a merge job. |
 | **Autopick** | The heuristic that selects a default artifact per study in a merge workspace. |
-| **Deep search** | An opt-in mode raising the sample-search candidate cap from 40 studies to 500. Slower, higher recall. |
+| **Deep search** | The default sample-metadata search mode, probing up to 500 candidate studies (vs. 40 in the legacy fast path). Slower, higher recall. |
 | **Enrichment** | The background pass that fills in a project study's sample counts, prep list, and data types after it is added. |
 | **Legacy claim** | A one-time, opt-in migration adopting data created before authentication existed (owned by the literal user `"default"`). |
 | **Barnacle** | The deployment host (`barnacle2.ucsd.edu`) where the backend runs. |

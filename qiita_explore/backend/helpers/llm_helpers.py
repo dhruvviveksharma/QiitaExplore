@@ -8,7 +8,6 @@ import anthropic as _anthropic
 from config import (
     client,
     get_client,
-    CHAT_SYSTEM_PROMPT,
     DEFAULT_MODEL,
     ALLOWED_MODELS,
 )
@@ -184,7 +183,8 @@ def _study_discovery_compact_block(study: dict) -> str:
 
 
 def _format_discovery_study_list(studies, header_line: str, max_chars: int,
-                                 *, tools_available: bool = True):
+                                 *, tools_available: bool = True,
+                                 report_tool_name: str = "get_study_report"):
     """Fit as many compact study blocks as possible under max_chars.
 
     Studies that don't fit are listed as one-line stubs rather than dropped:
@@ -211,7 +211,7 @@ def _format_discovery_study_list(studies, header_line: str, max_chars: int,
     out = header_line.strip() + "\n\n" + "\n\n".join(chosen) if chosen else header_line.strip() + "\n"
     omitted = studies[len(chosen):]
     if omitted:
-        hatch = " — call get_study_report(<id>) for any of them" if tools_available else ""
+        hatch = f" — call {report_tool_name}(<id>) for any of them" if tools_available else ""
         out += f"\n\n({len(omitted)} more not shown in full{hatch}:)\n"
         out += "\n".join(
             f"- ID {s.get('study_id')}: {_truncate(s.get('study_title') or 'Untitled study', 140)}"
@@ -299,8 +299,8 @@ def _build_project_study_context(project: dict, user_id: str = "default", budget
     return fallback[:budget]
 
 
-def _build_api_messages(messages, study_context_text: str, system_prompt: str = None):
-    prompt = system_prompt or CHAT_SYSTEM_PROMPT
+def _build_api_messages(messages, study_context_text: str, system_prompt: str):
+    prompt = system_prompt
     if study_context_text:
         context_block = f"\n\nSTUDY CONTEXT:\n{study_context_text}"
     else:
@@ -312,84 +312,7 @@ def _build_api_messages(messages, study_context_text: str, system_prompt: str = 
     return [{"role": "system", "content": system_content}] + _normalize_messages(messages)
 
 
-def _build_global_search_context(studies, user_query: str, budget: int = 24_000):
-    """Build LLM context from auto-searched studies for global chat (compact rows).
-
-    tools_available=False is not a parameter because this builder *is* the legacy
-    path: its only caller is the `else` branch of `model_supports_tools` in
-    global_chat_routes, which streams via llm_chat_stream with no tools attached.
-    """
-    if not studies:
-        return f'A database search for "{user_query}" returned no matching studies in Qiita. Suggest rephrasing or broadening the query.'
-    header = (
-        f'The following {len(studies)} studies were retrieved from Qiita based on the query "{user_query}":'
-    )
-    return _format_discovery_study_list(studies, header, budget, tools_available=False)
-
-
-_QUERY_PLAN_SYSTEM = (
-    "You are a database query planner for a microbiome study repository.\n"
-    "Given the conversation history, output ONLY a JSON object with:\n"
-    '  "keywords": list of 20–50 search terms (see expansion rules below)\n'
-    '  "entities": list of {"text": str, "type": "pi"|"project"|"cohort"|"institution"|"unknown"}'
-    " — named people/groups explicitly mentioned. type='pi' for a person;"
-    " project/cohort/institution for named studies or orgs. Only type='pi' can trigger"
-    " a hard PI filter after DB resolution.\n"
-    '  "description": short human-readable label (e.g. "American Gut Project studies")\n'
-    '  "skip_search": true only if the turn asks to filter/sort/analyze studies ALREADY listed'
-    " in the conversation — set false for any new discovery request\n"
-    '  "page": 0-based page number for pagination. Default 0. Increment by 1 each time the user'
-    " explicitly asks for more results from the SAME search (e.g. 'show me more', 'next batch',"
-    " 'none of these are right, try more'). Reset to 0 for any new/different search topic.\n\n"
-    "KEYWORD EXPANSION RULES — generate every plausible variant:\n"
-    "1. ORIGINAL: include the term exactly as the user typed it (unless it is a clear typo)\n"
-    "2. SUB-PHRASES: for multi-word inputs, include every subset combination.\n"
-    "   Example — 'American Gut Project': include 'American Gut Project', 'American Gut',\n"
-    "   'Gut Project', 'American Project', 'American', 'Gut', 'Project'\n"
-    "3. ABBREVIATION EXPANSION: if the input is an acronym, expand it in full AND include\n"
-    "   every sub-phrase of the expansion. Also keep the acronym itself.\n"
-    "   Example — 'AGP': include 'AGP', 'American Gut Project', 'American Gut', 'Gut Project',\n"
-    "   'American', 'Gut', 'Project'\n"
-    "4. FULL-NAME TO ABBREVIATION: if the input is a full phrase with a well-known acronym,\n"
-    "   include the acronym too. Example — 'Inflammatory Bowel Disease': also include 'IBD'\n"
-    "5. SYNONYMS: include scientific synonyms, common alternative spellings, related terms,\n"
-    "   and Latin/formal names that might appear in study titles or abstracts.\n"
-    "   Example — 'wild mice': include 'wild mice', 'wild mouse', 'feral mice', 'feral mouse',\n"
-    "   'wild-type', 'wildtype', 'WT mouse', 'WT mice', 'wild-caught', 'free-living mice'\n"
-    "   Example — 'shotgun metagenomic' or 'WGS': include 'WGS', 'whole genome shotgun',\n"
-    "   'whole metagenome shotgun', 'shotgun metagenomics', 'shotgun sequencing', 'metagenomics',\n"
-    "   'metagenomic', 'metagenome', 'whole genome sequencing', 'deep sequencing'\n"
-    "6. PLURAL/SINGULAR: include both forms when applicable\n"
-    "7. HYPHEN VARIANTS: include both hyphenated and unhyphenated forms\n"
-    "   Example — include both 'wild-type' and 'wildtype'\n\n"
-    "All keywords are OR'd against study title, abstract, and alias — more terms = wider net.\n"
-    "Aim for 30–50 terms. Do not truncate or cap the list early.\n\n"
-    "Output valid JSON only. No explanation, no markdown fences."
-)
-
-
-def llm_plan_query(messages: list) -> dict:
-    """Call LLM with full conversation history to produce a structured search plan."""
-    try:
-        r = client.chat.completions.create(
-            model=DEFAULT_MODEL,
-            messages=[{"role": "system", "content": _QUERY_PLAN_SYSTEM}] + _normalize_messages(messages),
-            timeout=45.0,
-        )
-        raw = (r.choices[0].message.content or "").strip()
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
-        plan = json.loads(raw)
-        plan.setdefault("keywords", [])
-        plan.setdefault("entities", [])
-        plan.setdefault("match_mode", "AND")
-        plan.setdefault("description", "studies")
-        plan.setdefault("page", 0)
-        return plan
-    except Exception:
-        return {"keywords": [], "match_mode": "AND", "description": "studies", "page": 0}
-
-
-def llm_chat(messages, study_context_text: str, system_prompt: str = None, model: str = None):
+def llm_chat(messages, study_context_text: str, system_prompt: str, model: str = None):
     resolved = _resolve_model(model)
     llm_client, provider = get_client(resolved)
     api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
@@ -401,7 +324,7 @@ def llm_chat(messages, study_context_text: str, system_prompt: str = None, model
     return (r.choices[0].message.content or "").strip()
 
 
-def llm_chat_stream(messages, study_context_text: str, system_prompt: str = None, model: str = None):
+def llm_chat_stream(messages, study_context_text: str, system_prompt: str, model: str = None):
     resolved = _resolve_model(model)
     llm_client, provider = get_client(resolved)
     api_msgs = _build_api_messages(messages, study_context_text, system_prompt)

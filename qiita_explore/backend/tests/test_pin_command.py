@@ -111,13 +111,19 @@ class TestPinResponseSurfacesRejection:
         assert body["pinned_studies"] == [11043]
 
 
-def test_scope_isolation(cache):
-    cache.pin_study_to_chat(CHAT_A, SCOPE_PROJECT, 11043)
-    global_pinned  = cache.list_pinned_studies(CHAT_A, SCOPE_GLOBAL)
-    project_pinned = cache.list_pinned_studies(CHAT_A, SCOPE_PROJECT)
-    assert 11043 not in global_pinned, "Project-scoped pin leaked into global scope"
-    assert 11043 in project_pinned
+def test_scope_isolation(cache, crud, sample_user_id, sample_study):
+    proj = crud.create_project(sample_user_id, "Scope Iso")
+    crud.add_study_to_project(proj["project_id"], sample_user_id, sample_study)
+    chat = crud.create_chat(proj["project_id"], sample_user_id)
+    chat_id = chat["chat_id"]
+    sid = sample_study["study_id"]
 
-    cache.pin_study_to_chat(CHAT_A, SCOPE_GLOBAL, 22222)
-    project_pinned2 = cache.list_pinned_studies(CHAT_A, SCOPE_PROJECT)
+    cache.pin_study_to_chat(chat_id, SCOPE_PROJECT, sid)
+    global_pinned  = cache.list_pinned_studies(chat_id, SCOPE_GLOBAL)
+    project_pinned = cache.list_pinned_studies(chat_id, SCOPE_PROJECT)
+    assert sid not in global_pinned, "Project-scoped pin leaked into global scope"
+    assert sid in project_pinned
+
+    cache.pin_study_to_chat(chat_id, SCOPE_GLOBAL, 22222)
+    project_pinned2 = cache.list_pinned_studies(chat_id, SCOPE_PROJECT)
     assert 22222 not in project_pinned2, "Global-scoped pin leaked into project scope"

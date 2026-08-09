@@ -5,7 +5,7 @@ from helpers.qiita_fetch import _pin_studies_validated
 from helpers.pinned_context import _build_pinned_reports_context
 
 
-def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, system_prompt=None):
+def stream_pin_flow(pin_study_ids, chat_id, scope, full_msgs, model, persist, system_prompt):
     """Validate + pin studies, generate an LLM ack, persist it, and yield SSE events.
 
     `persist(assistant_content)` is called once the ack has streamed fully; the

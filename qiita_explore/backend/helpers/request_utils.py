@@ -8,6 +8,7 @@ from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
     list_pinned_study_meta,
     unpin_study_from_chat,
+    SCOPE_PROJECT,
 )
 
 
@@ -72,11 +73,17 @@ def pin_response(chat_id: str, scope: str, study_id: int):
             **pinned_payload(chat_id, scope)}
     if body['ok']:
         return jsonify(body)
-    body['error'] = (
-        f"Study {study_id} is private, not found, or has no accessible data"
-        if study_id in invalid
-        else f"Pin limit reached ({PINNED_STUDIES_PER_CHAT_CAP} studies per chat)"
-    )
+    if study_id in invalid and scope == SCOPE_PROJECT:
+        body['error'] = (
+            f"Study {study_id} is not part of this project, is private, not found, "
+            f"or has no accessible data"
+        )
+    elif study_id in invalid:
+        body['error'] = (
+            f"Study {study_id} is private, not found, or has no accessible data"
+        )
+    else:
+        body['error'] = f"Pin limit reached ({PINNED_STUDIES_PER_CHAT_CAP} studies per chat)"
     return jsonify(body), 409
 
 

@@ -250,11 +250,11 @@ Ten models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
 
-**`supports_tools: False` is a routing decision, not a capability note.** Every currently configured model has `supports_tools: True` (the one exception, `gemma-small`, was removed from the roster) — the consequence is structural: `backend/routes/global_chat_routes.py` branches on `model_supports_tools(model)`, and with no model returning `False` anymore, its **legacy path** (an LLM-planned query followed by keyword search, emitting the older `step_start` / `step_done` events instead of `stream_agent`'s tool-call loop) is currently unreachable through the model picker. The branch is still there in code, just dead until either a non-tool-calling model is added back or something else routes into it directly.
+**`supports_tools`** in `MODEL_METADATA` records whether a model can emit streaming tool calls. Chat routes always call `stream_agent` regardless; the field remains for other callers and future model additions.
 
 `provider` splits along a second axis: `backend/config.py :: get_client` returns the shared NRP `OpenAI` client for `provider: "nrp"`, and a freshly constructed `anthropic.Anthropic` for `provider: "anthropic"`. The agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
 
-Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in all three helpers (`get_client`, `model_supports_tools`, `context_budget_chars`), with one asymmetry worth knowing: `model_supports_tools` defaults an unrecognized name to `False`, routing it to the legacy path rather than raising.
+Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in `get_client` and `context_budget_chars`. `model_supports_tools` defaults an unrecognized name to `False`.
 
 ---
 
@@ -289,11 +289,13 @@ These are literals in source. They cannot be changed without an edit and a resta
 
 ## System prompts
 
-Two prompts live as module-level string literals at the bottom of `backend/config.py`.
+Three prompts live as module-level string literals at the bottom of `backend/config.py`.
 
-**`CHAT_SYSTEM_PROMPT`** — project-scoped chat. Consumed by `backend/helpers/llm_helpers.py`. Its work is anti-hallucination: never invent study IDs, titles, sample counts, metadata fields, or external accessions; use only what appears in the supplied project context; say "unavailable" rather than guess; answer conceptually when no studies are loaded. It also fixes the output contract (Markdown, no SQL unless asked).
+**`CHAT_SYSTEM_PROMPT`** — shared non-agent turns (`/pin` acknowledgement, `api_create_chat` first message). Anti-hallucination rules for project context.
 
-**`GLOBAL_CHAT_SYSTEM_PROMPT`** — global discovery chat. Consumed by `backend/routes/global_chat_routes.py` and by `backend/agent_harness.py`. It is substantially longer because it carries the agent's operating manual: how to fill `search_studies`' typed dimension slots (`organism`, `qualifier`, `body_site`, `condition_or_intervention`, `project_or_pi`, `keywords`), how to map colloquial sequencing terms to `data_types`, the "exactly one `search_studies` call per request" rule, the top-20 result table format, and the closing refinement section.
+**`PROJECT_CHAT_SYSTEM_PROMPT`** — project agent turns (`chat_routes.py :: stream_agent`). States that only studies currently saved in the project are accessible; public Qiita search is unavailable; project report/pin tools reject IDs outside membership.
+
+**`GLOBAL_CHAT_SYSTEM_PROMPT`** — global discovery chat (`global_chat_routes.py`, `agent_harness.py`). Carries the agent operating manual for `search_studies` dimension slots, data-type mapping, and the one-search rule.
 
 **The distinction that matters: prompt instructions are advisory; the tool schema is mechanical.** "Issue EXACTLY ONE call per user request" is a request the model may ignore. What actually enforces it is code — `stream_agent` sets `search_already_done` after the first search and **removes `search_studies` from the tool list** on subsequent iterations, so a second call is not merely discouraged but unrepresentable. The same split applies throughout: the prompt asks for a `limit`, `backend/helpers/agent_tools.py` clamps it to `1…20`; the prompt asks the model not to over-narrow, the backend pools all slots into one ranked query regardless. When behavior must hold, look for it in the schema and the loop, not the prose. See [`05-agent.md`](05-agent.md).
 

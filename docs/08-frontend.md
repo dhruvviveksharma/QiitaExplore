@@ -239,7 +239,7 @@ messages: [
   ...c.messages,
   { role: 'user',      content: userMsg },
   { role: 'assistant', content: '', isStreaming: true,
-    steps: [], pendingStep: null, queryPlan: null, segments: null },
+    steps: [], pendingStep: null, segments: null },
 ]
 ```
 
@@ -461,15 +461,16 @@ Every read and write is wrapped in `try/catch`, so private-browsing modes that t
 
 ---
 
-## Project chat vs. global chat: an asymmetry
+## Project chat vs. global chat
 
-Worth flagging here because it is invisible from the UI and surprising when first encountered: **only global chats use the agentic tool-calling path.** Project chats stream through a plain token accumulator — `onToken` appends to `m.content`, and that is the entire handler.
+Both scopes use the agentic segment renderer. The difference is authorization and tools:
 
-Compare the two `streamChat` call sites in `frontend/js/app_state.js :: sendMessage`. The project branch passes `onToken` and `onDone`. The global branch passes `onToken`, `onQueryPlan`, `onAgentStart`, `onSegmentToolCall`, `onSegmentToolResult`, and `onDone`. Segments, tool-call cards, and inline study results only ever appear in a global chat.
+- **Global chat** passes `TOOL_SCHEMAS` — public `search_studies`, `get_study_report`, `pin_study`, and optional deep sample search.
+- **Project chat** passes `PROJECT_TOOL_SCHEMAS` — `search_project_studies` (SQLite membership only), `get_project_study_report`, and `pin_study`. The model cannot call public search tools even if it tries.
 
-The reason is scope: a project chat already has an explicit, bounded study set assembled server-side, so there is nothing for a search tool to do. A global chat is searching all of Qiita and needs tools to find anything at all.
+Compare the two `streamChat` call sites in `frontend/js/app_state.js :: sendMessage`. Both branches pass `onTokenAgent`, `onAgentStart`, `onSegmentToolCall`, `onSegmentToolResult`, and `onDone`. The project branch also updates the sidebar title from the `done` event.
 
-The full protocol — the SSE event types, how segments are constructed and frozen, and the `ui_payload` persistence contract — belongs to [`06-streaming-and-chat.md`](06-streaming-and-chat.md).
+The full protocol — SSE event types, segment construction, and `ui_payload` persistence — is in [`06-streaming-and-chat.md`](06-streaming-and-chat.md).
 
 ---
 

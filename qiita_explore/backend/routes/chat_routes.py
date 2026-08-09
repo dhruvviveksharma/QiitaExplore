@@ -3,7 +3,9 @@ import logging
 from flask import g, jsonify, request
 
 from run import app
-from config import context_budget_chars
+from config import PROJECT_CHAT_SYSTEM_PROMPT, context_budget_chars
+from helpers.agent import stream_agent
+from helpers.agent_tool_schemas import PROJECT_TOOL_SCHEMAS
 from store import (
     SCOPE_PROJECT,
     append_chat_messages,
@@ -14,12 +16,12 @@ from store import (
     get_project,
     get_project_studies_only,
     list_pinned_study_meta,
+    allowed_project_study_ids,
 )
 from helpers.llm_helpers import (
     _sse,
     _build_project_study_context,
     llm_chat,
-    llm_chat_stream,
     friendly_llm_error,
 )
 from helpers.qiita_fetch import _detect_mentioned_study_ids
@@ -45,7 +47,8 @@ def api_create_chat(project_id):
     chat          = create_chat(project_id, user_id, first_message or data.get('title'))
     if first_message:
         study_ctx         = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
-        assistant_content = llm_chat([{"role": "user", "content": first_message}], study_context_text=study_ctx, model=model)
+        assistant_content = llm_chat([{"role": "user", "content": first_message}], study_context_text=study_ctx,
+                                      system_prompt=PROJECT_CHAT_SYSTEM_PROMPT, model=model)
         append_chat_messages(project_id, user_id, chat["chat_id"], first_message, assistant_content)
     chat = get_chat(project_id, user_id, chat["chat_id"])
     return jsonify(chat)
@@ -79,6 +82,7 @@ def api_chat_message_stream(project_id, chat_id):
 
     proj      = get_project_studies_only(project_id)
     full_msgs = build_full_msgs(chat.get('messages'), user_content)
+    member_ids = allowed_project_study_ids(project_id)
 
     def generate():
         yield ': keepalive\n\n'
@@ -92,20 +96,30 @@ def api_chat_message_stream(project_id, chat_id):
                     scope=SCOPE_PROJECT,
                     full_msgs=full_msgs,
                     model=model,
+                    system_prompt=PROJECT_CHAT_SYSTEM_PROMPT,
                     persist=lambda ac: append_chat_messages(project_id, user_id, chat_id, user_content, ac),
                 )
                 yield _sse("done", {"chat_id": chat_id, "persisted": True, "pinned_studies": all_pinned,
                                     "pinned_study_meta": list_pinned_study_meta(chat_id, SCOPE_PROJECT)})
                 return
             if report_study_id is not None:
-                assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
+                if report_study_id not in member_ids:
+                    msg = (
+                        f"Study {report_study_id} is not part of this project. "
+                        f"Add it via Browse first if you want its report here."
+                    )
+                    yield _sse("step_start", {"name": "load_samples", "label": f"Loading sample data for study {report_study_id}…"})
+                    yield _sse("step_done", {"name": "load_samples", "label": f"Study {report_study_id} is not part of this project"})
+                    yield _sse("token", {"token": msg})
+                    assistant_parts = [msg]
+                else:
+                    assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
             else:
                 num_proj_studies = len((proj or {}).get("studies") or [])
                 yield _sse("step_start", {"name": "build_context", "label": "Loading study context…"})
                 study_ctx = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
                 yield _sse("step_done", {"name": "build_context", "label": "Study context ready", "detail": f"{num_proj_studies} studies"})
                 yield ': keepalive\n\n'
-                # Merge dynamically detected study IDs with any explicitly pinned ones
                 detected_ids   = _detect_mentioned_study_ids(user_content, proj)
                 pinned_studies = chat.get("pinned_studies") or []
                 deep_ids       = list(dict.fromkeys(detected_ids + [s for s in pinned_studies if s not in detected_ids]))
@@ -119,18 +133,62 @@ def api_chat_message_stream(project_id, chat_id):
                         fetch_label = "Loading pinned study data…"
                         done_label  = "Pinned reports ready"
                     yield _sse("step_start", {"name": "deep_context", "label": fetch_label})
-                    # Project chat streams via llm_chat_stream — no tools, ever.
-                    deep_ctx = _build_pinned_reports_context(deep_ids, model, tools_available=False)
+                    deep_ctx = _build_pinned_reports_context(
+                        deep_ids, model, tools_available=True,
+                        report_tool_name="get_project_study_report")
                     yield _sse("step_done", {"name": "deep_context", "label": done_label, "detail": f"{len(deep_ids)} studies"})
                     yield ': keepalive\n\n'
                 combined_ctx = "\n\n".join(x for x in (study_ctx, deep_ctx) if x) or None
-                yield _sse("step_start", {"name": "llm_generate", "label": "Generating response…"})
-                for token in llm_chat_stream(full_msgs, study_context_text=combined_ctx, model=model):
-                    assistant_parts.append(token)
-                    yield _sse("token", {"token": token})
+
+                segments_list = []
+                current_text  = []
+                for event in stream_agent(
+                    full_msgs,
+                    system_prompt=PROJECT_CHAT_SYSTEM_PROMPT,
+                    model=model,
+                    study_context_text=combined_ctx,
+                    scope=SCOPE_PROJECT,
+                    chat_id=chat_id,
+                    tools=PROJECT_TOOL_SCHEMAS,
+                ):
+                    etype = event["type"]
+                    if etype == "agent_start":
+                        yield _sse("agent_start", {})
+                    elif etype == "token":
+                        current_text.append(event["token"])
+                        assistant_parts.append(event["token"])
+                        yield _sse("token", {"token": event["token"]})
+                    elif etype == "segment_tool_call":
+                        if current_text:
+                            segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
+                            current_text = []
+                        segments_list.append({"type": "tool", "name": event["name"],
+                                               "label": event["label"], "args": event["args"],
+                                               "done": False, "result": None})
+                        yield _sse("segment_tool_call", {"name": event["name"], "label": event["label"], "args": event["args"]})
+                    elif etype == "segment_tool_result":
+                        for seg in segments_list:
+                            if seg.get("type") == "tool" and seg.get("name") == event["name"] and not seg.get("done"):
+                                seg["done"] = True
+                                seg["result"] = {"label": event["label"], "detail": event["detail"], "ui_payload": event.get("ui_payload")}
+                                break
+                        yield _sse("segment_tool_result", {"name": event["name"], "label": event["label"],
+                                                            "detail": event.get("detail", ""), "ui_payload": event.get("ui_payload")})
+                if current_text:
+                    segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
+                if segments_list:
+                    ui_payload = {"kind": "agent_segments", "segments": segments_list}
             assistant_content = "".join(assistant_parts).strip()
             append_chat_messages(project_id, user_id, chat_id, user_content, assistant_content, assistant_ui_payload=ui_payload)
-            yield _sse("done", {"chat_id": chat_id, "persisted": True})
+            if ui_payload and ui_payload.get("kind") == "agent_segments":
+                meta = list_pinned_study_meta(chat_id, SCOPE_PROJECT)
+                yield _sse("done", {
+                    "chat_id": chat_id, "persisted": True,
+                    "pinned_studies": [m["study_id"] for m in meta],
+                    "pinned_study_meta": meta,
+                })
+            else:
+                yield _sse("done", {"chat_id": chat_id, "persisted": True})
         except Exception as e:
             logger.exception("stream error in project chat %s", chat_id)
             yield _sse("error", {"error": friendly_llm_error(e, model)})

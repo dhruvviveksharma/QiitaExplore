@@ -228,12 +228,21 @@ def add_study_to_project(project_id: str, user_id: str, study: dict):
 
 def remove_study_from_project(project_id: str, user_id: str, study_id):
     resolved_user = _resolve_user(user_id)
+    sid = int(study_id)
     with _conn() as conn:
         if not _project_exists(conn, project_id, resolved_user):
             return None
         conn.execute(
             "DELETE FROM project_studies WHERE project_id = ? AND study_id = ?",
-            (project_id, int(study_id)),
+            (project_id, sid),
+        )
+        conn.execute(
+            """
+            DELETE FROM chat_pinned_studies
+            WHERE chat_scope = 'project' AND study_id = ?
+              AND chat_id IN (SELECT chat_id FROM project_chats WHERE project_id = ?)
+            """,
+            (sid, project_id),
         )
         conn.execute(
             "DELETE FROM project_context_summaries WHERE project_id = ?",
@@ -259,6 +268,26 @@ def get_project_studies_only(project_id: str):
         project = _as_dict(row)
         project["studies"] = _load_project_studies(conn, project_id)
         return project
+
+
+def get_project_id_for_chat(chat_id: str):
+    """Return the project_id for a project chat, or None if not found."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT project_id FROM project_chats WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+    return row["project_id"] if row else None
+
+
+def allowed_project_study_ids(project_id: str) -> set:
+    """Normalized set of study IDs currently in a project."""
+    proj = get_project_studies_only(project_id) or {}
+    return {
+        int(s["study_id"])
+        for s in (proj.get("studies") or [])
+        if s.get("study_id") is not None
+    }
 
 
 def list_chats(project_id: str, user_id: str, limit: int = 200):

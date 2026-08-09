@@ -31,6 +31,23 @@ class TestProjectChatCrud:
 
 
 @pytest.mark.e2e
+class TestProjectChatReportGate:
+    def test_report_foreign_study_rejected(self, client, project, project_chat, public_study_ids):
+        """`/report` with a study not in the project streams refusal text, no ui event."""
+        study_id = public_study_ids[0]
+        result = stream_chat(
+            client, project_chat["chat_id"],
+            f"/report {study_id}",
+            report_study_id=study_id,
+            project_id=project["project_id"],
+        )
+        assert result["error"] is None
+        assert result["ui_payload"] is None
+        assert result["persisted"]
+        assert "not part of this project" in result["assistant_text"].lower()
+
+
+@pytest.mark.e2e
 @pytest.mark.e2e_llm
 class TestProjectChatMessaging:
     def test_create_with_first_message_persists_both_turns(self, client, project):

@@ -20,7 +20,6 @@ function useAppState() {
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [showSql,      setShowSql]      = useState(false);
-  const [deepSearch,   setDeepSearch]   = useState(false);
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
@@ -255,7 +254,7 @@ function useAppState() {
           messages: [
             ...c.messages,
             { role: 'user',      content: userMsg },
-            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, queryPlan: null, segments: null },
+            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null },
           ],
         },
       };
@@ -279,7 +278,7 @@ function useAppState() {
   };
 
   // Shared fetch+guard+parseSSE for a chat stream. `handlers.onToken`/`onDone`
-  // (and any agent-only extras like onQueryPlan) are supplied per call site;
+  // (and any agent-only extras) are supplied per call site;
   // the step/ui/error handlers are identical across project and global chat.
   const streamChat = async (url, body, chatId, signal, handlers) => {
     const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body), signal });
@@ -470,9 +469,8 @@ function useAppState() {
     const reportStudyId = reportMatch ? parseInt(reportMatch[1], 10) : null;
     const pinMatch      = /^\/pin\s+([\d\s]+?)\s*$/i.exec(msg);
     const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
-    const deepMatch    = /^\/deepsearch\s+(.+)/is.exec(msg);
-    const isDeepSearch = deepSearch || !!deepMatch;
-    const sendMsg      = deepMatch ? deepMatch[1].trim() : msg;
+    const deepMatch = /^\/deepsearch\s+(.+)/is.exec(msg);
+    const sendMsg   = deepMatch ? deepMatch[1].trim() : msg;
     const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
@@ -519,7 +517,10 @@ function useAppState() {
           },
           chatId, ctrl.signal,
           {
-            onToken: ({ token }) => patchLast(chatId, m => ({ ...m, content: (m.content||'') + (token||'') })),
+            onToken:             onTokenAgent(chatId),
+            onAgentStart:        onAgentStart(chatId),
+            onSegmentToolCall:   onSegmentToolCall(chatId),
+            onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = displayMsg.slice(0, 60);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
@@ -540,12 +541,11 @@ function useAppState() {
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
-            ...(isDeepSearch            && { deep_search: true }),
+            deep_search: true,
           },
           chatId, ctrl.signal,
           {
             onToken:             onTokenAgent(chatId),
-            onQueryPlan:         (payload) => patchLast(chatId, m => ({ ...m, queryPlan: payload })),
             onAgentStart:        onAgentStart(chatId),
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
@@ -595,7 +595,7 @@ function useAppState() {
     if (!q) return;
     if (override) setQuery(override);
     setSearching(true); setSearched(false);
-    const res = await apiPost('/search', { query: q, deep_search: deepSearch });
+    const res = await apiPost('/search', { query: q, deep_search: true });
     if (res.ok) {
       const d = await res.json();
       setResults(d.results || []);
@@ -628,7 +628,7 @@ function useAppState() {
   return {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql, setDeepSearch,
+    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
@@ -636,7 +636,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,

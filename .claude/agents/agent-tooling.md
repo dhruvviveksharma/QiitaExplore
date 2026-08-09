@@ -12,10 +12,12 @@ You are the owner of the agentic tool-calling subsystem in qiita-web / qiita_exp
 
 **Backend**
 - `qiita_explore/backend/helpers/agent.py` — `stream_agent()`: the streaming tool loop. Emits SSE events.
-- `qiita_explore/backend/helpers/agent_tools.py` — the tool definitions: `search_studies`, `get_study_report`, `pin_study`, `compute_diversity` (stub, pending TKT-010 BIOM). **This file is at/over the 500-line cap — split before growing it (TKT-011).**
-- `qiita_explore/backend/helpers/sample_search.py` — `search_studies_by_sample_meta()`: bounded per-study JSONB probes; runs alongside text search.
-- `qiita_explore/backend/routes/global_chat_routes.py` — wires the SSE endpoint.
-- `qiita_explore/backend/config.py` — `MODEL_METADATA`, `model_supports_tools(model)`, `context_budget_chars(model)`. The agent path is taken **only if `model_supports_tools(model)`**; otherwise the legacy `llm_plan_query` → keyword path runs. All ten currently configured models support streaming tool calls, so that legacy branch is presently unreachable (it existed for `gemma-small`, which has been removed from the roster).
+- `qiita_explore/backend/helpers/agent_tool_schemas.py` — `TOOL_SCHEMAS` (global) and `PROJECT_TOOL_SCHEMAS` (project-scoped).
+- `qiita_explore/backend/helpers/agent_tools.py` — tool dispatch by scope: global search/report/pin vs project-local search/report/pin.
+- `qiita_explore/backend/helpers/sample_search.py` — `search_studies_by_sample_meta()`: bounded per-study JSONB probes; runs alongside text search (global only).
+- `qiita_explore/backend/routes/global_chat_routes.py` — global SSE endpoint (`tools=TOOL_SCHEMAS`).
+- `qiita_explore/backend/routes/chat_routes.py` — project SSE endpoint (`tools=PROJECT_TOOL_SCHEMAS`).
+- `qiita_explore/backend/config.py` — `MODEL_METADATA`, `GLOBAL_CHAT_SYSTEM_PROMPT`, `PROJECT_CHAT_SYSTEM_PROMPT`, `model_supports_tools(model)`, `context_budget_chars(model)`. Both stream routes always use `stream_agent`; `model_supports_tools` is capability metadata only.
 
 **Frontend**
 - `qiita_explore/frontend/js/components.js` — `AgentMessageBubble`, `ToolCallCard` (collapsible: query args + result table), `ToolResultWidget`, `SamplesReportBubble`.

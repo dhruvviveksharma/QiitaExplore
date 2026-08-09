@@ -8,6 +8,8 @@ from .crud import (  # noqa: F401
     create_project,
     get_project,
     get_project_studies_only,
+    get_project_id_for_chat,
+    allowed_project_study_ids,
     update_project,
     delete_project,
     add_study_to_project,

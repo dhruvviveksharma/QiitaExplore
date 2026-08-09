@@ -486,7 +486,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
     </details>
   ) : null;
   const isSampleSearch = payload.tool === 'search_by_sample';
-  if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
+  if ((payload.tool === 'search_studies' || payload.tool === 'search_project_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
       {piLine}
       {sqlBlock}
@@ -594,7 +594,6 @@ const SLASH_COMMANDS = [
   { cmd: '/systems',    insert: '/systems',     usage: '/systems',               desc: 'Check status & latency of all available LLM models.' },
   { cmd: '/report',    insert: '/report ',     usage: '/report 104',            desc: 'Load full sample-level metadata for a Qiita study.' },
   { cmd: '/pin',       insert: '/pin ',        usage: '/pin 77 101',            desc: 'Pin one or more studies into this chat context.' },
-  { cmd: '/deepsearch',insert: '/deepsearch ', usage: '/deepsearch wild mice',  desc: 'Deep search: scans sample metadata across ~500 studies (slower, more comprehensive).' },
 ];
 
 // ─── PlusMenu ─────────────────────────────────────────────────────────────────

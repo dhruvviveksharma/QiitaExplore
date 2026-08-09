@@ -4,29 +4,33 @@
 
 ---
 
-## Scope: global chat only
+## Scope: both chat streams
 
-Agentic tool-calling exists in exactly one place: `POST /api/global-chats/<chat_id>/message/stream`, handled by `backend/routes/global_chat_routes.py`. Project chat (`backend/routes/chat_routes.py :: api_chat_message_stream`) has no agentic branch at all — it always runs `_build_project_study_context` → `llm_chat_stream`, regardless of which model is selected. Everything in this appendix that says "agentic path" means global chat with a tool-capable model; there is no equivalent surface in project chat.
+Agentic tool-calling runs on both streaming endpoints:
+
+| Route | Schemas | Search |
+|---|---|---|
+| `POST /api/global-chats/<chat_id>/message/stream` (`global_chat_routes.py`) | `TOOL_SCHEMAS` | Public Qiita |
+| `POST /api/projects/<pid>/chats/<cid>/message/stream` (`chat_routes.py`) | `PROJECT_TOOL_SCHEMAS` | Local SQLite membership only |
+
+`execute_tool` routes by `scope` before dispatch. Project scope rejects global tool names fail-closed. `/pin` and `/report` slash commands remain non-agentic on both routes.
 
 ---
 
 ## Tool schema conventions
 
-`backend/helpers/agent_tools.py :: TOOL_SCHEMAS` is a list of five entries in OpenAI function-calling format:
+`backend/helpers/agent_tool_schemas.py` defines two schema lists in OpenAI function-calling format:
 
-```json
-{ "type": "function",
-  "function": { "name": "...", "description": "...",
-                "parameters": { "type": "object", "properties": {...}, "required": [...] } } }
-```
+- **`TOOL_SCHEMAS`** — global chat: `search_studies`, `search_by_sample`, `get_study_report`, `pin_study`.
+- **`PROJECT_TOOL_SCHEMAS`** — project chat: `search_project_studies`, `get_project_study_report`, `pin_study`.
 
-This list is passed directly as `tools=` to `client.chat.completions.create(...)` for every NRP-Nautilus (`provider: "nrp"`) model. For Anthropic models (`provider: "anthropic"` in `config.py :: MODEL_METADATA`), `backend/helpers/agent.py :: _openai_tools_to_anthropic` reshapes each entry into `{"name", "description", "input_schema"}` — `input_schema` is the OpenAI `parameters` object, passed through unchanged. No field is added, dropped, or renamed in translation, so the JSON Schema itself — types, the `required` list, and every prose description the model reads to decide what synonyms to fill in — is identical between providers. The translation runs once per turn, at the top of `_stream_anthropic_agent`, not once per loop iteration.
+Each route passes its list as the required `tools=` argument to `stream_agent`. The list is passed directly as `tools=` to `client.chat.completions.create(...)` for every NRP-Nautilus (`provider: "nrp"`) model. For Anthropic models (`provider: "anthropic"` in `config.py :: MODEL_METADATA`), `backend/helpers/agent.py :: _openai_tools_to_anthropic` reshapes each entry into `{"name", "description", "input_schema"}` — `input_schema` is the OpenAI `parameters` object, passed through unchanged. No field is added, dropped, or renamed in translation, so the JSON Schema itself — types, the `required` list, and every prose description the model reads to decide what synonyms to fill in — is identical between providers. The translation runs once per turn, at the top of `_stream_anthropic_agent`, not once per loop iteration.
 
-Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. `model_supports_tools(model)` (also in `config.py`) gates whether the agentic path runs at all — at time of writing it returns `True` for all ten configured models (the former exception, `gemma-small`, was removed from the roster), so nothing currently routes to the `False` branch.
+Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. `model_supports_tools(model)` remains in `config.py` as capability metadata; chat routes no longer branch on it.
 
 ### The `active_tools` mutation
 
-`search_studies` is designed to run at most once per turn. Both provider loops track a local `search_already_done` flag, set when `_execute_tool_call` returns `is_search=True` (i.e. `name == "search_studies"`), and once set, filter the schema handed to the model on every subsequent round:
+`search_studies` and `search_project_studies` are designed to run at most once per turn. Both provider loops track a local `search_already_done` flag, set when `_execute_tool_call` returns `is_search=True` (either search tool name), and once set, filter the schema handed to the model on every subsequent round:
 
 - OpenAI path (`stream_agent`): `active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]`
 - Anthropic path (`_stream_anthropic_agent`): `curr_tools = [t for t in anth_tools if t["name"] != "search_studies"]`
@@ -121,7 +125,7 @@ The merge step itself is worth naming explicitly, since it determines what `via`
 
 **Side effects:** none — no pin, no write. Bounding rules (candidate caps, thread pool ≤ 16, per-statement timeout) live in `helpers/sample_search.py`; see [`04-search.md`](04-search.md).
 
-**`deep_search` is invisible to the model.** It is not a property in this tool's JSON schema at all — the model cannot set it, request it, or even see that it exists. It originates as a plain boolean in the `/message/stream` POST body (set by the `/deepsearch` slash command or a UI toggle), threads through `stream_agent(..., deep_search=deep_search)` as a Python keyword argument, and reaches `_tool_search_studies` via `execute_tool(..., deep_search=deep_search)`. Its only effects are widening the sample-search candidate cap (`SAMPLE_SEARCH_DEEP_CANDIDATES=500` vs. `SAMPLE_SEARCH_DEFAULT_CANDIDATES=40`) and switching the completion label to `"Deep-searched Qiita database"`. Every other tool ignores it — `execute_tool`'s signature accepts `deep_search` for all tools uniformly, but only `_tool_search_studies` reads it.
+**`deep_search` is invisible to the model.** It is not a property in this tool's JSON schema at all — the model cannot set it, request it, or even see that it exists. It originates as a plain boolean in the `/message/stream` POST body (defaulting to `true` when omitted; the frontend always sends `deep_search: true`), threads through `stream_agent(..., deep_search=deep_search)` as a Python keyword argument, and reaches `_tool_search_studies` via `execute_tool(..., deep_search=deep_search)`. Its only effects are widening the sample-search candidate cap (`SAMPLE_SEARCH_DEEP_CANDIDATES=500` vs. `SAMPLE_SEARCH_DEFAULT_CANDIDATES=40`) and switching the completion label to `"Deep-searched Qiita database"`. Every other tool ignores it — `execute_tool`'s signature accepts `deep_search` for all tools uniformly, but only `_tool_search_studies` reads it.
 
 ---
 
@@ -282,8 +286,7 @@ Bare `: keepalive\n\n` comment lines — no `event:`, no `data:` — are interle
 They appear at a fixed set of call sites, all before a step that can take multiple seconds:
 
 - `global_chat_routes.py`, immediately as `generate()` starts — before anything else is computed, so the connection has output before the client even finishes its `fetch`.
-- `global_chat_routes.py`, right after the `pinned_reports` `step_done` (before the agentic-vs-legacy fork).
-- `global_chat_routes.py`, legacy path only — after `query_plan`, after `build_context`'s `step_done` in the non-`skip_search` branch.
+- `global_chat_routes.py`, right after the `pinned_reports` `step_done` (when present).
 - `chat_routes.py`, after `build_context`'s `step_done` and after `deep_context`'s `step_done`.
 - `pin_flow.py :: stream_pin_flow`, after `deep_context`'s `step_done`, shared by both routes' pin flow.
 
@@ -291,26 +294,25 @@ Notably, the agentic path itself (`stream_agent`'s tool loop) has **no** keepali
 
 ---
 
-## All 10 events
+## All SSE events
 
-The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site against `parseSSE`'s dispatch table — there are exactly 10, no more:
+The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site against `parseSSE`'s dispatch table:
 
 | Event | Emitted by | Purpose |
 |---|---|---|
-| `agent_start` | Agentic path only | Switches the frontend message into segments mode. |
-| `segment_tool_call` | Agentic path only | A tool is being invoked; carries name/label/args. |
-| `segment_tool_result` | Agentic path only | A tool call finished; carries label/detail/ui_payload. |
-| `token` | Both paths | One chunk of streamed assistant text. |
-| `step_start` | Legacy path + pin/report flows (both routes) | A named non-tool step began. |
-| `step_done` | Legacy path + pin/report flows (both routes) | A named step finished. |
-| `query_plan` | Legacy path only | The keyword plan `llm_plan_query` produced. |
-| `ui` | Legacy path (`/report` flow) only | A structured payload to render inline (samples report). |
-| `done` | Both paths | Terminal event for a successful turn. |
-| `error` | Both paths | Terminal event for a failed turn. |
+| `agent_start` | Agent turns (both routes) | Switches the frontend message into segments mode. |
+| `segment_tool_call` | Agent turns | A tool is being invoked; carries name/label/args. |
+| `segment_tool_result` | Agent turns | A tool call finished; carries label/detail/ui_payload. |
+| `token` | Agent turns, pin/report refusal | One chunk of streamed assistant text. |
+| `step_start` | Context prep, pin/report flows | A named non-tool step began. |
+| `step_done` | Context prep, pin/report flows | A named step finished. |
+| `ui` | `/report` member flow | A structured payload to render inline (samples report). |
+| `done` | All successful turns | Terminal event. |
+| `error` | All failed turns | Terminal event. |
 
 #### event-agent_start
 
-Emitted once, immediately after `stream_agent` yields its first event, only when `model_supports_tools(model)` is true. Payload: `{}` (empty object — no fields). Client: `parseSSE` dispatches to `onAgentStart`, wired in `app_state.js` to `onAgentStart(chatId) → patchLast(chatId, m => ({...m, segments: []}))`. This is the sole trigger that flips a message from `segments: null` (legacy rendering) to `segments: []` (agent rendering) — nothing else in the frontend sets `segments` to a non-null value.
+Emitted once at the start of each agent turn on both routes. Payload: `{}` (empty object). Client: `onAgentStart` sets `segments: []`, flipping from steps/content rendering to segment rendering.
 
 #### event-segment_tool_call
 
@@ -334,15 +336,11 @@ Emitted by `_execute_tool_call` after the tool returns (or raises). Payload: `{"
 
 #### event-token
 
-Emitted by both the legacy and agentic paths, once per streamed content chunk. Payload: `{"token": str}`. Client dispatch depends on which `onToken` handler the call site wired: project chat and the legacy global-chat branch use a plain handler that appends straight to `m.content`; the agentic global-chat branch uses `onTokenAgent(chatId)`, which checks `m.segments`. If `segments` is `null` (should not happen mid-agent-turn, since `agent_start` always precedes it) it falls back to appending to `m.content`; otherwise it appends to the last segment if that segment is `{type: 'text', done: false}`, or opens a new text segment. This is also the mechanism that closes a tool segment's implicit "gap" — a token arriving right after a `segment_tool_result` always starts a fresh text segment rather than resuming the pre-tool one.
+Emitted during agent turns and pin/report refusal paths. Payload: `{"token": str}`. Both chat call sites use `onTokenAgent(chatId)`, which appends to the last open text segment or opens a new one. `/pin` and `/report` branches that never enter `stream_agent` still append to `m.content` via the same handler's fallback when `segments` is null.
 
 #### event-step_start / event-step_done
 
-Two events, documented together because they always pair. Emitted by the legacy path (`translate_query`, `search_db`, `build_context`, `llm_generate` steps in `global_chat_routes.py`), by project chat's context-building steps (`chat_routes.py`), and by the shared pin/report flows (`pin_flow.py :: stream_pin_flow`, `request_utils.py :: stream_samples_report`). Payload for `step_start`: `{"name": str, "label": str}`. Payload for `step_done`: `{"name": str, "label": str, "detail": str}` (detail sometimes omitted). Client: `onStepStart` sets `m.pendingStep = {name, label}`; `onStepDone` clears `pendingStep` and appends `{name, label, detail}` to `m.steps`. Neither touches `m.segments` — these are the "legacy" rendering fields, and a message using them keeps `segments: null` for its whole lifetime.
-
-#### event-query_plan
-
-Emitted once, by the legacy path only, right after `llm_plan_query` returns. Payload: `{"description": str, "keywords": list[str], "match_mode": "OR", "sql_where": str}`. `sql_where` is a **display-only** approximation built by joining keywords with `ILIKE` fragments in `global_chat_routes.py` — it is not the SQL that `search_studies_with_sql` actually executes (which uses parameterized `%s` placeholders; see [`04-search.md`](04-search.md#parameter-binding-order-is-load-bearing)). Client: `onQueryPlan` sets `m.queryPlan = payload` verbatim; nothing else reads or clears this field.
+Two events, documented together because they always pair. Emitted by context-prep steps (`build_context`, `deep_context`, `pinned_reports` in both routes) and by the shared pin/report flows (`pin_flow.py :: stream_pin_flow`, `request_utils.py :: stream_samples_report`). Payload for `step_start`: `{"name": str, "label": str}`. Payload for `step_done`: `{"name": str, "label": str, "detail": str}` (detail sometimes omitted). Client: `onStepStart` sets `m.pendingStep`; `onStepDone` appends to `m.steps`. Agent turns use `m.segments` instead once `agent_start` fires.
 
 #### event-ui
 
@@ -430,7 +428,7 @@ These produce identical output today **only because** the synthetic `name` (`f"t
 - Every `segment_tool_call` is eventually paired with a `segment_tool_result` carrying the same `name`, **or** the turn terminates via `done`/`error` first (a client or server crash mid-tool-call, or the generator raising past `_execute_tool_call`'s own `try/except`, leaves an orphaned `done: false` tool segment in the frontend's in-memory state — `applyStreamDone` does not force-close it, it only force-closes trailing **text** segments).
 - `token` events may interleave freely with `segment_tool_call`/`segment_tool_result` pairs — the model can emit narrative text before, between, and after tool calls in the same turn, and each such run becomes its own `{type: 'text', ...}` segment, split wherever a tool call interrupts it.
 - **Multiple tool calls within one LLM round never interleave with each other.** If a single completion requests several tools at once (e.g. `pin_study` alongside `get_study_report`), `_execute_tool_call` is invoked once per call, in a strict `for` loop — order-preserved via `sorted(tool_call_map)` by chunk index on the OpenAI path, or plain list order (the order `content_block_stop` events arrived) on the Anthropic path. Call *N*'s `segment_tool_result` is always emitted before call *N+1*'s `segment_tool_call` — there is no concurrent tool execution and no possibility of two open (`done: false`) tool segments coexisting from the same round, which is part of why the call-id-suffixed uniqueness discussed above is sufficient rather than merely convenient.
-- `step_start`/`step_done` pairs (legacy path, and the pin/report flows on both paths) always nest correctly — the codebase never emits two consecutive `step_start` events for different `name`s without an intervening `step_done`.
+- `step_start`/`step_done` pairs (context prep and pin/report flows on both paths) always nest correctly — the codebase never emits two consecutive `step_start` events for different `name`s without an intervening `step_done`.
 - `done` is always the last event of a successful turn; `error` is always the last event of a failed one. The two are mutually exclusive per turn, and no event of any kind follows either.
 - **Forced synthesis can emit `token` events after the last `segment_tool_result` with no intervening tool call.** Both `stream_agent` and `_stream_anthropic_agent` track whether the LLM's final round produced any text (`final_had_synthesis`). If the loop exits — either because `max_iters` was exhausted while the model was still requesting tools, or because the model's very last round was pure tool-calling with no accompanying text — and the last message on the running transcript is a tool result, the code issues one extra, non-streaming-tools completion call solely to obtain closing prose, and re-emits its `token` events on the wire. This means a turn's `token` events are not guaranteed to be contiguous with the round that triggered them; a client cannot assume "no more text is coming" just because the most recent event was `segment_tool_result`. Hitting `max_iters` itself is only logged server-side (`logger.warning("agent hit max_iters=%d without stopping", max_iters)`) — no SSE event reports it, so a turn that silently truncated its own tool-calling loop looks, from the wire, identical to one that finished normally.
 

@@ -15,6 +15,9 @@ from store import (
     upsert_study_detail_cache,
     pin_study_to_chat,
     list_pinned_studies,
+    SCOPE_PROJECT,
+    get_project_id_for_chat,
+    get_project_studies_only,
 )
 
 _QIITA_BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
@@ -296,13 +299,27 @@ def _pin_studies_validated(chat_id: str, scope: str, study_ids: list):
 
     Returns (pinned_now, invalid, rejected, all_pinned) where:
       pinned_now  — IDs newly pinned this call
-      invalid     — IDs not found / private in Qiita
+      invalid     — IDs not found / private in Qiita, or not in project (project scope)
       rejected    — IDs skipped because the 10-pin cap was reached
       all_pinned  — full list of pinned IDs for this chat after the operation
     """
     seen = set()
-    deduped = [sid for sid in study_ids if not (sid in seen or seen.add(sid))]
-    pinned_now, invalid, rejected = [], [], []
+    deduped = [int(sid) for sid in study_ids if not (sid in seen or seen.add(sid))]
+    invalid = []
+    if scope == SCOPE_PROJECT:
+        project_id = get_project_id_for_chat(chat_id)
+        allowed = set()
+        if project_id:
+            proj = get_project_studies_only(project_id) or {}
+            allowed = {
+                int(s["study_id"])
+                for s in (proj.get("studies") or [])
+                if s.get("study_id") is not None
+            }
+        out_of_project = [sid for sid in deduped if sid not in allowed]
+        deduped = [sid for sid in deduped if sid in allowed]
+        invalid.extend(out_of_project)
+    pinned_now, rejected = [], []
     for sid in deduped:
         header = _fetch_study_header_cached(sid)
         if header is None or ((header.get("num_samples") or 0) == 0 and (header.get("num_preps") or 0) == 0):

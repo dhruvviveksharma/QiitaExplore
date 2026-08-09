@@ -90,6 +90,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {"study_id": 11043}, "abc123def456",
                     scope="global", chat_id="chat1", deep_search=False,
+                    search_already_done=False,
                 )
             )
 
@@ -121,6 +122,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "search_studies", {"keywords": ["mouse"]}, "xyz999abc111",
                     scope="global", chat_id="chat1", deep_search=False,
+                    search_already_done=False,
                 )
             )
 
@@ -136,6 +138,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "pin_study", {"study_ids": [11043]}, "aaa000bbb111",
                     scope="global", chat_id="chat1", deep_search=False,
+                    search_already_done=False,
                 )
             )
 
@@ -150,6 +153,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {"study_id": 99}, "fail12345678",
                     scope="global", chat_id="chat1", deep_search=False,
+                    search_already_done=False,
                 )
             )
 
@@ -176,6 +180,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {}, "detl00000000",
                     scope="global", chat_id="chat1", deep_search=False,
+                    search_already_done=False,
                 )
             )
 

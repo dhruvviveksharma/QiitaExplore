@@ -8,20 +8,16 @@ Prerequisites: [`04-search.md`](04-search.md) — the tools call into the search
 
 ## The switch
 
-Everything in chat forks on one predicate:
+Both chat endpoints always run the agentic tool loop via `stream_agent`. The fork is **which tool schemas** the route passes in:
 
-```python
-if model_supports_tools(model):   # agentic path — this chapter
-else:                             # legacy path — regex planner, one search, plain stream
-```
+| Endpoint | `tools=` | Search surface |
+|---|---|---|
+| Global chat | `TOOL_SCHEMAS` from `agent_tool_schemas.py` | Public Qiita (`search_studies`, `search_by_sample`) |
+| Project chat | `PROJECT_TOOL_SCHEMAS` | Local SQLite only (`search_project_studies`) |
 
-`backend/config.py :: model_supports_tools` reads `supports_tools` from `MODEL_METADATA`. All ten configured models currently return `True` — the one model that returned `False` (`gemma-small`, which could not emit streaming tool calls) was removed from the roster, so the legacy `else` branch below is presently unreachable through the model picker.
+`backend/config.py :: model_supports_tools` and `MODEL_METADATA.supports_tools` remain capability metadata for callers that need to know whether a model can emit tool calls. They no longer route chat — there is no legacy planner/search fallback.
 
-There is a second fork, and it surprises people:
-
-> **Only global chats use the agentic path.** `backend/routes/chat_routes.py` never imports `stream_agent`. Project chats — the ones scoped to a saved collection of studies — use a plain token accumulator with pre-built context, regardless of which model is selected. Tool cards appear in global chat only.
-
-This is historical: project chat predates the tool loop and already had its context-building path. The asymmetry is not principled, and unifying the two is a natural cleanup. It is documented here because a reader comparing the two chat implementations will otherwise assume they missed something.
+Project chat is scoped: `_execute_project_tool` rejects global tool names, `/pin` and `/report` gate on current `project_studies` membership, and project-scope pin reads join membership so stale rows never surface.
 
 ---
 

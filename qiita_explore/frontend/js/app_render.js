@@ -1,14 +1,14 @@
 function renderApp(s, account) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql, setDeepSearch,
+    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -284,11 +284,6 @@ function renderApp(s, account) {
                 <button className="btn-search" onClick={() => doSearch()} disabled={searching || !query.trim()}>
                   {searching ? '…' : 'Search'}
                 </button>
-                <button
-                  className={`btn-deepsearch${deepSearch ? ' active' : ''}`}
-                  onClick={() => setDeepSearch(v => !v)}
-                  title="Also scan sample metadata (slower)"
-                ><BoltIcon /> Deep</button>
                 {searched && (
                   <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
                     Clear
@@ -314,7 +309,7 @@ function renderApp(s, account) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /><br />{deepSearch ? 'Deep searching sample metadata…' : 'Searching…'}</div>}
+              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /><br />Deep searching sample metadata…</div>}
 
               {!searching && (
                 <>
@@ -443,29 +438,6 @@ function renderApp(s, account) {
                               )}
                             </div>
                           )}
-                          {m.queryPlan && (
-                            <div className="msg-query-plan">
-                              <span className="qp-icon">⌕</span>
-                              <span className="qp-desc">{m.queryPlan.description}</span>
-                              {(m.queryPlan.keywords || []).length > 0 && (
-                                <span className="qp-keywords">
-                                  {m.queryPlan.keywords.map(k => (
-                                    <span key={k} className="qp-kw-chip">{k}</span>
-                                  ))}
-                                </span>
-                              )}
-                              <span className="qp-mode">{m.queryPlan.match_mode}</span>
-                            </div>
-                          )}
-                          {m.queryPlan?.applied_filters?.pi && (
-                            <PiFilterLine pi={m.queryPlan.applied_filters.pi} />
-                          )}
-                          {m.queryPlan?.sql_where && (
-                            <details className="msg-sql-details">
-                              <summary className="msg-sql-summary">Show SQL</summary>
-                              <div className="sql-block">WHERE {m.queryPlan.sql_where}</div>
-                            </details>
-                          )}
                           {m.isStreaming && !m.content && !m.steps?.length && !m.pendingStep ? (
                             <InfinityLoader w={80} h={50} />
                           ) : (!m.isStreaming || m.content) ? (
@@ -572,12 +544,6 @@ function renderApp(s, account) {
                   />
                 )}
               </div>
-              <button
-                className={`composer-mode-pill${deepSearch ? ' active' : ''}`}
-                onClick={() => setDeepSearch(v => !v)}
-                title={deepSearch ? 'Switch to normal chat' : 'Enable deep sample-metadata search'}>
-                {deepSearch ? 'Deep search' : 'Chat'}
-              </button>
               <span style={{flex:1}} />
               <span className="composer-model-chip"
                     onClick={() => setShowModelPicker(v => !v)}

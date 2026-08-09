@@ -148,7 +148,7 @@ def search():
     try:
         data        = request.get_json() or {}
         user_query  = data.get('query', '')
-        deep_search = bool(data.get('deep_search', False))
+        deep_search = bool(data.get('deep_search', True))
         if not user_query:
             return jsonify({'error': 'Query is required'}), 400
 

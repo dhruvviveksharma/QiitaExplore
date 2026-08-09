@@ -143,14 +143,16 @@ class TestPinnedStudiesSurviveReload:
             {"study_id": 11043, "study_title": "Wild mouse gut"}
         ]
 
-    def test_project_chat_pins_survive_refetch(self, crud, sample_user_id):
+    def test_project_chat_pins_survive_refetch(self, crud, sample_user_id, sample_study):
         import store.cache as cache
         project_id = crud.create_project(sample_user_id, "Pin Project")["project_id"]
+        crud.add_study_to_project(project_id, sample_user_id, sample_study)
         chat_id = crud.create_chat(project_id, sample_user_id)["chat_id"]
-        cache.pin_study_to_chat(chat_id, cache.SCOPE_PROJECT, 101, "Soil survey")
+        sid = sample_study["study_id"]
+        cache.pin_study_to_chat(chat_id, cache.SCOPE_PROJECT, sid, "Soil survey")
 
         reloaded = crud.get_chat(project_id, sample_user_id, chat_id)
-        assert reloaded["pinned_studies"] == [101]
+        assert reloaded["pinned_studies"] == [sid]
         assert reloaded["pinned_study_meta"][0]["study_title"] == "Soil survey"
 
     def test_unpin_clears_both_views(self, global_chat_crud, sample_user_id):

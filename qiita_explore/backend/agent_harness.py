@@ -110,7 +110,8 @@ def run_prompt(prompt, model, history, deep_search=False):
         scope=SCOPE_GLOBAL,
         chat_id=CHAT_ID,
         deep_search=deep_search,
-        max_iters=8,
+        max_iters=10,
+        tools=TOOL_SCHEMAS,
     ):
         etype = event["type"]
 
@@ -209,9 +210,10 @@ def main():
         logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     # ── lazy-import agent modules after logging/path setup ─────────────────────
-    global stream_agent, execute_tool, GLOBAL_CHAT_SYSTEM_PROMPT, SCOPE_GLOBAL, agent_mod
+    global stream_agent, execute_tool, GLOBAL_CHAT_SYSTEM_PROMPT, SCOPE_GLOBAL, TOOL_SCHEMAS, agent_mod
     import helpers.agent as agent_mod
     from helpers.agent import stream_agent
+    from helpers.agent_tool_schemas import TOOL_SCHEMAS
     from helpers.agent_tools import execute_tool
     from config import GLOBAL_CHAT_SYSTEM_PROMPT
     from store.cache import SCOPE_GLOBAL

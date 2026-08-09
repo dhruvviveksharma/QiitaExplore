@@ -9,8 +9,8 @@ Prerequisites: [`05-agent.md`](05-agent.md) — the segments described here are 
 ## Two endpoints stream. Nothing else does.
 
 ```
-POST /api/projects/<pid>/chats/<cid>/message/stream    ← legacy path only
-POST /api/global-chats/<cid>/message/stream            ← agentic or legacy
+POST /api/projects/<pid>/chats/<cid>/message/stream    ← agentic (project-scoped tools)
+POST /api/global-chats/<cid>/message/stream            ← agentic (global tools)
 ```
 
 Every other endpoint in the application is a plain request/response. All SSE frames anywhere are produced by a single function, `backend/helpers/llm_helpers.py :: _sse`:
@@ -45,33 +45,31 @@ The buffer-and-split-on-blank-line detail matters: a frame can arrive across two
 | `segment_tool_call`   | agentic    | A tool invocation began                                  |
 | `segment_tool_result` | agentic    | That invocation returned                                 |
 | `token`               | both       | One chunk of assistant text                              |
-| `step_start`          | legacy     | A named phase began (`build_context`, `llm_generate`, …) |
-| `step_done`           | legacy     | That phase finished                                      |
-| `query_plan`          | legacy     | The keyword plan and pseudo-WHERE clause                 |
+| `step_start`          | pin/report/context prep | A named phase began (`build_context`, `load_samples`, …) |
+| `step_done`           | pin/report/context prep | That phase finished                                      |
 | `ui`                  | both       | A structured render payload replaces the text body       |
 | `done`                | both       | Turn complete; carries title and pinned studies          |
 | `error`               | both       | Turn failed; carries a user-facing message               |
 
 
-Exactly ten, and the set is symmetric: every event `_sse` emits has a handler in `parseSSE`, and every handler corresponds to an emitted event.
+Exactly nine event types are wired end-to-end: every event `_sse` emits has a handler in `parseSSE`, and every handler corresponds to an emitted event.
 
 With one exception, in the other direction. `stream_agent` yields a `reasoning` type for reasoning-capable models. No route translates it, and `parseSSE` has no handler for it. Reasoning tokens are generated and dropped; only `backend/agent_harness.py` sees them. See [`05-agent.md`](05-agent.md).
 
-### The asymmetry between the two endpoints
+### The two endpoints
 
-Project chats and global chats have diverged, and it is visible in which events each can emit:
+Both streams use the same agent segment contract. The difference is scope and which preparatory steps run before `stream_agent`:
 
 
 |                             | Project chat           | Global chat                 |
 | --------------------------- | ---------------------- | --------------------------- |
-| Agentic path                | **never**              | when `model_supports_tools` |
-| `agent_start` / `segment_*` | never                  | yes                         |
-| `step_start` / `step_done`  | yes                    | legacy path only            |
-| `query_plan`                | no                     | legacy path only            |
-| Frontend handlers wired     | token accumulator only | all handlers                |
+| Agentic path                | always (`PROJECT_TOOL_SCHEMAS`) | always (`TOOL_SCHEMAS`) |
+| `agent_start` / `segment_*` | yes                    | yes                         |
+| `step_start` / `step_done`  | context prep, pin, report | pinned_reports, pin, report |
+| Tool search surface         | project SQLite only    | public Qiita DB             |
+| Frontend handlers wired     | `onTokenAgent`, segment handlers | same                        |
 
-
-The frontend mirrors this: `sendMessage` wires `onAgentStart` / `onSegmentToolCall` / `onSegmentToolResult` / `onQueryPlan` for the **global** call site only. Even if a project chat somehow emitted a segment event, nothing would consume it.
+The frontend mirrors this: both `sendMessage` call sites wire `onTokenAgent`, `onAgentStart`, `onSegmentToolCall`, and `onSegmentToolResult`. `/pin` and `/report` turns on either scope still use the steps/content bubble (`m.steps`, `m.content`) because those branches never enter `stream_agent`.
 
 ---
 

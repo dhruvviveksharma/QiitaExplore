@@ -7,9 +7,11 @@ from typing import Generator, Optional
 
 from config import client, get_client
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
-from helpers.agent_tools import TOOL_SCHEMAS, execute_tool
+from helpers.agent_tools import execute_tool
 
 logger = logging.getLogger(__name__)
+
+_DEDUP_AFTER_USE_TOOL_NAMES = frozenset({"search_studies", "search_project_studies"})
 
 
 def _openai_tools_to_anthropic(tools):
@@ -23,11 +25,27 @@ def _openai_tools_to_anthropic(tools):
     ]
 
 
-def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search):
-    """Yield segment events for one tool call; return (result_text, is_search_studies)."""
+def _is_dedup_search_tool(name: str) -> bool:
+    return name in _DEDUP_AFTER_USE_TOOL_NAMES
+
+
+def _tools_without_dedup_searches(tools, search_already_done: bool):
+    if not search_already_done:
+        return tools
+    blocked = _DEDUP_AFTER_USE_TOOL_NAMES
+    return [t for t in tools if t["function"]["name"] not in blocked]
+
+
+def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_already_done):
+    """Yield segment events for one tool call; return (result_text, is_dedup_search)."""
     step_name = f"tool_{name}_{call_id[:6]}"
     yield {"type": "segment_tool_call", "name": step_name,
            "label": _tool_label(name, args), "args": args}
+    if _is_dedup_search_tool(name) and search_already_done:
+        msg = f"Only one {name} call is allowed per turn. Use the results already returned."
+        yield {"type": "segment_tool_result", "name": step_name,
+               "label": f"{name} skipped", "detail": "duplicate search", "ui_payload": None}
+        return (msg, True)
     t0 = time.perf_counter()
     try:
         result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
@@ -43,20 +61,17 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search):
     detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
     yield {"type": "segment_tool_result", "name": step_name,
            "label": result.label, "detail": detail, "ui_payload": result.ui_payload}
-    return (result.text, name == "search_studies")
+    return (result.text, _is_dedup_search_tool(name))
 
 
-def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters):
-    anth_tools = _openai_tools_to_anthropic(TOOL_SCHEMAS)
+def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools):
+    anth_tools = _openai_tools_to_anthropic(tools)
     msgs = list(api_msgs)
     search_already_done = False
     final_had_synthesis = False
 
     for iteration in range(max_iters):
-        curr_tools = (
-            [t for t in anth_tools if t["name"] != "search_studies"]
-            if search_already_done else anth_tools
-        )
+        curr_tools = _tools_without_dedup_searches(anth_tools, search_already_done)
         system_text, messages = _extract_system_and_messages(msgs)
         t_llm = time.perf_counter()
         ttft = None
@@ -129,6 +144,7 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             result_text, is_search = yield from _execute_tool_call(
                 tu["name"], tu["args"], tu["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
+                search_already_done=search_already_done,
             )
             if is_search:
                 search_already_done = True
@@ -160,6 +176,7 @@ def stream_agent(
     study_context_text: Optional[str],
     scope: str,
     chat_id: str,
+    tools: list,
     max_iters: int = 4,
     deep_search: bool = False,
 ) -> Generator[dict, None, None]:
@@ -183,19 +200,15 @@ def stream_agent(
 
     llm_client, provider = get_client(resolved)
     if provider == "anthropic":
-        yield from _stream_anthropic_agent(llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters)
+        yield from _stream_anthropic_agent(
+            llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools)
         return
 
-    search_already_done = False  # allow model only ONE search_studies call
+    search_already_done = False
     final_had_synthesis = False
 
     for iteration in range(max_iters):
-        # After a search completes, drop search_studies from the schema so the
-        # model is forced to synthesise results rather than re-searching.
-        if search_already_done:
-            active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]
-        else:
-            active_tools = TOOL_SCHEMAS
+        active_tools = _tools_without_dedup_searches(tools, search_already_done)
 
         t_llm = time.perf_counter()
         stream = client.chat.completions.create(
@@ -208,7 +221,7 @@ def stream_agent(
 
         content_parts   = []
         reasoning_parts = []
-        tool_call_map   = {}   # index -> {id, name, arguments}
+        tool_call_map   = {}
         finish_reason   = None
         ttft            = None
 
@@ -221,7 +234,6 @@ def stream_agent(
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
 
-            # Reasoning-model output (e.g. minimax-m2, o1-style models on vLLM)
             reasoning = getattr(delta, "reasoning_content", None)
             if reasoning:
                 reasoning_parts.append(reasoning)
@@ -244,7 +256,6 @@ def stream_agent(
                     if fn.arguments:
                         tool_call_map[idx]["arguments"] += fn.arguments
 
-            # Debug: log only non-empty chunks so the file stays readable
             if logger.isEnabledFor(logging.DEBUG):
                 has_c = bool(delta.content)
                 has_r = bool(reasoning)
@@ -296,6 +307,7 @@ def stream_agent(
             result_text, is_search = yield from _execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
+                search_already_done=search_already_done,
             )
             if is_search:
                 search_already_done = True
@@ -323,8 +335,13 @@ def _tool_label(name: str, args: dict) -> str:
         kws = (args.get("organism") or args.get("keywords") or
                args.get("qualifier") or args.get("body_site") or [])[:3]
         return f"Searching: {', '.join(kws)}…" if kws else "Searching Qiita…"
+    if name == "search_project_studies":
+        kws = args.get("keywords") or []
+        return f"Searching project: {', '.join(kws[:3])}…" if kws else "Listing project studies…"
     if name == "get_study_report":
         return f"Loading report for study {args.get('study_id', '?')}…"
+    if name == "get_project_study_report":
+        return f"Loading project report for study {args.get('study_id', '?')}…"
     if name == "pin_study":
         ids = args.get("study_ids") or []
         return f"Pinning {len(ids)} {'study' if len(ids) == 1 else 'studies'}…"

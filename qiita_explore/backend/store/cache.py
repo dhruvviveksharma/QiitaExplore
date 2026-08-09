@@ -188,14 +188,31 @@ def _load_pinned_study_meta(conn, chat_id: str, scope: str):
     The single read of this table — `_load_pinned_studies` derives from it rather
     than running a second query over the same rows. `study_title` is NULL for rows
     pinned before the column existed; callers fall back to the bare study ID.
+
+    Project-scope reads join current project membership so stale pins for
+    removed studies never surface in UI or context assembly.
     """
-    rows = conn.execute(
-        """
-        SELECT study_id, study_title FROM chat_pinned_studies
-        WHERE chat_id = ? AND chat_scope = ? ORDER BY pinned_at ASC
-        """,
-        (chat_id, _normalize_scope(scope)),
-    ).fetchall()
+    scope = _normalize_scope(scope)
+    if scope == SCOPE_PROJECT:
+        rows = conn.execute(
+            """
+            SELECT p.study_id, p.study_title
+            FROM chat_pinned_studies p
+            JOIN project_chats pc ON pc.chat_id = p.chat_id
+            JOIN project_studies ps ON ps.project_id = pc.project_id AND ps.study_id = p.study_id
+            WHERE p.chat_id = ? AND p.chat_scope = ?
+            ORDER BY p.pinned_at ASC
+            """,
+            (chat_id, scope),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT study_id, study_title FROM chat_pinned_studies
+            WHERE chat_id = ? AND chat_scope = ? ORDER BY pinned_at ASC
+            """,
+            (chat_id, scope),
+        ).fetchall()
     return [{"study_id": int(r["study_id"]), "study_title": r["study_title"]} for r in rows]
 
 
