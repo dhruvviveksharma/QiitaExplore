@@ -641,8 +641,8 @@ function SlashCommandMenu({ matches, activeIndex, onPick }) {
 // ─── ModelPickerCard ──────────────────────────────────────────────────────────
 const _NRP_MODELS = [
   ['qwen3','Qwen 3 (397B)'], ['qwen3-small','Qwen 3 Small (27B)'],
-  ['gpt-oss','GPT-OSS (120B)'], ['gemma','Gemma (31B)'],
-  ['gemma-small','Gemma Small (~8B)'], ['kimi','Kimi (1T)'],
+  ['deepseek-v4-flash','DeepSeek V4 Flash (304B)'], ['gemma','Gemma (31B)'],
+  ['kimi','Kimi (1T)'],
   ['glm-5','GLM-5 (744B)'], ['minimax-m2','Minimax M2 (230B)'],
 ];
 const _CLAUDE_MODELS = [

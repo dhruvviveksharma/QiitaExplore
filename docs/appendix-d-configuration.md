@@ -235,15 +235,14 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 ## Model roster
 
-Eleven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `gemma`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
+Ten models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `gemma`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
 
 | Name | Provider | Tier | Size | Context (tokens) | Modalities | `supports_tools` | Budget (chars) |
 |---|---|---|---|---|---|---|---|
 | `qwen3` | nrp | main | 397B | 1,010,000 | image, video | yes | 3,507,000 |
 | `qwen3-small` | nrp | main | 27B | 1,010,000 | image, video | yes | 3,507,000 |
-| `gpt-oss` | nrp | main | 120B | 131,072 | — | yes | 430,752 |
+| `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | yes | 3,642,016 |
 | `gemma` *(default)* | nrp | main | 31B | 262,144 | image, video | yes | 889,504 |
-| `gemma-small` | nrp | evaluating | ~8B | 131,072 | image, video, audio | **no** | 430,752 |
 | `kimi` | nrp | evaluating | 1T | 262,144 | image, video | yes | 889,504 |
 | `glm-5` | nrp | evaluating | 744B | 202,752 | — | yes | 681,632 |
 | `minimax-m2` | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
@@ -251,7 +250,7 @@ Eleven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`back
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
 
-**`supports_tools: False` is a routing decision, not a capability note.** `gemma-small` is the only model with it, and the consequence is structural: `backend/routes/global_chat_routes.py` branches on `model_supports_tools(model)`. Tool-capable models go through `stream_agent` — the agentic loop with real tool calls, `segment_tool_call` / `segment_tool_result` SSE events, and the frontend's segments rendering. `gemma-small` falls to the **legacy path**: an LLM-planned query followed by keyword search, emitting the older `step_start` / `step_done` events. A user who selects `gemma-small` gets a visibly different chat, not a slightly worse one.
+**`supports_tools: False` is a routing decision, not a capability note.** Every currently configured model has `supports_tools: True` (the one exception, `gemma-small`, was removed from the roster) — the consequence is structural: `backend/routes/global_chat_routes.py` branches on `model_supports_tools(model)`, and with no model returning `False` anymore, its **legacy path** (an LLM-planned query followed by keyword search, emitting the older `step_start` / `step_done` events instead of `stream_agent`'s tool-call loop) is currently unreachable through the model picker. The branch is still there in code, just dead until either a non-tool-calling model is added back or something else routes into it directly.
 
 `provider` splits along a second axis: `backend/config.py :: get_client` returns the shared NRP `OpenAI` client for `provider: "nrp"`, and a freshly constructed `anthropic.Anthropic` for `provider: "anthropic"`. The agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
 

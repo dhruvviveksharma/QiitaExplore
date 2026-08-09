@@ -38,7 +38,7 @@ QiitaExplore replaces that manual loop with a local web console that sits in fro
 | Frontend | React via Babel standalone (no build step) | Zero-install iteration for a local research tool — clone, open `index.html`, done. No webpack/Vite pipeline to maintain. |
 | Local store | SQLite | Projects, chats, and cache tables live entirely on disk next to the app — no separate database service to run for local state. |
 | Source of truth | PostgreSQL (Qiita production schema, read-only) | Studies, preps, and per-study sample metadata are queried directly via `qiita_db.sql_connection.TRN` — vendored, trimmed Qiita DB layer, never written to. |
-| LLM | OpenAI-compatible client → NRP-Nautilus endpoint | Swappable model roster (`qwen3`, `gpt-oss`, `gemma`, `kimi`, `glm-5`, and others) behind one client interface; tool-calling support is detected per model. |
+| LLM | OpenAI-compatible client → NRP-Nautilus endpoint | Swappable model roster (`qwen3`, `deepseek-v4-flash`, `gemma`, `kimi`, `glm-5`, and others) behind one client interface; tool-calling support is detected per model. |
 | Data processing | pandas, numpy, `biom-format`, `qiita-files` | Standard microbiome tooling for reading/writing BIOM artifacts during merge jobs. |
 
 ## Quick Start / Installation

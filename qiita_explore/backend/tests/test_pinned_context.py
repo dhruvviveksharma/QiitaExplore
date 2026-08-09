@@ -36,18 +36,26 @@ class TestPerStudyBudget:
         # gemma: 889,504 chars * 0.65 / 5 = 115,635 -> the 60k constant wins
         assert pinned._pinned_per_study_budget(5, "gemma") == 60_000
 
-    def test_clamp_fires_on_a_131k_model(self, pinned):
-        # gpt-oss: 430,752 * 0.65 // 5 = 55,997, just under the constant.
-        # This is the assertion that stops 5 x 60k overflowing a 131k window.
-        assert pinned._pinned_per_study_budget(5, "gpt-oss") == 55_997
+    def test_clamp_fires_on_a_131k_model(self, pinned, monkeypatch):
+        # A synthetic small-context model (131,072 tokens, like the smallest
+        # models used to be) rather than a real registry entry — this test
+        # is about the clamp math, not about which models happen to be
+        # configured today. 430,752 * 0.65 // 5 = 55,997, just under the
+        # constant. This is the assertion that stops 5 x 60k overflowing a
+        # 131k window.
+        import config
+        monkeypatch.setitem(config.MODEL_METADATA, "test-small-model", {"context": 131_072})
+        assert pinned._pinned_per_study_budget(5, "test-small-model") == 55_997
 
-    def test_assembled_worst_case_fits_the_smallest_model(self, pinned):
+    def test_assembled_worst_case_fits_the_smallest_model(self, pinned, monkeypatch):
+        import config
         from config import context_budget_chars
-        per = pinned._pinned_per_study_budget(5, "gpt-oss")
-        assert per * 5 < context_budget_chars("gpt-oss")
+        monkeypatch.setitem(config.MODEL_METADATA, "test-small-model", {"context": 131_072})
+        per = pinned._pinned_per_study_budget(5, "test-small-model")
+        assert per * 5 < context_budget_chars("test-small-model")
 
     def test_single_pin_gets_the_full_constant_everywhere(self, pinned):
-        for model in ("gpt-oss", "gemma", "qwen3"):
+        for model in ("deepseek-v4-flash", "gemma", "qwen3"):
             assert pinned._pinned_per_study_budget(1, model) == 60_000
 
 
@@ -254,9 +262,10 @@ class TestDiscoveryStubs:
         assert "- ID 102:" in out, "the small last study must stay in the stub tail"
 
     def test_without_tools_the_stubs_stay_but_the_hatch_goes(self, fmt):
-        """The legacy path (_build_global_search_context, gemma-small) has no
-        tools. The IDs are still worth listing — the model can say what it can't
-        see — but pointing it at get_study_report would be uncallable."""
+        """The legacy path (_build_global_search_context, for a non-tool-calling
+        model) has no tools. The IDs are still worth listing — the model can say
+        what it can't see — but pointing it at get_study_report would be
+        uncallable."""
         out = fmt(self._studies(5), "HEADER (5 studies):", 1_500, tools_available=False)
         for i in range(5):
             assert f"ID {100 + i}:" in out

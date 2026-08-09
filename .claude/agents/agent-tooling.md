@@ -15,7 +15,7 @@ You are the owner of the agentic tool-calling subsystem in qiita-web / qiita_exp
 - `qiita_explore/backend/helpers/agent_tools.py` — the tool definitions: `search_studies`, `get_study_report`, `pin_study`, `compute_diversity` (stub, pending TKT-010 BIOM). **This file is at/over the 500-line cap — split before growing it (TKT-011).**
 - `qiita_explore/backend/helpers/sample_search.py` — `search_studies_by_sample_meta()`: bounded per-study JSONB probes; runs alongside text search.
 - `qiita_explore/backend/routes/global_chat_routes.py` — wires the SSE endpoint.
-- `qiita_explore/backend/config.py` — `MODEL_METADATA`, `model_supports_tools(model)`, `context_budget_chars(model)`. The agent path is taken **only if `model_supports_tools(model)`**; otherwise the legacy `llm_plan_query` → keyword path runs. `gemma-small` does NOT support streaming tool calls.
+- `qiita_explore/backend/config.py` — `MODEL_METADATA`, `model_supports_tools(model)`, `context_budget_chars(model)`. The agent path is taken **only if `model_supports_tools(model)`**; otherwise the legacy `llm_plan_query` → keyword path runs. All ten currently configured models support streaming tool calls, so that legacy branch is presently unreachable (it existed for `gemma-small`, which has been removed from the roster).
 
 **Frontend**
 - `qiita_explore/frontend/js/components.js` — `AgentMessageBubble`, `ToolCallCard` (collapsible: query args + result table), `ToolResultWidget`, `SamplesReportBubble`.

@@ -7,6 +7,12 @@
       "runtimeArgs": ["serve", "/Users/dhruvsharma/Downloads/Projects/qiita-web/qiita_explore/frontend", "--no-clipboard"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["/Users/dhruvsharma/Downloads/Projects/qiita-web/qiita_explore/start_barnacle.sh"],
+      "port": 5001
     }
   ]
 }

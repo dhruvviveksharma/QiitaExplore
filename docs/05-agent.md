@@ -15,7 +15,7 @@ if model_supports_tools(model):   # agentic path — this chapter
 else:                             # legacy path — regex planner, one search, plain stream
 ```
 
-`backend/config.py :: model_supports_tools` reads `supports_tools` from `MODEL_METADATA`. Ten of the eleven configured models return `True`; `gemma-small` is the only one that does not, because it cannot emit streaming tool calls.
+`backend/config.py :: model_supports_tools` reads `supports_tools` from `MODEL_METADATA`. All ten configured models currently return `True` — the one model that returned `False` (`gemma-small`, which could not emit streaming tool calls) was removed from the roster, so the legacy `else` branch below is presently unreachable through the model picker.
 
 There is a second fork, and it surprises people:
 
