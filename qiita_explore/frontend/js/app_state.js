@@ -7,7 +7,7 @@ function useAppState() {
   const [projLoading, setProjLoading] = useState(true);
   const [openProjId,  setOpenProjId]  = useState(null);
   const [openProject, setOpenProject] = useState(null);
-  const [view,        setView]        = useState({ type: 'browse' });
+  const [view,        setView]        = useState(() => parseHash(window.location.hash).view);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCache,   setChatCache]   = useState({});
   const [globalChats, setGlobalChats] = useState([]);
@@ -42,7 +42,10 @@ function useAppState() {
     setThemeState(t);
     try { localStorage.setItem('ui:theme', t); } catch (_) {}
   };
-  const [modalStudy,         setModalStudy]         = useState(null);
+  const [modalStudy,         setModalStudy]         = useState(() => {
+    const { studyId } = parseHash(window.location.hash);
+    return studyId != null ? { study_id: studyId } : null;
+  });
   const [modalDetail,        setModalDetail]        = useState(null);
   const [modalDetailLoading, setModalDetailLoading] = useState(false);
   const [projDetailLoading,  setProjDetailLoading]  = useState(false);
@@ -587,6 +590,27 @@ function useAppState() {
     setModalStudy(null); setModalDetail(null);
   };
 
+  // URL-driven modal restore, where only a bare id is available (no full
+  // study object with title/abstract already in hand, unlike every click
+  // site that calls openStudyModal). Kept separate from openStudyModal so
+  // the common click path never pays for an extra metadata round trip.
+  const openStudyById = async (studyId) => {
+    modalAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    modalAbortRef.current = ctrl;
+    setModalStudy({ study_id: studyId }); setModalDetail(null); setModalDetailLoading(true);
+    try {
+      const [study, detail] = await Promise.all([
+        apiFetch(`/studies/${studyId}`).then(r => r.ok ? r.json() : { study_id: studyId }),
+        fetchStudyDetail(studyId),
+      ]);
+      if (!ctrl.signal.aborted) { setModalStudy(study); setModalDetail(detail); }
+    } catch (_) {}
+    finally {
+      if (!ctrl.signal.aborted) setModalDetailLoading(false);
+    }
+  };
+
   // ─── misc ─────────────────────────────────────────────────────────────────────
   const enrichAllStudies = async (projId) => {
     const res = await apiPost(`/projects/${projId}/studies/enrich-all`, {});
@@ -627,6 +651,10 @@ function useAppState() {
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
     return 'Browse Studies';
   }, [view, chatCache, projects]);
+
+  // Placed last so it postdates every const (openChat, openStudyById,
+  // closeModal) it closes over, regardless of their declaration order above.
+  useUrlSync({ view, setView, setOpenProjId, openChat, modalStudy, openStudyById, closeModal });
 
   return {
     // state setters needed in render

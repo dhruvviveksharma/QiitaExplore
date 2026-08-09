@@ -346,6 +346,10 @@ input, textarea { font-family: var(--sans); }
   border-radius: 999px; padding: 2px 8px;
 }
 .topbar-spacer { flex: 1; }
+/* .msg-copy-btn defaults to align-self:flex-start for its flex-column homes
+   (.msg-bubble, .agent-msg); .topbar is a flex row, so override back to
+   center or it pins to the top of the 44px bar instead of the title. */
+.topbar .msg-copy-btn { align-self: center; }
 
 /* Content scroll area */
 .content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; display: flex; flex-direction: column; }
@@ -1220,6 +1224,10 @@ input, textarea { font-family: var(--sans); }
 .modal-close:hover { background: var(--border-soft); }
 .modal-expand { position: absolute; top: 14px; right: 46px; width: 26px; height: 26px; border-radius: 50%; background: var(--bg); color: var(--text-2); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: all var(--t); }
 .modal-expand:hover { background: var(--border-soft); }
+/* Third corner control, left of .modal-expand/.modal-close. Its .msg-copy-btn
+   child is text+icon (not a 26px circle like its neighbors), so it gets its
+   own offset clear of both rather than following their fixed width. */
+.modal-copy-link { position: absolute; top: 14px; right: 78px; }
 .modal-ws-bar { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .modal-ws-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; }
 .modal-ws-row + .modal-ws-row { border-top: 1px solid var(--border-soft); }

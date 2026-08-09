@@ -198,9 +198,10 @@ stateDiagram-v2
     global_chat --> browse: logo click
 
     note right of browse
-        No URL is ever written.
-        Reload returns here from
-        anywhere.
+        view <-> hash sync via
+        useUrlSync. Reload and
+        Back/Forward restore
+        the exact view.
     end note
 ```
 
@@ -208,15 +209,17 @@ stateDiagram-v2
 
 The `browse → global-chat` transition is the interesting one. Sending a message from Browse is not a navigation the user asks for: `sendMessage` sees `view.type === 'browse'`, creates a global chat, snapshots the current `ctxStudies` into its cache entry, clears them, and rewrites `view` — all before the first network call for the message itself.
 
-### The limitation
+### URL routing
 
-**Nothing about** `view` **is reflected in the URL.** There is no `history.pushState`, no hash, no query parameter, and no `popstate` listener anywhere in the frontend. That has three consequences that are worth stating as product limitations rather than as technical debt, because they are what a user actually experiences:
+`view` is reflected in the URL via `js/hooks/useUrlSync.js`, following the same load-order-dependent, no-imports pattern as `useModelSelection.js`. Routing is **hash-based**, not `pushState`: production nginx already has a `try_files ... /index.html` SPA fallback, but local dev serves the frontend from a plain static file server (VS Code Live Server / Cursor Live Preview) with no such rewrite rule, so a real path would 404 on direct load there. A hash fragment never leaves the browser, so it behaves identically in both environments with zero server changes.
 
-- **You cannot link to anything.** There is no way to send a colleague "look at this chat" or "this study's provenance tree" or "this merge workspace". The only way to share a result is a screenshot or a copy-paste. For a tool whose purpose is collaborative interpretation of shared datasets, this is a meaningful gap.
-- **The browser Back button leaves the application.** It does not return to the previous chat, because no history entry was ever pushed. It navigates away entirely, and everything not persisted server-side — `ctxStudies`, scroll position, the whole `chatCache` — is gone. Users learn to avoid Back, which is a bad thing to have to learn.
-- **Reload always lands on Browse.** Refreshing while reading a chat loses your place; you must find the chat in the sidebar again. On slower connections this compounds, because the sidebar itself has to reload before you can navigate.
+The hash has two independent parts — a path for `view`, and an optional `?study=<id>` suffix layered on top for the study modal, since studies are global (not owned by a project or chat) and the same suffix works after any path:
 
-The fix is not large in principle — `view` is already a serialisable tagged union, so it maps cleanly onto a path like `/p/:projId/c/:chatId`, and a `popstate` handler that calls `setView` would restore Back. The reason it has not been done is that the frontend is served as a static file with no server-side rewrite rule, so real paths would 404 on direct load and a hash-based scheme would be needed instead. That is a deployment change, not a React change.
+- `#/` → `{type:'browse'}`; `#/merges` → `{type:'merges'}` (only if `SHOW_MERGES` is on)
+- `#/projects/:projId/chats/:chatId` → `{type:'project-chat', ...}`; `#/chats/:chatId` → `{type:'global-chat', ...}`
+- `?study=<id>` appended to any of the above opens that study's modal on top of the backdrop, e.g. `#/chats/abc123?study=104`
+
+`useUrlSync` seeds `view`/`modalStudy`'s initial `useState` from the hash on mount, restores on `hashchange` (Back/Forward and manual edits), and pushes the hash whenever `view`/`modalStudy` change — guarded by comparing full hash strings so the write-effect and the `hashchange` listener don't echo each other into a redundant refetch loop. Chat links are personal deep links only: opening one still goes through the existing session-cookie + `user_id` ownership checks unchanged, so a link only resolves for its owner. Studies have no such restriction (gated only by `is_study_public`), but a link opened cold needs `GET /api/studies/<id>` (`study_routes.py`) to populate title/abstract/PI, since `.../detail` alone doesn't carry that metadata.
 
 ---
 
@@ -481,7 +484,7 @@ The full protocol — SSE event types, segment construction, and `ui_payload` pe
 Stated plainly.
 
 - **There are no frontend tests of any kind.** No unit tests, no component tests, no end-to-end browser tests, no test runner, no `package.json` to hang one off. The backend has a `tests/` tree with unit, e2e, and benchmark suites; the frontend has nothing. Every frontend change is verified by a human opening a browser, which is why `CLAUDE.md` requires running barnacle and walking the golden path before calling a UI change done. This is the single largest gap in the frontend's engineering story.
-- **No URL routing.** No deep links, no working Back button, no shareable state, and a reload always lands on Browse. Detailed above; it is a product limitation, not only debt.
+- ~~No URL routing.~~ Fixed — see "URL routing" above. Chats and studies are both hash-addressable; chat links remain owner-only (existing session/ownership checks are unchanged), studies are global-scoped and gated only by `is_study_public`.
 - **Four files exceed the repo's 500-line cap** — `style.css` (1885, exempt in practice as a stylesheet), `components.js` (684, TKT-038), `app_state.js` (633, TKT-036), and `app_render.js` (601, TKT-037). All three JS splits are planned and unstarted.
 - **Runtime transpile cost on every cold load.** Around 6,000 lines through Babel standalone before first paint, with no minification and no caching of the compiled output. TKT-020.
 - **Manual cache-bust versioning.** A forgotten `?v=` bump ships a fix that the developer sees and users do not.

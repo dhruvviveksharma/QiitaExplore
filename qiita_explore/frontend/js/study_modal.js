@@ -226,7 +226,7 @@ function StudyModalOutputs({ study, detail, loading }) {
 
 // ── Study modal ────────────────────────────────────────────────────────────────
 
-function StudyModal({ study, detail, loading, onClose }) {
+function StudyModal({ study, detail, loading, onClose, shareUrl }) {
   const [fullscreen, setFullscreen] = useState(false);
 
   return (
@@ -238,6 +238,11 @@ function StudyModal({ study, detail, loading, onClose }) {
           onClick={() => setFullscreen(p => !p)}>
           {fullscreen ? '⤡' : '⤢'}
         </button>
+        {shareUrl && (
+          <div className="modal-copy-link">
+            <CopyResponseButton title="Copy study link" text={shareUrl} />
+          </div>
+        )}
         <div className="modal-id">Study ID {study.study_id}</div>
         <div className="modal-title">{study.study_title || 'Untitled study'}</div>
 

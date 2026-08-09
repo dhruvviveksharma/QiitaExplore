@@ -550,7 +550,7 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
 }
 
 // ─── CopyResponseButton ───────────────────────────────────────────────────────
-function CopyResponseButton({ text }) {
+function CopyResponseButton({ text, title = 'Copy response' }) {
   const [copied, setCopied] = useState(false);
   if (!text) return null;
   const handleCopy = async () => {
@@ -558,7 +558,7 @@ function CopyResponseButton({ text }) {
     if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
   };
   return (
-    <button className="msg-copy-btn" title="Copy response" onClick={handleCopy}>
+    <button className="msg-copy-btn" title={title} onClick={handleCopy}>
       {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
       <span>{copied ? 'Copied' : 'Copy'}</span>
     </button>

@@ -25,6 +25,17 @@ from helpers.qiita_fetch import (
 )
 
 
+@app.route('/api/studies/<int:study_id>', methods=['GET'])
+def api_get_study(study_id):
+    """Return a single study's title/abstract/PI metadata by id alone."""
+    if not is_study_public(study_id):
+        return jsonify({'error': 'Study not found or not public'}), 404
+    results = search_studies_with_sql(custom_sql_where="s.study_id = %s", params=[study_id], limit=1)
+    if not results:
+        return jsonify({'error': 'Study not found'}), 404
+    return jsonify(results[0])
+
+
 @app.route('/api/studies/<int:study_id>/detail', methods=['GET'])
 def api_study_detail(study_id):
     """Return prep templates, artifacts, and samples for a study (preps/artifacts cached)."""

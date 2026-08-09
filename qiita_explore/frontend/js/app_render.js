@@ -198,6 +198,12 @@ function renderApp(s, account) {
               {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
                 <span className="topbar-badge">{openProject.studies.length} sources</span>
               )}
+              {isChat && view.chatId && (
+                <CopyResponseButton
+                  title="Copy chat link"
+                  text={window.location.origin + window.location.pathname + buildHash(view, null)}
+                />
+              )}
             </>
           )}
           <span className="topbar-spacer" />
@@ -561,7 +567,8 @@ function renderApp(s, account) {
       {/* ══════════════════ MODAL ══════════════════════ */}
       {modalStudy && (
         <StudyModal study={modalStudy} detail={modalDetail}
-          loading={modalDetailLoading} onClose={closeModal} />
+          loading={modalDetailLoading} onClose={closeModal}
+          shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}
       {showMergePanel && (
         <MergeWorkspacePanel
