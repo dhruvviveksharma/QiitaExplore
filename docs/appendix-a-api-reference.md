@@ -291,14 +291,19 @@ Empty `query` → **400** `{"error": "Query is required"}`.
 
 Behavior:
 
-1. `llm_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, and `description`. Missing pieces default to `1=1`, `[]`, and `50`.
-2. `search_studies_with_sql(...)` runs the text search, passing `keywords` as `relevance_keywords` so results are scored (title 3, alias 2, abstract 1 per hit) rather than returned in table order. A non-list result is coerced to `[]`.
-3. When `deep_search` is true, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB, bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500). Keywords fall back to whitespace tokens of length ≥ 2 from the raw query if the plan produced none. Results are appended, deduplicated by `study_id`, and are **not** re-ranked against the text results — they land after them.
+1. `llm_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, `applied_filters`, and PI resolution metadata. Missing pieces default to `1=1`, `[]`, and `50`.
+2. `search_studies_with_sql(...)` runs the text search with expanded keywords as `relevance_keywords` (title 30, alias 15, PI 20, abstract 10 per hit). Sample-metadata layer adds +1 per matching keyword on merged results. PI veto applies only when `resolve_pi` finds a match in `study_person`.
+3. When `deep_search` is true, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB (full text), bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500). Results merge and re-rank with the same unified scorer.
 
-Response echoes the plan so the UI can display what was searched:
+Response echoes the plan and `applied_filters`:
 
 ```json
-{ "results": [], "sql_query": { "keywords": [], "description": "..." }, "count": 0 }
+{
+  "results": [],
+  "sql_query": { "keywords": [], "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } } },
+  "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } },
+  "count": 0
+}
 ```
 
 Any exception is caught, traceback-printed, and returned as **500** with `str(e)`.

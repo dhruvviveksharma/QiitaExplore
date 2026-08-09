@@ -9,7 +9,8 @@ from qiita_db.sql_connection import TRN
 from run import app
 from config import client, ALLOWED_MODELS, MODEL_METADATA, SAMPLE_SEARCH_DEEP_CANDIDATES
 from services.llm import llm_query_to_sql
-from services.study_service import search_studies_with_sql
+from services.study_service import search_studies_with_sql, expand_keyword_variants
+from services.relevance import build_pi_required_filter, finalize_search_results
 from helpers.sample_search import search_studies_by_sample_meta
 from store import get_study_detail_cache, upsert_study_detail_cache
 from store.crud import get_setting, set_setting
@@ -156,29 +157,45 @@ def search():
         params       = sql_query.get('params') if isinstance(sql_query.get('params'), list) else []
         lim          = sql_query.get("search_limit", 50) if isinstance(sql_query, dict) else 50
         kws = sql_query.get('keywords') or []
+        expanded_kws = expand_keyword_variants(kws) if kws else []
+        resolved_pis = sql_query.get('resolved_pis') or []
+        veto_applied = bool(sql_query.get('veto_applied'))
+        pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
+
         text_results = search_studies_with_sql(
             custom_sql_where=where_clause, params=params, limit=lim,
-            relevance_keywords=kws if kws else None,
+            relevance_keywords=expanded_kws if expanded_kws else None,
+            pi_filter_sql=pi_sql,
+            pi_filter_params=pi_params,
         )
         if not isinstance(text_results, list):
             text_results = []
 
         if deep_search:
-            keywords = sql_query.get('keywords') if isinstance(sql_query.get('keywords'), list) else []
-            if not keywords:
-                keywords = [w for w in user_query.split() if len(w) >= 2]
+            probe_kws = expanded_kws or [w for w in user_query.split() if len(w) >= 2]
             seen_ids = {s['study_id'] for s in text_results}
             meta_results = search_studies_by_sample_meta(
-                keywords, max_candidates=SAMPLE_SEARCH_DEEP_CANDIDATES
+                probe_kws,
+                max_candidates=SAMPLE_SEARCH_DEEP_CANDIDATES,
+                resolved_pis=resolved_pis if veto_applied else None,
             )
             for s in meta_results:
                 if s['study_id'] not in seen_ids:
                     seen_ids.add(s['study_id'])
                     text_results.append(s)
 
+        if expanded_kws and text_results:
+            text_results = finalize_search_results(
+                text_results, expanded_kws,
+                resolved_pis=resolved_pis, veto_applied=veto_applied,
+            )
+
+        applied_filters = sql_query.get('applied_filters') or {}
+
         return jsonify({
             'results':   text_results,
             'sql_query': sql_query,
+            'applied_filters': applied_filters,
             'count':     len(text_results),
         })
     except Exception as e:

@@ -103,22 +103,36 @@ Plus four correlated subqueries in the SELECT list: `num_samples`, `data_types`,
 
 `SELECT DISTINCT` is **required**, not stylistic: the artifact/visibility join fans a study out to one row per artifact. Note that `qiita_fetch` expresses the same public-visibility constraint as a correlated `WHERE EXISTS` instead, which avoids the fan-out and therefore needs no `DISTINCT`. The two forms are semantically equivalent; the difference is historical, and the `EXISTS` form is the better pattern.
 
-### Relevance scoring
+### Relevance scoring (two layers)
 
-`build_relevance_score` emits a summed CASE expression per keyword, weighted by where the match lands:
+**Layer 1 — SQL** (`build_relevance_score` in `study_service.py`): one `unnest(%s::text[])` block sums per-keyword weights:
 
+| Field | Weight |
+| ----- | ------ |
+| `study_title` | 30 |
+| `study_abstract` | 10 |
+| `study_alias` | 15 |
+| PI name | 20 |
 
-| Field            | Weight |
-| ---------------- | ------ |
-| `study_title`    | 3      |
-| `study_alias`    | 2      |
-| PI name          | 2      |
-| `study_abstract` | 1      |
+**Layer 2 — sample metadata** (`score_studies_sample_layer` in `sample_search.py`): after text + sample hits merge, each merged study is probed once. Full `sample_values::text` is searched; **+1 per keyword** with at least one sample match.
 
+Final ordering: `relevance DESC, num_samples DESC NULLS LAST, s.study_id`.
 
-Ordering is `relevance DESC, num_samples DESC NULLS LAST, s.study_id`. The sample-count tiebreak is a deliberate bias toward larger studies when relevance ties — usually what a researcher wants, occasionally not.
+`build_where_from_plan` uses the same `unnest(%s::text[])` pattern (one array param) instead of repeating a 6-column OR per keyword.
 
-Note the asymmetry: the **scoring** expression looks at 4 fields, while `build_where_from_plan`'s **matching** clause looks at 6 (adding PI affiliation and lab contact name). A study matched solely on lab-contact name therefore scores zero and sorts last. That is defensible — it is a weak signal — but it is not obvious from either function alone.
+Note the asymmetry: **scoring** looks at 4 fields, while **matching** in `build_where_from_plan` looks at 6 (adding PI affiliation and lab contact name). A study matched solely on lab-contact name therefore scores zero and sorts last.
+
+### PI veto (resolve before filter)
+
+When the user names a specific PI (`entities` with `type: "pi"` on the agent path, or `by <Name>` / `PI <Name>` on browse), `resolve_pi` looks up `qiita.study_person` by deterministic SQL ILIKE — **never an LLM call**.
+
+**Veto applies only when resolution succeeds.** If extraction names a PI but nothing matches in `study_person`, results stay unfiltered (no empty-result trap from a bad regex).
+
+When veto is active, enforcement happens at three points: SQL WHERE (`build_pi_required_filter`), sample candidate lookup (`_get_candidate_ids`), and a post-merge Python guard (`study_matches_pi`).
+
+`project` / `cohort` / `institution` entities are keyword-scored only — there is no DB entity to resolve.
+
+`applied_filters.pi` is returned in search responses and rendered in the UI (`input`, `resolved`, `veto_applied`).
 
 ### The data-type filter
 
@@ -155,7 +169,7 @@ Score parameters come first because the relevance expression sits in the **SELEC
 
 `expand_keyword_variants` adds morphological variants before either builder runs: an irregular map handles `mouse ↔ mice`, `bacterium ↔ bacteria`; otherwise a naive `+s` plural is appended. **The result is capped at 80 terms.**
 
-Two things to note. The cap applies *after* expansion, so it corresponds to roughly 40 input terms. And each surviving keyword contributes 6 bound parameters to the WHERE and 4 to the score expression — so 80 terms means a WHERE clause with 480 `ILIKE` comparisons per row. That is the direct cause of the latency problem below.
+Two things to note. The cap applies *after* expansion, so it corresponds to roughly 40 input terms. Both `build_where_from_plan` and `build_relevance_score` bind **one** `text[]` parameter each (via `unnest`), so SQL text and param count no longer grow linearly with keyword count.
 
 ---
 
@@ -172,7 +186,7 @@ There is no global sample table. Answering "which studies have samples from mice
 ```mermaid
 flowchart LR
     A["candidate study IDs<br/>40 default · 500 deep<br/><i>data-type filtered, or<br/>top-N by sample count</i>"]
-    B["per-call ThreadedConnectionPool<br/>statement_timeout = 8000 ms"]
+    B["per-call ThreadedConnectionPool<br/>statement_timeout = 15000 ms"]
     C["ThreadPoolExecutor<br/>≤ 16 workers"]
     D["N × SELECT EXISTS(...)<br/>on qiita.sample_{id}"]
     E{"as_completed<br/>max(30, N×0.4) s"}
@@ -215,16 +229,14 @@ Two details:
 Unbounded, this design would scan every study in Qiita. Three limits prevent that:
 
 1. **Candidate cap.** 40 studies by default, 500 in deep-search mode. Candidates are the data-type-filtered set when a filter is active, otherwise the largest studies by sample count — a recall bias that is stated plainly here because it is invisible in the UI: **a small study that matches perfectly may never be probed.**
-2. **Per-statement timeout.** 8000 ms, set in the connection string, so a pathological study cannot hold a connection.
+2. **Per-statement timeout.** 15000 ms (default), set in the connection string, so a pathological study cannot hold a connection.
 3. **Overall budget.** `as_completed(timeout=max(30, N × 0.4))`. On expiry, stragglers are cancelled and **whatever matched is returned**.
 
 That last point is the important one. **A timeout degrades recall; it never fails the request.** The user gets fewer studies, not an error. This is the right trade for exploratory search and the wrong one for anything requiring completeness — and nothing in the response currently indicates that truncation occurred, which is worth fixing.
 
 ### Merging with text results
 
-`backend/helpers/agent_tools.py :: _tool_search_studies` runs both searches on every call. Text search over-fetches at `limit × 2` to leave room; sample search excludes IDs text search already found. Results merge with **text hits winning dedup**, are re-ranked by a Python-side score (title match 3, abstract match 1), and are trimmed to the limit. Each study is tagged `via: "text"` or `via: "sample_metadata"` so the UI can show how it was found.
-
-The organism slot gets preference for probing: `probe_kws = organism_kws or raw_kws`. Host fields are organism-identity columns, so probing them with `condition_or_intervention` terms mostly produces noise.
+`backend/helpers/agent_tools.py :: _tool_search_studies` runs both searches on every call. Text search over-fetches at `limit × 2`; sample search uses full expanded keywords against `sample_values::text`. Results merge, receive unified relevance scoring (text + sample layer), PI veto when resolved, then trim to `limit`. Each study is tagged `via: "text"` or `via: "sample_metadata"`.
 
 ---
 

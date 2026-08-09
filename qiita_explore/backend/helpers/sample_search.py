@@ -13,6 +13,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
+from services.relevance import build_pi_required_filter
 from helpers.qiita_fetch import _fetch_study_header
 from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
@@ -27,10 +28,23 @@ _HOST_FIELDS = [
 _MAX_KEYWORDS_PER_PROBE = 10
 
 
-def _get_candidate_ids(data_types, exclude_ids, max_candidates):
+def _get_candidate_ids(data_types, exclude_ids, max_candidates, resolved_pis=None):
     """Return up to max_candidates public study IDs to probe, minus exclude_ids."""
     dt_sql, dt_params = build_data_type_filter(data_types)
-    where = f"AND {dt_sql}" if dt_sql else ""
+    pi_sql, pi_params = build_pi_required_filter(resolved_pis or [])
+    joins = ""
+    if pi_sql:
+        joins = (
+            " LEFT JOIN qiita.study_person sp_pi"
+            " ON s.principal_investigator_id = sp_pi.study_person_id"
+        )
+    where_parts = []
+    if dt_sql:
+        where_parts.append(dt_sql)
+    if pi_sql:
+        where_parts.append(pi_sql)
+    extra_where = (" AND " + " AND ".join(where_parts)) if where_parts else ""
+    query_params = list(dt_params) + list(pi_params) + [max_candidates * 2]
     try:
         with TRN:
             TRN.add(f"""
@@ -38,14 +52,15 @@ def _get_candidate_ids(data_types, exclude_ids, max_candidates):
                     (SELECT COUNT(*) FROM qiita.study_sample ss
                      WHERE ss.study_id = s.study_id) AS n
                 FROM qiita.study s
+                {joins}
                 LEFT JOIN qiita.study_artifact sa ON s.study_id = sa.study_id
                 LEFT JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
                 LEFT JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
                 WHERE v.visibility = 'public'
-                {where}
+                {extra_where}
                 ORDER BY n DESC NULLS LAST
                 LIMIT %s
-            """, dt_params + [max_candidates * 2])
+            """, query_params)
             rows = TRN.execute_fetchindex()
     except Exception:
         logger.exception("_get_candidate_ids failed")
@@ -102,21 +117,94 @@ def _probe_exists(pool, sid, clauses, params, tag):
 
 
 def _probe_study_raw(pool, study_id, kws):
-    """Return True if any host field in sample_{study_id} matches a keyword.
-
-    Uses a dedicated psycopg2 connection from the pool — safe to call from
-    multiple threads simultaneously (unlike the shared TRN singleton).
-    """
-    kws = [k.strip() for k in kws if k.strip()][:_MAX_KEYWORDS_PER_PROBE]
+    """Return True if any sample metadata JSONB text matches a keyword."""
+    kws = [k.strip() for k in kws if k.strip()]
     if not kws:
         return False
     sid = int(study_id)
-    conditions, params = [], [sid]
-    for field in _HOST_FIELDS:
-        for kw in kws:
-            conditions.append(f"sm.sample_values->>'{field}' ILIKE %s")
-            params.append(f"%{kw}%")
-    return _probe_exists(pool, sid, conditions, params, "probe")
+    sql = f"""
+        SELECT EXISTS (
+            SELECT 1 FROM unnest(%s::text[]) AS kw
+            WHERE EXISTS (
+                SELECT 1 FROM qiita.study_sample ss
+                JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
+                WHERE ss.study_id = %s
+                  AND ss.sample_id <> 'qiita_sample_column_names'
+                  AND sm.sample_values::text ILIKE ('%' || kw || '%')
+            )
+        )
+    """
+    conn = pool.getconn()
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, [kws, sid])
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except Exception:
+        logger.exception("probe study=%s failed", sid)
+        return False
+    finally:
+        pool.putconn(conn)
+
+
+def _score_sample_metadata_raw(pool, study_id, keywords):
+    """Return count of keywords with at least one sample metadata match."""
+    kws = [k.strip() for k in (keywords or []) if k.strip()]
+    if not kws:
+        return 0
+    sid = int(study_id)
+    sql = f"""
+        SELECT COUNT(DISTINCT kw)
+        FROM unnest(%s::text[]) AS kw
+        WHERE EXISTS (
+            SELECT 1 FROM qiita.study_sample ss
+            JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
+            WHERE ss.study_id = %s
+              AND ss.sample_id <> 'qiita_sample_column_names'
+              AND sm.sample_values::text ILIKE ('%' || kw || '%')
+        )
+    """
+    conn = pool.getconn()
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, [kws, sid])
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        logger.exception("score_sample_metadata study=%s failed", sid)
+        return 0
+    finally:
+        pool.putconn(conn)
+
+
+def score_studies_sample_layer(study_ids, keywords, pool_size=16):
+    """Score sample-metadata keyword hits for each study ID in parallel."""
+    ids = [int(s) for s in (study_ids or [])]
+    if not ids:
+        return {}
+    workers = min(len(ids), pool_size)
+    timeout = max(30, len(ids) * 0.4)
+    pool = _probe_pool(workers)
+    scores = {}
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {executor.submit(_score_sample_metadata_raw, pool, sid, keywords): sid for sid in ids}
+    try:
+        for fut in as_completed(futures, timeout=timeout):
+            sid = futures[fut]
+            try:
+                scores[sid] = fut.result()
+            except Exception:
+                scores[sid] = 0
+    except (TimeoutError, concurrent.futures.TimeoutError):
+        logger.warning("[sample_score] timed out; returning partial scores")
+        for f in futures:
+            f.cancel()
+    finally:
+        executor.shutdown(wait=False)
+        pool.closeall()
+    return scores
 
 
 def _probe_fields_raw(pool, study_id, field_filters, keywords):
@@ -188,7 +276,8 @@ def _hydrate_headers(ids):
 
 def search_studies_by_field_filters(field_filters=None, keywords=None,
                                      data_types=None, exclude_ids=None,
-                                     max_candidates=200, pool_size=16):
+                                     max_candidates=200, pool_size=16,
+                                     resolved_pis=None):
     """Search studies whose sample metadata matches structured field filters or keywords.
 
     field_filters: [{"field": str, "value": str}] — checked via JSONB key lookup
@@ -200,7 +289,9 @@ def search_studies_by_field_filters(field_filters=None, keywords=None,
     if not ff and not kws:
         return []
 
-    candidate_ids = _get_candidate_ids(data_types, exclude_ids, max_candidates)
+    candidate_ids = _get_candidate_ids(
+        data_types, exclude_ids, max_candidates, resolved_pis=resolved_pis,
+    )
     if not candidate_ids:
         return []
 
@@ -215,7 +306,7 @@ def search_studies_by_field_filters(field_filters=None, keywords=None,
 
 def search_studies_by_sample_meta(topic_keywords, data_types=None,
                                    exclude_ids=None, max_candidates=500,
-                                   pool_size=16):
+                                   pool_size=16, resolved_pis=None):
     """Search for studies whose sample metadata matches topic keywords.
 
     Uses a per-call ThreadedConnectionPool so parallel probes run on independent
@@ -226,7 +317,9 @@ def search_studies_by_sample_meta(topic_keywords, data_types=None,
     if not kws:
         return []
 
-    candidate_ids = _get_candidate_ids(data_types, exclude_ids, max_candidates)
+    candidate_ids = _get_candidate_ids(
+        data_types, exclude_ids, max_candidates, resolved_pis=resolved_pis,
+    )
     if not candidate_ids:
         return []
 

@@ -8,6 +8,10 @@ from services.study_service import (
     build_where_from_plan, search_studies_with_sql,
     detect_data_types, expand_keyword_variants,
 )
+from services.relevance import (
+    normalize_entities, prepare_pi_filter, build_pi_required_filter,
+    finalize_search_results, pi_detail_suffix,
+)
 from helpers.llm_helpers import _format_discovery_study_list
 from helpers.sample_search import search_studies_by_sample_meta, search_studies_by_field_filters
 from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_validated
@@ -17,205 +21,7 @@ from config import (SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDA
 
 logger = logging.getLogger(__name__)
 
-TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_studies",
-            "description": (
-                "Search the Qiita public microbiome database for studies. "
-                "Issue EXACTLY ONE call per user request — never multiple calls with different filters. "
-                "Fill every typed slot you can identify from the query with ALL synonyms for that concept. "
-                "The backend pools all slots into one ranked search, so filling generously never over-narrows. "
-                "Include ALL relevant terms from the full conversation so refinements accumulate. "
-                "Only set data_types/investigation_types when the user EXPLICITLY names a sequencing type."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "organism": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Host or focal organism. Generate ALL known synonyms: common names, "
-                            "Latin binomials, strains, related genera, plural + singular. "
-                            "e.g. mouse → [\"mouse\",\"mice\",\"murine\",\"Mus musculus\","
-                            "\"house mouse\",\"field mouse\",\"wood mouse\",\"deer mouse\","
-                            "\"C57BL/6\",\"BALB/c\",\"Apodemus\",\"Peromyscus\",\"rodent\",\"rodents\"]"
-                        ),
-                    },
-                    "qualifier": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Condition, status, or context modifiers: wild vs captive, diseased vs healthy, "
-                            "treated vs control, life stage, diet. Include all synonyms and compound forms. "
-                            "e.g. wild → [\"wild\",\"wild animal\",\"wild animals\",\"wild-caught\","
-                            "\"feral\",\"feral mice\",\"free-living\",\"wildlife\",\"non-captive\","
-                            "\"natural habitat\",\"wild mice\",\"wild mouse\",\"wild rodent\"]"
-                        ),
-                    },
-                    "body_site": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Anatomical location or environmental niche. Include ontology synonyms. "
-                            "e.g. gut → [\"gut\",\"intestine\",\"colon\",\"gastrointestinal\",\"GI tract\","
-                            "\"cecum\",\"ileum\",\"jejunum\",\"feces\",\"stool\",\"fecal\",\"host-associated\"]. "
-                            "e.g. soil → [\"soil\",\"rhizosphere\",\"sediment\",\"terrestrial\",\"earth\"]"
-                        ),
-                    },
-                    "condition_or_intervention": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Disease, treatment, or experimental manipulation. Include abbreviations. "
-                            "e.g. antibiotic → [\"antibiotic\",\"antibiotics\",\"antimicrobial\","
-                            "\"ciprofloxacin\",\"vancomycin\",\"dysbiosis\",\"perturbation\"]. "
-                            "e.g. FMT → [\"FMT\",\"fecal microbiota transplant\",\"fecal transplant\","
-                            "\"stool transplant\",\"microbiome transfer\"]"
-                        ),
-                    },
-                    "project_or_pi": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Named cohort, project, PI surname, or institution. "
-                            "Populate ONLY if the user explicitly names one. "
-                            "e.g. [\"American Gut\",\"AGP\",\"American Gut Project\"]. "
-                            "e.g. Jeff Gordon → [\"Gordon\",\"Jeff Gordon\",\"Gordon lab\"]"
-                        ),
-                    },
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Catch-all for terms that don't fit the typed slots above, "
-                            "or for plain keyword searches without clear biological dimensions. "
-                            "Also used for backward-compatible flat keyword lists."
-                        ),
-                    },
-                    "data_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "AND filter — only set when user EXPLICITLY names a sequencing type. "
-                            "Valid: '16S', '18S', 'ITS', 'Metagenomic', 'Metatranscriptomic', "
-                            "'Metabolomic', 'Proteomic', 'Multiomic', 'Genome Isolate', 'Full Length Operon'. "
-                            "Use 'Metagenomic' for shotgun/WGS. Omit for plain topic queries."
-                        ),
-                    },
-                    "investigation_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Extremely narrow sub-filter (~18 studies). OMIT for common terms — "
-                            "use data_types=['Metagenomic'] for shotgun/WGS instead."
-                        ),
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max studies to return (1–20, default 10).",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_study_report",
-            "description": (
-                "Load full sample-level metadata for a specific Qiita study. "
-                "Shows all samples with their metadata fields."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "study_id": {
-                        "type": "integer",
-                        "description": "The Qiita study ID to fetch.",
-                    },
-                },
-                "required": ["study_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "pin_study",
-            "description": (
-                "Attach one or more studies to this chat for persistent deep context. "
-                "Pinned studies are loaded in full on each message. Cap: 10 studies."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "study_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "List of Qiita study IDs to pin.",
-                    },
-                },
-                "required": ["study_ids"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_by_sample",
-            "description": (
-                "Search for studies where samples match specific metadata attributes. "
-                "Use this when the user asks about subject characteristics: body site, disease, "
-                "age, sex, BMI, host organism, tissue type, or any sample-level metadata field. "
-                "Different from search_studies which searches study-level titles and abstracts — "
-                "this searches the actual recorded sample records."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "field_filters": {
-                        "type": "array",
-                        "description": (
-                            "Specific field-value pairs to match in sample metadata. "
-                            "e.g. [{\"field\":\"disease\",\"value\":\"IBD\"},"
-                            "{\"field\":\"body_site\",\"value\":\"rectum\"}]. "
-                            "Common fields: disease, body_site, env_package, host_sex, "
-                            "host_age, host_bmi, tissue_type, treatment."
-                        ),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "field": {"type": "string"},
-                                "value": {"type": "string"},
-                            },
-                            "required": ["field", "value"],
-                        },
-                    },
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Free-text terms matched across all sample metadata fields.",
-                    },
-                    "data_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Restrict to studies of these data types (e.g. '16S', 'Metagenomic').",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max studies to return (default 8, max 20).",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-]
-
+from helpers.agent_tool_schemas import TOOL_SCHEMAS  # re-exported for agent.py
 
 @dataclass
 class ToolResult:
@@ -251,19 +57,12 @@ def _empty_input_result(tool, text, label, detail, args=None):
 
 
 def _collect_terms(args: dict) -> tuple:
-    """Pool dimension slots into (raw_kws, detect_kws).
-
-    Dimension-priority order: organism → qualifier → body_site →
-    condition_or_intervention → project_or_pi → keywords.
-    Dedup preserves first occurrence, so when the 80-term cap is hit the
-    catch-all keywords slot drops first — organism terms are never crowded out.
-
-    detect_kws = keywords catch-all only, used for auto data-type detection so
-    biological slot terms (e.g. "metagenomics" in condition) don't silently
-    trigger an assay AND-filter the user never asked for.
-    """
+    """Pool dimension slots and entity texts into (raw_kws, detect_kws)."""
     def _clean(lst):
         return [str(k).strip() for k in (lst or []) if str(k).strip()]
+
+    entities = normalize_entities(args)
+    entity_texts = [e["text"] for e in entities]
 
     seen, raw_kws = set(), []
     for slot in ("organism", "qualifier", "body_site",
@@ -272,6 +71,10 @@ def _collect_terms(args: dict) -> tuple:
             if t not in seen:
                 seen.add(t)
                 raw_kws.append(t)
+    for t in entity_texts:
+        if t not in seen:
+            seen.add(t)
+            raw_kws.append(t)
 
     detect_kws = _clean(args.get("keywords") or [])
     return raw_kws, detect_kws
@@ -296,65 +99,59 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
 
 
 def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult:
+    entities = normalize_entities(args)
+    _, resolved_pis, veto_applied, applied_pi = prepare_pi_filter(entities)
+    pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
+
     raw_kws, detect_kws = _collect_terms(args)
     limit          = max(1, min(20, int(args.get("limit") or 10)))
     explicit_types = [t.strip() for t in (args.get("data_types") or []) if t]
     explicit_inv   = [t.strip() for t in (args.get("investigation_types") or []) if t]
 
     logger.info(
-        "[search_studies] raw_kws=%d detect_kws=%d deep=%s explicit_types=%s limit=%d",
-        len(raw_kws), len(detect_kws), deep_search, explicit_types or None, limit,
+        "[search_studies] raw_kws=%d detect_kws=%d deep=%s explicit_types=%s limit=%d veto=%s",
+        len(raw_kws), len(detect_kws), deep_search, explicit_types or None, limit, veto_applied,
     )
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("[search_studies] raw_kws=%s", raw_kws)
+        logger.debug("[search_studies] raw_kws=%s applied_pi=%s", raw_kws, applied_pi)
 
     if not raw_kws:
         return _empty_input_result("search_studies", "No keywords provided — cannot search.",
                                     "Search studies", "no keywords", args={"keywords": []})
 
-    # Expand morphological variants (mouse → also mice)
     kws = expand_keyword_variants(raw_kws)
     logger.info("[search_studies] expanded_kws=%d  %s", len(kws), kws[:10])
 
-    # Auto-detect data types from the keywords catch-all only — not biological slots —
-    # so a term like "metagenomics" in condition_or_intervention doesn't AND-filter.
     auto_types      = detect_data_types(detect_kws)
     effective_types = list(dict.fromkeys(explicit_types + auto_types)) or None
     effective_inv   = explicit_inv or None
 
-    logger.info("[search_studies] effective_types=%s effective_inv=%s",
-                effective_types, effective_inv)
-
-    # Text search (topic OR + data-type AND)
     where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
         where, params,
-        limit=limit * 2,             # over-fetch to leave room for sample hits
+        limit=limit * 2,
         relevance_keywords=kws,
         data_types=effective_types,
         investigation_types=effective_inv,
+        pi_filter_sql=pi_sql,
+        pi_filter_params=pi_params,
         return_sql=True,
     )
     text_ids = {s["study_id"] for s in text_studies}
     logger.info("[search_studies] text_hits=%d", len(text_studies))
 
-    # Sample-metadata search — always on; default uses a small candidate cap,
-    # deep_search expands it. Organism slot terms are preferred for precision
-    # (host fields are organism-identity columns); fall back to full pool if empty.
-    organism_kws   = [str(k).strip() for k in (args.get("organism") or []) if str(k).strip()]
-    probe_kws      = organism_kws or raw_kws
-    max_cands      = SAMPLE_SEARCH_DEEP_CANDIDATES if deep_search else SAMPLE_SEARCH_DEFAULT_CANDIDATES
+    max_cands = SAMPLE_SEARCH_DEEP_CANDIDATES if deep_search else SAMPLE_SEARCH_DEFAULT_CANDIDATES
     sample_studies = search_studies_by_sample_meta(
-        probe_kws,
+        kws,
         data_types=effective_types,
         exclude_ids=text_ids,
         max_candidates=max_cands,
         pool_size=16,
+        resolved_pis=resolved_pis if veto_applied else None,
     )
-    logger.info("[search_studies] sample_hits=%d (probe_kws=%d deep=%s max_cands=%d)",
-                len(sample_studies), len(probe_kws), deep_search, max_cands)
+    logger.info("[search_studies] sample_hits=%d (deep=%s max_cands=%d)",
+                len(sample_studies), deep_search, max_cands)
 
-    # Merge: text hits first (win dedup); sample hits fill gaps; re-rank; trim
     seen_ids, merged = {}, []
     for s in text_studies + sample_studies:
         sid = s["study_id"]
@@ -362,13 +159,9 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             seen_ids[sid] = s
             merged.append(s)
 
-    def _score(s):
-        title    = (s.get("study_title") or "").lower()
-        abstract = (s.get("study_abstract") or "").lower()
-        return sum(3 if k.lower() in title else (1 if k.lower() in abstract else 0)
-                   for k in kws)
-    merged.sort(key=_score, reverse=True)
-    merged = merged[:limit]
+    merged = finalize_search_results(
+        merged, kws, resolved_pis=resolved_pis, veto_applied=veto_applied, limit=limit,
+    )
 
     logger.info("[search_studies] final_merged=%d (after trim to limit=%d)", len(merged), limit)
 
@@ -383,16 +176,19 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
         f" (incl. {len(sample_studies)} from sample metadata of ≤{max_cands} studies)"
         if sample_studies else f" (sample scan: 0 matches, ≤{max_cands} studies)"
     )
-    # ui_payload: emit flattened keywords for backward compat with existing frontend widgets
+    pi_suffix = pi_detail_suffix(applied_pi)
+    applied_filters = {"pi": applied_pi} if applied_pi.get("input") else {}
+
     return ToolResult(
         text=text,
         label=label,
-        detail=f"top {len(merged)} results{detail_suffix}",
+        detail=f"top {len(merged)} results{detail_suffix}{pi_suffix}",
         ui_payload={
             "kind":           "tool_call",
             "tool":           "search_studies",
             "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
             "sql_query":      sql_str,
+            "applied_filters": applied_filters,
             "result_summary": f"{len(merged)} studies" if merged else "no matches",
             "result_studies": _result_studies(merged),
         },

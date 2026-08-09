@@ -1148,6 +1148,7 @@ input, textarea { font-family: var(--sans); }
 .sql-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); cursor: pointer; }
 .sql-toggle input { accent-color: var(--accent); }
 .sql-block { background: #0a1929; border-radius: var(--radius-s); padding: 10px 14px; font-family: monospace; font-size: 12px; color: #7ec8e3; }
+.pi-filter-line { font-size: 12px; color: var(--text-2); margin: 6px 0; }
 .msg-sql-details { margin: 2px 0 4px; }
 .msg-sql-summary { cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none; }
 .msg-sql-details .sql-block { margin-top: 4px; }

@@ -3,6 +3,7 @@ import logging
 
 from helpers.pg_pool import pooled_fetchall
 from helpers.qiita_fetch import _STUDY_COUNT_COLUMNS, _row_to_study_header
+from services.relevance import RELEVANCE_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
@@ -112,49 +113,53 @@ def build_where_from_plan(plan: dict) -> tuple:
     keywords = expand_keyword_variants(raw)
     if not keywords:
         return "1=1", []
-    clauses, params = [], []
-    for kw in keywords:
-        clauses.append(
-            "(s.study_title ILIKE %s OR s.study_abstract ILIKE %s OR s.study_alias ILIKE %s"
-            " OR sp_pi.name ILIKE %s OR sp_pi.affiliation ILIKE %s OR sp_lab.name ILIKE %s)"
-        )
-        params.extend([f"%{kw}%"] * 6)
-    return " OR ".join(clauses), params
+    clause = (
+        "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS kw"
+        " WHERE s.study_title ILIKE ('%' || kw || '%')"
+        " OR s.study_abstract ILIKE ('%' || kw || '%')"
+        " OR s.study_alias ILIKE ('%' || kw || '%')"
+        " OR sp_pi.name ILIKE ('%' || kw || '%')"
+        " OR sp_pi.affiliation ILIKE ('%' || kw || '%')"
+        " OR sp_lab.name ILIKE ('%' || kw || '%'))"
+    )
+    return clause, [keywords]
 
 
 def build_relevance_score(keywords) -> tuple:
     """Return (sql_expr, params) scoring each study by keyword matches.
 
     Keywords are morphologically expanded first.
-    Title matches weigh most (3), alias next (2), abstract least (1).
+    Weights from RELEVANCE_WEIGHTS. Sums per-keyword scores via unnest()
+    over one array param instead of repeating the CASE block per keyword.
     """
     kws = expand_keyword_variants(
         [k.strip() for k in (keywords or []) if len(k.strip()) >= 2]
     )
     if not kws:
         return "0", []
-    terms, params = [], []
-    for kw in kws:
-        terms.append(
-            "(CASE WHEN s.study_title ILIKE %s THEN 3 ELSE 0 END"
-            " + CASE WHEN s.study_alias ILIKE %s THEN 2 ELSE 0 END"
-            " + CASE WHEN sp_pi.name ILIKE %s THEN 2 ELSE 0 END"
-            " + CASE WHEN s.study_abstract ILIKE %s THEN 1 ELSE 0 END)"
-        )
-        params.extend([f"%{kw}%"] * 4)
-    return " + ".join(terms), params
+    w = RELEVANCE_WEIGHTS
+    expr = (
+        "(SELECT COALESCE(SUM("
+        f"CASE WHEN s.study_title ILIKE ('%' || kw || '%') THEN {w['title']} ELSE 0 END"
+        f" + CASE WHEN s.study_alias ILIKE ('%' || kw || '%') THEN {w['alias']} ELSE 0 END"
+        f" + CASE WHEN sp_pi.name ILIKE ('%' || kw || '%') THEN {w['pi']} ELSE 0 END"
+        f" + CASE WHEN s.study_abstract ILIKE ('%' || kw || '%') THEN {w['abstract']} ELSE 0 END"
+        "), 0) FROM unnest(%s::text[]) AS kw)"
+    )
+    return expr, [kws]
 
 
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
                             relevance_keywords=None,
                             data_types=None, investigation_types=None,
                             gold_only=False,
+                            pi_filter_sql=None, pi_filter_params=None,
                             return_sql=False):
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
 
     Param binding order (psycopg2 left-to-right):
-        score_params → data_type_filter_params → topic (WHERE) params
+        score_params → data_type_filter_params → topic (WHERE) params → pi_filter_params
     """
     if params is None:
         params = []
@@ -189,14 +194,16 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     if gold_only:
         topic_where += " AND EXISTS (SELECT 1 FROM qiita.per_study_tags pst WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD')"
 
-    full_params = score_params + dt_params + list(params)
+    if pi_filter_sql:
+        topic_where += f" AND ({pi_filter_sql})"
+
+    full_params = score_params + dt_params + list(params) + list(pi_filter_params or [])
 
     logger.info(
         "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "
-        "keyword_clauses=%d score_params=%d total_params=%d",
+        "topic_params=%d score_params=%d total_params=%d pi_filter=%s",
         lim, off, data_types, investigation_types,
-        len(params) // 6 if params else 0,
-        len(score_params), len(full_params),
+        len(params), len(score_params), len(full_params), bool(pi_filter_sql),
     )
 
     sql = f"""

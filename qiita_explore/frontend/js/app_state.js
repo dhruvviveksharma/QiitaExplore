@@ -18,6 +18,7 @@ function useAppState() {
   const [searching,    setSearching]    = useState(false);
   const [searched,     setSearched]     = useState(false);
   const [sqlQuery,     setSqlQuery]     = useState(null);
+  const [appliedFilters, setAppliedFilters] = useState(null);
   const [showSql,      setShowSql]      = useState(false);
   const [deepSearch,   setDeepSearch]   = useState(false);
   const [ctxStudies,   setCtxStudies]   = useState([]);
@@ -595,7 +596,12 @@ function useAppState() {
     if (override) setQuery(override);
     setSearching(true); setSearched(false);
     const res = await apiPost('/search', { query: q, deep_search: deepSearch });
-    if (res.ok) { const d = await res.json(); setResults(d.results || []); setSqlQuery(d.sql_query || null); }
+    if (res.ok) {
+      const d = await res.json();
+      setResults(d.results || []);
+      setSqlQuery(d.sql_query || null);
+      setAppliedFilters(d.applied_filters || null);
+    }
     else setResults([]);
     setSearched(true); setSearching(false);
   };
@@ -622,7 +628,7 @@ function useAppState() {
   return {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
+    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql, setDeepSearch,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
@@ -630,7 +636,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,

@@ -1529,6 +1529,36 @@ cap policy.
 
 ---
 
+## TKT-053: Full SearchIntent Model (deferred)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Metadata-aware relevance scoring (Part 1) ships typed `entities[]` with PI-only veto
+and `applied_filters` visibility. A fuller `SearchIntent{user_intent, semantic_query,
+entities, filters}` model would generalize filters (date_after, sample_count_min,
+disease/host/geography entity types) and unify browse, agent, and legacy chat planners.
+
+Nothing in the current product needs date or sample-count filtering yet — defer until
+a concrete caller requires it.
+
+### Plan
+
+Design `SearchIntent` as a shared planner output consumed by all three search entry
+points. Keep `resolve_pi` deterministic; add filter types incrementally with DB-backed
+resolution only where a real entity exists.
+
+### Files
+
+- `qiita_explore/backend/services/relevance.py` (extend)
+- `qiita_explore/backend/helpers/agent_tools.py`
+- `qiita_explore/backend/services/llm.py`
+- `qiita_explore/backend/helpers/llm_helpers.py`
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-08-03*
 
 ---

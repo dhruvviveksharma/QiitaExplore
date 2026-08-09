@@ -1,14 +1,14 @@
 function renderApp(s, account) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
-    setQuery, setResults, setSearched, setSqlQuery, setShowSql, setDeepSearch,
+    setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql, setDeepSearch,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, showSql, deepSearch,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql, deepSearch,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     input, sending, compErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -290,7 +290,7 @@ function renderApp(s, account) {
                   title="Also scan sample metadata (slower)"
                 ><BoltIcon /> Deep</button>
                 {searched && (
-                  <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); }}>
+                  <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
                     Clear
                   </button>
                 )}
@@ -303,13 +303,14 @@ function renderApp(s, account) {
               </div>
 
 
-              {sqlQuery && (
+              {(sqlQuery || appliedFilters?.pi) && (
                 <>
+                  {appliedFilters?.pi && <PiFilterLine pi={appliedFilters.pi} />}
                   <label className="sql-toggle">
                     <input type="checkbox" checked={showSql} onChange={e => setShowSql(e.target.checked)} />
                     Show generated SQL
                   </label>
-                  {showSql && <div className="sql-block">WHERE {sqlQuery.where_clause}</div>}
+                  {showSql && sqlQuery && <div className="sql-block">WHERE {sqlQuery.where_clause}</div>}
                 </>
               )}
 
@@ -455,6 +456,9 @@ function renderApp(s, account) {
                               )}
                               <span className="qp-mode">{m.queryPlan.match_mode}</span>
                             </div>
+                          )}
+                          {m.queryPlan?.applied_filters?.pi && (
+                            <PiFilterLine pi={m.queryPlan.applied_filters.pi} />
                           )}
                           {m.queryPlan?.sql_where && (
                             <details className="msg-sql-details">

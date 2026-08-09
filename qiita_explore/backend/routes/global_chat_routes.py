@@ -4,7 +4,11 @@ from flask import g, jsonify, request
 
 from run import app
 from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars, model_supports_tools
-from services.study_service import search_studies_with_sql, build_where_from_plan
+from services.study_service import search_studies_with_sql, build_where_from_plan, expand_keyword_variants
+from services.relevance import (
+    normalize_entities, prepare_pi_filter, build_pi_required_filter,
+    finalize_search_results,
+)
 from helpers.agent import stream_agent
 from store import (
     SCOPE_GLOBAL,
@@ -160,17 +164,23 @@ def api_global_chat_message_stream(chat_id):
                     # Legacy path: llm_plan_query → keyword search → llm_chat_stream
                     yield _sse("step_start", {"name": "translate_query", "label": "Planning query…"})
                     plan = llm_plan_query(full_msgs)
+                    entities = normalize_entities(plan)
+                    _, resolved_pis, veto_applied, applied_pi = prepare_pi_filter(entities)
+                    pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
                     where, search_params = build_where_from_plan(plan)
                     kws = plan.get("keywords", [])
+                    expanded_kws = expand_keyword_variants(kws) if kws else []
                     display_where = " OR ".join(
                         f"(title/abstract/alias ILIKE '%{kw}%')" for kw in kws
                     ) if kws else "all public studies"
+                    applied_filters = {"pi": applied_pi} if applied_pi.get("input") else {}
                     yield _sse("step_done", {"name": "translate_query", "label": "Query planned", "detail": plan["description"]})
                     yield _sse("query_plan", {
                         "description": plan["description"],
                         "keywords": kws,
                         "match_mode": "OR",
                         "sql_where": display_where,
+                        "applied_filters": applied_filters,
                     })
                     yield ': keepalive\n\n'
                     skip_search = bool(plan.get("skip_search"))
@@ -189,7 +199,18 @@ def api_global_chat_message_stream(chat_id):
                         s_label   = "Searching Qiita database…" if page_num == 0 else f"Fetching batch {page_num + 1}…"
                         yield _sse("step_start", {"name": "search_db", "label": s_label})
                         try:
-                            studies = search_studies_with_sql(where, search_params, limit=PAGE_SIZE, offset=offset)
+                            studies = search_studies_with_sql(
+                                where, search_params,
+                                limit=PAGE_SIZE, offset=offset,
+                                relevance_keywords=expanded_kws or None,
+                                pi_filter_sql=pi_sql,
+                                pi_filter_params=pi_params,
+                            )
+                            if expanded_kws and studies:
+                                studies = finalize_search_results(
+                                    studies, expanded_kws,
+                                    resolved_pis=resolved_pis, veto_applied=veto_applied,
+                                )
                         except Exception:
                             studies = []
                         yield _sse("step_done", {"name": "search_db", "label": "Search complete", "detail": f"{len(studies)} studies found"})

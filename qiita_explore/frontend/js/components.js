@@ -459,12 +459,26 @@ function InlineStudyCard({ study, isPinned, onPin, onMerge, onOpen }) {
   );
 }
 
+// ─── PI filter display (search visibility) ───────────────────────────────────
+function PiFilterLine({ pi }) {
+  if (!pi || !(pi.input || []).length) return null;
+  const input = pi.input.join(', ');
+  if (pi.veto_applied) {
+    const resolved = (pi.resolved || []).join(', ') || input;
+    return <p className="pi-filter-line">PI filter: {input} → {resolved} (veto active)</p>;
+  }
+  return <p className="pi-filter-line">PI filter: {input} — not found, unfiltered</p>;
+}
+
 // ─── ToolResultWidget ─────────────────────────────────────────────────────────
 function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned }) {
   if (!payload) return null;
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
   const studies = payload.result_studies || [];
+  const piLine = payload.applied_filters?.pi
+    ? <PiFilterLine pi={payload.applied_filters.pi} />
+    : null;
   const sqlBlock = payload.sql_query ? (
     <details className="tool-sql-block">
       <summary className="tool-sql-summary">SQL query</summary>
@@ -474,6 +488,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
   const isSampleSearch = payload.tool === 'search_by_sample';
   if ((payload.tool === 'search_studies' || isSampleSearch) && studies.length) return (
     <React.Fragment>
+      {piLine}
       {sqlBlock}
       <CollapsibleSection id={`tool-results-${payload.tool}`}
         title={`${studies.length} studies`}
@@ -489,7 +504,7 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
     </React.Fragment>
   );
   return payload.result_summary
-    ? <React.Fragment>{sqlBlock}<p className="tool-call-text-result">{payload.result_summary}</p></React.Fragment>
+    ? <React.Fragment>{piLine}{sqlBlock}<p className="tool-call-text-result">{payload.result_summary}</p></React.Fragment>
     : null;
 }
 

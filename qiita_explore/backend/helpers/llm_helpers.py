@@ -331,6 +331,10 @@ _QUERY_PLAN_SYSTEM = (
     "You are a database query planner for a microbiome study repository.\n"
     "Given the conversation history, output ONLY a JSON object with:\n"
     '  "keywords": list of 20–50 search terms (see expansion rules below)\n'
+    '  "entities": list of {"text": str, "type": "pi"|"project"|"cohort"|"institution"|"unknown"}'
+    " — named people/groups explicitly mentioned. type='pi' for a person;"
+    " project/cohort/institution for named studies or orgs. Only type='pi' can trigger"
+    " a hard PI filter after DB resolution.\n"
     '  "description": short human-readable label (e.g. "American Gut Project studies")\n'
     '  "skip_search": true only if the turn asks to filter/sort/analyze studies ALREADY listed'
     " in the conversation — set false for any new discovery request\n"
@@ -376,6 +380,7 @@ def llm_plan_query(messages: list) -> dict:
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
         plan = json.loads(raw)
         plan.setdefault("keywords", [])
+        plan.setdefault("entities", [])
         plan.setdefault("match_mode", "AND")
         plan.setdefault("description", "studies")
         plan.setdefault("page", 0)

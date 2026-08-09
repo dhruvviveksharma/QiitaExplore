@@ -26,7 +26,7 @@ You are a read-only database explorer for the qiita-web / qiita_explore project.
 - **Data-type join chain**: `study → study_prep_template → prep_template → data_type`. To filter studies by data type, EXISTS over this chain.
 - **Per-study sample metadata**: `qiita.sample_{study_id}` tables, JSONB column `sample_values`. There is **no global index** across studies — never propose a global scan. Bound every sample probe (data-type-filtered set, or top-N by sample count, fanned out with a small thread pool — see `sample_search.py`).
 - **`prep_template.investigation_type`**: WGS ~521 studies, shotgun_metagenomics ~18. Too narrow to use as a default filter; only when the user is explicit. `"Metagenomic"` (~605 studies) is the broad default for "shotgun".
-- **Relevance scoring** (in SQL): title=3, alias=2, abstract=1 per keyword hit; `ORDER BY relevance DESC, num_samples DESC`.
+- **Relevance scoring**: Layer 1 SQL — title=30, alias=15, PI=20, abstract=10 per keyword hit; Layer 2 sample metadata — +1 per keyword with a `sample_values` match. PI veto via `resolve_pi` on `study_person` (only when DB match succeeds). `ORDER BY relevance DESC, num_samples DESC`.
 
 ## SQLite key tables
 
