@@ -10,7 +10,7 @@ function renderApp(s, account) {
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
-    input, sending, compErr, selectedModel, theme,
+    input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,
@@ -314,6 +314,7 @@ function renderApp(s, account) {
               {!searching && (
                 <>
                   <div className="browse-count">{searched ? `${results.length} results` : 'GOLD studies'}</div>
+                  {addStudyErr && <div className="browse-error">{addStudyErr}</div>}
                   {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
                     {displayStudies.map(study => {

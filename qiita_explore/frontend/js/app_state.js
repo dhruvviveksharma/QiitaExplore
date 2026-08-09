@@ -29,6 +29,7 @@ function useAppState() {
   const [input,   setInput]   = useState('');
   const [sending, setSending] = useState(false);
   const [compErr,        setCompErr]        = useState('');
+  const [addStudyErr,    setAddStudyErr]    = useState('');
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
@@ -166,8 +167,10 @@ function useAppState() {
 
   const addStudyToProject = async (study) => {
     if (!openProjId) return;
+    setAddStudyErr('');
     const res = await apiPost(`/projects/${openProjId}/studies`, { study });
     if (res.ok) { const updated = await res.json(); setOpenProject(updated); }
+    else { const body = await res.json().catch(() => ({})); setAddStudyErr(body.error || 'Could not add study'); }
   };
 
   const removeStudy = async (studyId) => {
@@ -638,7 +641,7 @@ function useAppState() {
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
-    input, sending, compErr, selectedModel, theme,
+    input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
     projDetailLoading, chatLoading,

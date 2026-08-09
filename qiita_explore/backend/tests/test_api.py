@@ -9,7 +9,7 @@ class TestSchemaIntegrity:
         """All expected tables exist."""
         tables = [
             "projects", "project_studies", "project_chats", "project_chat_messages",
-            "project_context_summaries", "global_chats", "global_chat_messages",
+            "global_chats", "global_chat_messages",
             "study_detail_cache", "chat_pinned_studies", "meta"
         ]
         cursor = db_conn.execute(

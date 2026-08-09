@@ -29,39 +29,6 @@ def upsert_project_study_summary(project_id: str, user_id: str, study_id: int, s
     return True
 
 
-def get_project_context_summary(project_id: str, user_id: str):
-    resolved_user = _resolve_user(user_id)
-    with _conn() as conn:
-        if not _project_exists(conn, project_id, resolved_user):
-            return None
-        row = conn.execute(
-            "SELECT summary_text, source_updated_at, created_at, updated_at FROM project_context_summaries WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
-    return _as_dict(row)
-
-
-def upsert_project_context_summary(project_id: str, user_id: str, summary_text: str, source_updated_at: str = None):
-    resolved_user = _resolve_user(user_id)
-    with _conn() as conn:
-        if not _project_exists(conn, project_id, resolved_user):
-            return False
-        now = _now()
-        conn.execute(
-            """
-            INSERT INTO project_context_summaries(project_id, summary_text, source_updated_at, created_at, updated_at)
-            VALUES(?, ?, ?, ?, ?)
-            ON CONFLICT(project_id) DO UPDATE SET
-                summary_text = excluded.summary_text,
-                source_updated_at = excluded.source_updated_at,
-                updated_at = excluded.updated_at
-            """,
-            (project_id, summary_text or "", source_updated_at, now, now),
-        )
-        conn.commit()
-    return True
-
-
 def update_project_study_data(
     project_id: str,
     study_id: int,

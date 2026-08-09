@@ -4,6 +4,7 @@ Import from here:  from store import get_project, list_projects, ...
 """
 
 from .crud import (  # noqa: F401
+    PROJECT_STUDIES_CAP,
     list_projects,
     create_project,
     get_project,
@@ -51,8 +52,6 @@ from .cache import (  # noqa: F401
     SCOPE_GLOBAL,
     PINNED_STUDIES_PER_CHAT_CAP,
     upsert_project_study_summary,
-    get_project_context_summary,
-    upsert_project_context_summary,
     update_project_study_data,
     get_study_detail_cache,
     upsert_study_detail_cache,

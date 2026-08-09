@@ -4,6 +4,7 @@ from flask import g, jsonify, request
 
 from run import app, _bg_executor
 from store import (
+    PROJECT_STUDIES_CAP,
     add_study_to_project,
     create_project,
     delete_project,
@@ -109,6 +110,12 @@ def api_add_study(project_id):
 
     if not is_study_public(study.get('study_id')):
         return jsonify({'error': 'Study is not public and cannot be added'}), 403
+
+    proj = get_project(project_id, user_id)
+    if not proj:
+        return jsonify({'error': 'Project not found'}), 404
+    if len(proj.get('studies') or []) >= PROJECT_STUDIES_CAP:
+        return jsonify({'error': f'Project has reached the maximum of {PROJECT_STUDIES_CAP} studies'}), 400
 
     proj = add_study_to_project(project_id, user_id, study)
     if not proj:

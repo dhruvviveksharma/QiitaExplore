@@ -46,7 +46,7 @@ def api_create_chat(project_id):
     model         = data.get('model')
     chat          = create_chat(project_id, user_id, first_message or data.get('title'))
     if first_message:
-        study_ctx         = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
+        study_ctx         = _build_project_study_context(proj, budget=context_budget_chars(model))
         assistant_content = llm_chat([{"role": "user", "content": first_message}], study_context_text=study_ctx,
                                       system_prompt=PROJECT_CHAT_SYSTEM_PROMPT, model=model)
         append_chat_messages(project_id, user_id, chat["chat_id"], first_message, assistant_content)
@@ -117,7 +117,7 @@ def api_chat_message_stream(project_id, chat_id):
             else:
                 num_proj_studies = len((proj or {}).get("studies") or [])
                 yield _sse("step_start", {"name": "build_context", "label": "Loading study context…"})
-                study_ctx = _build_project_study_context(proj, user_id=user_id, budget=context_budget_chars(model))
+                study_ctx = _build_project_study_context(proj, budget=context_budget_chars(model))
                 yield _sse("step_done", {"name": "build_context", "label": "Study context ready", "detail": f"{num_proj_studies} studies"})
                 yield ': keepalive\n\n'
                 detected_ids   = _detect_mentioned_study_ids(user_content, proj)

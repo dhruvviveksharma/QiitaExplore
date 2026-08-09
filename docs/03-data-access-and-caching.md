@@ -148,9 +148,9 @@ There are no fixed context constants any more; every budget derives from the sel
 
 The consequence is worth stating plainly: **a conversation forgets anything said more than ten messages ago**, regardless of how much budget remains. In the agentic path this is partly compensated by the model being able to re-derive facts by calling tools, but a user-supplied constraint from turn one is genuinely gone by turn twelve. This is the substance of TKT-005.
 
-### The three-tier degradation ladder
+### The two-tier degradation ladder
 
-`backend/helpers/llm_helpers.py :: _build_project_study_context` assembles a project's studies into context, degrading in three stages as the collection grows:
+`backend/helpers/llm_helpers.py :: _build_project_study_context` assembles a project's studies into context, degrading in two stages as the collection grows, with a plain truncate as the last resort:
 
 ```mermaid
 flowchart TB
@@ -159,7 +159,7 @@ flowchart TB
     B -->|no| C["Keep full detail while under<br/>65% of the detail budget;<br/>overflow → one-line summaries"]
     C --> D{"fits in budget?"}
     D -->|yes| T2["<b>Tier 2</b> — details for some,<br/>summaries for the rest"]
-    D -->|no| T3["<b>Tier 3</b> — study IDs only (first 60)<br/>+ cached project summary,<br/>hard-clipped to budget"]
+    D -->|no| T3["Hard-clip the Tier 2 candidate<br/>to budget"]
 ```
 
 
@@ -167,9 +167,10 @@ flowchart TB
 What a user loses at each step:
 
 - **Tier 1 → 2.** Studies past the 65% mark lose their sample-metadata context, prep detail, and PI information; they keep an ID, a truncated title, and a ~480-character summary. The model can still name them correctly but can no longer reason about their contents. Which studies survive is **order-dependent, not relevance-dependent** — it is whichever ones the project happens to list first.
-- **Tier 2 → 3.** Everything collapses to a list of at most 60 IDs plus a pre-computed project summary, if a fresh one is cached (the cache is keyed on the project's `updated_at`, so an edited project has no valid summary). At this tier the model knows which studies exist and essentially nothing about them.
 
 The 65% figure reserves the remaining 35% for the summary lines that the overflow generates — without it, Tier 2 could produce output larger than Tier 1.
+
+A project is capped at `store/crud.py :: PROJECT_STUDIES_CAP` (20 studies), enforced when a study is added (`routes/project_routes.py :: api_add_study`). This is what keeps Tier 2 from needing a further cache-based fallback: there used to be a Tier 3 here — study IDs only (first 60) plus a project summary cached in a `project_context_summaries` table keyed on the project's `updated_at`. That cache was never actually written by anything, so Tier 3 always rendered "No cached summary available." — it was removed along with the table, and replaced by the size cap above.
 
 Pinned studies are budgeted separately by `_build_pinned_reports_context` (`backend/helpers/pinned_context.py`), which gives each inlined study a flat `PINNED_CHARS_PER_STUDY` clamped by the model's window, fetches them across a small thread pool, and — when the caller has tools — inlines only the first `PINNED_INLINE_STUDIES`, listing the rest as manifest lines the model can expand with `get_study_report` or `get_project_study_report` (passed via `report_tool_name`). Callers without tools (`/pin` acknowledgement) inline every pinned study and share the budget across all of them, since a manifest line would name a function they cannot call. Project-scope pin reads join current `project_studies` membership; removing a study from a project purges its pins from every chat in that project.
 

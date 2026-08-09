@@ -12,7 +12,6 @@ from config import (
     ALLOWED_MODELS,
 )
 from store import (
-    get_project_context_summary,
     get_study_detail_cache,
     upsert_study_detail_cache,
 )
@@ -220,13 +219,12 @@ def _format_discovery_study_list(studies, header_line: str, max_chars: int,
     return out + "\n"
 
 
-def _build_project_study_context(project: dict, user_id: str = "default", budget: int = 12_000):
+def _build_project_study_context(project: dict, budget: int = 12_000):
     if not project:
         return None
-    studies    = project.get("studies") or []
+    studies = project.get("studies") or []
     if not studies:
         return None
-    project_id = project.get("project_id")
 
     # Lazy-import to avoid circular dependency at module load time
     from helpers.qiita_fetch import _fetch_sample_context_text
@@ -279,24 +277,7 @@ def _build_project_study_context(project: dict, user_id: str = "default", budget
     if summary_lines:
         candidate_parts.append("Summaries for remaining studies:\n" + "\n".join(summary_lines))
     candidate = "\n\n".join(candidate_parts)
-    if len(candidate) <= budget:
-        return candidate
-
-    project_summary    = None
-    if project_id:
-        cached             = get_project_context_summary(project_id, user_id)
-        source_updated_at  = project.get("updated_at")
-        if cached and cached.get("summary_text") and cached.get("source_updated_at") == source_updated_at:
-            project_summary = cached.get("summary_text")
-
-    ids_line = ", ".join(str(s.get("study_id")) for s in studies[:60])
-    fallback = (
-        header
-        + f"Study IDs in this project: {ids_line}\n\n"
-        + "Project summary:\n"
-        + (project_summary or "No cached summary available.")
-    )
-    return fallback[:budget]
+    return candidate[:budget]
 
 
 def _build_api_messages(messages, study_context_text: str, system_prompt: str):

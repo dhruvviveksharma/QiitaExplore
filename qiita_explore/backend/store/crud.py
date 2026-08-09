@@ -5,6 +5,8 @@ import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title
 
+PROJECT_STUDIES_CAP = 20
+
 
 def get_setting(key: str):
     with _conn() as conn:
@@ -215,10 +217,6 @@ def add_study_to_project(project_id: str, user_id: str, study: dict):
             ),
         )
         conn.execute(
-            "DELETE FROM project_context_summaries WHERE project_id = ?",
-            (project_id,),
-        )
-        conn.execute(
             "UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",
             (_now(), project_id, resolved_user),
         )
@@ -243,10 +241,6 @@ def remove_study_from_project(project_id: str, user_id: str, study_id):
               AND chat_id IN (SELECT chat_id FROM project_chats WHERE project_id = ?)
             """,
             (sid, project_id),
-        )
-        conn.execute(
-            "DELETE FROM project_context_summaries WHERE project_id = ?",
-            (project_id,),
         )
         conn.execute(
             "UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",

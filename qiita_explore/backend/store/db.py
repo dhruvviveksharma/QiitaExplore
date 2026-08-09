@@ -135,15 +135,6 @@ def _create_schema(conn):
             FOREIGN KEY (chat_id) REFERENCES project_chats(chat_id) ON DELETE CASCADE
         );
 
-        CREATE TABLE IF NOT EXISTS project_context_summaries (
-            project_id TEXT PRIMARY KEY,
-            summary_text TEXT,
-            source_updated_at TEXT,
-            created_at TEXT,
-            updated_at TEXT,
-            FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
-        );
-
         CREATE TABLE IF NOT EXISTS global_chats (
             chat_id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
