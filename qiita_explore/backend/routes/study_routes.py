@@ -8,7 +8,7 @@ from qiita_db.sql_connection import TRN
 
 from run import app
 from config import client, ALLOWED_MODELS, MODEL_METADATA, SAMPLE_SEARCH_DEEP_CANDIDATES
-from services.llm import llm_query_to_sql
+from services.llm import browse_query_to_sql
 from services.study_service import search_studies_with_sql, expand_keyword_variants
 from services.relevance import build_pi_required_filter, finalize_search_results
 from helpers.sample_search import search_studies_by_sample_meta
@@ -152,7 +152,7 @@ def search():
         if not user_query:
             return jsonify({'error': 'Query is required'}), 400
 
-        sql_query    = llm_query_to_sql(user_query)
+        sql_query    = browse_query_to_sql(user_query)
         where_clause = sql_query.get('where_clause') or '1=1'
         params       = sql_query.get('params') if isinstance(sql_query.get('params'), list) else []
         lim          = sql_query.get("search_limit", 50) if isinstance(sql_query, dict) else 50
