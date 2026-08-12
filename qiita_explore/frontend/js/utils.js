@@ -1,10 +1,10 @@
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
-// TODO: revert fallback to port 5001 before committing to master
-// 127.0.0.1, not localhost: the session cookie is host-only, so this must
-// match whichever host the browser used to reach the page.
-const API = document.querySelector('meta[name="api-base"]')?.content
-          || 'http://127.0.0.1:5002/api';
+// Relative by default so the same build works same-origin behind any proxy
+// (production nginx, a Cloudflare Tunnel, etc.) with no host to keep in
+// sync. index.html's <meta name="api-base"> overrides this for local dev
+// where the frontend and backend are on different origins.
+const API = document.querySelector('meta[name="api-base"]')?.content || '/api';
 
 const formatDate = (dateStr) =>
   new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

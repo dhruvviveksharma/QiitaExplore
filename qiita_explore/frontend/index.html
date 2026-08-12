@@ -3,15 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- api host MUST match the host this page is served from (Cursor Live
-       Preview serves it at http://127.0.0.1:5503). A browser treats
-       127.0.0.1 and localhost as *different sites*, so a SameSite=Lax session
-       cookie set by a "localhost" API would NOT be sent on this page's
-       cross-site fetches. Keeping both on 127.0.0.1 makes them same-site so
-       the cookie rides along. The SSH tunnel to barnacle must bind 127.0.0.1
-       (ssh -L 127.0.0.1:5001:localhost:5001), and this origin must be in
-       barnacle's QIITA_EXPLORE_ALLOWED_ORIGINS. -->
-  <meta name="api-base" content="http://127.0.0.1:5001/api">
+  <!-- api-base is relative by default (js/utils.js) so this file works
+       same-origin behind any proxy -- production nginx, a Cloudflare
+       Tunnel, whatever -- with no edits needed. Local dev with the
+       frontend and backend on different origins (e.g. a static file
+       server plus a loopback SSH tunnel) needs an explicit override,
+       using 127.0.0.1 (not localhost) so it matches this page's host --
+       see docs/08-frontend.md ("API base resolution") for why. Example:
+       <meta name="api-base" content="http://127.0.0.1:5001/api"> -->
   <title>Qiita Explorer</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
