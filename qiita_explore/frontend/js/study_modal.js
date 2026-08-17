@@ -226,11 +226,11 @@ function StudyModalOutputs({ study, detail, loading }) {
 
 // ── Study modal ────────────────────────────────────────────────────────────────
 
-function StudyModal({ study, detail, loading, onClose, shareUrl }) {
+function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
   const [fullscreen, setFullscreen] = useState(false);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className={`modal-overlay${drawerOpen ? ' with-drawer' : ''}`} onClick={onClose}>
       <div className={`modal-card${fullscreen ? ' modal-fullscreen' : ''}`}
         onClick={e => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>×</button>
@@ -264,26 +264,32 @@ function StudyModal({ study, detail, loading, onClose, shareUrl }) {
             )}
 
             {study.study_abstract && (
-              <div className="modal-section"><h4>Abstract</h4><p>{study.study_abstract}</p></div>
+              <CollapsibleSection id="study-modal-abstract" title="Abstract" defaultOpen>
+                <p>{study.study_abstract}</p>
+              </CollapsibleSection>
             )}
             {study.pi_name && (
-              <div className="modal-section">
-                <h4>Principal Investigator</h4>
+              <CollapsibleSection id="study-modal-pi" title="Principal Investigator" defaultOpen>
                 <p>{study.pi_name}{study.pi_affiliation ? ` — ${study.pi_affiliation}` : ''}</p>
-              </div>
+              </CollapsibleSection>
             )}
             {study.pi_email && (
-              <div className="modal-section"><h4>Contact</h4><p>{study.pi_email}</p></div>
+              <CollapsibleSection id="study-modal-contact" title="Contact" defaultOpen>
+                <p>{study.pi_email}</p>
+              </CollapsibleSection>
             )}
 
-            <div className="modal-section">
-              <h4>Prep Templates</h4>
+            <CollapsibleSection id="study-modal-preps" title="Prep Templates"
+              subtitle={detail ? `${(detail.preps || []).length}` : undefined} defaultOpen>
               <PrepsTable detail={detail} loading={loading} />
-            </div>
+            </CollapsibleSection>
 
             {!loading && detail && (
-              <div className="modal-section">
-                <h4>Samples{detail.total_samples != null ? ` (${detail.total_samples} total${detail.total_samples > 200 ? ', showing first 200' : ''})` : ''}</h4>
+              <CollapsibleSection id="study-modal-samples" title="Samples"
+                subtitle={detail.total_samples != null
+                  ? `${detail.total_samples} total${detail.total_samples > 200 ? ', showing first 200' : ''}`
+                  : undefined}
+                defaultOpen>
                 <SamplesBrowser
                   samples={detail.samples || []}
                   layout="two-pane"
@@ -294,13 +300,12 @@ function StudyModal({ study, detail, loading, onClose, shareUrl }) {
                     return d.fields || null;
                   }}
                 />
-              </div>
+              </CollapsibleSection>
             )}
 
-            <div className="modal-section">
-              <h4>Outputs</h4>
+            <CollapsibleSection id="study-modal-outputs" title="Outputs" defaultOpen>
               <StudyModalOutputs study={study} detail={detail} loading={loading} />
-            </div>
+            </CollapsibleSection>
           </>
         )}
       </div>

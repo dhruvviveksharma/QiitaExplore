@@ -614,6 +614,7 @@ function renderApp(s, account) {
       {modalStudy && (
         <StudyModal study={modalStudy} detail={modalDetail}
           loading={modalDetailLoading} onClose={closeModal}
+          drawerOpen={!!(showMergePanel || searchResultsPanel)}
           shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}
       {showMergePanel && (

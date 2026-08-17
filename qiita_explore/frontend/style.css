@@ -1243,6 +1243,9 @@ input, textarea { font-family: var(--sans); }
   z-index: 200; padding: 20px;
   animation: fadeIn .14s ease;
 }
+/* Keep the study card in the leftover column when the right drawer is open
+   (search results / merge panel are 420px). Width is % of this overlay, not vw. */
+.modal-overlay.with-drawer { right: 420px; }
 @keyframes fadeIn { from { opacity:0; } }
 .modal-card {
   background: var(--surface);
@@ -1256,7 +1259,8 @@ input, textarea { font-family: var(--sans); }
 }
 @keyframes slideUp { from { transform: translateY(10px); opacity:0; } }
 
-.modal-fullscreen { max-width: none; width: 96vw; max-height: 92vh; }
+.modal-fullscreen { max-width: none; width: 96%; max-height: 92vh; }
+.modal-overlay.with-drawer .modal-fullscreen { width: 100%; }
 .modal-close {
   position: absolute; top: 14px; right: 14px;
   width: 26px; height: 26px;
@@ -1284,6 +1288,12 @@ input, textarea { font-family: var(--sans); }
 .modal-section { margin-bottom: 14px; }
 .modal-section h4 { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing:.07em; color: var(--text-3); margin-bottom: 5px; }
 .modal-section p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; }
+.modal-card .collapsible-header {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-3);
+}
+.modal-card .collapsible-header:hover { color: var(--accent); }
+.modal-card .collapsible-body p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; margin: 0; }
 
 .modal-stats { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 14px; }
 .modal-stat  { font-size: 11.5px; color: var(--text-2); background: var(--bg); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 7px; }
