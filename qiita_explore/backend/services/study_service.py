@@ -113,14 +113,15 @@ def build_where_from_plan(plan: dict) -> tuple:
     keywords = expand_keyword_variants(raw)
     if not keywords:
         return "1=1", []
+    # Literal % must be %% — psycopg2 treats bare % as placeholders when params are passed.
     clause = (
         "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS kw"
-        " WHERE s.study_title ILIKE ('%' || kw || '%')"
-        " OR s.study_abstract ILIKE ('%' || kw || '%')"
-        " OR s.study_alias ILIKE ('%' || kw || '%')"
-        " OR sp_pi.name ILIKE ('%' || kw || '%')"
-        " OR sp_pi.affiliation ILIKE ('%' || kw || '%')"
-        " OR sp_lab.name ILIKE ('%' || kw || '%'))"
+        " WHERE s.study_title ILIKE ('%%' || kw || '%%')"
+        " OR s.study_abstract ILIKE ('%%' || kw || '%%')"
+        " OR s.study_alias ILIKE ('%%' || kw || '%%')"
+        " OR sp_pi.name ILIKE ('%%' || kw || '%%')"
+        " OR sp_pi.affiliation ILIKE ('%%' || kw || '%%')"
+        " OR sp_lab.name ILIKE ('%%' || kw || '%%'))"
     )
     return clause, [keywords]
 
@@ -140,10 +141,10 @@ def build_relevance_score(keywords) -> tuple:
     w = RELEVANCE_WEIGHTS
     expr = (
         "(SELECT COALESCE(SUM("
-        f"CASE WHEN s.study_title ILIKE ('%' || kw || '%') THEN {w['title']} ELSE 0 END"
-        f" + CASE WHEN s.study_alias ILIKE ('%' || kw || '%') THEN {w['alias']} ELSE 0 END"
-        f" + CASE WHEN sp_pi.name ILIKE ('%' || kw || '%') THEN {w['pi']} ELSE 0 END"
-        f" + CASE WHEN s.study_abstract ILIKE ('%' || kw || '%') THEN {w['abstract']} ELSE 0 END"
+        f"CASE WHEN s.study_title ILIKE ('%%' || kw || '%%') THEN {w['title']} ELSE 0 END"
+        f" + CASE WHEN s.study_alias ILIKE ('%%' || kw || '%%') THEN {w['alias']} ELSE 0 END"
+        f" + CASE WHEN sp_pi.name ILIKE ('%%' || kw || '%%') THEN {w['pi']} ELSE 0 END"
+        f" + CASE WHEN s.study_abstract ILIKE ('%%' || kw || '%%') THEN {w['abstract']} ELSE 0 END"
         "), 0) FROM unnest(%s::text[]) AS kw)"
     )
     return expr, [kws]

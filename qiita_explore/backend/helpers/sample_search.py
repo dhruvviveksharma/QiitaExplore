@@ -130,7 +130,7 @@ def _probe_study_raw(pool, study_id, kws):
                 JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
                 WHERE ss.study_id = %s
                   AND ss.sample_id <> 'qiita_sample_column_names'
-                  AND sm.sample_values::text ILIKE ('%' || kw || '%')
+                  AND sm.sample_values::text ILIKE ('%%' || kw || '%%')
             )
         )
     """
@@ -162,7 +162,7 @@ def _score_sample_metadata_raw(pool, study_id, keywords):
             JOIN qiita.sample_{sid} sm ON ss.sample_id = sm.sample_id
             WHERE ss.study_id = %s
               AND ss.sample_id <> 'qiita_sample_column_names'
-              AND sm.sample_values::text ILIKE ('%' || kw || '%')
+              AND sm.sample_values::text ILIKE ('%%' || kw || '%%')
         )
     """
     conn = pool.getconn()

@@ -36,6 +36,15 @@ class TestBuildRelevanceScore:
         assert len(params) == 1
         assert isinstance(params[0], list)
 
+    def test_literal_pct_escaped_for_psycopg2(self):
+        """Bare % in SQL + params → IndexError in psycopg2; wildcards must be %%."""
+        expr, params = build_relevance_score(["skin microbiome", "forensic"])
+        assert "('%%' || kw || '%%')" in expr
+        assert expr.count("%s") == 1
+        # Simulate psycopg2 placeholder interpolation — must not raise IndexError.
+        formatted = expr % tuple(params)
+        assert "ILIKE ('%' || kw || '%')" in formatted
+
 
 class TestBuildWhereFromPlan:
     def test_single_array_param(self):
@@ -43,6 +52,15 @@ class TestBuildWhereFromPlan:
         assert "unnest(%s::text[])" in clause
         assert len(params) == 1
         assert isinstance(params[0], list)
+
+    def test_literal_pct_escaped_for_psycopg2(self):
+        clause, params = build_where_from_plan(
+            {"keywords": ["skin microbiome", "forensic"]}
+        )
+        assert "('%%' || kw || '%%')" in clause
+        assert clause.count("%s") == 1
+        formatted = clause % tuple(params)
+        assert "ILIKE ('%' || kw || '%')" in formatted
 
 
 class TestBuildPiRequiredFilter:
@@ -55,6 +73,13 @@ class TestBuildPiRequiredFilter:
         sql, params = build_pi_required_filter([{"name": "Jeff Gordon"}])
         assert "unnest(%s::text[])" in sql
         assert len(params) == 1
+
+    def test_literal_pct_escaped_for_psycopg2(self):
+        sql, params = build_pi_required_filter([{"name": "Jeff Gordon"}])
+        assert "('%%' || pi_name || '%%')" in sql
+        assert sql.count("%s") == 1
+        formatted = sql % tuple(params)
+        assert "ILIKE ('%' || pi_name || '%')" in formatted
 
 
 class TestScoreStudyTextFields:

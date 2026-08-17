@@ -63,10 +63,11 @@ def build_pi_required_filter(resolved_pis: list) -> tuple:
     names = [r.get("name") for r in resolved_pis if r.get("name")]
     if not names:
         return None, []
+    # Literal % must be %% — psycopg2 treats bare % as placeholders when params are passed.
     sql = (
         "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS pi_name"
-        " WHERE sp_pi.name ILIKE ('%' || pi_name || '%')"
-        " OR sp_pi.affiliation ILIKE ('%' || pi_name || '%'))"
+        " WHERE sp_pi.name ILIKE ('%%' || pi_name || '%%')"
+        " OR sp_pi.affiliation ILIKE ('%%' || pi_name || '%%'))"
     )
     return sql, [names]
 
@@ -81,7 +82,7 @@ def resolve_pi(pi_texts: list) -> list:
         FROM qiita.study_person
         WHERE EXISTS (
             SELECT 1 FROM unnest(%s::text[]) AS pi
-            WHERE name ILIKE ('%' || pi || '%') OR affiliation ILIKE ('%' || pi || '%')
+            WHERE name ILIKE ('%%' || pi || '%%') OR affiliation ILIKE ('%%' || pi || '%%')
         )
     """
     rows = pooled_fetchall(sql, [texts])
