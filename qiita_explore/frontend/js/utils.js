@@ -83,6 +83,36 @@ const apiPost  = (path, body) => apiFetch(path, { method: 'POST',   body: JSON.s
 const apiPatch = (path, body) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body) });
 const apiDel   = (path)       => apiFetch(path, { method: 'DELETE' });
 
+// ─── Markdown (marked + DOMPurify) ─────────────────────────────────────────────
+let _mdReady = false;
+function _ensureMarked() {
+  if (_mdReady || typeof marked === 'undefined') return;
+  if (typeof marked.use === 'function') {
+    marked.use({ gfm: true, breaks: true });
+  } else if (typeof marked.setOptions === 'function') {
+    marked.setOptions({ gfm: true, breaks: true });
+  }
+  _mdReady = true;
+}
+function renderMarkdown(text) {
+  _ensureMarked();
+  const src = text == null ? '' : String(text);
+  const raw = typeof marked !== 'undefined'
+    ? (typeof marked.parse === 'function' ? marked.parse(src) : marked(src))
+    : src;
+  let html = typeof DOMPurify !== 'undefined'
+    ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
+    : raw;
+  // External links open in a new tab — applied post-sanitize so it works across marked versions.
+  return html.replace(
+    /<a\s+([^>]*?)href="(https?:\/\/[^"]+)"([^>]*)>/gi,
+    (m, pre, href, post) => {
+      if (/\btarget=/i.test(pre + post)) return m;
+      return `<a ${pre}href="${href}"${post} target="_blank" rel="noopener noreferrer">`;
+    }
+  );
+}
+
 // Module-scope coalescing for /studies/<id>/detail. All callers (modal + every
 // SamplesReportBubble) share one in-flight promise + one cached result per study,
 // so we don't slam the (slow, single-transaction) Qiita DB with parallel duplicates.

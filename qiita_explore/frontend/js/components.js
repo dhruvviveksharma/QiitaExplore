@@ -509,11 +509,13 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
 }
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
+function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAllStudies }) {
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
   const detail = done ? seg.result?.detail : null;
+  const studies = seg.result?.ui_payload?.result_studies || [];
+  const hasStudies = done && studies.length > 0;
   const hasArgs = (seg.args?.keywords?.length > 0) || (seg.args?.field_filters?.length > 0)
                || (seg.args?.study_id != null) || (seg.args?.study_ids?.length > 0);
   return (
@@ -522,9 +524,18 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned }) {
         {done ? <span className="step-dot" /> : <WreathLoader size={28} />}
         <span className="tool-call-banner-label">{label}</span>
         {detail && <span className="tool-call-banner-meta">{detail}</span>}
+        {hasStudies && (
+          <span className="tool-call-view-all" onClick={() => onViewAllStudies?.({
+            studies,
+            title: label,
+            detail,
+          })}>
+            View all →
+          </span>
+        )}
         {done && hasArgs && (
-          <span className="tool-call-view-all" onClick={() => setShowArgs(v => !v)}>
-            {showArgs ? 'Hide ▴' : 'View all →'}
+          <span className="tool-call-show-query" onClick={() => setShowArgs(v => !v)}>
+            {showArgs ? 'Hide query ▴' : 'Show query'}
           </span>
         )}
       </div>
@@ -566,17 +577,18 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies }) {
   const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
           <div key={i} className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
-            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(seg.content)) }} />
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.content) }} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
+            onViewAllStudies={onViewAllStudies}
             isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
         ) : null
       )}

@@ -26,6 +26,17 @@ function useAppState() {
   const [mergeWorkspaceId, setMergeWorkspaceId] = useState(null);
   const [showMergePanel,   setShowMergePanel]   = useState(false);
   const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
+  // { studies, title, detail } | null — right drawer for search_studies "View all"
+  const [searchResultsPanel, setSearchResultsPanel] = useState(null);
+  const openSearchResultsPanel = (payload) => {
+    setShowMergePanel(false);
+    setSearchResultsPanel(payload || null);
+  };
+  const closeSearchResultsPanel = () => setSearchResultsPanel(null);
+  const openMergePanel = (open = true) => {
+    if (open) setSearchResultsPanel(null);
+    setShowMergePanel(!!open);
+  };
   const [input,   setInput]   = useState('');
   const [sending, setSending] = useState(false);
   const [compErr,        setCompErr]        = useState('');
@@ -664,11 +675,13 @@ function useAppState() {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    openSearchResultsPanel, closeSearchResultsPanel, openMergePanel,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    searchResultsPanel,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,

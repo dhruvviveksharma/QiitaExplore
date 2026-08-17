@@ -6,10 +6,12 @@ function renderApp(s, account) {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    openSearchResultsPanel, closeSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    searchResultsPanel,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
@@ -210,7 +212,7 @@ function renderApp(s, account) {
           {SHOW_MERGES && view.type !== 'merges' && (
             <button className={`merge-toggle-btn ${showMergePanel ? 'active' : ''}`}
               title="Merge Workspace"
-              onClick={() => setShowMergePanel(p => !p)}>
+              onClick={() => openMergePanel(!showMergePanel)}>
               <MergeIcon /> Merge
             </button>
           )}
@@ -248,7 +250,7 @@ function renderApp(s, account) {
           </div>
         )}
 
-        <div className={`content${showMergePanel ? ' merge-open' : ''}`}>
+        <div className={`content${(showMergePanel || searchResultsPanel) ? ' merge-open' : ''}`}>
 
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
@@ -354,7 +356,7 @@ function renderApp(s, account) {
                                 <button className="btn-card-merge"
                                   onClick={() => {
                                     setPendingMergeStudy(study);
-                                    setShowMergePanel(true);
+                                    openMergePanel(true);
                                   }}>
                                   + Merge
                                 </button>
@@ -419,8 +421,9 @@ function renderApp(s, account) {
                           isStreaming={!!m.isStreaming}
                           msgKey={`${view.chatId}-${i}`}
                           onPinStudy={study => pinStudy(view.chatId, study)}
-                          onMergeStudy={study => { setPendingMergeStudy(study); setShowMergePanel(true); }}
+                          onMergeStudy={study => { setPendingMergeStudy(study); openMergePanel(true); }}
                           onOpenStudy={openStudyModal}
+                          onViewAllStudies={openSearchResultsPanel}
                           pinnedStudyIds={pinnedMeta.map(p => p.study_id)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
@@ -452,7 +455,7 @@ function renderApp(s, account) {
                               <div
                                 className={`msg-bubble${m.isStreaming ? ' streaming' : ''}`}
                                 dangerouslySetInnerHTML={{
-                                  __html: DOMPurify.sanitize(marked.parse(m.content || (!m.isStreaming ? '*No response*' : '')))
+                                  __html: renderMarkdown(m.content || (!m.isStreaming ? '*No response*' : ''))
                                 }}
                               />
                               {m.isStreaming && m.content && <div style={{marginTop:'6px'}}><InfinityLoader w={64} h={40} /></div>}
@@ -576,7 +579,19 @@ function renderApp(s, account) {
           setWorkspaceId={setMergeWorkspaceId}
           pendingStudy={pendingMergeStudy}
           clearPendingStudy={() => setPendingMergeStudy(null)}
-          onClose={() => setShowMergePanel(false)}
+          onClose={() => openMergePanel(false)}
+        />
+      )}
+      {searchResultsPanel && (
+        <SearchResultsPanel
+          studies={searchResultsPanel.studies}
+          title={searchResultsPanel.title}
+          detail={searchResultsPanel.detail}
+          onClose={closeSearchResultsPanel}
+          onPin={study => view.chatId && pinStudy(view.chatId, study)}
+          onMerge={study => { setPendingMergeStudy(study); openMergePanel(true); }}
+          onOpen={openStudyModal}
+          isPinned={sid => pinnedMeta.some(p => p.study_id === sid)}
         />
       )}
     </div>

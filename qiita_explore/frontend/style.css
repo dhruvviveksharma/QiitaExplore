@@ -553,6 +553,39 @@ input, textarea { font-family: var(--sans); }
 .tool-call-banner-meta  { font-size: 11.5px; color: var(--accent-h); flex: 1; }
 .tool-call-view-all     { font-size: 11px; font-weight: 600; color: var(--accent); cursor: pointer; }
 .tool-call-view-all:hover { text-decoration: underline; }
+.tool-call-show-query   { font-size: 11px; font-weight: 500; color: var(--text-3); cursor: pointer; margin-left: 10px; }
+.tool-call-show-query:hover { color: var(--accent); text-decoration: underline; }
+
+/* Search results drawer (View all →) — same right-edge pattern as .merge-panel */
+.search-results-panel {
+  position: fixed; top: 0; right: 0; width: 420px; height: 100%;
+  z-index: 200; background: var(--surface); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.12);
+}
+.search-results-panel-header {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.search-results-panel-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.search-results-panel-title { font-weight: 600; font-size: 0.95rem; color: var(--text); }
+.search-results-panel-detail { font-size: 0.75rem; color: var(--text-3); line-height: 1.35; }
+.search-results-panel-count { font-size: 0.72rem; color: var(--text-3); margin-top: 4px; }
+.search-results-panel-close {
+  border: none; background: transparent; color: var(--text-3);
+  font-size: 1.35rem; line-height: 1; cursor: pointer; padding: 0 2px;
+}
+.search-results-panel-close:hover { color: var(--text); }
+.search-results-panel-body { flex: 1; overflow-y: auto; padding: 12px 14px 20px; }
+.search-results-empty { font-size: 0.85rem; color: var(--text-3); margin: 8px 0; }
+.search-results-list { display: flex; flex-direction: column; gap: 10px; }
+.search-results-row { display: flex; gap: 8px; align-items: flex-start; }
+.search-results-rank {
+  flex-shrink: 0; min-width: 28px; margin-top: 10px;
+  font-size: 0.72rem; font-weight: 600; color: var(--text-3);
+}
+.search-results-card-wrap { flex: 1; min-width: 0; }
+.search-results-card-wrap .inline-study-card { margin: 0; }
 
 /* ── Inline study cards (inside chat tool results) ───────────── */
 .inline-study-cards { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -607,35 +640,32 @@ input, textarea { font-family: var(--sans); }
 }
 
 /* ── Markdown rendering inside msg-bubble ────────────────────── */
-.msg-bubble p { margin: 0 0 0.5em; line-height: 1.65; }
+.msg-bubble { overflow-x: auto; }
+.msg-bubble p { margin: 0 0 0.55em; line-height: 1.65; }
 .msg-bubble p:last-child { margin-bottom: 0; }
 
 .msg-bubble h1, .msg-bubble h2, .msg-bubble h3, .msg-bubble h4 {
   font-weight: 600;
-  margin: 0.7em 0 0.35em 0;
-  line-height: 1.3;
+  margin: 0.85em 0 0.4em 0;
+  line-height: 1.35;
   color: var(--text);
 }
 .msg-bubble h1:first-child, .msg-bubble h2:first-child, .msg-bubble h3:first-child { margin-top: 0; }
 .msg-bubble h1 { font-size: 1.15em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.2em; }
-.msg-bubble h2 {
-  font-size: 0.76em; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.07em;
-  color: var(--text-3); margin: 1.1em 0 0.4em;
-}
+.msg-bubble h2 { font-size: 1.05em; }
 .msg-bubble h3 { font-size: 0.98em; }
 .msg-bubble h4 { font-size: 0.92em; }
 
 .msg-bubble ul, .msg-bubble ol {
-  margin: 0.2em 0 0.35em 0;
-  padding-left: 1.25em;
+  margin: 0.15em 0 0.55em 0;
+  padding-left: 1.35em;
 }
 .msg-bubble li {
-  margin-bottom: 0.35em;
+  margin-bottom: 0.28em;
   line-height: 1.55;
 }
 .msg-bubble li > ul, .msg-bubble li > ol {
-  margin: 0.3em 0 0.3em 0;
+  margin: 0.25em 0 0.25em 0;
 }
 
 .msg-bubble strong { font-weight: 600; color: var(--text); }
@@ -647,7 +677,7 @@ input, textarea { font-family: var(--sans); }
 .msg-bubble hr {
   border: none;
   border-top: 1px solid var(--border);
-  margin: 0.6em 0;
+  margin: 0.75em 0;
 }
 
 .msg-bubble blockquote {
@@ -673,7 +703,7 @@ input, textarea { font-family: var(--sans); }
   border-radius: var(--radius-s);
   padding: 0.8em 1em;
   overflow-x: auto;
-  margin: 0.5em 0;
+  margin: 0.55em 0;
 }
 .msg-bubble pre code {
   background: none;
@@ -684,8 +714,9 @@ input, textarea { font-family: var(--sans); }
 
 .msg-bubble table {
   border-collapse: collapse;
-  width: 100%;
-  margin: 0.5em 0;
+  width: max-content;
+  min-width: 100%;
+  margin: 0.55em 0;
   font-size: 0.9em;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
