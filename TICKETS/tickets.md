@@ -1618,6 +1618,84 @@ periodic reverify, cross-user isolation, etc. — see the class list) into
 
 ---
 
+
+
+## TKT-055: `search_studies_with_sql` Param Order May Not Match WHERE-Clause Text Order
+
+**Severity:** High
+**Status:** Open — needs live-DB verification, not fixed
+
+### Description
+
+Found 2026-08-17 while adding tag-based search (`build_tag_filter`,
+threaded through as `search_studies_with_sql(..., tags=...)`).
+
+`services/study_service.py :: search_studies_with_sql` builds
+`topic_where = "(custom_sql_where) AND dt_sql AND tag_sql AND
+(pi_filter_sql)"` — `custom_sql_where`'s own placeholder(s) occur
+**textually before** `dt_sql`'s in the assembled string. But `full_params`
+is built as `score_params + dt_params + tag_params + list(params) +
+list(pi_filter_params or [])` — `dt_params`/`tag_params` are placed
+**before** `list(params)` (the params for `custom_sql_where`), the reverse
+of their text order. psycopg2 substitutes `%s` strictly left to right
+(explicitly called out as "load-bearing" in `docs/04-search.md`), so if
+this reading is correct, `dt_params`/`tag_params` bind into
+`custom_sql_where`'s placeholder(s) and vice versa.
+
+This is not a rare edge case: `helpers/agent_tools.py ::
+_tool_search_studies` (the agent's primary search tool) calls
+`build_where_from_plan()` — which always returns exactly one placeholder,
+`unnest(%s::text[])`, whenever any keyword is present — **and** frequently
+also passes a non-empty `data_types` (auto-detected via `detect_data_types`
+for common terms like "shotgun"/"WGS", or explicit). Both non-empty
+simultaneously is the normal case for that tool, not exceptional.
+
+Worked example: `data_types=["Metagenomic"]`, `custom_sql_where` from a
+keyword search. Per the (apparent) order bug, the WHERE clause's first
+placeholder (`unnest(%s::text[])`, meant for the keyword array) would
+receive `"Metagenomic"` (a plain string) instead — `unnest('Metagenomic'::
+text[])` is not a valid Postgres array literal and should raise, while the
+data-type `IN (%s)` placeholder would receive a Python list where a scalar
+is expected.
+
+**Why this wasn't caught by tests**: no test in this repo exercises
+`search_studies_with_sql` against a real Postgres connection — everything
+either mocks `pooled_fetchall` entirely or runs in an environment (like the
+one this was found in) with no live DB access at all. If the query does
+error at runtime, `helpers/agent.py :: _execute_tool_call`'s try/except
+would catch it and surface "Tool search_studies failed: ..." to the model
+rather than crashing the app — a failure mode that degrades the search
+experience without necessarily looking like *this specific* cause.
+
+**Not fixed as part of the tags work**: this predates tag support (the same
+issue already existed between `dt_params` and `params`); the docstring and
+`docs/04-search.md` both describe the current order as intentional, and
+this environment has no live Postgres to verify a reorder wouldn't itself
+break something not yet understood. `tags` was threaded through matching
+the *existing* convention, not correcting it.
+
+### Plan
+
+- Verify against a real Postgres instance (barnacle or equivalent): run
+  `_tool_search_studies` with both a keyword and a `data_types` filter set,
+  confirm whether it errors or silently returns wrong results.
+- If confirmed: reorder to `score_params + list(params) + dt_params +
+  tag_params + list(pi_filter_params or [])` (matching actual WHERE-text
+  left-to-right order), update the docstring and
+  `docs/04-search.md`'s "Parameter binding order is load-bearing" section
+  to match, and add an integration test that exercises this against a real
+  (or properly mocked-at-the-SQL-driver-level) query — the existing mocks
+  patch `pooled_fetchall` entirely, which cannot catch a param/placeholder
+  mismatch.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py :: search_studies_with_sql`
+- `qiita_explore/backend/helpers/agent_tools.py :: _tool_search_studies`
+- `docs/04-search.md` § "Parameter binding order is load-bearing"
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-08-17*
 
 ---

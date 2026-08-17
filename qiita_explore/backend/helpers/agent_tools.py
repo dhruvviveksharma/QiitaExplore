@@ -240,6 +240,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     auto_types      = detect_data_types(detect_kws)
     effective_types = list(dict.fromkeys(explicit_types + auto_types)) or None
     effective_inv   = explicit_inv or None
+    tags            = [t.strip() for t in (args.get("tags") or []) if t] or None
 
     where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
@@ -248,6 +249,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
         relevance_keywords=kws,
         data_types=effective_types,
         investigation_types=effective_inv,
+        tags=tags,
         pi_filter_sql=pi_sql,
         pi_filter_params=pi_params,
         return_sql=True,

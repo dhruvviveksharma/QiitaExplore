@@ -7,17 +7,19 @@ from .db import _conn, _as_dict, _now, _resolve_user, _chat_title
 from .crud import _decode_ui, _insert_chat_message_pair, _resolved_chat_title
 
 
-def list_global_chats(user_id: str, limit: int = 200):
+def list_global_chats(user_id: str, limit: int = 200, include_archived: bool = False):
     resolved_user = _resolve_user(user_id)
     limit = max(1, min(500, int(limit)))
+    archived_clause = "" if include_archived else "AND COALESCE(gc.is_archived, 0) = 0"
     with _conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT gc.chat_id, gc.title, gc.created_at, gc.updated_at,
+                   gc.is_pinned, gc.pinned_at, gc.is_archived, gc.archived_at,
                    (SELECT COUNT(1) FROM global_chat_messages m WHERE m.chat_id = gc.chat_id) AS messages_count
             FROM global_chats gc
-            WHERE gc.user_id = ?
-            ORDER BY gc.updated_at DESC, gc.created_at DESC
+            WHERE gc.user_id = ? {archived_clause}
+            ORDER BY COALESCE(gc.is_pinned, 0) DESC, gc.pinned_at DESC, gc.updated_at DESC, gc.created_at DESC
             LIMIT ?
             """,
             (resolved_user, limit),
@@ -50,7 +52,11 @@ def get_global_chat(user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
-            "SELECT chat_id, title, created_at, updated_at FROM global_chats WHERE user_id = ? AND chat_id = ?",
+            """
+            SELECT chat_id, title, created_at, updated_at,
+                   is_pinned, pinned_at, is_archived, archived_at
+            FROM global_chats WHERE user_id = ? AND chat_id = ?
+            """,
             (resolved_user, chat_id),
         ).fetchone()
         if row is None:
@@ -123,6 +129,38 @@ def update_global_chat_title(user_id: str, chat_id: str, title: str):
         if cur.rowcount == 0:
             return None
     return {"chat_id": chat_id, "title": clean}
+
+
+def set_global_chat_pinned(user_id: str, chat_id: str, pinned: bool):
+    resolved_user = _resolve_user(user_id)
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE global_chats SET is_pinned = ?, pinned_at = ?
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (1 if pinned else 0, _now() if pinned else None, resolved_user, chat_id),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+    return {"chat_id": chat_id, "is_pinned": bool(pinned)}
+
+
+def set_global_chat_archived(user_id: str, chat_id: str, archived: bool):
+    resolved_user = _resolve_user(user_id)
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE global_chats SET is_archived = ?, archived_at = ?
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (1 if archived else 0, _now() if archived else None, resolved_user, chat_id),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+    return {"chat_id": chat_id, "is_archived": bool(archived)}
 
 
 def delete_global_chat(user_id: str, chat_id: str):

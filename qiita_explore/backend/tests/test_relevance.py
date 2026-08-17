@@ -8,7 +8,7 @@ from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()
 
-from services.study_service import build_relevance_score, build_where_from_plan
+from services.study_service import build_relevance_score, build_where_from_plan, build_tag_filter
 from services.relevance import (
     RELEVANCE_WEIGHTS,
     score_study_text_fields,
@@ -80,6 +80,31 @@ class TestBuildPiRequiredFilter:
         assert sql.count("%s") == 1
         formatted = sql % tuple(params)
         assert "ILIKE ('%' || pi_name || '%')" in formatted
+
+
+class TestBuildTagFilter:
+    def test_empty_when_no_tags(self):
+        sql, params = build_tag_filter([])
+        assert sql is None
+        assert params == []
+        assert build_tag_filter(None) == (None, [])
+
+    def test_in_clause_shape(self):
+        sql, params = build_tag_filter(["GOLD"])
+        assert "qiita.per_study_tags" in sql
+        assert "pst.study_tag IN (%s)" in sql
+        assert params == ["GOLD"]
+
+    def test_multiple_tags_multiple_placeholders(self):
+        sql, params = build_tag_filter(["GOLD", "CURATED"])
+        assert sql.count("%s") == 2
+        assert params == ["GOLD", "CURATED"]
+
+    def test_no_fixed_vocabulary_assumed(self):
+        """Any caller-supplied value is filtered on as-is — no hardcoded
+        'GOLD'-only special-casing (unlike the old gold_only param)."""
+        sql, params = build_tag_filter(["anything-the-caller-says"])
+        assert params == ["anything-the-caller-says"]
 
 
 class TestScoreStudyTextFields:
@@ -177,6 +202,30 @@ class TestBrowseKeywordSelection:
         assert "low" not in plan["keywords"]
         assert "microbiome" in plan["keywords"]
         assert "bacteria" in plan["keywords"]
+
+
+class TestBrowseQueryTagDetection:
+    """'GOLD' is the only study_tag confirmed anywhere in this codebase — the
+    browse-box detector deliberately only recognizes that one word, not a
+    general tag vocabulary that's never been verified against a live DB."""
+
+    def test_gold_detected_as_whole_word(self):
+        plan = browse_query_to_sql("gold studies about mice")
+        assert plan["tags"] == ["GOLD"]
+        assert plan["applied_filters"]["tags"] == ["GOLD"]
+
+    def test_gold_is_case_insensitive(self):
+        assert browse_query_to_sql("Gold studies")["tags"] == ["GOLD"]
+
+    def test_no_false_positive_on_substring(self):
+        """'goldfish' contains 'gold' but isn't the word 'gold'."""
+        plan = browse_query_to_sql("goldfish gut microbiome")
+        assert plan["tags"] == []
+        assert "tags" not in plan["applied_filters"]
+
+    def test_no_tags_key_when_absent(self):
+        plan = browse_query_to_sql("mouse gut microbiome")
+        assert plan["tags"] == []
 
 
 class TestBrowseQueryPiGating:

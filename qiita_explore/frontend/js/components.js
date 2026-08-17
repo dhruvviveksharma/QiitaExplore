@@ -608,6 +608,103 @@ const SLASH_COMMANDS = [
   { cmd: '/pin',       insert: '/pin ',        usage: '/pin 77 101',            desc: 'Pin one or more studies into this chat context.' },
 ];
 
+// ─── ChatRowMenu ────────────────────────────────────────────────────────────
+// "..." menu on a sidebar chat row. Rename/Delete just trigger the caller's
+// existing inline-rename/delete handlers (no new logic) — Pin/Archive/Move
+// are the genuinely new actions. Dismiss (outside-click + Escape) mirrors
+// AccountBar's pattern (auth.js); no other two-level menu exists yet in this
+// codebase, so "Move to project" builds its own flyout submenu.
+function ChatRowMenu({
+  isPinned, isArchived, currentProjectId, currentProjectName, projects,
+  onRename, onTogglePin, onToggleArchive, onDelete,
+  onMoveToProject, onRemoveFromProject, onCreateProjectAndMove,
+}) {
+  const [open, setOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  // .sidebar-body scrolls (overflow-y: auto), so a plain position:absolute
+  // menu would get clipped for any row near the bottom of the visible
+  // sidebar. Computing fixed-viewport coordinates from the trigger button's
+  // own rect escapes that clipping instead.
+  const [pos, setPos] = useState(null);
+  const rootRef = useRef(null);
+  const btnRef  = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = e => {
+      if (rootRef.current && rootRef.current.contains(e.target)) return;
+      setOpen(false); setMoveOpen(false);
+    };
+    const onKey  = e => { if (e.key === 'Escape') { setOpen(false); setMoveOpen(false); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const close = () => { setOpen(false); setMoveOpen(false); };
+  const otherProjects = (projects || []).filter(p => p.project_id !== currentProjectId);
+  const toggleOpen = e => {
+    e.stopPropagation();
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 200) });
+    }
+    setOpen(v => !v);
+  };
+
+  return (
+    <div className="cr-menu-root" ref={rootRef}>
+      <button ref={btnRef} className="cr-more" onClick={toggleOpen} title="More">
+        <DotsIcon />
+      </button>
+      {open && pos && (
+        <div className="cr-menu" style={{ top: pos.top, left: pos.left }} onClick={e => e.stopPropagation()}>
+          <button className="cr-menu-item" onClick={() => { onRename(); close(); }}>Rename</button>
+          <div className="cr-menu-sep" />
+          <button className="cr-menu-item" onClick={() => { onTogglePin(); close(); }}>
+            {isPinned ? 'Unpin chat' : 'Pin chat'}
+          </button>
+          <button className="cr-menu-item" onClick={() => { onToggleArchive(); close(); }}>
+            {isArchived ? 'Unarchive' : 'Archive'}
+          </button>
+          <button className="cr-menu-item cr-menu-danger" onClick={() => { onDelete(); close(); }}>Delete</button>
+          <div className="cr-menu-sep" />
+          {currentProjectId && <div className="cr-menu-label">{currentProjectName}</div>}
+          <div className="cr-menu-item cr-menu-parent"
+            onMouseEnter={() => setMoveOpen(true)}
+            onClick={e => { e.stopPropagation(); setMoveOpen(v => !v); }}>
+            <span>Move to project</span>
+            <ChevronIcon dir="right" size={11} />
+            {moveOpen && (
+              <div className="cr-submenu" onClick={e => e.stopPropagation()}>
+                <button className="cr-menu-item" onClick={() => {
+                  const name = prompt('New project name:', 'Untitled');
+                  if (name && name.trim()) { onCreateProjectAndMove(name.trim()); close(); }
+                }}>+ New project</button>
+                {otherProjects.length > 0 && <div className="cr-menu-sep" />}
+                {otherProjects.map(p => (
+                  <button key={p.project_id} className="cr-menu-item"
+                    onClick={() => { onMoveToProject(p.project_id); close(); }}>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {currentProjectId && (
+            <button className="cr-menu-item" onClick={() => { onRemoveFromProject(); close(); }}>
+              Remove from project
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── PlusMenu ─────────────────────────────────────────────────────────────────
 const _PLUS_ACTIONS = [
   { cmd: '/report', insert: '/report ', desc: 'Load study sample data' },

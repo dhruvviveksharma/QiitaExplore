@@ -285,7 +285,69 @@ input, textarea { font-family: var(--sans); }
 .chat-row:hover .cr-del { opacity: 1; }
 .cr-del:hover { background: #fce7f3; color: var(--accent); }
 
+/* ── Sidebar chat-row "..." menu ─────────────────────────────────────────── */
+.cr-menu-root { position: relative; flex-shrink: 0; }
+.cr-more {
+  opacity: 0;
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  color: var(--text-3);
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity var(--t), background var(--t), color var(--t);
+  flex-shrink: 0;
+}
+.chat-row:hover .cr-more { opacity: 1; }
+.cr-more:hover { background: var(--border-soft); color: var(--accent); }
+
+/* position:fixed (coordinates computed in JS from the trigger's rect) —
+   .sidebar-body scrolls, so position:absolute would clip this for any row
+   near the bottom of the visible sidebar. */
+.cr-menu {
+  position: fixed; z-index: 160;
+  width: 200px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: 0 8px 26px rgba(0,0,0,.13), 0 1px 3px rgba(0,0,0,.07);
+  padding: 4px 0;
+}
+.cr-menu-item {
+  width: 100%; text-align: left; padding: 8px 14px;
+  font-size: 12.5px; color: var(--text-2);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  position: relative;
+}
+.cr-menu-item:hover { background: var(--accent-soft); color: var(--accent-h); }
+.cr-menu-danger { color: #d33; }
+.cr-menu-danger:hover { background: #fce7f3; color: #d33; }
+.cr-menu-sep { height: 1px; background: var(--border-soft); margin: 4px 0; }
+.cr-menu-label {
+  padding: 6px 14px 2px;
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-3);
+}
+.cr-menu-parent { cursor: pointer; }
+.cr-submenu {
+  position: absolute; top: -4px; left: calc(100% + 4px); z-index: 161;
+  width: 190px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: 0 8px 26px rgba(0,0,0,.13), 0 1px 3px rgba(0,0,0,.07);
+  padding: 4px 0;
+  max-height: 240px; overflow-y: auto;
+}
+
 .folder-empty { font-size: 12px; color: var(--text-3); padding: 6px 4px 8px; }
+
+.sb-archived-toggle {
+  width: 100%; text-align: left;
+  padding: 5px 8px; margin-top: 2px;
+  font-size: 11.5px; color: var(--text-3);
+  border-radius: var(--radius-s);
+  transition: color var(--t), background var(--t);
+}
+.sb-archived-toggle:hover { color: var(--accent); background: var(--border-soft); }
+.chat-row.archived-row { opacity: 0.6; }
+.chat-row.archived-row:hover { opacity: 1; }
 
 /* ── Sidebar new-proj form ────────────────────────────────────── */
 .new-proj-btn {
@@ -1289,35 +1351,67 @@ input, textarea { font-family: var(--sans); }
   padding: 26px;
   position: relative;
   animation: slideUp .16s ease;
+  /* Slows the compact <-> fullscreen resize (toggled via .modal-fullscreen,
+     manually or by scroll-to-expand) instead of snapping instantly. */
+  transition: max-width 360ms ease, width 360ms ease, max-height 360ms ease;
 }
 @keyframes slideUp { from { transform: translateY(10px); opacity:0; } }
 
-.modal-fullscreen { max-width: none; width: 96%; max-height: 92vh; }
+/* max-width: 100vw, not none — `none` has no numeric value, so a
+   transition can't interpolate to/from it and would snap regardless. */
+.modal-fullscreen { max-width: 100vw; width: 96%; max-height: 92vh; }
 .modal-overlay.with-drawer .modal-fullscreen { width: 100%; }
+
+/* Frozen header bar — sticks to the top of .modal-card as its content
+   scrolls, and now carries the title + stat chips too, not just the ID/
+   button row. The negative top offset + negative margins bleed it out to
+   cover the card's own 26px padding, so nothing scrolls visibly behind it. */
+.modal-header-bar {
+  position: sticky;
+  top: -26px;
+  margin: -26px -26px 16px;
+  padding: 14px 26px 12px;
+  background: var(--surface);
+  z-index: 5;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+}
+.modal-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.modal-header-left  { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.modal-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
 .modal-close {
-  position: absolute; top: 14px; right: 14px;
-  width: 26px; height: 26px;
+  width: 34px; height: 34px;
   border-radius: 50%;
   background: var(--bg);
-  color: var(--text-2);
+  color: var(--accent);
   display: flex; align-items: center; justify-content: center;
-  font-size: 15px;
+  font-size: 19px;
   transition: all var(--t);
 }
 .modal-close:hover { background: var(--border-soft); }
-.modal-expand { position: absolute; top: 14px; right: 46px; width: 26px; height: 26px; border-radius: 50%; background: var(--bg); color: var(--text-2); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: all var(--t); }
-.modal-expand:hover { background: var(--border-soft); }
-/* Third corner control, left of .modal-expand/.modal-close. Its .msg-copy-btn
-   child is text+icon (not a 26px circle like its neighbors), so it gets its
-   own offset clear of both rather than following their fixed width. */
-.modal-copy-link { position: absolute; top: 14px; right: 78px; }
+.modal-expand {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all var(--t);
+}
+.modal-expand:hover { background: var(--accent-h); }
 .modal-ws-bar { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .modal-ws-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; }
 .modal-ws-row + .modal-ws-row { border-top: 1px solid var(--border-soft); }
 .modal-ws-label { font-size: 0.78rem; font-weight: 500; color: var(--text-2); min-width: 90px; }
 .modal-ws-msg { font-size: 0.8rem; color: var(--text-3); }
-.modal-id { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
-.modal-title { font-family: var(--sans); font-weight: 600; font-size: 17px; line-height: 1.35; margin-bottom: 18px; }
+.modal-id { font-size: 16px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+.modal-title { font-family: var(--sans); font-weight: 600; font-size: 17px; line-height: 1.35; margin-bottom: 8px; }
 .modal-section { margin-bottom: 14px; }
 .modal-section h4 { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing:.07em; color: var(--text-3); margin-bottom: 5px; }
 .modal-section p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; }
@@ -1328,7 +1422,7 @@ input, textarea { font-family: var(--sans); }
 .modal-card .collapsible-header:hover { color: var(--accent); }
 .modal-card .collapsible-body p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; margin: 0; }
 
-.modal-stats { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 14px; }
+.modal-stats { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 0; }
 .modal-stat  { font-size: 11.5px; color: var(--text-2); background: var(--bg); border: 1px solid var(--border-soft); border-radius: 4px; padding: 2px 7px; }
 .modal-detail-loading { font-size: 12px; color: var(--text-3); padding: 6px 0; }
 

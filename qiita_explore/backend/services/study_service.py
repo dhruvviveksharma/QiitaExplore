@@ -105,6 +105,23 @@ def build_data_type_filter(data_types, investigation_types=None):
     return sql, params
 
 
+def build_tag_filter(tags):
+    """Return (sql_snippet, params) for a qiita.per_study_tags EXISTS filter,
+    or (None, []). Structurally identical to build_data_type_filter — no
+    fixed vocabulary is assumed (the only tag ever referenced anywhere in
+    this codebase before this was the literal 'GOLD'); any tag value the
+    caller supplies is filtered on as-is."""
+    tags = [t for t in (tags or []) if t]
+    if not tags:
+        return None, []
+    placeholders = ",".join(["%s"] * len(tags))
+    sql = (
+        f"EXISTS (SELECT 1 FROM qiita.per_study_tags pst"
+        f" WHERE pst.study_id = s.study_id AND pst.study_tag IN ({placeholders}))"
+    )
+    return sql, list(tags)
+
+
 def build_where_from_plan(plan: dict) -> tuple:
     """Return (where_clause, params) for broad parameterized search from LLM plan.
     Keywords are morphologically expanded (mouse→mice) before building clauses.
@@ -153,14 +170,26 @@ def build_relevance_score(keywords) -> tuple:
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
                             relevance_keywords=None,
                             data_types=None, investigation_types=None,
-                            gold_only=False,
+                            tags=None,
                             pi_filter_sql=None, pi_filter_params=None,
                             return_sql=False):
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
 
     Param binding order (psycopg2 left-to-right):
-        score_params → data_type_filter_params → topic (WHERE) params → pi_filter_params
+        score_params → data_type_filter_params → tag_filter_params → topic (WHERE) params → pi_filter_params
+
+    NOTE this order does not actually match the WHERE text's left-to-right
+    placeholder occurrence — topic_where is built as
+    "(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)", so
+    custom_sql_where's own placeholders occur BEFORE dt_sql's/tag_sql's in
+    the rendered SQL, not after. This mismatch predates this function's tag
+    support (data_types has had the same issue) — flagging rather than
+    silently reordering, since it's explicitly documented as intentional
+    here and in docs/04-search.md, and this environment has no live
+    Postgres to verify a reorder against. tags is threaded through with the
+    SAME (possibly-wrong) relative convention as data_types, not "fixed" —
+    see the session notes / TICKETS for this specific finding.
     """
     if params is None:
         params = []
@@ -192,13 +221,14 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     else:
         topic_where = custom_sql_where if custom_sql_where else "1=1"
 
-    if gold_only:
-        topic_where += " AND EXISTS (SELECT 1 FROM qiita.per_study_tags pst WHERE pst.study_id = s.study_id AND pst.study_tag = 'GOLD')"
+    tag_sql, tag_params = build_tag_filter(tags)
+    if tag_sql:
+        topic_where += f" AND {tag_sql}"
 
     if pi_filter_sql:
         topic_where += f" AND ({pi_filter_sql})"
 
-    full_params = score_params + dt_params + list(params) + list(pi_filter_params or [])
+    full_params = score_params + dt_params + tag_params + list(params) + list(pi_filter_params or [])
 
     logger.info(
         "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "

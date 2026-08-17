@@ -172,10 +172,15 @@ def search():
         resolved_pis = sql_query.get('resolved_pis') or []
         veto_applied = bool(sql_query.get('veto_applied'))
         pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
+        # Detected from the query text (e.g. "gold studies") plus any explicit
+        # tags an API caller supplies directly — deduped, order preserved.
+        explicit_tags = [t for t in (data.get('tags') or []) if isinstance(t, str) and t]
+        tags = list(dict.fromkeys((sql_query.get('tags') or []) + explicit_tags)) or None
 
         text_results = search_studies_with_sql(
             custom_sql_where=where_clause, params=params, limit=lim,
             relevance_keywords=expanded_kws if expanded_kws else None,
+            tags=tags,
             pi_filter_sql=pi_sql,
             pi_filter_params=pi_params,
         )

@@ -21,6 +21,8 @@ from .crud import (  # noqa: F401
     create_chat,
     append_chat_messages,
     update_chat_title,
+    set_chat_pinned,
+    set_chat_archived,
     delete_chat,
 )
 
@@ -31,7 +33,15 @@ from .global_chat_crud import (  # noqa: F401
     create_global_chat,
     append_global_chat_messages,
     update_global_chat_title,
+    set_global_chat_pinned,
+    set_global_chat_archived,
     delete_global_chat,
+)
+
+from .chat_move import (  # noqa: F401
+    move_chat_to_project,
+    move_global_chat_to_project,
+    move_project_chat_to_global,
 )
 
 from .merge_crud import (  # noqa: F401

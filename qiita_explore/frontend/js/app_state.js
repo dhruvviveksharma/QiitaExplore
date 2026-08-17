@@ -29,6 +29,13 @@ function useAppState() {
   // Which sidebar chat row (project or global) is being renamed inline, if any.
   const [editingChatId, setEditingChatId] = useState(null);
   const [editChatVal,   setEditChatVal]   = useState('');
+  // Archived-chats "show archived" toggle, per list. archivedProjChats resets
+  // whenever openProjId changes (see the openProjId effect below) — it's
+  // meaningless across a project switch.
+  const [showArchivedProj,   setShowArchivedProj]   = useState(false);
+  const [archivedProjChats,  setArchivedProjChats]  = useState(null);
+  const [showArchivedGlobal, setShowArchivedGlobal] = useState(false);
+  const [archivedGlobalChats, setArchivedGlobalChats] = useState(null);
   const [mergeWorkspaceId, setMergeWorkspaceId] = useState(null);
   const [showMergePanel,   setShowMergePanel]   = useState(false);
   const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
@@ -109,6 +116,8 @@ function useAppState() {
   }, []);
 
   useEffect(() => {
+    setShowArchivedProj(false);
+    setArchivedProjChats(null);
     if (!openProjId) { setOpenProject(null); return; }
     fetchProjectDetail(openProjId);
   }, [openProjId]);
@@ -256,6 +265,151 @@ function useAppState() {
     dropChat(chatId);
     if (view.chatId === chatId) setView({ type: 'global-chat', chatId: null });
     setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
+  };
+
+  // ─── pin / archive / move (sidebar "..." menu) ────────────────────────────────
+  // Pinned chats float to the top; mirrors the backend's ORDER BY without
+  // needing exact timestamp comparison client-side (Array.sort is stable, so
+  // ties keep their existing relative order).
+  const sortChatsForDisplay = (chats) =>
+    [...chats].sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+
+  const patchProjChatFlags = (projId, chatId, patch) =>
+    apiJson(`/projects/${projId}/chats/${chatId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  const patchGlobChatFlags = (chatId, patch) =>
+    apiJson(`/global-chats/${chatId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+
+  const setProjChatPinned = async (projId, chatId, pinned) => {
+    try {
+      const d = await patchProjChatFlags(projId, chatId, { pinned });
+      setOpenProject(prev => prev && {
+        ...prev,
+        chats: sortChatsForDisplay((prev.chats || []).map(c =>
+          c.chat_id === chatId ? { ...c, is_pinned: d.is_pinned } : c)),
+      });
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
+  };
+
+  const setGlobChatPinned = async (chatId, pinned) => {
+    try {
+      const d = await patchGlobChatFlags(chatId, { pinned });
+      setGlobalChats(prev => sortChatsForDisplay(prev.map(c =>
+        c.chat_id === chatId ? { ...c, is_pinned: d.is_pinned } : c)));
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
+  };
+
+  // Archiving always drops the chat out of the current (default, non-archived)
+  // list view — the "Show archived" view (separate state) is what un-archive
+  // acts on instead.
+  const setProjChatArchived = async (projId, chatId, archived) => {
+    try {
+      await patchProjChatFlags(projId, chatId, { archived });
+      setOpenProject(prev => prev && { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) });
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
+  };
+
+  const setGlobChatArchived = async (chatId, archived) => {
+    try {
+      await patchGlobChatFlags(chatId, { archived });
+      setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
+  };
+
+  // Moving/removing always evicts the chatCache entry too — its messages
+  // belong to a different scope now, same as delete.
+  const moveProjChatToProject = async (fromProjId, chatId, targetProjectId) => {
+    try {
+      await apiJson(`/projects/${fromProjId}/chats/${chatId}/move-to-project`,
+        { method: 'POST', body: JSON.stringify({ project_id: targetProjectId }) });
+      dropChat(chatId);
+      setOpenProject(prev => prev && { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) });
+      if (view.chatId === chatId) setView({ type: 'project-chat', projId: fromProjId, chatId: null });
+    } catch (e) { setCompErr(e.message || 'Could not move chat'); }
+  };
+
+  const moveGlobalChatToProject = async (chatId, targetProjectId) => {
+    try {
+      await apiJson(`/global-chats/${chatId}/move-to-project`,
+        { method: 'POST', body: JSON.stringify({ project_id: targetProjectId }) });
+      dropChat(chatId);
+      setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
+      if (view.chatId === chatId) setView({ type: 'global-chat', chatId: null });
+    } catch (e) { setCompErr(e.message || 'Could not move chat'); }
+  };
+
+  const removeChatFromProject = async (projId, chatId) => {
+    try {
+      await apiJson(`/projects/${projId}/chats/${chatId}/remove-from-project`,
+        { method: 'POST', body: '{}' });
+      dropChat(chatId);
+      setOpenProject(prev => prev && { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) });
+      if (view.chatId === chatId) setView({ type: 'project-chat', projId, chatId: null });
+    } catch (e) { setCompErr(e.message || 'Could not remove chat from project'); }
+  };
+
+  // "+ New project" inside the Move-to-project submenu — create, then
+  // immediately move the chat into it.
+  const createProjectAndMoveChat = async (name, fromProjId, chatId) => {
+    const res = await apiPost('/projects', { name: (name || '').trim() || 'Untitled' });
+    if (!res.ok) { setCompErr('Failed to create project'); return; }
+    const proj = await res.json();
+    await loadProjects();
+    if (fromProjId) await moveProjChatToProject(fromProjId, chatId, proj.project_id);
+    else await moveGlobalChatToProject(chatId, proj.project_id);
+  };
+
+  // ─── "Show archived" toggle ───────────────────────────────────────────────────
+  // include_archived=1 returns EVERY chat (archived and not) — filtering to
+  // just the archived ones client-side avoids a second backend query mode.
+  const toggleShowArchivedProj = async (projId) => {
+    if (!showArchivedProj && archivedProjChats === null) {
+      const res = await apiFetch(`/projects/${projId}?include_archived=1`);
+      if (res.ok) {
+        const d = await res.json();
+        setArchivedProjChats((d.chats || []).filter(c => c.is_archived));
+      }
+    }
+    setShowArchivedProj(v => !v);
+  };
+
+  const toggleShowArchivedGlobal = async () => {
+    if (!showArchivedGlobal && archivedGlobalChats === null) {
+      const res = await apiFetch('/global-chats?include_archived=1');
+      if (res.ok) {
+        const d = await res.json();
+        setArchivedGlobalChats((d.chats || []).filter(c => c.is_archived));
+      }
+    }
+    setShowArchivedGlobal(v => !v);
+  };
+
+  // Unarchive moves the chat back into the default list's local state
+  // (rather than just vanishing from the archived list) — global chats in
+  // particular only ever load once, so without this the chat would stay
+  // invisible in both lists until a full page reload.
+  const unarchiveProjChat = async (projId, chatId) => {
+    try {
+      const d = await patchProjChatFlags(projId, chatId, { archived: false });
+      const restored = (archivedProjChats || []).find(c => c.chat_id === chatId);
+      setArchivedProjChats(prev => (prev || []).filter(c => c.chat_id !== chatId));
+      if (restored) {
+        setOpenProject(prev => prev && {
+          ...prev,
+          chats: sortChatsForDisplay([...(prev.chats || []), { ...restored, is_archived: d.is_archived, archived_at: null }]),
+        });
+      }
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
+  };
+
+  const unarchiveGlobalChat = async (chatId) => {
+    try {
+      const d = await patchGlobChatFlags(chatId, { archived: false });
+      const restored = (archivedGlobalChats || []).find(c => c.chat_id === chatId);
+      setArchivedGlobalChats(prev => (prev || []).filter(c => c.chat_id !== chatId));
+      if (restored) {
+        setGlobalChats(prev => sortChatsForDisplay([...prev, { ...restored, is_archived: d.is_archived, archived_at: null }]));
+      }
+    } catch (e) { setCompErr(e.message || 'Could not update chat'); }
   };
 
   // Shared rename primitive — PATCHes the chat, updates chatCache, then
@@ -756,6 +910,7 @@ function useAppState() {
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
+    showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
     searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -768,6 +923,9 @@ function useAppState() {
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
+    setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
+    moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
+    toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,

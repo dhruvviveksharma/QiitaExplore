@@ -275,6 +275,14 @@ def _create_schema(conn):
         ("project_chat_messages", "ui_payload", "TEXT"),
         ("global_chat_messages", "ui_payload", "TEXT"),
         ("chat_pinned_studies", "study_title", "TEXT"),
+        ("project_chats", "is_pinned", "INTEGER DEFAULT 0"),
+        ("project_chats", "pinned_at", "TEXT"),
+        ("project_chats", "is_archived", "INTEGER DEFAULT 0"),
+        ("project_chats", "archived_at", "TEXT"),
+        ("global_chats", "is_pinned", "INTEGER DEFAULT 0"),
+        ("global_chats", "pinned_at", "TEXT"),
+        ("global_chats", "is_archived", "INTEGER DEFAULT 0"),
+        ("global_chats", "archived_at", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")

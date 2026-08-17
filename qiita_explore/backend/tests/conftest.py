@@ -100,6 +100,14 @@ def global_chat_crud():
 
 
 @pytest.fixture
+def chat_move():
+    """Cross-table chat-move logic — its own module for the same reason as
+    global_chat_crud (keeps store/crud.py under the 500-line cap)."""
+    import store.chat_move as sql_store_chat_move
+    return sql_store_chat_move
+
+
+@pytest.fixture
 def sample_user_id():
     return "test_user_001"
 

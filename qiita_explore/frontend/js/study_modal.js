@@ -227,24 +227,68 @@ function StudyModalOutputs({ study, detail, loading }) {
 // ── Study modal ────────────────────────────────────────────────────────────────
 
 function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen,   setFullscreen]   = useState(false);
+  // Tracks whether the CURRENT fullscreen=true came from auto-scroll-expand
+  // rather than an explicit click — only an auto-expand auto-collapses.
+  const [autoExpanded, setAutoExpanded] = useState(false);
+  const cardRef = useRef(null);
+
+  // Scrolling down in the compact view auto-expands to fullscreen for more
+  // room; scrolling back to the top reverses it — but only when the
+  // expansion was itself automatic. An explicit click on the expand button
+  // sticks until the user explicitly restores it, even after scrolling up.
+  const handleCardScroll = () => {
+    const top = cardRef.current?.scrollTop ?? 0;
+    if (!fullscreen && top > 0) {
+      setFullscreen(true);
+      setAutoExpanded(true);
+    } else if (fullscreen && autoExpanded && top <= 0) {
+      setFullscreen(false);
+      setAutoExpanded(false);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    setAutoExpanded(false); // any explicit click clears the "auto" flag
+    setFullscreen(p => !p);
+  };
+
+  const showStats = !(!loading && detail?.isPrivate) &&
+    (study.data_types || study.num_samples != null || study.num_preps != null);
 
   return (
     <div className={`modal-overlay${drawerOpen ? ' with-drawer' : ''}`} onClick={onClose}>
-      <div className={`modal-card${fullscreen ? ' modal-fullscreen' : ''}`}
-        onClick={e => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-        <button className="modal-expand" title={fullscreen ? 'Restore' : 'Fullscreen'}
-          onClick={() => setFullscreen(p => !p)}>
-          {fullscreen ? '⤡' : '⤢'}
-        </button>
-        {shareUrl && (
-          <div className="modal-copy-link">
-            <CopyResponseButton title="Copy study link" text={shareUrl} />
+      <div ref={cardRef} className={`modal-card${fullscreen ? ' modal-fullscreen' : ''}`}
+        onClick={e => e.stopPropagation()} onScroll={handleCardScroll}>
+        <div className="modal-header-bar">
+          <div className="modal-header-top">
+            <div className="modal-header-left">
+              <span className="modal-id">Study ID {study.study_id}</span>
+              {shareUrl && (
+                <div className="modal-copy-link">
+                  <CopyResponseButton title="Copy study link" text={shareUrl} />
+                </div>
+              )}
+            </div>
+            <div className="modal-header-right">
+              <button className="modal-expand" title={fullscreen ? 'Restore' : 'Fullscreen'}
+                onClick={toggleFullscreen}>
+                <ExpandCompressIcon expanded={fullscreen} />
+              </button>
+              <button className="modal-close" onClick={onClose}>×</button>
+            </div>
           </div>
-        )}
-        <div className="modal-id">Study ID {study.study_id}</div>
-        <div className="modal-title">{study.study_title || 'Untitled study'}</div>
+          <div className="modal-title">{study.study_title || 'Untitled study'}</div>
+          {showStats && (
+            <div className="modal-stats">
+              {splitTypes(study.data_types).map(t => (
+                <span key={t} className="dtype-chip">{t}</span>
+              ))}
+              {study.num_samples != null && <span className="modal-stat">{study.num_samples} samples</span>}
+              {study.num_preps   != null && <span className="modal-stat">{study.num_preps} preps</span>}
+            </div>
+          )}
+        </div>
 
         {!loading && detail?.isPrivate ? (
           <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'3rem 1rem', gap:'1rem', color:'#aaa'}}>
@@ -253,16 +297,6 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
           </div>
         ) : (
           <>
-            {(study.data_types || study.num_samples != null || study.num_preps != null) && (
-              <div className="modal-stats">
-                {splitTypes(study.data_types).map(t => (
-                  <span key={t} className="dtype-chip">{t}</span>
-                ))}
-                {study.num_samples != null && <span className="modal-stat">{study.num_samples} samples</span>}
-                {study.num_preps   != null && <span className="modal-stat">{study.num_preps} preps</span>}
-              </div>
-            )}
-
             {study.study_abstract && (
               <CollapsibleSection id="study-modal-abstract" title="Abstract" defaultOpen>
                 <p>{study.study_abstract}</p>

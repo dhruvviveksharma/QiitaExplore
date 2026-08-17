@@ -126,6 +126,17 @@ TOOL_SCHEMAS = [
                             "use data_types=['Metagenomic'] for shotgun/WGS instead."
                         ),
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "AND filter on curation tags (qiita.per_study_tags) — only set when "
+                            "the user explicitly asks for a specific tag. The only confirmed value "
+                            "in this database today is 'GOLD' (curated high-quality studies — e.g. "
+                            "\"gold studies\", \"gold-tagged\"). Omit otherwise; do not guess other "
+                            "tag values."
+                        ),
+                    },
                     "limit": {
                         "type": "integer",
                         "description": "Max studies to return (1–20, default 10).",

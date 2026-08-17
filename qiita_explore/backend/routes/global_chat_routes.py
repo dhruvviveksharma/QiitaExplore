@@ -12,11 +12,14 @@ from store import (
     create_global_chat,
     delete_global_chat,
     update_global_chat_title,
+    set_global_chat_pinned,
+    set_global_chat_archived,
     get_global_chat,
     global_chat_exists,
     list_global_chats,
     list_pinned_studies,
     list_pinned_study_meta,
+    move_global_chat_to_project,
 )
 from helpers.llm_helpers import (
     _sse,
@@ -34,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 @app.route('/api/global-chats', methods=['GET'])
 def api_list_global_chats():
-    return jsonify({'chats': list_global_chats(g.user_id)})
+    include_archived = request.args.get('include_archived') in ('1', 'true', 'True')
+    return jsonify({'chats': list_global_chats(g.user_id, include_archived=include_archived)})
 
 
 @app.route('/api/global-chats', methods=['POST'])
@@ -56,21 +60,49 @@ def api_get_global_chat(chat_id):
 
 
 @app.route('/api/global-chats/<chat_id>', methods=['PATCH'])
-def api_rename_global_chat(chat_id):
+def api_update_global_chat(chat_id):
     data = request.get_json() or {}
-    title = data.get('title')
-    if not isinstance(title, str) or not title.strip():
-        return jsonify({'error': 'title is required'}), 400
-    chat = update_global_chat_title(g.user_id, chat_id, title)
-    if not chat:
-        return jsonify({'error': 'Chat not found'}), 404
-    return jsonify(chat)
+    title, pinned, archived = data.get('title'), data.get('pinned'), data.get('archived')
+    if title is None and pinned is None and archived is None:
+        return jsonify({'error': 'title, pinned, or archived is required'}), 400
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        return jsonify({'error': 'title must be a non-empty string'}), 400
+
+    result = {'chat_id': chat_id}
+    if title is not None:
+        r = update_global_chat_title(g.user_id, chat_id, title)
+        if not r:
+            return jsonify({'error': 'Chat not found'}), 404
+        result['title'] = r['title']
+    if pinned is not None:
+        r = set_global_chat_pinned(g.user_id, chat_id, bool(pinned))
+        if not r:
+            return jsonify({'error': 'Chat not found'}), 404
+        result['is_pinned'] = r['is_pinned']
+    if archived is not None:
+        r = set_global_chat_archived(g.user_id, chat_id, bool(archived))
+        if not r:
+            return jsonify({'error': 'Chat not found'}), 404
+        result['is_archived'] = r['is_archived']
+    return jsonify(result)
 
 
 @app.route('/api/global-chats/<chat_id>', methods=['DELETE'])
 def api_delete_global_chat(chat_id):
     delete_global_chat(g.user_id, chat_id)
     return jsonify({'ok': True})
+
+
+@app.route('/api/global-chats/<chat_id>/move-to-project', methods=['POST'])
+def api_move_global_chat_to_project(chat_id):
+    data = request.get_json() or {}
+    project_id = data.get('project_id')
+    if not project_id:
+        return jsonify({'error': 'project_id is required'}), 400
+    chat = move_global_chat_to_project(g.user_id, chat_id, project_id)
+    if not chat:
+        return jsonify({'error': 'Chat or project not found'}), 404
+    return jsonify(chat)
 
 
 @app.route('/api/global-chats/<chat_id>/message/stream', methods=['POST'])

@@ -113,6 +113,13 @@ def browse_query_to_sql(user_query: str) -> dict:
     # path _tool_search_studies uses. Embedding it here too would AND the
     # identical EXISTS(...) clause into the query twice.
 
+    # 'GOLD' is the only study_tag value confirmed anywhere in this codebase
+    # or its docs — detecting just that one word avoids guessing at an
+    # unverified vocabulary. Like the PI filter above, this is returned for
+    # the caller to apply via search_studies_with_sql's `tags` kwarg, not
+    # embedded into where_clause here.
+    tags = ["GOLD"] if re.search(r'\bgold\b', user_query, re.IGNORECASE) else []
+
     subclauses = []
     clause_sql = _keyword_clause_sql()
     for kw in kw_use:
@@ -135,13 +142,18 @@ def browse_query_to_sql(user_query: str) -> dict:
     else:
         where_clause = text_where or "1=1"
 
+    applied_filters = {"pi": applied_pi} if pi_texts else {}
+    if tags:
+        applied_filters["tags"] = tags
+
     return {
         "where_clause": where_clause,
         "params": params,
         "search_limit": search_limit,
         "match_mode": "broad" if broad else "narrow",
         "keywords": kw_use,
-        "applied_filters": {"pi": applied_pi} if pi_texts else {},
+        "applied_filters": applied_filters,
         "resolved_pis": resolved if veto_applied else [],
         "veto_applied": veto_applied,
+        "tags": tags,
     }

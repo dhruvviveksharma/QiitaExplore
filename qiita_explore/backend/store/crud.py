@@ -87,13 +87,15 @@ def _load_project_chat_messages(conn, chat_id):
     return [{**_as_dict(r), "ui_payload": _decode_ui(r["ui_payload"])} for r in rows]
 
 
-def _load_project_chats(conn, project_id):
+def _load_project_chats(conn, project_id, include_archived=False):
+    archived_clause = "" if include_archived else "AND COALESCE(is_archived, 0) = 0"
     rows = conn.execute(
-        """
-        SELECT chat_id, title, created_at, updated_at
+        f"""
+        SELECT chat_id, title, created_at, updated_at,
+               is_pinned, pinned_at, is_archived, archived_at
         FROM project_chats
-        WHERE project_id = ?
-        ORDER BY updated_at DESC, created_at DESC
+        WHERE project_id = ? {archived_clause}
+        ORDER BY COALESCE(is_pinned, 0) DESC, pinned_at DESC, updated_at DESC, created_at DESC
         """,
         (project_id,),
     ).fetchall()
@@ -134,7 +136,7 @@ def create_project(user_id: str, name: str):
     return get_project(project_id, user_id)
 
 
-def get_project(project_id: str, user_id: str):
+def get_project(project_id: str, user_id: str, include_archived: bool = False):
     """Return the project only if it is owned by user_id — no cross-user fallback."""
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -146,7 +148,7 @@ def get_project(project_id: str, user_id: str):
             return None
         project = _as_dict(row)
         project["studies"] = _load_project_studies(conn, project_id)
-        project["chats"] = _load_project_chats(conn, project_id)
+        project["chats"] = _load_project_chats(conn, project_id, include_archived)
         return project
 
 
@@ -284,19 +286,21 @@ def allowed_project_study_ids(project_id: str) -> set:
     }
 
 
-def list_chats(project_id: str, user_id: str, limit: int = 200):
+def list_chats(project_id: str, user_id: str, limit: int = 200, include_archived: bool = False):
     resolved_user = _resolve_user(user_id)
     limit = max(1, min(500, int(limit)))
     with _conn() as conn:
         if not _project_exists(conn, project_id, resolved_user):
             return []
+        archived_clause = "" if include_archived else "AND COALESCE(pc.is_archived, 0) = 0"
         rows = conn.execute(
-            """
+            f"""
             SELECT pc.chat_id, pc.title, pc.created_at, pc.updated_at,
+                   pc.is_pinned, pc.pinned_at, pc.is_archived, pc.archived_at,
                    (SELECT COUNT(1) FROM project_chat_messages m WHERE m.chat_id = pc.chat_id) AS messages_count
             FROM project_chats pc
-            WHERE pc.project_id = ? AND pc.user_id = ?
-            ORDER BY pc.updated_at DESC, pc.created_at DESC
+            WHERE pc.project_id = ? AND pc.user_id = ? {archived_clause}
+            ORDER BY COALESCE(pc.is_pinned, 0) DESC, pc.pinned_at DESC, pc.updated_at DESC, pc.created_at DESC
             LIMIT ?
             """,
             (project_id, resolved_user, limit),
@@ -320,7 +324,8 @@ def get_chat(project_id: str, user_id: str, chat_id: str):
     with _conn() as conn:
         row = conn.execute(
             """
-            SELECT chat_id, title, created_at, updated_at
+            SELECT chat_id, title, created_at, updated_at,
+                   is_pinned, pinned_at, is_archived, archived_at
             FROM project_chats
             WHERE project_id = ? AND user_id = ? AND chat_id = ?
             """,
@@ -442,6 +447,30 @@ def update_chat_title(project_id: str, user_id: str, chat_id: str, title: str):
         if cur.rowcount == 0:
             return None
     return {"chat_id": chat_id, "title": clean}
+
+
+def _set_project_chat_flag(project_id, user_id, chat_id, *, flag_col, at_col, value):
+    resolved_user = _resolve_user(user_id)
+    with _conn() as conn:
+        cur = conn.execute(
+            f"UPDATE project_chats SET {flag_col} = ?, {at_col} = ? "
+            f"WHERE project_id = ? AND user_id = ? AND chat_id = ?",
+            (1 if value else 0, _now() if value else None, project_id, resolved_user, chat_id),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+    return {"chat_id": chat_id, flag_col: bool(value)}
+
+
+def set_chat_pinned(project_id: str, user_id: str, chat_id: str, pinned: bool):
+    return _set_project_chat_flag(project_id, user_id, chat_id,
+                                   flag_col="is_pinned", at_col="pinned_at", value=pinned)
+
+
+def set_chat_archived(project_id: str, user_id: str, chat_id: str, archived: bool):
+    return _set_project_chat_flag(project_id, user_id, chat_id,
+                                   flag_col="is_archived", at_col="archived_at", value=archived)
 
 
 def delete_chat(project_id: str, user_id: str, chat_id: str):

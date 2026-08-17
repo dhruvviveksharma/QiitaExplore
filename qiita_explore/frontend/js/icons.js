@@ -3,6 +3,17 @@
 
 const _ICON_STYLE = { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 };
 
+function DotsIcon({ size = 14, style = {} }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"
+      style={{ ..._ICON_STYLE, ...style }}>
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="12" cy="19" r="2" />
+    </svg>
+  );
+}
+
 function ChevronIcon({ open, dir, size = 12, style = {} }) {
   let rotation = 0;
   if (dir === 'left') rotation = 180;
@@ -14,6 +25,24 @@ function ChevronIcon({ open, dir, size = 12, style = {} }) {
       strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
       style={{ ..._ICON_STYLE, transition: 'transform 140ms ease', transform: `rotate(${rotation}deg)`, ...style }}>
       <polyline points="9 6 15 12 9 18" />
+    </svg>
+  );
+}
+
+// Two identical chevrons on the NW-SE diagonal (same points array, so their
+// shape/size/stroke always match exactly). `expanded` flips each 180° in
+// place — pointing away from each other (compact, invites expanding) vs.
+// pointing at each other (expanded, invites restoring) — rather than using
+// two different glyphs whose metrics never quite line up.
+function ExpandCompressIcon({ expanded, size = 13, style = {} }) {
+  const topLeftAngle     = expanded ? 45  : 225;
+  const bottomRightAngle = expanded ? 225 : 45;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+      style={{ ..._ICON_STYLE, ...style }}>
+      <polyline points="-3,-3 3,0 -3,3" transform={`translate(7,7) rotate(${topLeftAngle})`} />
+      <polyline points="-3,-3 3,0 -3,3" transform={`translate(17,17) rotate(${bottomRightAngle})`} />
     </svg>
   );
 }

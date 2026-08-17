@@ -39,6 +39,7 @@ function renderApp(s, account) {
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
+    showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
     searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -49,6 +50,9 @@ function renderApp(s, account) {
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
+    setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
+    moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
+    toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,
   } = s;
@@ -185,6 +189,81 @@ function renderApp(s, account) {
                           </div>
                         )}
                       </div>
+                      <ChatRowMenu
+                        isPinned={!!c.is_pinned}
+                        isArchived={!!c.is_archived}
+                        currentProjectId={p.project_id}
+                        currentProjectName={p.name}
+                        projects={projects}
+                        onRename={() => {
+                          setEditingChatId(c.chat_id);
+                          setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                        }}
+                        onTogglePin={() => setProjChatPinned(p.project_id, c.chat_id, !c.is_pinned)}
+                        onToggleArchive={() => setProjChatArchived(p.project_id, c.chat_id, !c.is_archived)}
+                        onDelete={() => deleteProjChat(p.project_id, c.chat_id)}
+                        onMoveToProject={targetId => moveProjChatToProject(p.project_id, c.chat_id, targetId)}
+                        onRemoveFromProject={() => removeChatFromProject(p.project_id, c.chat_id)}
+                        onCreateProjectAndMove={name => createProjectAndMoveChat(name, p.project_id, c.chat_id)}
+                      />
+                      <button className="cr-del" onClick={e => { e.stopPropagation(); deleteProjChat(p.project_id, c.chat_id); }}>×</button>
+                    </div>
+                  ))}
+
+                  {projInnerTab === 'chats' && (
+                    <button className="sb-archived-toggle" onClick={e => { e.stopPropagation(); toggleShowArchivedProj(p.project_id); }}>
+                      {showArchivedProj ? 'Hide archived' : `Show archived${archivedProjChats ? ` (${archivedProjChats.length})` : ''}`}
+                    </button>
+                  )}
+                  {projInnerTab === 'chats' && showArchivedProj && (archivedProjChats || []).map(c => (
+                    <div
+                      key={c.chat_id}
+                      className={`chat-row archived-row ${view.chatId === c.chat_id ? 'active' : ''}`}
+                      onClick={() => openProjChat(p.project_id, c.chat_id)}
+                    >
+                      <div className="cr-content">
+                        {editingChatId === c.chat_id ? (
+                          <input className="cr-title-input" value={editChatVal} autoFocus
+                            onChange={e => setEditChatVal(e.target.value)}
+                            onBlur={() => saveRenameChat('proj', p.project_id, c.chat_id)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { e.preventDefault(); saveRenameChat('proj', p.project_id, c.chat_id); }
+                              if (e.key === 'Escape') setEditingChatId(null);
+                            }}
+                            onClick={e => e.stopPropagation()} />
+                        ) : (
+                          <div className="cr-title editable" onClick={e => {
+                            e.stopPropagation();
+                            setEditingChatId(c.chat_id);
+                            setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                          }}>
+                            {chatCache[c.chat_id]?.title || c.title || 'New chat'}
+                            <span className="rename-hint">✎</span>
+                          </div>
+                        )}
+                        {c.updated_at && (
+                          <div className="cr-date">
+                            {formatDate(c.updated_at)}
+                          </div>
+                        )}
+                      </div>
+                      <ChatRowMenu
+                        isPinned={!!c.is_pinned}
+                        isArchived={true}
+                        currentProjectId={p.project_id}
+                        currentProjectName={p.name}
+                        projects={projects}
+                        onRename={() => {
+                          setEditingChatId(c.chat_id);
+                          setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                        }}
+                        onTogglePin={() => setProjChatPinned(p.project_id, c.chat_id, !c.is_pinned)}
+                        onToggleArchive={() => unarchiveProjChat(p.project_id, c.chat_id)}
+                        onDelete={() => deleteProjChat(p.project_id, c.chat_id)}
+                        onMoveToProject={targetId => moveProjChatToProject(p.project_id, c.chat_id, targetId)}
+                        onRemoveFromProject={() => removeChatFromProject(p.project_id, c.chat_id)}
+                        onCreateProjectAndMove={name => createProjectAndMoveChat(name, p.project_id, c.chat_id)}
+                      />
                       <button className="cr-del" onClick={e => { e.stopPropagation(); deleteProjChat(p.project_id, c.chat_id); }}>×</button>
                     </div>
                   ))}
@@ -268,6 +347,79 @@ function renderApp(s, account) {
                   </div>
                 )}
               </div>
+              <ChatRowMenu
+                isPinned={!!c.is_pinned}
+                isArchived={!!c.is_archived}
+                currentProjectId={null}
+                currentProjectName={null}
+                projects={projects}
+                onRename={() => {
+                  setEditingChatId(c.chat_id);
+                  setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                }}
+                onTogglePin={() => setGlobChatPinned(c.chat_id, !c.is_pinned)}
+                onToggleArchive={() => setGlobChatArchived(c.chat_id, !c.is_archived)}
+                onDelete={() => deleteGlobChat(c.chat_id)}
+                onMoveToProject={targetId => moveGlobalChatToProject(c.chat_id, targetId)}
+                onRemoveFromProject={() => {}}
+                onCreateProjectAndMove={name => createProjectAndMoveChat(name, null, c.chat_id)}
+              />
+              <button className="cr-del" onClick={e => { e.stopPropagation(); deleteGlobChat(c.chat_id); }}>×</button>
+            </div>
+          ))}
+
+          <button className="sb-archived-toggle" onClick={toggleShowArchivedGlobal}>
+            {showArchivedGlobal ? 'Hide archived' : `Show archived${archivedGlobalChats ? ` (${archivedGlobalChats.length})` : ''}`}
+          </button>
+          {showArchivedGlobal && (archivedGlobalChats || []).map(c => (
+            <div
+              key={c.chat_id}
+              className={`chat-row flat archived-row ${view.type === 'global-chat' && view.chatId === c.chat_id ? 'active' : ''}`}
+              onClick={() => openGlobChat(c.chat_id)}
+            >
+              <div className="cr-content">
+                {editingChatId === c.chat_id ? (
+                  <input className="cr-title-input" value={editChatVal} autoFocus
+                    onChange={e => setEditChatVal(e.target.value)}
+                    onBlur={() => saveRenameChat('global', null, c.chat_id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); saveRenameChat('global', null, c.chat_id); }
+                      if (e.key === 'Escape') setEditingChatId(null);
+                    }}
+                    onClick={e => e.stopPropagation()} />
+                ) : (
+                  <div className="cr-title editable" onClick={e => {
+                    e.stopPropagation();
+                    setEditingChatId(c.chat_id);
+                    setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                  }}>
+                    {chatCache[c.chat_id]?.title || c.title || 'New chat'}
+                    <span className="rename-hint">✎</span>
+                  </div>
+                )}
+                {c.updated_at && (
+                  <div className="cr-date">
+                    {formatDate(c.updated_at)}
+                  </div>
+                )}
+              </div>
+              <ChatRowMenu
+                isPinned={!!c.is_pinned}
+                isArchived={true}
+                currentProjectId={null}
+                currentProjectName={null}
+                projects={projects}
+                onRename={() => {
+                  setEditingChatId(c.chat_id);
+                  setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                }}
+                onTogglePin={() => setGlobChatPinned(c.chat_id, !c.is_pinned)}
+                onToggleArchive={() => unarchiveGlobalChat(c.chat_id)}
+                onDelete={() => deleteGlobChat(c.chat_id)}
+                onMoveToProject={targetId => moveGlobalChatToProject(c.chat_id, targetId)}
+                onRemoveFromProject={() => {}}
+                onCreateProjectAndMove={name => createProjectAndMoveChat(name, null, c.chat_id)}
+              />
               <button className="cr-del" onClick={e => { e.stopPropagation(); deleteGlobChat(c.chat_id); }}>×</button>
             </div>
           ))}

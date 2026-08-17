@@ -88,7 +88,8 @@ def api_create_project():
 
 @app.route('/api/projects/<project_id>', methods=['GET'])
 def api_get_project(project_id):
-    proj = get_project(project_id, g.user_id)
+    include_archived = request.args.get('include_archived') in ('1', 'true', 'True')
+    proj = get_project(project_id, g.user_id, include_archived=include_archived)
     if not proj:
         return jsonify({'error': 'Project not found'}), 404
     return jsonify(proj)
