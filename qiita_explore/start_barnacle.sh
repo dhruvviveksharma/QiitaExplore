@@ -7,8 +7,11 @@ cd "$SCRIPT_DIR/backend"
 # shellcheck source=detect_env.sh
 source "$SCRIPT_DIR/detect_env.sh"
 
+# conda activate scripts reference unset vars; nounset must be off around them
+set +u
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate qiita-web
+set -u
 
 # Point Qiita at the repo's config file (has correct qiita-db-rc credentials)
 export QIITA_CONFIG_FP="/home/d4sharma/qiita-web/qiita_config.cfg"
