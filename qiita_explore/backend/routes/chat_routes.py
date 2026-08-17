@@ -11,6 +11,7 @@ from store import (
     append_chat_messages,
     create_chat,
     delete_chat,
+    update_chat_title,
     get_chat,
     project_chat_exists,
     get_project,
@@ -57,6 +58,18 @@ def api_create_chat(project_id):
 @app.route('/api/projects/<project_id>/chats/<chat_id>', methods=['GET'])
 def api_get_chat(project_id, chat_id):
     chat = get_chat(project_id, g.user_id, chat_id)
+    if not chat:
+        return jsonify({'error': 'Chat not found'}), 404
+    return jsonify(chat)
+
+
+@app.route('/api/projects/<project_id>/chats/<chat_id>', methods=['PATCH'])
+def api_rename_chat(project_id, chat_id):
+    data = request.get_json() or {}
+    title = data.get('title')
+    if not isinstance(title, str) or not title.strip():
+        return jsonify({'error': 'title is required'}), 400
+    chat = update_chat_title(project_id, g.user_id, chat_id, title)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     return jsonify(chat)

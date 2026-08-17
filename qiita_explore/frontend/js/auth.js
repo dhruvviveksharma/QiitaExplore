@@ -111,7 +111,7 @@ function ConnectQiita({ onConnected }) {
       <div className="auth-card">
         <div className="app-logo app-logo-home auth-logo">
           <span className="app-logo-mark"><WreathLoader size={32} /></span>
-          <span className="app-logo-text">Qiita<em>Explorer</em></span>
+          <span className="app-logo-text">Qiita<em>Explore</em></span>
         </div>
         <ol className="auth-steps">
           <li>Log in with your Qiita account (opens in a new tab).</li>

@@ -427,6 +427,23 @@ def append_chat_messages(
     return get_chat(project_id, resolved_user, chat_id)
 
 
+def update_chat_title(project_id: str, user_id: str, chat_id: str, title: str):
+    resolved_user = _resolve_user(user_id)
+    clean = _chat_title(title)
+    with _conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE project_chats SET title = ?, updated_at = ?
+            WHERE project_id = ? AND user_id = ? AND chat_id = ?
+            """,
+            (clean, _now(), project_id, resolved_user, chat_id),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+    return {"chat_id": chat_id, "title": clean}
+
+
 def delete_chat(project_id: str, user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:

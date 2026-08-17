@@ -39,6 +39,16 @@ class TestProjectChats:
         chats = crud.list_chats(project_id, sample_user_id)
         assert len(chats) == 0
 
+    def test_rename_chat(self, crud, sample_user_id):
+        project = crud.create_project(sample_user_id, "Chat Project")
+        chat = crud.create_chat(project["project_id"], sample_user_id)
+        updated = crud.update_chat_title(
+            project["project_id"], sample_user_id, chat["chat_id"], "Renamed chat"
+        )
+        assert updated["title"] == "Renamed chat"
+        loaded = crud.get_chat(project["project_id"], sample_user_id, chat["chat_id"])
+        assert loaded["title"] == "Renamed chat"
+
     def test_get_chat_with_messages(self, crud, sample_user_id):
         """Get chat with message history."""
         project = crud.create_project(sample_user_id, "Chat Project")
@@ -80,6 +90,15 @@ class TestGlobalChats:
         # Verify deleted
         chats = global_chat_crud.list_global_chats(sample_user_id)
         assert len(chats) == 0
+
+    def test_rename_global_chat(self, global_chat_crud, sample_user_id):
+        chat = global_chat_crud.create_global_chat(sample_user_id, title="Old title")
+        updated = global_chat_crud.update_global_chat_title(
+            sample_user_id, chat["chat_id"], "New title"
+        )
+        assert updated["title"] == "New title"
+        loaded = global_chat_crud.get_global_chat(sample_user_id, chat["chat_id"])
+        assert loaded["title"] == "New title"
 
     def test_global_chats_isolated_by_user(self, global_chat_crud, sample_user_id):
         """Global chats are isolated by user."""

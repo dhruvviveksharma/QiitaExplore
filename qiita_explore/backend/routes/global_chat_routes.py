@@ -11,6 +11,7 @@ from store import (
     append_global_chat_messages,
     create_global_chat,
     delete_global_chat,
+    update_global_chat_title,
     get_global_chat,
     global_chat_exists,
     list_global_chats,
@@ -49,6 +50,18 @@ def api_create_global_chat():
 @app.route('/api/global-chats/<chat_id>', methods=['GET'])
 def api_get_global_chat(chat_id):
     chat = get_global_chat(g.user_id, chat_id)
+    if not chat:
+        return jsonify({'error': 'Chat not found'}), 404
+    return jsonify(chat)
+
+
+@app.route('/api/global-chats/<chat_id>', methods=['PATCH'])
+def api_rename_global_chat(chat_id):
+    data = request.get_json() or {}
+    title = data.get('title')
+    if not isinstance(title, str) or not title.strip():
+        return jsonify({'error': 'title is required'}), 400
+    chat = update_global_chat_title(g.user_id, chat_id, title)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
     return jsonify(chat)

@@ -240,6 +240,30 @@ function useAppState() {
     setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
   };
 
+  const renameChat = async (newTitle) => {
+    const chatId = view.chatId;
+    const url = chatScopeUrl(view, chatId);
+    if (!url) return;
+    try {
+      const d = await apiJson(url, { method: 'PATCH', body: JSON.stringify({ title: newTitle }) });
+      const title = d.title;
+      setChatCache(prev => {
+        const cur = prev[chatId];
+        return cur ? { ...prev, [chatId]: { ...cur, title } } : prev;
+      });
+      if (view.type === 'global-chat') {
+        setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
+      } else if (view.type === 'project-chat') {
+        setOpenProject(prev => prev && {
+          ...prev,
+          chats: (prev.chats || []).map(c => c.chat_id === chatId ? { ...c, title } : c),
+        });
+      }
+    } catch (e) {
+      setCompErr(e.message || 'Could not rename chat');
+    }
+  };
+
   // ─── streaming helpers ────────────────────────────────────────────────────────
   const patchLast = (chatId, fn) =>
     setChatCache(prev => {
@@ -417,6 +441,13 @@ function useAppState() {
   };
 
   const completeSlash = (item) => {
+    // Commands that don't need extra args should run immediately — inserting
+    // `/systems` and waiting for a second Enter is what made the prompt look broken.
+    if (item.cmd === '/systems' || item.cmd === '/model') {
+      setInput('');
+      sendMessage(item.cmd);
+      return;
+    }
     setInput(item.insert);
     setTimeout(() => taRef.current?.focus(), 0);
   };
@@ -506,7 +537,7 @@ function useAppState() {
       }
 
       // ── /systems ────────────────────────────────────────────────────────────
-      if (/^\/systems\s*$/i.test(msg)) {
+      if (/^\/systems\b/i.test(msg)) {
         const chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
           ? await ensureChatId(workView, '/systems')
           : null;
@@ -692,7 +723,7 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    completeSlash,
+    completeSlash, renameChat,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,

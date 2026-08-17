@@ -333,6 +333,14 @@ input, textarea { font-family: var(--sans); }
    drop the border that would otherwise draw a line across the middle. */
 .topbar.has-sources-bar { border-radius: var(--radius-m) var(--radius-m) 0 0; border-bottom: none; }
 .topbar-title { font-size: 14px; font-weight: 500; color: var(--text); }
+.topbar-title.editable { cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-title.editable:hover .rename-hint { opacity: 1; }
+.topbar-title-input {
+  font-size: 14px; font-weight: 500; color: var(--text);
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 3px 8px; outline: none; background: var(--surface);
+  min-width: 160px; max-width: 420px; flex: 1;
+}
 .topbar-nav {
   padding: 4px 12px; font-size: 13px; font-weight: 500;
   background: none; border: none; border-radius: 6px;
@@ -448,7 +456,6 @@ input, textarea { font-family: var(--sans); }
   border-radius: var(--radius-m);
   font-size: 13.5px;
   line-height: 1.65;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 .msg-row.user .msg-bubble {
@@ -459,6 +466,7 @@ input, textarea { font-family: var(--sans); }
   font-weight: 400;
   padding: 10px 16px;
   border-radius: var(--radius-m);
+  white-space: pre-wrap; /* plain-text user messages keep newlines */
 }
 .app.dark .msg-row.user .msg-bubble {
   background: var(--text);
@@ -640,21 +648,20 @@ input, textarea { font-family: var(--sans); }
 }
 
 /* ── Markdown rendering inside msg-bubble ────────────────────── */
-.msg-bubble { overflow-x: auto; }
 .msg-bubble p { margin: 0 0 0.55em; line-height: 1.65; }
 .msg-bubble p:last-child { margin-bottom: 0; }
 
 .msg-bubble h1, .msg-bubble h2, .msg-bubble h3, .msg-bubble h4 {
-  font-weight: 600;
-  margin: 0.85em 0 0.4em 0;
-  line-height: 1.35;
+  font-weight: 700;
+  margin: 1em 0 0.45em 0;
+  line-height: 1.3;
   color: var(--text);
 }
 .msg-bubble h1:first-child, .msg-bubble h2:first-child, .msg-bubble h3:first-child { margin-top: 0; }
-.msg-bubble h1 { font-size: 1.15em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.2em; }
-.msg-bubble h2 { font-size: 1.05em; }
-.msg-bubble h3 { font-size: 0.98em; }
-.msg-bubble h4 { font-size: 0.92em; }
+.msg-bubble h1 { font-size: 1.4em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.25em; }
+.msg-bubble h2 { font-size: 1.28em; }
+.msg-bubble h3 { font-size: 1.18em; }
+.msg-bubble h4 { font-size: 1.08em; }
 
 .msg-bubble ul, .msg-bubble ol {
   margin: 0.15em 0 0.55em 0;
@@ -712,20 +719,28 @@ input, textarea { font-family: var(--sans); }
   font-size: 0.85em;
 }
 
-.msg-bubble table {
+.msg-bubble .md-table-wrap {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.55em 0;
+  -webkit-overflow-scrolling: touch;
+}
+.msg-bubble .md-table-wrap table {
   border-collapse: collapse;
   width: max-content;
-  min-width: 100%;
-  margin: 0.55em 0;
+  max-width: none;
+  min-width: 0;
+  margin: 0 auto; /* center when narrower than the bubble */
   font-size: 0.9em;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
-  overflow: hidden;
 }
 .msg-bubble th, .msg-bubble td {
   border: 1px solid var(--border-soft);
   padding: 0.4em 0.65em;
   text-align: left;
+  white-space: nowrap;
 }
 .msg-bubble th {
   background: var(--sidebar-bg);
@@ -1051,7 +1066,7 @@ input, textarea { font-family: var(--sans); }
 
 .show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
 .show-more-btn:hover { color: var(--accent); }
-.content.merge-open { padding-right: 430px; transition: padding-right .2s ease; }
+.main.merge-open { padding-right: 430px; transition: padding-right .2s ease; }
 /* Workspace picker (floating panel create state) */
 .merge-picker-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
 .merge-ws-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }

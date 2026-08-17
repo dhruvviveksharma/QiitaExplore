@@ -612,6 +612,7 @@ const SLASH_COMMANDS = [
 const _PLUS_ACTIONS = [
   { cmd: '/report', insert: '/report ', desc: 'Load study sample data' },
   { cmd: '/pin',    insert: '/pin ',    desc: 'Pin studies to context' },
+  { cmd: '/systems', insert: '/systems', desc: 'Check model status' },
   { cmd: '/model',  insert: null,       desc: 'Switch LLM model' },
 ];
 function PlusMenu({ onClose, onCompleteSlash, onOpenModelPicker }) {

@@ -104,12 +104,17 @@ function renderMarkdown(text) {
     ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
     : raw;
   // External links open in a new tab — applied post-sanitize so it works across marked versions.
-  return html.replace(
+  html = html.replace(
     /<a\s+([^>]*?)href="(https?:\/\/[^"]+)"([^>]*)>/gi,
     (m, pre, href, post) => {
       if (/\btarget=/i.test(pre + post)) return m;
       return `<a ${pre}href="${href}"${post} target="_blank" rel="noopener noreferrer">`;
     }
+  );
+  // Isolate wide tables so only they scroll horizontally — not the whole bubble.
+  return html.replace(
+    /<table\b[\s\S]*?<\/table>/gi,
+    (table) => `<div class="md-table-wrap">${table}</div>`
   );
 }
 

@@ -7,7 +7,7 @@ from flask import jsonify, request
 from qiita_db.sql_connection import TRN
 
 from run import app
-from config import client, ALLOWED_MODELS, MODEL_METADATA, SAMPLE_SEARCH_DEEP_CANDIDATES
+from config import ALLOWED_MODELS, MODEL_METADATA, SAMPLE_SEARCH_DEEP_CANDIDATES, get_client
 from services.llm import browse_query_to_sql
 from services.study_service import search_studies_with_sql, expand_keyword_variants
 from services.relevance import build_pi_required_filter, finalize_search_results
@@ -217,12 +217,20 @@ def search():
 def _probe_model(model_name):
     start = time.time()
     try:
-        client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=1,
-            timeout=15,
-        )
+        c, provider = get_client(model_name)
+        if provider == "anthropic":
+            c.with_options(timeout=15.0).messages.create(
+                model=model_name,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "Hi"}],
+            )
+        else:
+            c.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=1,
+                timeout=15,
+            )
         return model_name, "ok", int((time.time() - start) * 1000)
     except Exception:
         return model_name, "down", int((time.time() - start) * 1000)

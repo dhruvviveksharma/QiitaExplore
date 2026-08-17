@@ -1,3 +1,29 @@
+function ChatTitleEditor({ title, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(title || '');
+  useEffect(() => { setVal(title || ''); }, [title]);
+  const save = async () => {
+    const t = val.trim();
+    setEditing(false);
+    if (!t || t === title) { setVal(title || ''); return; }
+    await onSave(t);
+  };
+  if (editing) return (
+    <input className="topbar-title-input" value={val} autoFocus
+      onChange={e => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { setEditing(false); setVal(title || ''); }
+      }} />
+  );
+  return (
+    <span className="topbar-title editable" onClick={() => setEditing(true)} title="Click to rename">
+      {title}<span className="rename-hint">✎</span>
+    </span>
+  );
+}
+
 function renderApp(s, account) {
   const {
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
@@ -20,7 +46,7 @@ function renderApp(s, account) {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    completeSlash,
+    completeSlash, renameChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,
   } = s;
@@ -40,7 +66,7 @@ function renderApp(s, account) {
         <div className="sidebar-header">
           <div className="app-logo app-logo-home" onClick={() => setView({ type: 'browse' })}>
             <span className="app-logo-mark"><WreathLoader size={28} /></span>
-            <span className="app-logo-text">Qiita<em>Explorer</em></span>
+            <span className="app-logo-text">Qiita<em>Explore</em></span>
           </div>
         </div>
 
@@ -175,7 +201,7 @@ function renderApp(s, account) {
       </aside>
 
       {/* ══════════════════ MAIN ══════════════════════ */}
-      <div className="main">
+      <div className={`main${(showMergePanel || searchResultsPanel) ? ' merge-open' : ''}`}>
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}`}>
           {(view.type === 'browse' || view.type === 'merges') ? (
@@ -196,7 +222,11 @@ function renderApp(s, account) {
             </>
           ) : (
             <>
-              <span className="topbar-title">{topTitle}</span>
+              {isChat && view.chatId ? (
+                <ChatTitleEditor title={topTitle} onSave={renameChat} />
+              ) : (
+                <span className="topbar-title">{topTitle}</span>
+              )}
               {view.type === 'project-chat' && openProject?.studies?.length > 0 && (
                 <span className="topbar-badge">{openProject.studies.length} sources</span>
               )}
@@ -250,7 +280,7 @@ function renderApp(s, account) {
           </div>
         )}
 
-        <div className={`content${(showMergePanel || searchResultsPanel) ? ' merge-open' : ''}`}>
+        <div className="content">
 
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
@@ -406,9 +436,18 @@ function renderApp(s, account) {
                         : 'Each message runs a database search. Add optional context chips from Browse to highlight specific studies alongside search results.'}
                     </p>
                     <div className="chat-empty-chips">
-                      {['What are the key themes?','Who are the PIs?','Summarize the abstracts','What sample types were used?','/report 104 - Full study report','/systems — Check model status']
-                        .map(q => (
-                          <button key={q} className="chat-starter" onClick={() => { setInput(q); s.taRef.current?.focus(); }}>{q}</button>
+                      {[
+                        { label: 'What are the key themes?' },
+                        { label: 'Who are the PIs?' },
+                        { label: 'Summarize the abstracts' },
+                        { label: 'What sample types were used?' },
+                        { label: '/report 104 - Full study report', send: '/report 104' },
+                        { label: '/systems — Check model status', send: '/systems' },
+                      ].map(chip => (
+                          <button key={chip.label} className="chat-starter" onClick={() => {
+                            if (chip.send) sendMessage(chip.send);
+                            else { setInput(chip.label); s.taRef.current?.focus(); }
+                          }}>{chip.label}</button>
                         ))}
                     </div>
                   </div>
@@ -534,7 +573,11 @@ function renderApp(s, account) {
                 if (menuOpen) {
                   if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, slashMatches.length - 1)); return; }
                   if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
-                  if (e.key === 'Tab')       { e.preventDefault(); completeSlash(slashMatches[slashIndex]); return; }
+                  if (e.key === 'Tab' || e.key === 'Enter') {
+                    e.preventDefault();
+                    completeSlash(slashMatches[slashIndex]);
+                    return;
+                  }
                   if (e.key === 'Escape')    { e.preventDefault(); setSlashDismissed(true); return; }
                 }
                 if (e.key === 'Enter' && !e.shiftKey && (isChat || view.type === 'browse')) { e.preventDefault(); sendMessage(); }
