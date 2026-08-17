@@ -27,9 +27,17 @@ There are no ES modules. No file has an `import` or an `export`. Every function,
 
 ### The API base, and why `127.0.0.1`
 
-`index.html` carries a `<meta name="api-base">` tag that `frontend/js/utils.js` reads at load time, falling back to a hardcoded default if the tag is missing. It currently points at port **5002** with a revert-to-5001 TODO — the repo's development-port convention described in [`01-architecture.md`](01-architecture.md), not a mistake.
+`frontend/js/utils.js` reads a `<meta name="api-base">` tag from `index.html` at load time and falls back to a relative `/api` if the tag is absent:
 
-The host in that URL is load-bearing, and `index.html` documents why in a comment longer than most of the file. **A browser treats** `127.0.0.1` **and** `localhost` **as different sites.** The session cookie set by `POST /api/auth/connect` is `SameSite=Lax`. If the page is served from `127.0.0.1` and the API base says `localhost`, every authenticated fetch becomes cross-site, the cookie is withheld, and the application presents as permanently logged out with no error message that points at the cause. Both sides must agree, which is also why the development SSH tunnel is specified as `ssh -L 127.0.0.1:5002:localhost:5002` and why that exact origin must appear in barnacle's `QIITA_EXPLORE_ALLOWED_ORIGINS`.
+```js
+const API = document.querySelector('meta[name="api-base"]')?.content || '/api';
+```
+
+The relative default resolves against whatever origin actually served the page, so it works unmodified behind any same-origin proxy — production nginx, a Cloudflare Tunnel, or anything else that serves the frontend and proxies `/api/` from one hostname. Nothing in the frontend needs to know the deployment's hostname or port.
+
+The meta tag exists only as an **override**, for the one case the relative default cannot cover: local dev where the frontend and backend are *not* same-origin — a static file server on one port, the API reached through a separate loopback SSH tunnel on another. That case needs an explicit absolute URL, and the host in that URL is load-bearing. **A browser treats** `127.0.0.1` **and** `localhost` **as different sites.** The session cookie set by `POST /api/auth/connect` is `SameSite=Lax`. If the page is served from `127.0.0.1` and the override says `localhost`, every authenticated fetch becomes cross-site, the cookie is withheld, and the application presents as permanently logged out with no error message that points at the cause. Both sides must agree, which is also why a development SSH tunnel of this kind is specified as `ssh -L 127.0.0.1:5001:localhost:5001` and why that exact origin must appear in barnacle's `QIITA_EXPLORE_ALLOWED_ORIGINS`.
+
+**Why relative-by-default, not a hardcoded host with a revert TODO.** The previous design hardcoded an absolute dev URL as the committed default, in *two* independent places (this meta tag and a matching JS fallback in `utils.js`), each carrying its own `// TODO: revert to port 5001 before committing to master`. Both TODOs went stale and shipped to `master` unreverted — twice. Worse, even a correctly-reverted absolute `127.0.0.1:5001` default only works for a browser on the same machine as the tunnel; it silently breaks for anyone reaching the app through a public hostname, which defeats the point of a Cloudflare Tunnel or any other real deployment. Making the safe, portable behavior (relative) the default and the narrow, host-specific behavior (absolute) an explicit opt-in removes the whole class of bug — there's no longer a value that must be remembered to change before a commit.
 
 ---
 
@@ -215,7 +223,7 @@ The `browse → global-chat` transition is the interesting one. Sending a messag
 
 The hash has two independent parts — a path for `view`, and an optional `?study=<id>` suffix layered on top for the study modal, since studies are global (not owned by a project or chat) and the same suffix works after any path:
 
-- `#/` → `{type:'browse'}`; `#/merges` → `{type:'merges'}` (only if `SHOW_MERGES` is on)
+- `#/browse` → `{type:'browse'}` (a bare `#/` or no hash is also accepted and treated the same, for old links); `#/merges` → `{type:'merges'}` (only if `SHOW_MERGES` is on)
 - `#/projects/:projId/chats/:chatId` → `{type:'project-chat', ...}`; `#/chats/:chatId` → `{type:'global-chat', ...}`
 - `?study=<id>` appended to any of the above opens that study's modal on top of the backdrop, e.g. `#/chats/abc123?study=104`
 

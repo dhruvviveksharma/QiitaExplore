@@ -27,9 +27,9 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 | Layer      | Tech                                     | Location |
 |------------|------------------------------------------|----------|
-| Backend    | Gunicorn (`start_barnacle.sh`), port 5001 | `qiita_explore/start_barnacle.sh` → `qiita_explore/backend/run.py` (`run:app`) |
+| Backend    | Gunicorn (`start_barnacle.sh`); port auto: master→5001, else→5002 | `qiita_explore/start_barnacle.sh` → `qiita_explore/backend/run.py` (`run:app`) |
 | Frontend   | React (Babel standalone, no build step)  | `qiita_explore/frontend/js/` |
-| Local DB   | SQLite                                   | `qiita_explore/backend/store/` |
+| Local DB   | SQLite under `/ddn_scratch/.../QiitaExploreDB/{deployment\|dev}/` | set by `detect_env.sh` via `QIITA_EXPERIMENT_DB_PATH` |
 | Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
 | LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `qiita_explore/backend/helpers/llm_helpers.py` |
 
@@ -47,7 +47,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 # Dev Workflow
 
-- **Start backend**: `bash qiita_explore/start_barnacle.sh` only (Gunicorn on port 5001; frontend `api-base` must match)
+- **Start backend**: `bash qiita_explore/start_barnacle.sh` only (port/data root from current branch via `detect_env.sh`; frontend `api-base` must match)
 - **Verify UI changes**: Run barnacle, open browser, test golden path before marking done
 - **Tickets**: Unplanned work goes in `~/qiita-web/TICKETS/tickets.md`, not inline
 
@@ -77,7 +77,6 @@ Before implementing:
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
-- When doing dev work, use port 5002 and add a #TODO comment. This needs to be changed back to 5001 before committing to master.
 
 ## 2. Simplicity First
 

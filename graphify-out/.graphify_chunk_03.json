@@ -1,0 +1,546 @@
+{
+  "nodes": [
+    {
+      "id": "assets_agent_chat_image",
+      "label": "Agent Chat Screenshot",
+      "file_type": "image",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_qiitaexplorer_ui",
+      "label": "QiitaExplorer Chat UI",
+      "file_type": "image",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_workspace_irritable_bowel",
+      "label": "\"Irritable Bowel\" Workspace (sidebar)",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_workspace_gut_microbiome",
+      "label": "\"Gut microbiome\" Workspace (sidebar)",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_global_chats_section",
+      "label": "Global Chats Sidebar Section",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_ibs_query",
+      "label": "User Query: \"Find me 10 studies related to the irritable bowel syndrome\"",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_shotgun_followup_query",
+      "label": "Follow-up User Message: \"Let's look at shotgun specifically\"",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_deep_search_tool_call",
+      "label": "\"Deep-searched Qiita database\" Tool Call Card (14.2s, 81 sample-metadata hits from <=500 studies)",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_sql_query_expander",
+      "label": "Collapsible \"SQL query\" Detail Row",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_study_result_cards",
+      "label": "10 Study Result Cards (ID, title, data-type tags, sample count, PI)",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_pin_button",
+      "label": "Per-Card \"Pin\" Button",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_merge_button",
+      "label": "Per-Card / Header \"Merge\" Button",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_minimax_m2_model_selector",
+      "label": "Model Selector Showing \"minimax-m2\"",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "assets_agent_chat_chat_input_composer",
+      "label": "Chat Composer (\"use '/' for commands, ask or search for studies\")",
+      "file_type": "concept",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_helpers_agent_tools_search_studies",
+      "label": "search_studies() agent tool",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_helpers_sample_search_search_studies_by_sample_meta",
+      "label": "search_studies_by_sample_meta() bounded sample search",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_helpers_agent_tools_detect_data_types",
+      "label": "detect_data_types() keyword-to-data-type mapper",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_store_cache_pin_study_to_chat",
+      "label": "pin_study_to_chat() store function",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_config_model_metadata",
+      "label": "MODEL_METADATA (LLM model registry incl. minimax-m2)",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_frontend_js_components_toolcallcard",
+      "label": "ToolCallCard React component",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_frontend_js_components_toolresultwidget",
+      "label": "ToolResultWidget React component",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_routes_merge_routes_module",
+      "label": "merge_routes.py (study merge endpoints)",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_store_crud_projects",
+      "label": "projects CRUD (workspaces)",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "qiita_explore_backend_store_global_chat_crud_module",
+      "label": "global_chat_crud.py (global chats store)",
+      "file_type": "code",
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "assets_agent_chat_image",
+      "target": "assets_agent_chat_qiitaexplorer_ui",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_qiitaexplorer_ui",
+      "target": "assets_agent_chat_workspace_irritable_bowel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_qiitaexplorer_ui",
+      "target": "assets_agent_chat_workspace_gut_microbiome",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_qiitaexplorer_ui",
+      "target": "assets_agent_chat_global_chats_section",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_workspace_irritable_bowel",
+      "target": "assets_agent_chat_ibs_query",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_ibs_query",
+      "target": "assets_agent_chat_deep_search_tool_call",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_deep_search_tool_call",
+      "target": "assets_agent_chat_sql_query_expander",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_deep_search_tool_call",
+      "target": "assets_agent_chat_study_result_cards",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_study_result_cards",
+      "target": "assets_agent_chat_pin_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_study_result_cards",
+      "target": "assets_agent_chat_merge_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_ibs_query",
+      "target": "assets_agent_chat_shotgun_followup_query",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_shotgun_followup_query",
+      "target": "assets_agent_chat_deep_search_tool_call",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_chat_input_composer",
+      "target": "assets_agent_chat_minimax_m2_model_selector",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_deep_search_tool_call",
+      "target": "qiita_explore_backend_helpers_agent_tools_search_studies",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_study_result_cards",
+      "target": "qiita_explore_backend_helpers_sample_search_search_studies_by_sample_meta",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_shotgun_followup_query",
+      "target": "qiita_explore_backend_helpers_agent_tools_detect_data_types",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_pin_button",
+      "target": "qiita_explore_backend_store_cache_pin_study_to_chat",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_minimax_m2_model_selector",
+      "target": "qiita_explore_backend_config_model_metadata",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_deep_search_tool_call",
+      "target": "qiita_explore_frontend_js_components_toolcallcard",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_study_result_cards",
+      "target": "qiita_explore_frontend_js_components_toolresultwidget",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_merge_button",
+      "target": "qiita_explore_backend_routes_merge_routes_module",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_workspace_irritable_bowel",
+      "target": "qiita_explore_backend_store_crud_projects",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "assets_agent_chat_global_chats_section",
+      "target": "qiita_explore_backend_store_global_chat_crud_module",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "agentic_search_pipeline_flow",
+      "label": "Agentic study-search pipeline (query -> tool call -> SQL -> results)",
+      "nodes": [
+        "assets_agent_chat_ibs_query",
+        "assets_agent_chat_shotgun_followup_query",
+        "assets_agent_chat_deep_search_tool_call",
+        "assets_agent_chat_sql_query_expander",
+        "assets_agent_chat_study_result_cards"
+      ],
+      "relation": "form",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png"
+    },
+    {
+      "id": "search_result_actions_group",
+      "label": "Study result card actions (Pin / Merge)",
+      "nodes": [
+        "assets_agent_chat_study_result_cards",
+        "assets_agent_chat_pin_button",
+        "assets_agent_chat_merge_button"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png"
+    },
+    {
+      "id": "qiitaexplorer_workspace_navigation",
+      "label": "Workspace / global chat sidebar navigation",
+      "nodes": [
+        "assets_agent_chat_qiitaexplorer_ui",
+        "assets_agent_chat_workspace_irritable_bowel",
+        "assets_agent_chat_workspace_gut_microbiome",
+        "assets_agent_chat_global_chats_section"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/dhruvsharma/Downloads/Projects/qiita-web/assets/agent-chat.png"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

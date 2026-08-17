@@ -9,13 +9,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/backend"
 
+# Same branch → env/data-root resolution as start_barnacle.sh
+# shellcheck source=detect_env.sh
+source "$SCRIPT_DIR/detect_env.sh"
+
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate qiita-web
 
 # Same Qiita DB config as start_barnacle.sh
 export QIITA_CONFIG_FP="/home/d4sharma/qiita-web/qiita_config.cfg"
-export QIITA_EXPERIMENT_DB_PATH="${QIITA_EXPERIMENT_DB_PATH:-$HOME/.qiita-experiment/projects.db}"
-mkdir -p "$(dirname "$QIITA_EXPERIMENT_DB_PATH")"
+export QIITA_EXPERIMENT_DB_PATH="${QIITA_EXPERIMENT_DB_PATH:-$QE_DATA_ROOT/projects.db}"
+export MERGE_RESULTS_DIR="${MERGE_RESULTS_DIR:-$QE_DATA_ROOT/merge_results}"
+mkdir -p "$(dirname "$QIITA_EXPERIMENT_DB_PATH")" "$MERGE_RESULTS_DIR"
 
 # Timestamped log file — every stdout byte (with ANSI stripped) is written here
 LOG_FP="$SCRIPT_DIR/logs/harness_$(date +%Y%m%d_%H%M%S).log"

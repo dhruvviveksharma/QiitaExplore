@@ -14,7 +14,7 @@ function hashToView(path) {
     return { type: 'global-chat', chatId: decodeURIComponent(m[1]) };
   if (path === '/merges' && SHOW_MERGES)
     return { type: 'merges' };
-  return { type: 'browse' };
+  return { type: 'browse' }; // covers '/browse', bare '/', and anything unmatched
 }
 
 // Pure serialize: view -> hash path (no '?study=' suffix, no leading '#').
@@ -25,7 +25,7 @@ function viewToPath(view) {
     return `/chats/${view.chatId}`;
   if (view.type === 'merges' && SHOW_MERGES)
     return '/merges';
-  return '/';
+  return '/browse';
 }
 
 // Full hash -> {view, studyId}. studyId is a global overlay independent of
@@ -61,15 +61,16 @@ function useUrlSync({ view, setView, setOpenProjId, openChat, modalStudy, openSt
   // hashchange asynchronously for ANY change, including our own), or every
   // internal navigation re-triggers a redundant restore a moment later. For
   // chats this isn't just waste: deleting the open chat transitions view to
-  // {type:'project-chat', chatId:null, ...}, which collapses to '#/' — an
-  // unguarded listener would parse that as {type:'browse'} and bounce the
-  // user out of "Select a chat" into full Browse. Compare the HASH STRING
-  // (path + study suffix together), not parsed objects — a deleted-chat
-  // view's type won't equal 'browse' as an object, but both collapse to the
-  // same string, which is what needs to be recognized as "nothing changed."
+  // {type:'project-chat', chatId:null, ...}, which collapses to '#/browse'
+  // — an unguarded listener would parse that as {type:'browse'} and bounce
+  // the user out of "Select a chat" into full Browse. Compare the HASH
+  // STRING (path + study suffix together), not parsed objects — a
+  // deleted-chat view's type won't equal 'browse' as an object, but both
+  // collapse to the same string, which is what needs to be recognized as
+  // "nothing changed."
   useEffect(() => {
     const onHashChange = () => {
-      const newHash = window.location.hash || '#/';
+      const newHash = window.location.hash || '#/browse';
       if (buildHash(view, modalStudy?.study_id ?? null) === newHash) return; // echo of our own last write
       const { view: target, studyId } = parseHash(newHash);
       if (target.type === 'project-chat' && target.projId) setOpenProjId(target.projId);

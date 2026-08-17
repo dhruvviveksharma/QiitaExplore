@@ -19,7 +19,7 @@ Several `except Exception:` blocks swallow errors with `pass` or a silent fallba
 
 - `qiita_explore/backend/routes/project_routes.py:42` — study-detail fetch/cache failure: `except Exception: pass` (user-facing study-add path)
 - `qiita_explore/backend/routes/project_routes.py:69` — sample-context fetch failure: `except Exception: pass`
-- `qiita_explore/backend/store/db.py:45` — bucket parse failure: silent `return []`
+- `qiita_explore/backend/store/db.py:45` — bucket pars e failure: silent `return []`
 - `qiita_explore/backend/store/db.py:202,207,212,217,222,228` — migration / ALTER TABLE failures swallowed
 - `qiita_explore/backend/store/cache.py:107` — cache parse failure swallowed
 - `qiita_explore/backend/store/crud.py:71` — silent swallow
@@ -1345,6 +1345,8 @@ not just green-via-skip.
 
 ---
 
+
+
 ## TKT-047: Unit Tests Fail Unless `QIITA_EXPLORE_ALLOWED_ORIGINS` Is Manually Cleared
 
 **Severity:** Medium
@@ -1358,11 +1360,11 @@ wrong with the code — it's environmental:
 
 - `config.py:6` calls `load_dotenv()`, which picks up `qiita_explore/.env`.
 - That file sets `QIITA_EXPLORE_ALLOWED_ORIGINS` to the dev origins
-  (`http://127.0.0.1:5503`, `http://localhost:5503`, `http://127.0.0.1:3000`,
-  `http://localhost:3000`).
+(`http://127.0.0.1:5503`, `http://localhost:5503`, `http://127.0.0.1:3000`,
+`http://localhost:3000`).
 - `_origin_allowed()` (`routes/auth_routes.py:39`) therefore requires a matching `Origin`
-  header, and Flask's test client sends none → every `POST /api/auth/connect` 403s, which
-  cascades through `TestAuthRoutes`, `TestPeriodicReverify` and `TestCrossUserIsolation`.
+header, and Flask's test client sends none → every `POST /api/auth/connect` 403s, which
+cascades through `TestAuthRoutes`, `TestPeriodicReverify` and `TestCrossUserIsolation`.
 
 `QIITA_EXPLORE_ALLOWED_ORIGINS="" pytest tests/` passes 103/103. The failure mode is
 confusing (it looks like an auth regression), and it silently punishes anyone who runs the
@@ -1371,11 +1373,13 @@ suite the obvious way.
 ### Plan
 
 - Pin the origin config inside the `_app` fixture the same way it already pins
-  `PAT_ENCRYPTION_KEY` / `SESSION_COOKIE_SECURE` (`tests/test_auth.py:81-83`):
-  `config.ALLOWED_ORIGINS = []`. That makes the suite independent of whatever `.env`
-  happens to be on the machine.
+`PAT_ENCRYPTION_KEY` / `SESSION_COOKIE_SECURE` (`tests/test_auth.py:81-83`):
+`config.ALLOWED_ORIGINS = []`. That makes the suite independent of whatever `.env`
+happens to be on the machine.
 - Consider whether `load_dotenv()` should be skipped under pytest entirely — several other
-  config values are equally environment-sensitive.
+config values are equally environment-sensitive.
+
+
 
 ### Files
 
@@ -1386,6 +1390,8 @@ suite the obvious way.
 ---
 
 ---
+
+
 
 ## TKT-048: Project Chat Derives Two Budgets From the Same Context Window
 
@@ -1419,6 +1425,8 @@ silently.
 
 ---
 
+
+
 ## TKT-049: `_resolve_user` Silently Misfiles a Lost Identity Into the Legacy Bucket
 
 **Severity:** Medium
@@ -1448,6 +1456,8 @@ callers pass it. Decide one convention and apply it to `merge_crud.py` too.
 
 ---
 
+
+
 ## TKT-050: Pre-Migration Pinned Rows Can Never Get Their Title Backfilled
 
 **Severity:** Low
@@ -1471,6 +1481,8 @@ keeping the cap check.
 - `qiita_explore/backend/store/cache.py :: pin_study_to_chat`
 
 ---
+
+
 
 ## TKT-051: ~15 Frontend Call Sites Still Fail Silently
 
@@ -1498,6 +1510,8 @@ diff — deliberately left out of the /simplify pass, which was scoped to the re
 - `qiita_explore/frontend/js/app_state.js`, `qiita_explore/frontend/js/merge_workspace.js`
 
 ---
+
+
 
 ## TKT-052: Browse Staging Enforces No Pin Cap
 
@@ -1529,6 +1543,8 @@ cap policy.
 
 ---
 
+
+
 ## TKT-053: Full SearchIntent Model (deferred)
 
 **Severity:** Low
@@ -1537,8 +1553,7 @@ cap policy.
 ### Description
 
 Metadata-aware relevance scoring (Part 1) ships typed `entities[]` with PI-only veto
-and `applied_filters` visibility. A fuller `SearchIntent{user_intent, semantic_query,
-entities, filters}` model would generalize filters (date_after, sample_count_min,
+and `applied_filters` visibility. A fuller `SearchIntent{user_intent, semantic_query, entities, filters}` model would generalize filters (date_after, sample_count_min,
 disease/host/geography entity types) and unify browse, agent, and legacy chat planners.
 
 Nothing in the current product needs date or sample-count filtering yet — defer until
