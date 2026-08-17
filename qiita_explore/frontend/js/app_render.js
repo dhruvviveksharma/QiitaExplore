@@ -32,12 +32,12 @@ function renderApp(s, account) {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
-    openSearchResultsPanel, closeSearchResultsPanel, openMergePanel,
+    openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
-    searchResultsPanel,
+    searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,
@@ -57,6 +57,7 @@ function renderApp(s, account) {
   const hasProjectSources  = view.type === 'project-chat' && openProject?.studies?.length > 0;
   const hasGlobalPins      = view.type === 'global-chat' && pinnedMeta.length > 0;
   const hasSourcesBar      = hasProjectSources || hasGlobalPins;
+  const resultsDrawerOpen  = !!(searchResultsPanel && !searchResultsClosing);
 
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
@@ -201,7 +202,7 @@ function renderApp(s, account) {
       </aside>
 
       {/* ══════════════════ MAIN ══════════════════════ */}
-      <div className={`main${(showMergePanel || searchResultsPanel) ? ' merge-open' : ''}`}>
+      <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}`}>
           {(view.type === 'browse' || view.type === 'merges') ? (
@@ -614,7 +615,7 @@ function renderApp(s, account) {
       {modalStudy && (
         <StudyModal study={modalStudy} detail={modalDetail}
           loading={modalDetailLoading} onClose={closeModal}
-          drawerOpen={!!(showMergePanel || searchResultsPanel)}
+          drawerOpen={!!(showMergePanel || resultsDrawerOpen)}
           shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}
       {showMergePanel && (
@@ -631,7 +632,9 @@ function renderApp(s, account) {
           studies={searchResultsPanel.studies}
           title={searchResultsPanel.title}
           detail={searchResultsPanel.detail}
+          closing={searchResultsClosing}
           onClose={closeSearchResultsPanel}
+          onExited={finishCloseSearchResultsPanel}
           onPin={study => view.chatId && pinStudy(view.chatId, study)}
           onMerge={study => { setPendingMergeStudy(study); openMergePanel(true); }}
           onOpen={openStudyModal}

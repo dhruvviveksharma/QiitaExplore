@@ -1,8 +1,31 @@
 // Right-hand drawer listing search_studies result_studies in relevance order.
-function SearchResultsPanel({ studies, title, detail, onClose, onPin, onMerge, onOpen, isPinned }) {
+function SearchResultsPanel({ studies, title, detail, closing, onClose, onExited, onPin, onMerge, onOpen, isPinned }) {
   const list = studies || [];
+  const exited = useRef(false);
+  const finish = () => {
+    if (exited.current) return;
+    exited.current = true;
+    onExited?.();
+  };
+  useEffect(() => {
+    if (!closing) return;
+    const t = setTimeout(finish, 280);
+    return () => clearTimeout(t);
+  }, [closing]);
   return (
-    <div className="search-results-panel" role="dialog" aria-label="Search results">
+    <div
+      className={`search-results-panel${closing ? ' closing' : ''}`}
+      role="dialog"
+      aria-label="Search results"
+      onAnimationEnd={e => {
+        if (e.target !== e.currentTarget) return;
+        if (closing && e.animationName === 'search-results-out') finish();
+      }}
+      onTransitionEnd={e => {
+        if (e.target !== e.currentTarget) return;
+        if (closing && e.propertyName === 'transform') finish();
+      }}
+    >
       <div className="search-results-panel-header">
         <div className="search-results-panel-heading">
           <span className="search-results-panel-title">{title || 'Search results'}</span>

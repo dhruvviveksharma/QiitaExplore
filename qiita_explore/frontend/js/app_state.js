@@ -28,13 +28,25 @@ function useAppState() {
   const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
   // { studies, title, detail } | null — right drawer for search_studies "View all"
   const [searchResultsPanel, setSearchResultsPanel] = useState(null);
+  const [searchResultsClosing, setSearchResultsClosing] = useState(false);
   const openSearchResultsPanel = (payload) => {
     setShowMergePanel(false);
+    setSearchResultsClosing(false);
     setSearchResultsPanel(payload || null);
   };
-  const closeSearchResultsPanel = () => setSearchResultsPanel(null);
+  const closeSearchResultsPanel = () => {
+    if (!searchResultsPanel || searchResultsClosing) return;
+    setSearchResultsClosing(true);
+  };
+  const finishCloseSearchResultsPanel = () => {
+    setSearchResultsPanel(null);
+    setSearchResultsClosing(false);
+  };
   const openMergePanel = (open = true) => {
-    if (open) setSearchResultsPanel(null);
+    if (open) {
+      setSearchResultsPanel(null);
+      setSearchResultsClosing(false);
+    }
     setShowMergePanel(!!open);
   };
   const [input,   setInput]   = useState('');
@@ -706,13 +718,13 @@ function useAppState() {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
-    openSearchResultsPanel, closeSearchResultsPanel, openMergePanel,
+    openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
-    searchResultsPanel,
+    searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
     modalStudy, modalDetail, modalDetailLoading,

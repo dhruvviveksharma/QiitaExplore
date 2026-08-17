@@ -564,12 +564,29 @@ input, textarea { font-family: var(--sans); }
 .tool-call-show-query   { font-size: 11px; font-weight: 500; color: var(--text-3); cursor: pointer; margin-left: 10px; }
 .tool-call-show-query:hover { color: var(--accent); text-decoration: underline; }
 
-/* Search results drawer (View all →) — same right-edge pattern as .merge-panel */
+/* Search results drawer (View all →) — floating bubble, inset from the edge */
 .search-results-panel {
-  position: fixed; top: 0; right: 0; width: 420px; height: 100%;
-  z-index: 200; background: var(--surface); border-left: 1px solid var(--border);
+  position: fixed; top: 12px; right: 12px; bottom: 12px;
+  width: 400px; height: auto;
+  z-index: 200; background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
   display: flex; flex-direction: column; overflow: hidden;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.12);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.16);
+  transform: translateX(0);
+  animation: search-results-in 220ms ease;
+  transition: transform 220ms ease;
+}
+.search-results-panel.closing {
+  animation: search-results-out 220ms ease forwards;
+}
+@keyframes search-results-in {
+  from { transform: translateX(calc(100% + 24px)); }
+  to { transform: translateX(0); }
+}
+@keyframes search-results-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(100% + 24px)); }
 }
 .search-results-panel-header {
   display: flex; align-items: flex-start; gap: 8px;
@@ -1066,7 +1083,7 @@ input, textarea { font-family: var(--sans); }
 
 .show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
 .show-more-btn:hover { color: var(--accent); }
-.main.merge-open { padding-right: 430px; transition: padding-right .2s ease; }
+.main.merge-open { padding-right: 430px; transition: padding-right 220ms ease; }
 /* Workspace picker (floating panel create state) */
 .merge-picker-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
 .merge-ws-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
@@ -1242,10 +1259,11 @@ input, textarea { font-family: var(--sans); }
   display: flex; align-items: center; justify-content: center;
   z-index: 200; padding: 20px;
   animation: fadeIn .14s ease;
+  transition: right 220ms ease;
 }
 /* Keep the study card in the leftover column when the right drawer is open
-   (search results / merge panel are 420px). Width is % of this overlay, not vw. */
-.modal-overlay.with-drawer { right: 420px; }
+   (search-results bubble + gutter / merge panel). Width is % of this overlay, not vw. */
+.modal-overlay.with-drawer { right: 430px; }
 @keyframes fadeIn { from { opacity:0; } }
 .modal-card {
   background: var(--surface);
