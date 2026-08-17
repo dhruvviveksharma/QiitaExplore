@@ -90,7 +90,7 @@ The session cookie name itself, `qe_sid`, is **not** configurable — it is the 
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
-| `QIITA_EXPERIMENT_DB_PATH` | *computed* — `backend/data/projects.db` | `backend/store/db.py` | Path to the local SQLite store (projects, chats, messages, sessions, caches). `start_barnacle.sh` overrides the default to `$HOME/.qiita-experiment/projects.db` and `mkdir -p`s the parent. | Yes |
+| `QIITA_EXPERIMENT_DB_PATH` | *computed* — `backend/data/projects.db` | `backend/store/db.py` | Path to the local SQLite store (projects, chats, messages, sessions, caches). `start_barnacle.sh` sources `detect_env.sh`, which resolves the current git branch to `deployment` (master) or `dev` (anything else) and overrides the default to `/ddn_scratch/d4sharma/QiitaExploreDB/{deployment\|dev}/projects.db`, `mkdir -p`ing the parent. | Yes |
 | `PG_POOL_MIN_CONN` | `2` | `backend/helpers/pg_pool.py` | Minimum connections in the read-only PostgreSQL pool. | Yes |
 | `PG_POOL_MAX_CONN` | `8` | `backend/helpers/pg_pool.py` | Maximum connections in that pool. This is a per-gunicorn-worker pool; multiply by the worker count for real database load. | Yes |
 
@@ -136,7 +136,7 @@ Note that the overall LLM context budget is **not** an environment variable. `ba
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
 | `MERGE_CONDA_ENV` | `qiita` | `backend/helpers/merge_executor.py` | Conda environment name passed to `conda run -n <env>` for the merge subprocess. | Yes |
-| `MERGE_RESULTS_DIR` | *computed* — `backend/data/merge_results` | `backend/helpers/merge_executor.py`, `backend/routes/merge_routes.py` | Where merge job working directories and the final `{job_id}.tar.gz` land. Created with `os.makedirs(..., exist_ok=True)` at import. | Yes |
+| `MERGE_RESULTS_DIR` | *computed* — `backend/data/merge_results` | `backend/helpers/merge_executor.py`, `backend/routes/merge_routes.py` | Where merge job working directories and the final `{job_id}.tar.gz` land. `start_barnacle.sh` overrides this the same way as `QIITA_EXPERIMENT_DB_PATH` — `/ddn_scratch/d4sharma/QiitaExploreDB/{deployment\|dev}/merge_results`. Created with `os.makedirs(..., exist_ok=True)` at import. | Yes |
 
 The merge executor is explicitly dev-only. Its module docstring carries a `TODO (before merging to master)` to replace the local `subprocess` path with an SFTP+SSH pipeline. Both variables above configure a code path that will not work on a remote deployment regardless of their values.
 

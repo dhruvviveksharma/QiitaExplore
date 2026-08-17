@@ -187,3 +187,36 @@ class TestExecuteToolCall:
         detail = events[1]["detail"]
         assert not detail.startswith("·"), f"Expected no leading '·', got: {detail!r}"
         assert "s" in detail   # timing like "0.0s"
+
+
+class TestToolsWithoutDedupSearches:
+    """Regression coverage for the OpenAI-vs-Anthropic tool-shape KeyError.
+
+    _stream_anthropic_agent passes Anthropic-shape tools ({"name": ...}, no
+    "function" key) into this filter once search_already_done flips True —
+    it must not assume the OpenAI {"function": {"name": ...}} shape.
+    """
+
+    OPENAI_TOOLS = [
+        {"type": "function", "function": {"name": "search_studies"}},
+        {"type": "function", "function": {"name": "get_study_report"}},
+    ]
+    ANTHROPIC_TOOLS = [
+        {"name": "search_studies", "description": "", "input_schema": {}},
+        {"name": "get_study_report", "description": "", "input_schema": {}},
+    ]
+
+    def test_openai_shape_unaffected(self):
+        import helpers.agent as agent_mod
+        result = agent_mod._tools_without_dedup_searches(self.OPENAI_TOOLS, True)
+        assert [t["function"]["name"] for t in result] == ["get_study_report"]
+
+    def test_anthropic_shape_does_not_raise(self):
+        import helpers.agent as agent_mod
+        result = agent_mod._tools_without_dedup_searches(self.ANTHROPIC_TOOLS, True)
+        assert [t["name"] for t in result] == ["get_study_report"]
+
+    def test_anthropic_shape_passthrough_when_search_not_done(self):
+        import helpers.agent as agent_mod
+        result = agent_mod._tools_without_dedup_searches(self.ANTHROPIC_TOOLS, False)
+        assert result == self.ANTHROPIC_TOOLS

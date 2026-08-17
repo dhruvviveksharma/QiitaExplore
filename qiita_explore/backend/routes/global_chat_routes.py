@@ -3,7 +3,7 @@ import logging
 from flask import g, jsonify, request
 
 from run import app
-from config import GLOBAL_CHAT_SYSTEM_PROMPT, context_budget_chars
+from config import GLOBAL_CHAT_SYSTEM_PROMPT
 from helpers.agent import stream_agent
 from helpers.agent_tool_schemas import TOOL_SCHEMAS
 from store import (

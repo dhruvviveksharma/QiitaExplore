@@ -124,6 +124,13 @@ input, textarea { font-family: var(--sans); }
   color: var(--text-3);
   padding: 8px 6px 4px;
 }
+.sb-label.with-action { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.sb-label-close {
+  font-size: 13px; color: var(--text-3); width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; text-transform: none; letter-spacing: normal; font-weight: 400;
+}
+.sb-label-close:hover { background: #fce7f3; color: var(--accent); }
 .sb-loading { font-size: 12px; color: var(--text-3); padding: 4px 8px; }
 .folder-loading { padding: 8px 16px; }
 
@@ -255,6 +262,14 @@ input, textarea { font-family: var(--sans); }
 
 .cr-content { flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 0; }
 .cr-title { font-family: var(--sans); font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+.cr-title.editable { cursor: pointer; }
+.cr-title.editable:hover .rename-hint { opacity: 1; }
+.cr-title-input {
+  font-family: var(--sans); font-size: 12px; color: var(--text-2);
+  border: 1px solid var(--accent); border-radius: 4px;
+  padding: 1px 4px; outline: none; background: var(--surface);
+  min-width: 0; flex: 1;
+}
 .cr-date  { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--text-3); flex-shrink: 0; margin-left: 4px; }
 
 .cr-del {

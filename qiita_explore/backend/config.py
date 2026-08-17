@@ -47,10 +47,6 @@ def get_client(model: str):
     return client, "nrp"
 
 
-def model_supports_tools(model: str) -> bool:
-    return MODEL_METADATA.get(model or DEFAULT_MODEL, {}).get("supports_tools", False)
-
-
 def context_budget_chars(model: str) -> int:
     ctx_tokens = MODEL_METADATA.get(model or DEFAULT_MODEL, MODEL_METADATA[DEFAULT_MODEL])["context"]
     chars = int((ctx_tokens - 8_000) * 3.5)

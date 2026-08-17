@@ -1,12 +1,10 @@
 """LLM context builders, SSE formatter, and streaming wrappers."""
 
 import json
-import re
 
 import anthropic as _anthropic
 
 from config import (
-    client,
     get_client,
     DEFAULT_MODEL,
     ALLOWED_MODELS,

@@ -63,7 +63,6 @@ def bold(s):  return _c("1", s)
 def cyan(s):  return _c("36", s)
 def green(s): return _c("32", s)
 def yellow(s):return _c("33", s)
-def magenta(s):return _c("35", s)
 
 TEXT_PREVIEW = int(os.getenv("HARNESS_TEXT_PREVIEW", "2000"))  # chars of tool text to show
 CHAT_ID = "harness-test-chat"

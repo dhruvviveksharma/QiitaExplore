@@ -22,7 +22,6 @@ from store import SCOPE_PROJECT, SCOPE_GLOBAL, get_project_id_for_chat, get_proj
 
 logger = logging.getLogger(__name__)
 
-from helpers.agent_tool_schemas import TOOL_SCHEMAS  # re-exported for agent.py
 
 @dataclass
 class ToolResult:

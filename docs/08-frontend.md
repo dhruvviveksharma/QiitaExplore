@@ -27,7 +27,9 @@ There are no ES modules. No file has an `import` or an `export`. Every function,
 
 ### The API base, and why `127.0.0.1`
 
-`frontend/js/utils.js` reads a `<meta name="api-base">` tag from `index.html` at load time and falls back to a relative `/api` if the tag is absent:
+**Current state on this branch (not yet the design below):** `frontend/js/utils.js` and `frontend/index.html` still hardcode the absolute dev URL `http://127.0.0.1:5002/api` as the committed default, each with its own `// TODO: revert to port 5001 before committing to master`. This is a known, deliberate decision for now, not an oversight. The relative-default design described below is the intended direction (already shipped on `master`) but has not been merged into this branch's `utils.js`/`index.html`.
+
+`frontend/js/utils.js` is intended to read a `<meta name="api-base">` tag from `index.html` at load time and fall back to a relative `/api` if the tag is absent:
 
 ```js
 const API = document.querySelector('meta[name="api-base"]')?.content || '/api';

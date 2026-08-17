@@ -2,6 +2,9 @@
 // toggle, per-study "+ Merge", in-chat "Merge →"). Flip to true to restore.
 const SHOW_MERGES = false;
 
+// Shared title-truncation for auto-generated chat titles.
+const truncateTitle = (msg) => (msg || '').slice(0, 60);
+
 function useAppState() {
   const [projects,    setProjects]    = useState([]);
   const [projLoading, setProjLoading] = useState(true);
@@ -23,6 +26,9 @@ function useAppState() {
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
+  // Which sidebar chat row (project or global) is being renamed inline, if any.
+  const [editingChatId, setEditingChatId] = useState(null);
+  const [editChatVal,   setEditChatVal]   = useState('');
   const [mergeWorkspaceId, setMergeWorkspaceId] = useState(null);
   const [showMergePanel,   setShowMergePanel]   = useState(false);
   const [pendingMergeStudy, setPendingMergeStudy] = useState(null);
@@ -252,28 +258,44 @@ function useAppState() {
     setGlobalChats(prev => prev.filter(c => c.chat_id !== chatId));
   };
 
-  const renameChat = async (newTitle) => {
-    const chatId = view.chatId;
-    const url = chatScopeUrl(view, chatId);
-    if (!url) return;
+  // Shared rename primitive — PATCHes the chat, updates chatCache, then
+  // hands the new title to `patchList` to mirror it into whichever sidebar
+  // list (project chats or global chats) holds this chat's row.
+  const renameChatCore = async (url, chatId, newTitle, patchList) => {
+    const t = (newTitle || '').trim();
+    if (!t) return;
     try {
-      const d = await apiJson(url, { method: 'PATCH', body: JSON.stringify({ title: newTitle }) });
+      const d = await apiJson(url, { method: 'PATCH', body: JSON.stringify({ title: t }) });
       const title = d.title;
       setChatCache(prev => {
         const cur = prev[chatId];
         return cur ? { ...prev, [chatId]: { ...cur, title } } : prev;
       });
-      if (view.type === 'global-chat') {
-        setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
-      } else if (view.type === 'project-chat') {
-        setOpenProject(prev => prev && {
-          ...prev,
-          chats: (prev.chats || []).map(c => c.chat_id === chatId ? { ...c, title } : c),
-        });
-      }
+      patchList(title);
     } catch (e) {
       setCompErr(e.message || 'Could not rename chat');
     }
+  };
+
+  // Explicit-chatId renamers — used by sidebar rows, which may not be the
+  // currently open chat (unlike the top-bar ChatTitleEditor below).
+  const renameProjChat = (projId, chatId, newTitle) =>
+    renameChatCore(`/projects/${projId}/chats/${chatId}`, chatId, newTitle, title =>
+      setOpenProject(prev => prev && {
+        ...prev,
+        chats: (prev.chats || []).map(c => c.chat_id === chatId ? { ...c, title } : c),
+      }));
+
+  const renameGlobChat = (chatId, newTitle) =>
+    renameChatCore(`/global-chats/${chatId}`, chatId, newTitle, title =>
+      setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c)));
+
+  // Top-bar rename (ChatTitleEditor) — always targets the currently open chat.
+  const renameChat = (newTitle) => {
+    const chatId = view.chatId;
+    if (!chatId) return;
+    if (view.type === 'global-chat') return renameGlobChat(chatId, newTitle);
+    if (view.type === 'project-chat' && view.projId) return renameProjChat(view.projId, chatId, newTitle);
   };
 
   // ─── streaming helpers ────────────────────────────────────────────────────────
@@ -299,7 +321,7 @@ function useAppState() {
 
   const optimisticAppend = (chatId, userMsg) =>
     setChatCache(prev => {
-      const c = prev[chatId] || { messages: [], title: userMsg.slice(0, 60) };
+      const c = prev[chatId] || { messages: [], title: truncateTitle(userMsg) };
       return {
         ...prev,
         [chatId]: {
@@ -313,7 +335,11 @@ function useAppState() {
       };
     });
 
-  const applyStreamDone = (chatId, title, pinnedList, pinnedMeta) => {
+  // `fallbackTitle` is only adopted when the chat's title is still the
+  // auto-generated default — a chat the user already renamed (or one whose
+  // title was already auto-set by a prior turn) is left untouched, so
+  // finishing a later message never clobbers a rename.
+  const applyStreamDone = (chatId, fallbackTitle, pinnedList, pinnedMeta) => {
     patchLast(chatId, m => {
       const next = { ...m, isStreaming: false, pendingStep: null };
       if (m.segments !== null) {
@@ -326,7 +352,8 @@ function useAppState() {
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
-      return { ...prev, [chatId]: { ...cur, title, pinnedStudyMeta: nextMeta } };
+      const nextTitle = cur.title === 'New chat' ? fallbackTitle : cur.title;
+      return { ...prev, [chatId]: { ...cur, title: nextTitle, pinnedStudyMeta: nextMeta } };
     });
   };
 
@@ -541,7 +568,7 @@ function useAppState() {
 
       if (view.type === 'browse') {
         const staged = [...ctxStudies];
-        const chat   = await createGlobalChatAndSeed(displayMsg.slice(0, 60));
+        const chat   = await createGlobalChatAndSeed(truncateTitle(displayMsg));
         workView     = { type: 'global-chat', chatId: chat.chat_id };
         setView(workView);
         setCtxStudies([]);
@@ -565,7 +592,7 @@ function useAppState() {
 
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
-        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
+        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -582,17 +609,19 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = displayMsg.slice(0, 60);
+              const title = truncateTitle(displayMsg);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
               setOpenProject(prev => prev ? {
-                ...prev, chats: (prev.chats||[]).map(c => c.chat_id === chatId ? { ...c, title } : c)
+                ...prev,
+                chats: (prev.chats || []).map(c =>
+                  c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c),
               } : prev);
             },
           },
         );
 
       } else if (workView.type === 'global-chat') {
-        const chatId = await ensureChatId(workView, displayMsg.slice(0, 60));
+        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -610,9 +639,10 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = displayMsg.slice(0, 60);
+              const title = truncateTitle(displayMsg);
               applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
-              setGlobalChats(prev => prev.map(c => c.chat_id === chatId ? { ...c, title } : c));
+              setGlobalChats(prev => prev.map(c =>
+                c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c));
             },
           },
         );
@@ -718,12 +748,14 @@ function useAppState() {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    editingChatId, editChatVal,
     searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -735,7 +767,7 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    completeSlash, renameChat,
+    completeSlash, renameChat, renameProjChat, renameGlobChat,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,

@@ -263,7 +263,6 @@ def get_workspace_study_samples(workspace_id, study_id):
 
 @app.route("/api/merge-workspaces/<workspace_id>/jobs", methods=["POST"])
 def submit_merge_job(workspace_id):
-    body = request.json or {}
     user_id = g.user_id
 
     ws = get_workspace(workspace_id, user_id)

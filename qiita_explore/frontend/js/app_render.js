@@ -32,11 +32,13 @@ function renderApp(s, account) {
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
     query, results, searching, searched, sqlQuery, appliedFilters, showSql,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
+    editingChatId, editChatVal,
     searchResultsPanel, searchResultsClosing,
     input, sending, compErr, addStudyErr, selectedModel, theme,
     slashIndex, slashDismissed, showModelPicker, showPlusMenu, anthropicKeySet,
@@ -46,7 +48,7 @@ function renderApp(s, account) {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
-    completeSlash, renameChat,
+    completeSlash, renameChat, renameProjChat, renameGlobChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
     activeMsgs, slashMatches,
   } = s;
@@ -58,6 +60,16 @@ function renderApp(s, account) {
   const hasGlobalPins      = view.type === 'global-chat' && pinnedMeta.length > 0;
   const hasSourcesBar      = hasProjectSources || hasGlobalPins;
   const resultsDrawerOpen  = !!(searchResultsPanel && !searchResultsClosing);
+
+  // Shared save for both sidebar chat lists' inline rename (see chat-row
+  // rendering below) — mirrors MergesTab's saveRename pattern.
+  const saveRenameChat = (kind, projId, chatId) => {
+    const t = editChatVal.trim();
+    setEditingChatId(null);
+    if (!t) return;
+    if (kind === 'proj') renameProjChat(projId, chatId, t);
+    else renameGlobChat(chatId, t);
+  };
 
   return (
     <div className={`app${theme === 'dark' ? ' dark' : ''}`}>
@@ -72,6 +84,32 @@ function renderApp(s, account) {
         </div>
 
         <div className="sidebar-body">
+
+          {/* Mirrors the "View all →" drawer (SearchResultsPanel below) —
+              same searchResultsPanel state drives both, so they open and
+              close together. This is the sidebar rendering of the same
+              retrieved-studies list, using the Studies-tab's row pattern
+              (title + study ID) rather than the drawer's InlineStudyCard. */}
+          {searchResultsPanel && (
+            <>
+              <div className="sb-label with-action">
+                <span>Search Results ({(searchResultsPanel.studies || []).length})</span>
+                <button className="sb-label-close" onClick={closeSearchResultsPanel} title="Clear">×</button>
+              </div>
+              {(searchResultsPanel.studies || []).length === 0 ? (
+                <div className="folder-empty">No studies in this result set.</div>
+              ) : (
+                (searchResultsPanel.studies || []).map(s => (
+                  <div key={s.study_id} className="chat-row" onClick={() => openStudyModal(s)}>
+                    <div className="cr-content">
+                      <div className="cr-title">{s.study_title || 'Untitled'}</div>
+                      <div className="cr-date">ID {s.study_id}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
+          )}
 
           <div className="sb-label">Workspaces</div>
           {projLoading && <div className="sb-loading">Loading…</div>}
@@ -122,7 +160,25 @@ function renderApp(s, account) {
                       onClick={() => openProjChat(p.project_id, c.chat_id)}
                     >
                       <div className="cr-content">
-                        <div className="cr-title">{chatCache[c.chat_id]?.title || c.title || 'New chat'}</div>
+                        {editingChatId === c.chat_id ? (
+                          <input className="cr-title-input" value={editChatVal} autoFocus
+                            onChange={e => setEditChatVal(e.target.value)}
+                            onBlur={() => saveRenameChat('proj', p.project_id, c.chat_id)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { e.preventDefault(); saveRenameChat('proj', p.project_id, c.chat_id); }
+                              if (e.key === 'Escape') setEditingChatId(null);
+                            }}
+                            onClick={e => e.stopPropagation()} />
+                        ) : (
+                          <div className="cr-title editable" onClick={e => {
+                            e.stopPropagation();
+                            setEditingChatId(c.chat_id);
+                            setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                          }}>
+                            {chatCache[c.chat_id]?.title || c.title || 'New chat'}
+                            <span className="rename-hint">✎</span>
+                          </div>
+                        )}
                         {c.updated_at && (
                           <div className="cr-date">
                             {formatDate(c.updated_at)}
@@ -187,7 +243,25 @@ function renderApp(s, account) {
               onClick={() => openGlobChat(c.chat_id)}
             >
               <div className="cr-content">
-                <div className="cr-title">{chatCache[c.chat_id]?.title || c.title || 'New chat'}</div>
+                {editingChatId === c.chat_id ? (
+                  <input className="cr-title-input" value={editChatVal} autoFocus
+                    onChange={e => setEditChatVal(e.target.value)}
+                    onBlur={() => saveRenameChat('global', null, c.chat_id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); saveRenameChat('global', null, c.chat_id); }
+                      if (e.key === 'Escape') setEditingChatId(null);
+                    }}
+                    onClick={e => e.stopPropagation()} />
+                ) : (
+                  <div className="cr-title editable" onClick={e => {
+                    e.stopPropagation();
+                    setEditingChatId(c.chat_id);
+                    setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
+                  }}>
+                    {chatCache[c.chat_id]?.title || c.title || 'New chat'}
+                    <span className="rename-hint">✎</span>
+                  </div>
+                )}
                 {c.updated_at && (
                   <div className="cr-date">
                     {formatDate(c.updated_at)}

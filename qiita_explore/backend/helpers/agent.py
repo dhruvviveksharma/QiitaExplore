@@ -33,7 +33,9 @@ def _tools_without_dedup_searches(tools, search_already_done: bool):
     if not search_already_done:
         return tools
     blocked = _DEDUP_AFTER_USE_TOOL_NAMES
-    return [t for t in tools if t["function"]["name"] not in blocked]
+    # tools is OpenAI-shape ({"function": {"name": ...}}) on the OpenAI path,
+    # Anthropic-shape ({"name": ...}) on the Anthropic path — handle both.
+    return [t for t in tools if t.get("function", t)["name"] not in blocked]
 
 
 def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_already_done):

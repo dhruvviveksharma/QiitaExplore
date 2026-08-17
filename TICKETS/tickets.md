@@ -238,11 +238,15 @@ Files over the 500-line `qiita_explore/` cap (verified 2026-06-21):
 - `merge_routes.py`: 528 → 364 via `helpers/merge_helpers.py` extraction (this pass, see TKT-014), **under cap**.
 - `components.js` (684), `app_state.js` (633), `app_render.js` (601), `agent_tools.py` (548) **remain over cap** — see TKT-038, TKT-036, TKT-037, TKT-013 respectively. The `app_actions.js` split proposed below for `app_state.js` was not done as a file split, but a chunk of its duplication was removed in-place (`streamChat`/`createProjChatAndSeed`/`createGlobalChatAndSeed`, see TKT-036).
 
+### Update (verified 2026-08-17)
 
+- `agent_tools.py`: 548 → 410, **now under cap** — closes as TKT-013 (see that ticket).
+- `components.js` (738), `app_state.js` (754), `app_render.js` (646) **still over cap**, and all three have grown rather than shrunk since the last count — see TKT-038, TKT-036, TKT-037.
+- `backend/tests/test_auth.py` is now 593 lines, newly over cap (not tracked by any existing ticket) — see the new item added at the end of this file.
 
 ### Plan (TKT-011 scope, remaining files only)
 
-**components.js / app_render.js / agent_tools.py** — split along feature boundaries (TBD per file; see TKT-038, TKT-037, TKT-013).
+**components.js / app_render.js** — split along feature boundaries (TBD per file; see TKT-038, TKT-037).
 
 ---
 
@@ -274,18 +278,17 @@ Two spots in the merge page fan out parallel requests that could become expensiv
 ## TKT-013: Split agent_tools.py (over 500-line cap)
 
 **Severity:** Low
-**Status:** Open
+**Status:** Closed — resolved
 
 ### Description
 
-`qiita_explore/backend/helpers/agent_tools.py` is 548 lines (verified 2026-06-21), over the cap.
+`qiita_explore/backend/helpers/agent_tools.py` was 548 lines (verified 2026-06-21), over the cap.
 
-### Plan
+### Resolution (verified 2026-08-17)
 
-Extract tool implementations into `helpers/agent_tool_impls.py`:
-
-- Move `_tool_search_studies`, `_tool_search_by_sample`, `_tool_get_study_report`, `_tool_pin_study`, `_tool_compute_diversity`
-- Keep `TOOL_SCHEMAS`, `ToolResult`, `execute_tool`, and small helpers in `agent_tools.py`
+Now **410 lines**, well under cap. `TOOL_SCHEMAS`/`ToolResult` already live in
+`helpers/agent_tool_schemas.py` (281 lines) — the split this ticket proposed
+already happened (see TKT-039, also closed). No further action needed.
 
 ---
 
@@ -873,6 +876,13 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 `app_state.js` is 672 lines, over the 500-line cap by 172 lines. As of 2026-07-14: 633 lines (after TKT-033/035 plus a new `streamChat()` + `createProjChatAndSeed()`/`createGlobalChatAndSeed()` extraction that deduplicated the project-chat vs. global-chat `sendMessage` branches). Still over cap — the file split below is unstarted.
 
+### Update (verified 2026-08-17)
+
+Now **754 lines** — grew, not shrank, since 633 (a chat-rename clobber fix
+consolidated 6 duplicated `.slice(0, 60)` sites into a `truncateTitle()`
+helper, netting a few added lines for the fix's own guard logic). The split
+below is still unstarted and now more overdue.
+
 ### Plan
 
 
@@ -904,6 +914,10 @@ Replaced with a plain inline conditional; `useMemo` removed.
 ### Description
 
 `app_render.js` is 601 lines, over the 500-line cap by 101 lines.
+
+### Update (verified 2026-08-17)
+
+Now **646 lines** — still over cap, number stale, conclusion unchanged.
 
 ### Plan
 
@@ -937,6 +951,10 @@ Replaced with a plain inline conditional; `useMemo` removed.
 
 `components.js` is 689 lines, over the 500-line cap by 189 lines. As of 2026-07-14: 684 lines — still over cap, split unstarted.
 
+### Update (verified 2026-08-17)
+
+Now **738 lines** — still over cap, number stale, conclusion unchanged.
+
 ### Plan
 
 
@@ -962,28 +980,26 @@ Replaced with a plain inline conditional; `useMemo` removed.
 ## TKT-039: Split `agent_tools.py` (548 → ~250 lines)
 
 **Severity:** Low
-**Status:** Open
+**Status:** Closed — resolved
 
 ### Description
 
-`agent_tools.py` is 548 lines, over the 500-line cap by 48 lines.
+`agent_tools.py` was 548 lines, over the 500-line cap by 48 lines.
 
-### Plan
+### Resolution (verified 2026-08-17)
 
-
-| New File                  | Contents                           | Est. Lines |
-| ------------------------- | ---------------------------------- | ---------- |
-| `agent_tool_schemas.py`   | TOOL_SCHEMAS, ToolResult dataclass | ~200       |
-| `agent_tool_executors.py` | All *tool** functions              | ~300       |
-| `agent_tools.py`          | Re-export layer                    | ~100       |
-
-
-
+`agent_tool_schemas.py` (281 lines, `TOOL_SCHEMAS` + `ToolResult`) already
+exists and is the sole source of `TOOL_SCHEMAS` for every real consumer
+(`agent.py`, `agent_harness.py`, `global_chat_routes.py`) — a stale
+`agent_tools.py` re-export of it (with no actual consumer) was removed in
+this pass. `agent_tools.py` itself is now 410 lines, under cap. The
+`agent_tool_executors.py` split proposed below was not needed to get under
+cap and was not done.
 
 ### Files
 
 - `qiita_explore/backend/helpers/agent_tools.py`
-- New split files in `qiita_explore/backend/helpers/`
+- `qiita_explore/backend/helpers/agent_tool_schemas.py`
 
 ---
 
@@ -1574,7 +1590,35 @@ resolution only where a real entity exists.
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-08-03*
+
+
+## TKT-054: Split `test_auth.py` (over 500-line cap)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`qiita_explore/backend/tests/test_auth.py` is 593 lines (verified
+2026-08-17 during a dead-code/simplification pass), over the 500-line cap.
+Not previously tracked — every other file that was over cap already had a
+ticket (TKT-011 and children); this one grew past the cap since the last
+audit.
+
+### Plan
+
+Split along its existing `Test*` class boundaries (session lifecycle,
+periodic reverify, cross-user isolation, etc. — see the class list) into
+2-3 files under `tests/`, e.g. `test_auth_sessions.py` +
+`test_auth_isolation.py`. No production code changes required.
+
+### Files
+
+- `qiita_explore/backend/tests/test_auth.py`
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-08-17*
 
 ---
 

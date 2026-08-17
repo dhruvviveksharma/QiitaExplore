@@ -3,7 +3,7 @@ import re
 from typing import Optional
 
 from config import GLOBAL_SEARCH_SQL_LIMIT_BROAD, GLOBAL_SEARCH_SQL_LIMIT_NARROW
-from services.relevance import resolve_pi, build_pi_required_filter
+from services.relevance import resolve_pi
 
 _STOP_WORDS = frozenset({
     'find', 'search', 'show', 'get', 'give', 'list', 'what', 'which',
@@ -108,11 +108,10 @@ def browse_query_to_sql(user_query: str) -> dict:
     text_clauses: list = []
     params:       list = []
 
-    if veto_applied:
-        pi_sql, pi_params = build_pi_required_filter(resolved)
-        if pi_sql:
-            text_clauses.append(pi_sql)
-            params.extend(pi_params)
+    # PI filtering is NOT embedded here — the caller (study_routes.search)
+    # applies it once via build_pi_required_filter()/pi_filter_sql, the same
+    # path _tool_search_studies uses. Embedding it here too would AND the
+    # identical EXISTS(...) clause into the query twice.
 
     subclauses = []
     clause_sql = _keyword_clause_sql()

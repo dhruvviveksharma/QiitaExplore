@@ -167,9 +167,9 @@ The one exception to "restart required" is `ANTHROPIC_API_KEY`, which is re-read
 
 `qiita_explore/requirements.txt` is what [`../INSTALL.md`](../INSTALL.md) installs. It uses **ranges** (`flask>=2.2,<2.3`, `openai>=1.40,<3.0`, `psycopg2-binary` unpinned).
 
-`qiita_explore/requirements.prod.txt` covers the same dependency set with **exact pins** (`Flask==2.2.5`, `pandas==1.5.3`, `numpy==1.26.4`), and its header still describes an "ezredbiom container" — the tree's former name.
+`qiita_explore/requirements.prod.txt` covers the same dependency set with **exact pins** (`Flask==2.2.5`, `numpy==1.26.4`) and every prod pin falls inside dev's range spec — the two files are currently in sync, with no package present in one but missing from the other. (There is no `pandas` dependency in either file.)
 
-Nothing in the start scripts or CI selects between them, so which one a host has installed is a property of how that host was built, not of the repo. Two consequences worth knowing before debugging a version-shaped problem: a fresh environment built from `requirements.txt` today will not necessarily match a host built from it six months ago, and the two files are kept in sync by hand — a dependency added to one is not automatically in the other. When a bug reproduces on one host and not another, `pip freeze` on both is the fastest discriminator.
+Nothing in the start scripts or CI selects between them, so which one a host has installed is a property of how that host was built, not of the repo. A consequence worth knowing before debugging a version-shaped problem: a fresh environment built from `requirements.txt` today will not necessarily match a host built from it six months ago. The two files are kept in sync by hand, so re-verify they still match before trusting this section — when a bug reproduces on one host and not another, `pip freeze` on both is the fastest discriminator.
 
 Both files install `qiita-files` directly from a GitHub archive URL at `master`, so a rebuild also picks up whatever that branch holds at rebuild time.
 
