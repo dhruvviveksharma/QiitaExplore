@@ -9,16 +9,26 @@ _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "da
 os.makedirs(_DEFAULT_DATA_DIR, exist_ok=True)
 DB_PATH = os.getenv("QIITA_EXPERIMENT_DB_PATH", os.path.join(_DEFAULT_DATA_DIR, "projects.db"))
 
+# WAL needs reliable POSIX locking + shared memory. /ddn_scratch is a network
+# filesystem where that fails under multi-worker contention (four gunicorn
+# workers racing PRAGMA journal_mode=WAL → "database is locked"). DELETE mode
+# is the SQLite-recommended fallback for networked paths.
+_ON_NETWORK_FS = DB_PATH.startswith("/ddn_scratch/")
+_JOURNAL_MODE = "DELETE" if _ON_NETWORK_FS else "WAL"
+# Wait up to 30s for a lock instead of Python's 5s default (docs/09-operations.md).
+_BUSY_TIMEOUT_MS = 30000
+
 
 def _now():
     return datetime.utcnow().isoformat() + "Z"
 
 
 def _conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_MS / 1000.0)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute(f"PRAGMA journal_mode = {_JOURNAL_MODE}")
     conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
