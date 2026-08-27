@@ -6,6 +6,40 @@
 
 // ── Add to project ────────────────────────────────────────────────────────────
 
+// Single-select dropdown built on the shared useDropdown convention (see
+// CLAUDE.md "Established Patterns: Dropdown UI") instead of a native
+// <select> — same trigger/panel/dismiss shape as ChatRowMenu's "...", just
+// with select-style (left-aligned, below the trigger) positioning, which is
+// useDropdown's default.
+function ProjectPickerDropdown({ projects, selectedId, onSelect }) {
+  const dd = useDropdown();
+  const selectedProj = (projects || []).find(p => p.project_id === selectedId);
+  const label = selectedId === '' ? '+ New project…' : (selectedProj?.name || 'Select a project');
+
+  return (
+    <div className="dd-root" ref={dd.rootRef}>
+      <button type="button" ref={dd.btnRef} className="dd-trigger" onClick={dd.toggle}>
+        <span className="dd-trigger-label">{label}</span>
+        <ChevronIcon dir={dd.open ? 'up' : 'down'} size={11} />
+      </button>
+      {dd.open && dd.pos && (
+        <div className="cr-menu" style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
+          {(projects || []).map(p => (
+            <button key={p.project_id} className="cr-menu-item"
+              onClick={() => { onSelect(p.project_id); dd.setOpen(false); }}>
+              {p.name}
+            </button>
+          ))}
+          <div className="cr-menu-sep" />
+          <button className="cr-menu-item" onClick={() => { onSelect(''); dd.setOpen(false); }}>
+            + New project…
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddToProjectBar({ study }) {
   const [projects,   setProjects]   = useState(null);
   const [selected,   setSelected]   = useState('');
@@ -63,15 +97,8 @@ function AddToProjectBar({ study }) {
   return (
     <div className="modal-ws-row">
       <span className="modal-ws-label">Add to project</span>
-      <select className="merge-dt-select" value={selected}
-        onChange={e => { setSelected(e.target.value); setMsg(''); }}>
-        {projects.map(p => (
-          <option key={p.project_id} value={p.project_id}>
-            {p.name} ({(p.studies || []).length})
-          </option>
-        ))}
-        <option value="">+ New project…</option>
-      </select>
+      <ProjectPickerDropdown projects={projects} selectedId={selected}
+        onSelect={id => { setSelected(id); setMsg(''); }} />
       {isNew && (
         <input className="merge-name-filter" placeholder="Project name"
           value={newName} onChange={e => setNewName(e.target.value)} />
@@ -167,7 +194,7 @@ function StudyActionBar({ study }) {
   return (
     <div className="modal-ws-bar">
       <AddToProjectBar study={study} />
-      <AddToMergeBar study={study} />
+      {SHOW_MERGES && <AddToMergeBar study={study} />}
     </div>
   );
 }
@@ -234,15 +261,26 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
   const cardRef = useRef(null);
 
   // Scrolling down in the compact view auto-expands to fullscreen for more
-  // room; scrolling back to the top reverses it — but only when the
-  // expansion was itself automatic. An explicit click on the expand button
-  // sticks until the user explicitly restores it, even after scrolling up.
+  // room; scrolling back up reverses it — but only when the expansion was
+  // itself automatic. An explicit click on the expand button sticks until
+  // the user explicitly restores it, even after scrolling up.
   const handleCardScroll = () => {
     const top = cardRef.current?.scrollTop ?? 0;
     if (!fullscreen && top > 0) {
       setFullscreen(true);
       setAutoExpanded(true);
-    } else if (fullscreen && autoExpanded && top <= 0) {
+    }
+  };
+
+  // Collapse is driven by wheel direction rather than scrollTop position:
+  // when the card's content is short (e.g. Samples/Outputs collapsed), the
+  // fullscreen card has no scrollable range at all — scrollTop is pinned at
+  // 0 — so scroll position alone can't tell "user scrolled back up" from
+  // "there was never anything to scroll," which used to make the card
+  // expand and immediately collapse again in a flicker.
+  const handleCardWheel = e => {
+    const top = cardRef.current?.scrollTop ?? 0;
+    if (fullscreen && autoExpanded && top <= 0 && e.deltaY < 0) {
       setFullscreen(false);
       setAutoExpanded(false);
     }
@@ -259,7 +297,7 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
   return (
     <div className={`modal-overlay${drawerOpen ? ' with-drawer' : ''}`} onClick={onClose}>
       <div ref={cardRef} className={`modal-card${fullscreen ? ' modal-fullscreen' : ''}`}
-        onClick={e => e.stopPropagation()} onScroll={handleCardScroll}>
+        onClick={e => e.stopPropagation()} onScroll={handleCardScroll} onWheel={handleCardWheel}>
         <div className="modal-header-bar">
           <div className="modal-header-top">
             <div className="modal-header-left">
