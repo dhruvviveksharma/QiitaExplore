@@ -42,6 +42,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 - **No-refresh sidebar**: After add/remove/create/delete, update local React state from the response body — never re-fetch. Use `setOpenProject`, patch `openProject.chats`, etc.
 - **Lazy detail fetching**: Study detail (preps, artifacts) only fetched on modal open or study add — never on page load. Uses `study_detail_cache` (6h TTL).
 - **LLM context**: Built via helpers in `qiita_explore/backend/helpers/` (e.g. `_study_detail_block()` in `qiita_fetch.py`) — includes `data_types`, `num_samples`, `num_preps`, and prep metadata where applicable.
+- **Dropdown UI**: Every custom dropdown (select-style pickers, "..." action menus) uses the `useDropdown()` hook (`qiita_explore/frontend/js/hooks/useDropdown.js`) plus `.cr-menu`/`.cr-menu-item` CSS — never a native `<select>` beyond the most trivial cases. The panel renders `position: fixed` with coordinates computed from the trigger button's own rect (not CSS-relative `position: absolute`), so it isn't clipped by a scrolling ancestor (the sidebar, a modal body, etc.). Reference implementations: `ChatRowMenu` in `components.js` (action menu with a submenu) and `ProjectPickerDropdown` in `study_modal.js` (select-style picker).
 
 ---
 

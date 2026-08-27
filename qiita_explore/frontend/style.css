@@ -299,9 +299,14 @@ input, textarea { font-family: var(--sans); }
 .chat-row:hover .cr-more { opacity: 1; }
 .cr-more:hover { background: var(--border-soft); color: var(--accent); }
 
-/* position:fixed (coordinates computed in JS from the trigger's rect) —
-   .sidebar-body scrolls, so position:absolute would clip this for any row
-   near the bottom of the visible sidebar. */
+/* Shared dropdown-panel convention (see CLAUDE.md "Established Patterns:
+   Dropdown UI") — despite the cr- ("chat-row") prefix from where this was
+   first built, .cr-menu/.cr-menu-item is the general panel/item styling
+   every useDropdown-based dropdown uses (ChatRowMenu's "...", the project
+   picker in study_modal.js, and future ones), not chat-row-specific.
+   position:fixed with coordinates computed in JS from the trigger's rect —
+   a scrolling ancestor (the sidebar, a modal body, ...) would otherwise
+   clip position:absolute for any trigger near its edge. */
 .cr-menu {
   position: fixed; z-index: 160;
   width: 200px;
@@ -315,6 +320,7 @@ input, textarea { font-family: var(--sans); }
   font-size: 12.5px; color: var(--text-2);
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   position: relative;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cr-menu-item:hover { background: var(--accent-soft); color: var(--accent-h); }
 .cr-menu-danger { color: #d33; }
@@ -1915,6 +1921,19 @@ input, textarea { font-family: var(--sans); }
 /* Global BIOM selector bar */
 .global-biom-selector { display: flex; align-items: center; gap: 6px; padding: 6px 12px 4px; flex-wrap: wrap; }
 .merge-dt-select { font-size: 0.8rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text-1); }
+
+/* useDropdown-based trigger, styled to match .merge-dt-select's box so a
+   custom dropdown drops in wherever a <select> used to sit. */
+.dd-root { position: relative; display: inline-block; }
+.dd-trigger {
+  font-size: 0.8rem; padding: 3px 8px 3px 6px;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface-2); color: var(--text-1);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-width: 120px;
+}
+.dd-trigger:hover { border-color: var(--accent); }
+.dd-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Merge cart */
 .merge-cart { margin-top: 10px; border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px; background: var(--surface); }

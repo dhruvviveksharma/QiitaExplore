@@ -174,7 +174,8 @@ function renderApp(s, account) {
                             }}
                             onClick={e => e.stopPropagation()} />
                         ) : (
-                          <div className="cr-title editable" onClick={e => {
+                          <div className="cr-title editable" title="Double-click to rename"
+                            onDoubleClick={e => {
                             e.stopPropagation();
                             setEditingChatId(c.chat_id);
                             setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
@@ -232,7 +233,8 @@ function renderApp(s, account) {
                             }}
                             onClick={e => e.stopPropagation()} />
                         ) : (
-                          <div className="cr-title editable" onClick={e => {
+                          <div className="cr-title editable" title="Double-click to rename"
+                            onDoubleClick={e => {
                             e.stopPropagation();
                             setEditingChatId(c.chat_id);
                             setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
@@ -332,7 +334,8 @@ function renderApp(s, account) {
                     }}
                     onClick={e => e.stopPropagation()} />
                 ) : (
-                  <div className="cr-title editable" onClick={e => {
+                  <div className="cr-title editable" title="Double-click to rename"
+                    onDoubleClick={e => {
                     e.stopPropagation();
                     setEditingChatId(c.chat_id);
                     setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
@@ -388,7 +391,8 @@ function renderApp(s, account) {
                     }}
                     onClick={e => e.stopPropagation()} />
                 ) : (
-                  <div className="cr-title editable" onClick={e => {
+                  <div className="cr-title editable" title="Double-click to rename"
+                    onDoubleClick={e => {
                     e.stopPropagation();
                     setEditingChatId(c.chat_id);
                     setEditChatVal(chatCache[c.chat_id]?.title || c.title || 'New chat');
