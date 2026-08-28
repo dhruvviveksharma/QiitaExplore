@@ -81,6 +81,12 @@ Schema migration needs no separate step and cannot be run separately — importi
 
 Both are current. Confusing them wastes a great deal of time. [`01-architecture.md`](01-architecture.md) has the diagrams; this section covers only what an operator needs to act on.
 
+A third, ad-hoc topology also exists — a public-facing static host on a
+machine that is neither barnacle nor the visitor's browser (currently
+kl-remote, proxying to barnacle over an SSH tunnel). It isn't a general
+pattern the way the two below are, so it's documented separately in
+[`../DEPLOYING.md`](../DEPLOYING.md) along with the bugs hit standing it up.
+
 ### Production — nginx :8080 → gunicorn :5001
 
 nginx terminates on **8080**, serves the static frontend from `location /`, and proxies `location /api/` to gunicorn on **127.0.0.1:5001** through an upstream block with `keepalive 32`. Frontend and API are same-origin, which is why an empty `QIITA_EXPLORE_ALLOWED_ORIGINS` is the correct production value.
