@@ -11,13 +11,14 @@
        using 127.0.0.1 (not localhost) so it matches this page's host --
        see docs/08-frontend.md ("API base resolution") for why. Example:
        <meta name="api-base" content="http://127.0.0.1:5001/api"> -->
-  <title>Qiita Explorer</title>
+  <meta name="api-base" content="http://127.0.0.1:5001/api">
+  <title>QiitaExplore</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=45" />
+  <link rel="stylesheet" href="style.css?v=57" />
 </head>
 <body>
   <div id="root"></div>
@@ -27,19 +28,22 @@
     and is irrelevant to the browser-served frontend, so we don't probe for it.
   -->
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
-  <script type="text/babel" src="js/utils.js?v=7"></script>
-  <script type="text/babel" src="js/icons.js?v=1"></script>
+  <script type="text/babel" src="js/utils.js?v=10"></script>
+  <script type="text/babel" src="js/icons.js?v=3"></script>
+  <script type="text/babel" src="js/hooks/useDropdown.js?v=1"></script>
   <script type="text/babel" src="js/loaders.js?v=4"></script>
-  <script type="text/babel" src="js/auth.js?v=6"></script>
-  <script type="text/babel" src="js/components.js?v=8"></script>
+  <script type="text/babel" src="js/auth.js?v=7"></script>
+  <script type="text/babel" src="js/components.js?v=13"></script>
+  <script type="text/babel" src="js/search_results_panel.js?v=2"></script>
   <script type="text/babel" src="js/hooks/useModelSelection.js?v=1"></script>
-  <script type="text/babel" src="js/app_state.js?v=12"></script>
-  <script type="text/babel" src="js/app_render.js?v=23"></script>
+  <script type="text/babel" src="js/hooks/useUrlSync.js?v=1"></script>
+  <script type="text/babel" src="js/app_state.js?v=21"></script>
+  <script type="text/babel" src="js/app_render.js?v=35"></script>
   <script type="text/babel" src="js/merge_artifacts.js?v=9"></script>
   <script type="text/babel" src="js/merge_tree.js?v=9"></script>
   <script type="text/babel" src="js/merge_detail.js?v=7"></script>
   <script type="text/babel" src="js/merge_workspace.js?v=9"></script>
-  <script type="text/babel" src="js/study_modal.js?v=4"></script>
-  <script type="text/babel" src="js/app.js?v=6"></script>
+  <script type="text/babel" src="js/study_modal.js?v=10"></script>
+  <script type="text/babel" src="js/app.js?v=7"></script>
 </body>
 </html>
