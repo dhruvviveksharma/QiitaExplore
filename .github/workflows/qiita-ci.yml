@@ -20,13 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # checkout@v4 is shallow (fetch-depth: 1) by default — important here,
+      # checkout@v7 is shallow (fetch-depth: 1) by default — important here,
       # this repo's .git is ~100 MB.
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -43,11 +43,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # 3.9 matches the barnacle deployment (see INSTALL.md / DEPLOYING.md).
       - name: Set up Python 3.9
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
           cache: pip
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: API base must stay relative ('/api')
         run: |
