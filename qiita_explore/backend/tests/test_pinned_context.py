@@ -135,7 +135,6 @@ class TestFullSamplesCache:
 
     @pytest.fixture
     def cached(self, qfetch, monkeypatch):
-        import json
         store = {}
         monkeypatch.setattr(qfetch, "get_study_detail_cache", lambda sid: store.get(int(sid)))
         def _upsert(sid, *a, full_samples_json=None, full_samples_limit=None, **kw):

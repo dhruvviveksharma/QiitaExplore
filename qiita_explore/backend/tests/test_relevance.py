@@ -2,7 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
 
 from tests.conftest import stub_qiita_db_and_core
 

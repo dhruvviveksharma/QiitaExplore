@@ -1,5 +1,4 @@
 """Tests for SQLite schema and data integrity."""
-import pytest
 
 
 class TestSchemaIntegrity:

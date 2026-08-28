@@ -10,10 +10,7 @@ Covers three behaviors introduced/fixed in the merge workflow:
 """
 
 import csv
-import io
-import json
 import sys
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -126,7 +123,6 @@ class TestWriteMergedSampleMetadata:
         """Import and call _write_merged_sample_metadata with a mocked DB fetch."""
         # Clear any cached import so the patch takes effect
         sys.modules.pop("helpers.merge_executor", None)
-        from helpers.merge_executor import _write_merged_sample_metadata
 
         mock_qiita = MagicMock(_fetch_full_sample_metadata=MagicMock(return_value=fetch_return))
         with patch.dict(sys.modules, {"helpers.qiita_fetch": mock_qiita}):
@@ -164,7 +160,6 @@ class TestWriteMergedSampleMetadata:
     def test_union_columns_across_studies(self, tmp_path):
         """Columns from both studies are unioned; missing values filled with 'not applicable'."""
         sys.modules.pop("helpers.merge_executor", None)
-        from helpers.merge_executor import _write_merged_sample_metadata
 
         rows_77 = [{"sample_id": "77.A", "fields": {"age": "5", "sex": "male"}}]
         rows_101 = [{"sample_id": "101.B", "fields": {"age": "30", "country": "USA"}}]
@@ -197,7 +192,6 @@ class TestWriteMergedSampleMetadata:
         mock_qiita = MagicMock(_fetch_full_sample_metadata=fake_rows_raise)
 
         sys.modules.pop("helpers.merge_executor", None)
-        from helpers.merge_executor import _write_merged_sample_metadata
 
         with patch.dict(sys.modules, {"helpers.qiita_fetch": mock_qiita}):
             sys.modules.pop("helpers.merge_executor", None)

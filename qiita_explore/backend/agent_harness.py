@@ -141,7 +141,7 @@ def run_prompt(prompt, model, history, deep_search=False):
         # segment_tool_result is already covered by _traced_execute_tool print
 
     total = time.perf_counter() - t_total
-    print(bold(f"\n\n── summary ───────────────────────────────────────"))
+    print(bold("\n\n── summary ───────────────────────────────────────"))
     print(f"  total wall time : {total:.2f}s")
     if _TRACE:
         print(f"  tool calls      : {len(_TRACE)}")

@@ -1,6 +1,5 @@
 """Tests for moving a chat between project scope and global scope, or
 between two projects — store/chat_move.py."""
-import pytest
 
 
 class TestProjectToProjectMove:

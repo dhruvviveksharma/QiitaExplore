@@ -1,23 +1,119 @@
-# name: Qiita CI
+name: CI
 
 on:
+  push:
+    branches: [master]
   pull_request:
-    branches:
-      - master
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch/PR; a new push cancels the stale run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: ruff
-        uses: actions/setup-python@v2
+      # checkout@v4 is shallow (fetch-depth: 1) by default — important here,
+      # this repo's .git is ~100 MB.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Pinned: a floating ruff release can start failing CI with no code
+      # change. Bump deliberately (run the new version locally first).
+      - name: Install ruff
+        run: pip install ruff==0.16.5
+
+      - name: Lint
+        run: ruff check qiita_core qiita_db qiita_explore scripts/qiita*
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # 3.9 matches the barnacle deployment (see INSTALL.md / DEPLOYING.md).
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
         with:
           python-version: "3.9"
-      - name: install dependencies
-        run: python -m pip install --upgrade pip
-      - name: Check out repository code
-        uses: actions/checkout@v2
-      - name: lint
+          cache: pip
+          cache-dependency-path: |
+            qiita_explore/requirements.txt
+            qiita_explore/backend/tests/requirements.txt
+
+      - name: Install dependencies
         run: |
-          pip install -q ruff
-          ruff check qiita_core qiita_db qiita_explore scripts/qiita*
+          python -m pip install --upgrade pip
+          pip install -r qiita_explore/requirements.txt \
+                      -r qiita_explore/backend/tests/requirements.txt
+
+      # Unit tier only: the e2e tier needs a live backend + Qiita Postgres
+      # + a real PAT, none of which exist on a cloud runner.
+      - name: Run unit tests with coverage
+        working-directory: qiita_explore/backend
+        run: |
+          python -m pytest tests/ -m "not e2e" \
+            --cov=. --cov-config=../../.coveragerc --cov-report=term
+          echo "## Coverage" >> "$GITHUB_STEP_SUMMARY"
+          coverage report --rcfile=../../.coveragerc --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+  # Cheap tripwires for deployment invariants documented in DEPLOYING.md.
+  # These have each caused (or would silently cause) a broken deploy.
+  deploy-guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: API base must stay relative ('/api')
+        run: |
+          UTILS=qiita_explore/frontend/js/utils.js
+          if ! grep -qF "|| '/api'" "$UTILS"; then
+            echo "::error file=$UTILS::API base fallback is no longer the relative '/api'. An absolute default silently breaks the kl-remote deployment (see DEPLOYING.md). If you refactored the API constant, keep a relative '/api' fallback and update this check."
+            exit 1
+          fi
+          if grep -nE "const API[^=]*=.*https?://" "$UTILS"; then
+            echo "::error file=$UTILS::Hardcoded absolute API base found in utils.js. Use index.html's <meta name=\"api-base\"> override for local dev instead."
+            exit 1
+          fi
+          echo "OK: API base defaults to relative /api"
+
+      - name: index.html must not ship an active api-base override
+        run: |
+          INDEX=qiita_explore/frontend/index.html
+          # The dev override must stay commented out; an active tag points the
+          # deployed frontend at localhost. Strip HTML comments first so the
+          # commented-out example doesn't false-positive.
+          if ! python3 -c 'import re,sys; html=open(sys.argv[1]).read(); html=re.sub(r"<!--.*?-->","",html,flags=re.S); sys.exit(1 if "api-base" in html else 0)' "$INDEX"; then
+            echo "::error file=$INDEX::Active <meta name=\"api-base\"> tag found. This override is for local dev only and must stay commented out in commits (see DEPLOYING.md)."
+            exit 1
+          fi
+          echo "OK: no active api-base override in index.html"
+
+      - name: detect_env.sh must keep master->5001, else->5002
+        run: |
+          DETECT=qiita_explore/detect_env.sh
+          if ! grep -A2 -F '"$BRANCH" = "master"' "$DETECT" | grep -q 'QE_PORT=5001'; then
+            echo "::error file=$DETECT::master branch no longer maps to port 5001. The deployment (nginx/kl-remote proxies) expects 5001 on master (see DEPLOYING.md)."
+            exit 1
+          fi
+          if ! grep -A2 '^else' "$DETECT" | grep -q 'QE_PORT=5002'; then
+            echo "::error file=$DETECT::non-master branches no longer map to port 5002. Dev must not claim the deployment port."
+            exit 1
+          fi
+          echo "OK: detect_env.sh port mapping intact (master->5001, else->5002)"

@@ -1,0 +1,26 @@
+# Ruff configuration (used by .github/workflows/qiita-ci.yml and local runs).
+# Pins ruff's current defaults explicitly, so lint results only change when
+# this file or the pinned ruff version changes — never by surprise.
+
+target-version = "py39"
+line-length = 100
+
+extend-exclude = [
+    ".claude",                  # local worktrees / scratch
+    ".pycache_tmp",
+    ".pytest_cache",
+    "qiita_explore/frontend",   # Babel-standalone JS, no Python
+    "qiita_db/support_files",   # vendored classic-Qiita patches/data
+]
+
+[lint]
+# Ruff's default selection, made explicit: pyflakes (F) plus the pycodestyle
+# subsets for imports (E4), statements (E7) and runtime errors (E9).
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# These files must mutate sys.path before importing app modules, so their
+# imports can't sit at the top of the file (E402).
+"qiita_explore/backend/run.py" = ["E402"]
+"qiita_explore/backend/tests/test_relevance.py" = ["E402"]
+"qiita_explore/backend/tests/test_search_studies_with_sql.py" = ["E402"]
