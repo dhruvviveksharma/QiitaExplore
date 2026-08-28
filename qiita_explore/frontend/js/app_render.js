@@ -89,32 +89,6 @@ function renderApp(s, account) {
 
         <div className="sidebar-body">
 
-          {/* Mirrors the "View all →" drawer (SearchResultsPanel below) —
-              same searchResultsPanel state drives both, so they open and
-              close together. This is the sidebar rendering of the same
-              retrieved-studies list, using the Studies-tab's row pattern
-              (title + study ID) rather than the drawer's InlineStudyCard. */}
-          {searchResultsPanel && (
-            <>
-              <div className="sb-label with-action">
-                <span>Search Results ({(searchResultsPanel.studies || []).length})</span>
-                <button className="sb-label-close" onClick={closeSearchResultsPanel} title="Clear">×</button>
-              </div>
-              {(searchResultsPanel.studies || []).length === 0 ? (
-                <div className="folder-empty">No studies in this result set.</div>
-              ) : (
-                (searchResultsPanel.studies || []).map(s => (
-                  <div key={s.study_id} className="chat-row" onClick={() => openStudyModal(s)}>
-                    <div className="cr-content">
-                      <div className="cr-title">{s.study_title || 'Untitled'}</div>
-                      <div className="cr-date">ID {s.study_id}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </>
-          )}
-
           <div className="sb-label">Workspaces</div>
           {projLoading && <div className="sb-loading">Loading…</div>}
 

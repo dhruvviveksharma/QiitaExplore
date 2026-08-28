@@ -124,13 +124,6 @@ input, textarea { font-family: var(--sans); }
   color: var(--text-3);
   padding: 8px 6px 4px;
 }
-.sb-label.with-action { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.sb-label-close {
-  font-size: 13px; color: var(--text-3); width: 16px; height: 16px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 4px; text-transform: none; letter-spacing: normal; font-weight: 400;
-}
-.sb-label-close:hover { background: #fce7f3; color: var(--accent); }
 .sb-loading { font-size: 12px; color: var(--text-3); padding: 4px 8px; }
 .folder-loading { padding: 8px 16px; }
 
@@ -331,7 +324,9 @@ input, textarea { font-family: var(--sans); }
   font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
   color: var(--text-3);
 }
-.cr-menu-parent { cursor: pointer; }
+/* Overrides .cr-menu-item's overflow:hidden (added for text truncation) —
+   this row hosts the .cr-submenu flyout, which must not be clipped. */
+.cr-menu-parent { cursor: pointer; overflow: visible; }
 .cr-submenu {
   position: absolute; top: -4px; left: calc(100% + 4px); z-index: 161;
   width: 190px;

@@ -814,9 +814,20 @@ function useAppState() {
     const ctrl = new AbortController();
     modalAbortRef.current = ctrl;
     setModalStudy(study); setModalDetail(null); setModalDetailLoading(true);
+    // Some callers (e.g. InlineStudyCard, fed by the agent's search_studies
+    // tool) pass a trimmed study object with no study_abstract/PI fields at
+    // all — fetch the full header alongside detail in that case, same as
+    // openStudyById does for a bare-id restore.
+    const needsHeader = !('study_abstract' in study);
     try {
-      const d = await fetchStudyDetail(study.study_id);
-      if (!ctrl.signal.aborted) setModalDetail(d);
+      const [header, d] = await Promise.all([
+        needsHeader ? apiFetch(`/studies/${study.study_id}`).then(r => r.ok ? r.json() : null) : null,
+        fetchStudyDetail(study.study_id),
+      ]);
+      if (!ctrl.signal.aborted) {
+        if (header) setModalStudy(prev => ({ ...prev, ...header }));
+        setModalDetail(d);
+      }
     } catch (_) {}
     finally {
       if (!ctrl.signal.aborted) setModalDetailLoading(false);
@@ -828,10 +839,10 @@ function useAppState() {
     setModalStudy(null); setModalDetail(null);
   };
 
-  // URL-driven modal restore, where only a bare id is available (no full
-  // study object with title/abstract already in hand, unlike every click
-  // site that calls openStudyModal). Kept separate from openStudyModal so
-  // the common click path never pays for an extra metadata round trip.
+  // URL-driven modal restore, where only a bare id is available — not even a
+  // title to show while loading (openStudyModal's callers at least have
+  // that, even when thin). Kept separate so the common click path doesn't
+  // pay for a header round trip when its study object already has one.
   const openStudyById = async (studyId) => {
     modalAbortRef.current?.abort();
     const ctrl = new AbortController();
