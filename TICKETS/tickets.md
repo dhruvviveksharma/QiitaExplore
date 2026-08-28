@@ -1696,7 +1696,259 @@ the *existing* convention, not correcting it.
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-08-17*
+
+
+## TKT-056: `purge_expired_sessions()` Is Never Called — `auth_sessions` Grows Unboundedly
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-08-27 during a dead-code/simplification pass. `store/auth_store.py:165`
+`purge_expired_sessions()` is fully implemented (hard-deletes rows past
+`absolute_expires_at`, keeps revoked rows for audit) but has zero call sites anywhere
+in the app — no route, no cron, no startup hook. Expired session rows accumulate in
+`auth_sessions` forever.
+
+### Plan
+
+Call `purge_expired_sessions()` opportunistically inside `create_session()` (garbage-collect
+expired rows on every new login) — no new infra/cron needed, low risk since login is
+infrequent per user.
+
+### Files
+
+- `qiita_explore/backend/store/auth_store.py :: purge_expired_sessions`, `create_session`
+
+---
+
+
+
+## TKT-057: Dead `close_pool()` in `pg_pool.py`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `helpers/pg_pool.py:51` `close_pool()` has zero call sites anywhere in
+the app. There is no shutdown-hook infrastructure in this codebase (Gunicorn workers are
+just killed) that would ever invoke it.
+
+### Plan
+
+Remove `close_pool()` as dead code.
+
+### Files
+
+- `qiita_explore/backend/helpers/pg_pool.py`
+
+---
+
+
+
+## TKT-058: Unused `dst_chats_tbl` + Raw String Literal Instead of `SCOPE_PROJECT` in `chat_move.py`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `store/chat_move.py:73` (`_move_chat_between_scopes`) computes
+`dst_chats_tbl = "project_chats" if to_scope == SCOPE_PROJECT else "global_chats"` but
+never references it — the INSERT branches (~lines 101, 112) instead hardcode
+`INSERT INTO project_chats` / `INSERT INTO global_chats` behind a raw
+`if to_scope == "project":` string check. This is inconsistent with the
+`SCOPE_PROJECT`/`SCOPE_GLOBAL` constants (`store/cache.py:8-9`) already used earlier in
+the same function (`from_scope == SCOPE_PROJECT`). Confirmed via pyflakes: "local variable
+'dst_chats_tbl' is assigned to but never used."
+
+### Plan
+
+Replace the raw `to_scope == "project"` literal with the `SCOPE_PROJECT` constant for
+consistency, and either use `dst_chats_tbl` in the INSERT branches or remove the unused
+variable — whichever reads cleaner once the constant is fixed (the two INSERT branches
+have differing column lists, so a full merge into one dynamic query may not be worth it).
+
+### Files
+
+- `qiita_explore/backend/store/chat_move.py :: _move_chat_between_scopes`
+
+---
+
+
+
+## TKT-059: Duplicated SSE Segment-Building Loop (`chat_routes.py` / `global_chat_routes.py`)
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-08-27, extends the gap TKT-031 explicitly left open. The loop that consumes
+`stream_agent()` events and builds `segments_list`/forwards SSE events is byte-for-byte
+identical in `routes/chat_routes.py` (~lines 196-233) and
+`routes/global_chat_routes.py` (~lines 154-192) — same `agent_start`/`token`/
+`segment_tool_call`/`segment_tool_result` branching, same `segments_list`/`current_text`
+bookkeeping. Only the `stream_agent(...)` call itself differs (`system_prompt`, `scope`,
+`tools`, and global-only `deep_search`).
+
+### Plan
+
+Extract the loop body into a shared generator in `helpers/request_utils.py` (which already
+holds this kind of shared route logic per TKT-031) — e.g. a function that takes the
+`stream_agent()` event iterator plus a mutable `assistant_parts` list, yields SSE-ready
+events, and hands back the built `segments_list`. Both routes iterate the shared generator
+instead of duplicating ~35 lines each.
+
+### Files
+
+- New/extended: `qiita_explore/backend/helpers/request_utils.py`
+- `qiita_explore/backend/routes/chat_routes.py`, `qiita_explore/backend/routes/global_chat_routes.py`
+
+---
+
+
+
+## TKT-060: Duplicated PATCH Dispatch Logic (`api_update_chat` / `api_update_global_chat`)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `api_update_chat` (`chat_routes.py:70-95`) and `api_update_global_chat`
+(`global_chat_routes.py:62-87`) have identical title/pinned/archived PATCH validation and
+dispatch logic, differing only in which store setter is called
+(`update_chat_title` vs `update_global_chat_title`, `set_chat_pinned` vs
+`set_global_chat_pinned`, `set_chat_archived` vs `set_global_chat_archived`).
+
+### Plan
+
+Extract a shared helper in `helpers/request_utils.py` that takes the request `data` plus
+the three scope-specific setter functions and returns either the result dict or an error
+tuple; both routes call it.
+
+### Files
+
+- `qiita_explore/backend/helpers/request_utils.py`
+- `qiita_explore/backend/routes/chat_routes.py :: api_update_chat`
+- `qiita_explore/backend/routes/global_chat_routes.py :: api_update_global_chat`
+
+---
+
+
+
+## TKT-061: Dead `BoltIcon` in `icons.js`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `frontend/js/icons.js:84` `BoltIcon` is defined but never
+imported/rendered anywhere else in the app.
+
+### Plan
+
+Delete it.
+
+### Files
+
+- `qiita_explore/frontend/js/icons.js`
+
+---
+
+
+
+## TKT-062: `AccountBar` Hand-Rolls Dropdown Logic Instead of Using `useDropdown`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `frontend/js/auth.js:193-208` (`AccountBar`) hand-rolls its own `open`
+state, `rootRef`, and mousedown/Escape-to-close `useEffect` — duplicating
+`hooks/useDropdown.js` exactly. Per this repo's documented "Dropdown UI" pattern
+(CLAUDE.md), every other dropdown (`ChatRowMenu`, `ProjectPickerDropdown`) already uses the
+shared hook; `AccountBar` is the sole holdout (predates the `useDropdown` extraction in
+`de6b6634`).
+
+### Plan
+
+Refactor `AccountBar` to use `useDropdown()`, dropping ~12 lines of duplicated state/effect
+logic.
+
+### Files
+
+- `qiita_explore/frontend/js/auth.js :: AccountBar`
+- `qiita_explore/frontend/js/hooks/useDropdown.js`
+
+---
+
+
+
+## TKT-063: Duplicated Inline-Rename Pattern (`ChatTitleEditor` / `MergePanelNameField`)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `ChatTitleEditor` (`app_render.js:1-25`) and `MergePanelNameField`
+(`merge_workspace.js:5-18`) both implement click-to-edit / Enter-to-save /
+Escape-to-cancel text editing with identical `editing`/`val` state and `onKeyDown` shape.
+`MergePanelNameField` inlines its own `apiPatch` call where `ChatTitleEditor` takes an
+`onSave` prop.
+
+### Plan
+
+Extract one shared component (e.g. `InlineEditField`, in `utils.js` or `components.js`)
+parameterized by `value`, an async `onSave` callback, and the wrapper/input className
+pair. `MergePanelNameField`'s inline `apiPatch` call becomes the `onSave` prop it passes
+in; both call sites use the shared component.
+
+### Files
+
+- New/shared component in `qiita_explore/frontend/js/utils.js` or `components.js`
+- `qiita_explore/frontend/js/app_render.js :: ChatTitleEditor`
+- `qiita_explore/frontend/js/merge_workspace.js :: MergePanelNameField`
+
+---
+
+
+
+## TKT-064: Duplicated Tree/Indent Provenance View Components in `merge_tree.js`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-27. `TreeChildren`/`TreeNode` (`merge_tree.js:43-151`) and
+`IndentChildren`/`IndentNode` (`merge_tree.js:153-260`) are structurally identical — same
+`flagsOpen`/`peekOpen`/`filesOpen` state, same job/BIOM-leaf/root/pass-through branching,
+same label-collision logic — differing only in CSS class names and minor DOM nesting (the
+tree view wraps nodes in an extra `.ao-tree-box` div that the indent view doesn't).
+
+### Plan
+
+Collapse into one component parameterized by a `variant: 'tree' | 'indent'` prop that
+switches class names and wrapper nesting. Most involved item of this batch since the two
+views' DOM structure isn't 100% identical (only behavior is) — verify visually in-browser
+afterward (Merge Workspace → provenance tree, toggle "Tree"/"List", expand a job's flags,
+expand a BIOM's files, view samples) to confirm both views still render identically to
+before.
+
+### Files
+
+- `qiita_explore/frontend/js/merge_tree.js`
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-08-27*
 
 ---
 
