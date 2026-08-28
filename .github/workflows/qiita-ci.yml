@@ -41,6 +41,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # config.py builds the OpenAI client at import; openai>=2 raises if no
+      # key is set. Unit tests never call the LLM, so a dummy value suffices
+      # (locally, load_dotenv() picks up the real key from qiita_explore/.env).
+      API_KEY: ci-dummy-key
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
