@@ -9,24 +9,40 @@
 // eventually a scrolling modal body, etc.) would otherwise get clipped by
 // that container's overflow for any trigger near its edge.
 function useDropdown(computePos) {
-  const [open, setOpen] = useState(false);
-  const [pos,  setPos]  = useState(null);
+  const [open,    setOpen]    = useState(false);
+  const [pos,     setPos]     = useState(null);
+  // While true the panel is still mounted but fading out (.cr-menu-closing);
+  // re-entering during the fade cancels it and fades back in.
+  const [closing, setClosing] = useState(false);
   const rootRef = useRef(null);
   const btnRef  = useRef(null);
   const leaveTimerRef = useRef(null);
+  const fadeTimerRef  = useRef(null);
+
+  const clearTimers = () => {
+    clearTimeout(leaveTimerRef.current);
+    clearTimeout(fadeTimerRef.current);
+  };
 
   useEffect(() => {
     if (!open) return;
-    const onDown = e => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
-    const onKey  = e => { if (e.key === 'Escape') setOpen(false); };
+    const closeNow = () => { clearTimers(); setClosing(false); setOpen(false); };
+    const onDown = e => { if (rootRef.current && !rootRef.current.contains(e.target)) closeNow(); };
+    const onKey  = e => { if (e.key === 'Escape') closeNow(); };
     // Hover-away dismissal: the dropdown stays open only while the cursor is
     // over the trigger or the panel (both DOM children of rootRef, so
     // mouseenter/mouseleave cover them even though the panel is
     // position:fixed). The grace delay bridges the few-px gap between the
-    // trigger and the panel so travelling across it doesn't close the menu.
+    // trigger and the panel so travelling across it doesn't close the menu;
+    // then the panel fades out (CSS .cr-menu-closing) before unmounting.
     const el = rootRef.current;
-    const onLeave = () => { leaveTimerRef.current = setTimeout(() => setOpen(false), 300); };
-    const onEnter = () => clearTimeout(leaveTimerRef.current);
+    const onLeave = () => {
+      leaveTimerRef.current = setTimeout(() => {
+        setClosing(true);
+        fadeTimerRef.current = setTimeout(() => { setClosing(false); setOpen(false); }, 130);
+      }, 150);
+    };
+    const onEnter = () => { clearTimers(); setClosing(false); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     el?.addEventListener('mouseleave', onLeave);
@@ -36,7 +52,7 @@ function useDropdown(computePos) {
       document.removeEventListener('keydown', onKey);
       el?.removeEventListener('mouseleave', onLeave);
       el?.removeEventListener('mouseenter', onEnter);
-      clearTimeout(leaveTimerRef.current);
+      clearTimers();
     };
   }, [open]);
 
@@ -49,8 +65,14 @@ function useDropdown(computePos) {
       const r = btnRef.current.getBoundingClientRect();
       setPos(computePos ? computePos(r) : { top: r.bottom + 4, left: r.left });
     }
+    clearTimers();
+    setClosing(false);
     setOpen(v => !v);
   };
 
-  return { open, setOpen, pos, rootRef, btnRef, toggle };
+  // Panel className carrying the enter/exit animation state — consumers use
+  // `className={dd.menuClass}` (plus any extras) on their .cr-menu div.
+  const menuClass = `cr-menu${closing ? ' cr-menu-closing' : ''}`;
+
+  return { open, setOpen, pos, rootRef, btnRef, toggle, closing, menuClass };
 }

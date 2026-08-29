@@ -628,11 +628,12 @@ function ChatRowMenu({
 
   return (
     <div className="cr-menu-root" ref={dd.rootRef}>
-      <button ref={dd.btnRef} className="cr-more" onClick={dd.toggle} title="More">
+      <button ref={dd.btnRef} className={`cr-more${dd.open ? ' cr-more-open' : ''}`}
+        onClick={dd.toggle} title="More">
         <DotsIcon />
       </button>
       {dd.open && dd.pos && (
-        <div className="cr-menu" style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
+        <div className={dd.menuClass} style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
           <button className="cr-menu-item" onClick={() => { onRename(); close(); }}>Rename</button>
           <div className="cr-menu-sep" />
           <button className="cr-menu-item" onClick={() => { onTogglePin(); close(); }}>

@@ -158,6 +158,7 @@ function renderApp(s, account) {
                             <span className="rename-hint">✎</span>
                           </div>
                         )}
+                        {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                         {c.updated_at && (
                           <div className="cr-date">
                             {formatDate(c.updated_at)}
@@ -217,6 +218,7 @@ function renderApp(s, account) {
                             <span className="rename-hint">✎</span>
                           </div>
                         )}
+                        {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                         {c.updated_at && (
                           <div className="cr-date">
                             {formatDate(c.updated_at)}
@@ -318,6 +320,7 @@ function renderApp(s, account) {
                     <span className="rename-hint">✎</span>
                   </div>
                 )}
+                {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                 {c.updated_at && (
                   <div className="cr-date">
                     {formatDate(c.updated_at)}
@@ -375,6 +378,7 @@ function renderApp(s, account) {
                     <span className="rename-hint">✎</span>
                   </div>
                 )}
+                {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                 {c.updated_at && (
                   <div className="cr-date">
                     {formatDate(c.updated_at)}

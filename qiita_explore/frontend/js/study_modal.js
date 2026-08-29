@@ -23,7 +23,7 @@ function ProjectPickerDropdown({ projects, selectedId, onSelect }) {
         <ChevronIcon dir={dd.open ? 'up' : 'down'} size={11} />
       </button>
       {dd.open && dd.pos && (
-        <div className="cr-menu" style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
+        <div className={dd.menuClass} style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
           {(projects || []).map(p => (
             <button key={p.project_id} className="cr-menu-item"
               onClick={() => { onSelect(p.project_id); dd.setOpen(false); }}>

@@ -241,7 +241,8 @@ function useAppState() {
   const newProjChat = async (projId) => {
     const chat = await createProjChatAndSeed(projId, 'New chat').catch(() => null);
     if (!chat) return;
-    setOpenProject(prev => prev ? { ...prev, chats: [{ ...chat, messages: [] }, ...(prev.chats || [])] } : prev);
+    // sortChatsForDisplay keeps pinned chats above the new (unpinned) one
+    setOpenProject(prev => prev ? { ...prev, chats: sortChatsForDisplay([{ ...chat, messages: [] }, ...(prev.chats || [])]) } : prev);
     setView({ type: 'project-chat', projId, chatId: chat.chat_id });
     setCompErr('');
   };
@@ -680,7 +681,7 @@ function useAppState() {
         pinnedStudyMeta: chat.pinned_study_meta || [],
       },
     }));
-    setGlobalChats(prev => [chat, ...prev]);
+    setGlobalChats(prev => sortChatsForDisplay([chat, ...prev]));
     return chat;
   };
 
