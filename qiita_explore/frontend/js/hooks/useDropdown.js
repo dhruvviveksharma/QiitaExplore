@@ -13,16 +13,30 @@ function useDropdown(computePos) {
   const [pos,  setPos]  = useState(null);
   const rootRef = useRef(null);
   const btnRef  = useRef(null);
+  const leaveTimerRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = e => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
     const onKey  = e => { if (e.key === 'Escape') setOpen(false); };
+    // Hover-away dismissal: the dropdown stays open only while the cursor is
+    // over the trigger or the panel (both DOM children of rootRef, so
+    // mouseenter/mouseleave cover them even though the panel is
+    // position:fixed). The grace delay bridges the few-px gap between the
+    // trigger and the panel so travelling across it doesn't close the menu.
+    const el = rootRef.current;
+    const onLeave = () => { leaveTimerRef.current = setTimeout(() => setOpen(false), 300); };
+    const onEnter = () => clearTimeout(leaveTimerRef.current);
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    el?.addEventListener('mouseleave', onLeave);
+    el?.addEventListener('mouseenter', onEnter);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
+      el?.removeEventListener('mouseleave', onLeave);
+      el?.removeEventListener('mouseenter', onEnter);
+      clearTimeout(leaveTimerRef.current);
     };
   }, [open]);
 
