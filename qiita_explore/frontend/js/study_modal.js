@@ -46,6 +46,8 @@ function AddToProjectBar({ study }) {
   const [newName,    setNewName]    = useState('');
   const [adding,     setAdding]     = useState(false);
   const [msg,        setMsg]        = useState('');
+  const rowRef = useRef(null);
+  const lastRealSelectedRef = useRef('');
 
   useEffect(() => {
     apiFetch('/projects')
@@ -53,9 +55,31 @@ function AddToProjectBar({ study }) {
       .then(d => {
         const list = d.projects || [];
         setProjects(list);
-        if (list.length > 0) setSelected(list[0].project_id);
+        if (list.length > 0) {
+          setSelected(list[0].project_id);
+          lastRealSelectedRef.current = list[0].project_id;
+        }
       });
   }, []);
+
+  const isNew = selected === '';
+
+  // Clicking (or Escape-ing) away from the "+ New project…" flow should
+  // cancel it, not leave the name input stuck open forever — revert to the
+  // last real project, mirroring useDropdown.js's own outside-click/Escape
+  // idiom.
+  useEffect(() => {
+    if (!isNew) return;
+    const cancel = () => setSelected(lastRealSelectedRef.current || (projects || [])[0]?.project_id || '');
+    const onDown = e => { if (rowRef.current && !rowRef.current.contains(e.target)) cancel(); };
+    const onKey  = e => { if (e.key === 'Escape') cancel(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isNew, projects]);
 
   async function handleAdd() {
     setAdding(true); setMsg('');
@@ -93,12 +117,15 @@ function AddToProjectBar({ study }) {
   }
 
   if (projects === null) return null;
-  const isNew = selected === '';
   return (
-    <div className="modal-ws-row">
+    <div className="modal-ws-row" ref={rowRef}>
       <span className="modal-ws-label">Add to project</span>
       <ProjectPickerDropdown projects={projects} selectedId={selected}
-        onSelect={id => { setSelected(id); setMsg(''); }} />
+        onSelect={id => {
+          setSelected(id);
+          if (id) lastRealSelectedRef.current = id;
+          setMsg('');
+        }} />
       {isNew && (
         <input className="merge-name-filter" placeholder="Project name"
           value={newName} onChange={e => setNewName(e.target.value)} />
@@ -259,6 +286,12 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
   // rather than an explicit click — only an auto-expand auto-collapses.
   const [autoExpanded, setAutoExpanded] = useState(false);
   const cardRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   // Scrolling down in the compact view auto-expands to fullscreen for more
   // room; scrolling back up reverses it — but only when the expansion was

@@ -1203,7 +1203,7 @@ input, textarea { font-family: var(--sans); }
 
 /* ── Browse panel ────────────────────────────────────────────── */
 .browse-panel {
-  max-width: 860px;
+  max-width: 1040px; /* wide enough for 3 columns of .studies-grid's 320px cards */
   width: 100%;  /* same auto-margin flex-item caveat as .chat-messages */
   margin: 0 auto;
   padding: 28px 24px;

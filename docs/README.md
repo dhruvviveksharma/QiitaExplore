@@ -97,7 +97,7 @@ The claims most likely to rot, and how to check them:
 | 52 endpoints, split by module | `grep -c "@app.route" backend/routes/*.py` |
 | 16 tables, 11 indexes | `CREATE TABLE` / `CREATE INDEX` in `backend/store/db.py` |
 | 5 tools, 10 SSE events | `TOOL_SCHEMAS` in `agent_tools.py`; `_sse(` call sites vs. `parseSSE`'s dispatch table |
-| 10 models | `ALLOWED_MODELS` in `config.py` |
+| 6 models | `ALLOWED_MODELS` in `config.py` |
 | 2 remaining `TRN` call sites | `grep -rn "TRN" --include="*.py" backend/` — most hits are docstrings explaining avoidance |
 | Every `path :: symbol` citation resolves | Grep each symbol name in the named file |
 

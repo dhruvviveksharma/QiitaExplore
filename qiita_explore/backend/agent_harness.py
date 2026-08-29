@@ -222,7 +222,7 @@ def main():
 
     ap = argparse.ArgumentParser(description="Test the agentic chatbot from the CLI.")
     ap.add_argument("prompt", nargs="?", help="one-shot prompt; omit for interactive REPL")
-    ap.add_argument("--model", default="qwen3", help="model id (default qwen3; tool-capable)")
+    ap.add_argument("--model", default="minimax-m2", help="model id (default minimax-m2; tool-capable)")
     ap.add_argument("--tool",  help="call one tool directly (no LLM)")
     ap.add_argument("--args",  default="{}", help="JSON args for --tool")
     ap.add_argument("--deep",  action="store_true",

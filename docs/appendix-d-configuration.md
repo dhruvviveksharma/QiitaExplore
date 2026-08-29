@@ -235,17 +235,13 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 ## Model roster
 
-Ten models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `gemma`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
+Six models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `minimax-m2`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
 
 | Name | Provider | Tier | Size | Context (tokens) | Modalities | `supports_tools` | Budget (chars) |
 |---|---|---|---|---|---|---|---|
-| `qwen3` | nrp | main | 397B | 1,010,000 | image, video | yes | 3,507,000 |
-| `qwen3-small` | nrp | main | 27B | 1,010,000 | image, video | yes | 3,507,000 |
 | `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | yes | 3,642,016 |
-| `gemma` *(default)* | nrp | main | 31B | 262,144 | image, video | yes | 889,504 |
-| `kimi` | nrp | evaluating | 1T | 262,144 | image, video | yes | 889,504 |
 | `glm-5` | nrp | evaluating | 744B | 202,752 | — | yes | 681,632 |
-| `minimax-m2` | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
+| `minimax-m2` *(default)* | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
 | `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
 | `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |

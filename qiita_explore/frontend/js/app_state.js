@@ -489,20 +489,25 @@ function useAppState() {
       };
     });
 
+  // Shared by normal completion (applyStreamDone) and an early Stop: ends
+  // the message's streaming state while keeping whatever content/segments
+  // already arrived, rather than requiring a `done` event.
+  const _finalizeStreamedMessage = (m) => {
+    const next = { ...m, isStreaming: false, pendingStep: null };
+    if (m.segments !== null) {
+      const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
+      next.segments = frozen;
+      next.ui = { kind: 'agent_segments', segments: frozen };
+    }
+    return next;
+  };
+
   // `fallbackTitle` is only adopted when the chat's title is still the
   // auto-generated default — a chat the user already renamed (or one whose
   // title was already auto-set by a prior turn) is left untouched, so
   // finishing a later message never clobbers a rename.
   const applyStreamDone = (chatId, fallbackTitle, pinnedList, pinnedMeta) => {
-    patchLast(chatId, m => {
-      const next = { ...m, isStreaming: false, pendingStep: null };
-      if (m.segments !== null) {
-        const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
-        next.segments = frozen;
-        next.ui = { kind: 'agent_segments', segments: frozen };
-      }
-      return next;
-    });
+    patchLast(chatId, _finalizeStreamedMessage);
     setChatCache(prev => {
       const cur = prev[chatId] || {};
       const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
@@ -716,6 +721,10 @@ function useAppState() {
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
 
+    // Visible in the catch block so a Stop (AbortError) can finalize the
+    // in-flight message for whichever chat this send was targeting.
+    let chatId = null;
+
     try {
       // ── Normalize browse → new global chat ──────────────────────────────────
       let workView = view;
@@ -731,7 +740,7 @@ function useAppState() {
 
       // ── /systems ────────────────────────────────────────────────────────────
       if (/^\/systems\b/i.test(msg)) {
-        const chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
+        chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
           ? await ensureChatId(workView, '/systems')
           : null;
         if (!chatId) return;
@@ -746,7 +755,7 @@ function useAppState() {
 
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
-        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
+        chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -775,7 +784,7 @@ function useAppState() {
         );
 
       } else if (workView.type === 'global-chat') {
-        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
+        chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -802,11 +811,19 @@ function useAppState() {
         );
       }
     } catch (e) {
-      if (e.name !== 'AbortError') setCompErr(e.message || 'Failed to send');
+      if (e.name === 'AbortError') {
+        // User clicked Stop: end the message's streaming state but keep
+        // whatever content/segments already arrived (no `done` event fires).
+        if (chatId) patchLast(chatId, _finalizeStreamedMessage);
+      } else {
+        setCompErr(e.message || 'Failed to send');
+      }
     } finally {
       setSending(false);
     }
   };
+
+  const stopGenerating = () => abortRef.current?.abort();
 
   // ─── modal ────────────────────────────────────────────────────────────────────
   const openStudyModal = async (study) => {
@@ -932,7 +949,7 @@ function useAppState() {
     // handlers
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,

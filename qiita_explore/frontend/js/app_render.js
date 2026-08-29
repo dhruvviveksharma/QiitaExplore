@@ -48,7 +48,7 @@ function renderApp(s, account) {
     taRef, bottomRef,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
@@ -808,7 +808,10 @@ function renderApp(s, account) {
                     title="Click or type /model to change">
                 {selectedModel}
               </span>
-              <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
+              <button className="composer-send" onClick={sending ? stopGenerating : sendMessage}
+                disabled={!sending && !canSend} title={sending ? 'Stop generating' : 'Send'}>
+                {sending ? '■' : '↑'}
+              </button>
             </div>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}
