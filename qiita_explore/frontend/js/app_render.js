@@ -30,7 +30,7 @@ function renderApp(s, account) {
     setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setMergeWorkspaceId, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
@@ -505,7 +505,6 @@ function renderApp(s, account) {
                       pendingStudy={pendingMergeStudy}
                       clearPendingStudy={() => setPendingMergeStudy(null)}
                       onClose={() => setMergeWorkspaceId(null)}
-                      embedded
                     />
                   : <div className="merges-detail-empty">Open a workspace to view it here</div>
                 }

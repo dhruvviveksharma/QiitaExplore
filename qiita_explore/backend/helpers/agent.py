@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Generator, Optional
 
-from config import client, get_client
+from config import get_client
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
 from helpers.agent_tools import execute_tool
 
@@ -213,7 +213,7 @@ def stream_agent(
         active_tools = _tools_without_dedup_searches(tools, search_already_done)
 
         t_llm = time.perf_counter()
-        stream = client.chat.completions.create(
+        stream = llm_client.chat.completions.create(
             model=resolved,
             messages=api_msgs,
             tools=active_tools,
@@ -320,7 +320,7 @@ def stream_agent(
 
     if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
         logger.info("[agent] forcing synthesis — loop ended on tool results")
-        synth = client.chat.completions.create(
+        synth = llm_client.chat.completions.create(
             model=resolved, messages=api_msgs, stream=True, timeout=300.0,
         )
         for chunk in synth:

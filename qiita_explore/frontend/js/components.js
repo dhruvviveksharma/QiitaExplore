@@ -378,7 +378,6 @@ function SystemsStatusBubble({ ui }) {
 
 // ─── SamplesReportBubble ──────────────────────────────────────────────────────
 function SamplesReportBubble({ ui, messageKey }) {
-  if (!ui) return null;
   const { header = {}, samples = [], study_id } = ui;
   const numSamples = header.num_samples != null ? header.num_samples : samples.length;
   const [detail,        setDetail]        = useState(null);

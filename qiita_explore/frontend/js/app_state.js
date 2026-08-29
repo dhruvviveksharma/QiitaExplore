@@ -506,7 +506,7 @@ function useAppState() {
   // auto-generated default — a chat the user already renamed (or one whose
   // title was already auto-set by a prior turn) is left untouched, so
   // finishing a later message never clobbers a rename.
-  const applyStreamDone = (chatId, fallbackTitle, pinnedList, pinnedMeta) => {
+  const applyStreamDone = (chatId, fallbackTitle, pinnedMeta) => {
     patchLast(chatId, _finalizeStreamedMessage);
     setChatCache(prev => {
       const cur = prev[chatId] || {};
@@ -773,7 +773,7 @@ function useAppState() {
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
+              applyStreamDone(chatId, title, payload?.pinned_study_meta ?? null);
               setOpenProject(prev => prev ? {
                 ...prev,
                 chats: (prev.chats || []).map(c =>
@@ -803,7 +803,7 @@ function useAppState() {
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
               const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
+              applyStreamDone(chatId, title, payload?.pinned_study_meta ?? null);
               setGlobalChats(prev => prev.map(c =>
                 c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c));
             },
@@ -928,7 +928,7 @@ function useAppState() {
     setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setMergeWorkspaceId, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,

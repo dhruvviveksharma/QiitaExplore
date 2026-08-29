@@ -19,12 +19,6 @@ from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
 logger = logging.getLogger(__name__)
 
-# Per-sample JSONB fields that carry host/organism identity
-_HOST_FIELDS = [
-    "scientific_name", "common_name",
-    "host_scientific_name", "host_common_name",
-    "env_feature", "taxon_id", "host_taxid",
-]
 _MAX_KEYWORDS_PER_PROBE = 10
 
 

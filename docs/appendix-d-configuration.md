@@ -171,7 +171,7 @@ QIITA_BASE_DATA_DIR=/path/to/qiita/data
 
 Plus `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` exported by `start_barnacle.sh`. Everything else has a default that is at least defensible.
 
-For comparison, the `.env` currently checked in at `qiita_explore/.env` sets four keys: `DIRECTORY` (read by nothing in the backend), `API_KEY`, `QIITA_CONTROL_PLANE_URL`, and `QIITA_PUBLIC_LOGIN_URL`.
+The `.env` at `qiita_explore/.env` is gitignored (never committed); each deployment maintains its own. A typical one sets `API_KEY`, `QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, and the `QIITA_EXPLORE_*` cookie/CORS overrides for its topology.
 
 ### Alphabetical index
 
@@ -237,20 +237,20 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 Six models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `minimax-m2`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
 
-| Name | Provider | Tier | Size | Context (tokens) | Modalities | `supports_tools` | Budget (chars) |
-|---|---|---|---|---|---|---|---|
-| `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | yes | 3,642,016 |
-| `glm-5` | nrp | evaluating | 744B | 202,752 | — | yes | 681,632 |
-| `minimax-m2` *(default)* | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
-| `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | yes | 672,000 |
-| `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
-| `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
+| Name | Provider | Tier | Size | Context (tokens) | Modalities | Budget (chars) |
+|---|---|---|---|---|---|---|
+| `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | 3,642,016 |
+| `glm-5` | nrp | evaluating | 744B | 202,752 | — | 681,632 |
+| `minimax-m2` *(default)* | nrp | evaluating | 230B | 204,800 | — | 688,800 |
+| `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | 672,000 |
+| `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | 672,000 |
+| `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | 672,000 |
 
-**`supports_tools`** in `MODEL_METADATA` records whether a model can emit streaming tool calls. Chat routes always call `stream_agent` regardless; the field remains for other callers and future model additions.
+Every model in the roster supports streaming tool calls; chat routes always call `stream_agent`. (A per-model `supports_tools` flag and a `model_supports_tools()` helper existed historically but were removed once nothing branched on them.)
 
 `provider` splits along a second axis: `backend/config.py :: get_client` returns the shared NRP `OpenAI` client for `provider: "nrp"`, and a freshly constructed `anthropic.Anthropic` for `provider: "anthropic"`. The agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
 
-Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in `get_client` and `context_budget_chars`. `model_supports_tools` defaults an unrecognized name to `False`.
+Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in `get_client` and `context_budget_chars`.
 
 ---
 

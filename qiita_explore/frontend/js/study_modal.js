@@ -1,8 +1,8 @@
 // Study detail modal — extracted from app_render.js (TKT-011)
 // Globals in scope: React, useState, useEffect, useRef (utils.js),
-//   apiFetch, apiPost, apiPatch (utils.js), PrepsTable, SamplesBrowser,
-//   ArtifactsTable (components.js), ArtifactOutputsView, prepReachableSet
-//   (merge_artifacts.js), ProvenanceForest (merge_tree.js)
+//   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js),
+//   ArtifactOutputsView, prepReachableSet (merge_artifacts.js),
+//   ProvenanceForest (merge_tree.js)
 
 // ── Add to project ────────────────────────────────────────────────────────────
 

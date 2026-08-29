@@ -22,10 +22,9 @@ mkdir -p "$(dirname "$QIITA_EXPERIMENT_DB_PATH")" "$MERGE_RESULTS_DIR"
 
 echo "Frontend uses Babel standalone (runtime transpilation) — no compile step needed."
 
-cd "$SCRIPT_DIR/backend"
 # Schema bootstrap once in the parent process so four workers don't race
 # CREATE TABLE / journal_mode on a fresh (or NFS) SQLite file.
-python -c "import store.db" 
+python -c "import store.db"
 
 echo "Starting gunicorn on port $QE_PORT (4 workers, 2 threads each)..."
 exec gunicorn -w 4 --threads 2 -b 0.0.0.0:$QE_PORT \

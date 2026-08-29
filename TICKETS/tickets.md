@@ -24,6 +24,7 @@ Several `except Exception:` blocks swallow errors with `pass` or a silent fallba
 - `qiita_explore/backend/store/cache.py:107` — cache parse failure swallowed
 - `qiita_explore/backend/store/crud.py:71` — silent swallow
 - `qiita_explore/backend/store/merge_crud.py:22` — silent swallow
+- `qiita_explore/backend/helpers/qiita_fetch.py:268-269, 276-277` (added 2026-08-29) — two bare `except Exception: pass` in `_get_or_fetch_full_samples` (cached-JSON decode failure and cache-write failure) — directly contradicts the "never silently" argument at `:137-139` of the same file
 
 
 
@@ -1728,7 +1729,7 @@ infrequent per user.
 ## TKT-057: Dead `close_pool()` in `pg_pool.py`
 
 **Severity:** Low
-**Status:** Open
+**Status:** Resolved (2026-08-29 simplification pass — function deleted)
 
 ### Description
 
@@ -1751,7 +1752,7 @@ Remove `close_pool()` as dead code.
 ## TKT-058: Unused `dst_chats_tbl` + Raw String Literal Instead of `SCOPE_PROJECT` in `chat_move.py`
 
 **Severity:** Low
-**Status:** Open
+**Status:** Resolved (2026-08-29 — `dst_chats_tbl` was already gone by then; the raw `"project"` literal at :100 now uses `SCOPE_PROJECT`)
 
 ### Description
 
@@ -1843,7 +1844,7 @@ tuple; both routes call it.
 ## TKT-061: Dead `BoltIcon` in `icons.js`
 
 **Severity:** Low
-**Status:** Open
+**Status:** Resolved (2026-08-29 simplification pass — deleted)
 
 ### Description
 
@@ -1948,7 +1949,268 @@ before.
 
 ---
 
-*Generated: 2026-05-19 | Updated: 2026-08-27*
+
+
+## TKT-065: Sidebar Chat Row JSX Copy-Pasted Four Times in `app_render.js`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-08-29 (simplification survey). The sidebar chat-row block (inline-rename input,
+title with double-click-to-rename, `ChatRowMenu`) is copy-pasted four times in
+`app_render.js` (~lines 134-186, 193-245, 294-346, 351-403 — project active/archived,
+global active/archived), ~53 lines each ≈ 212 lines total. The copies have already
+drifted: copies 1-2 test `view.chatId === c.chat_id` for the active class while copies 3-4
+also test `view.type === 'global-chat'`; and `onRemoveFromProject={() => {}}` in the
+global copies is a dead no-op (`ChatRowMenu` only renders that item when
+`currentProjectId` is truthy). Real deltas between copies are ~4 lines each: list source,
+className variant, `saveRenameChat('proj'|'global')`, archive-vs-unarchive handler.
+
+### Plan
+
+Extract one `ChatSidebarRow` component (alongside `ChatRowMenu` in `components.js`) taking
+`{chat, active, className, onOpen, onRename, menuProps}`; replace the four blocks with
+short call sites. ~212 lines → ~100. Verify all four contexts in-browser: rename
+(double-click), pin, archive/unarchive, move-to-project, delete.
+
+### Files
+
+- `qiita_explore/frontend/js/app_render.js`
+- `qiita_explore/frontend/js/components.js`
+
+---
+
+
+
+## TKT-066: Duplicated Tool-Result Assembly in `agent_tools.py`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. Three separate duplications:
+1. `_tool_get_project_study_report` (~:187-213) and `_tool_get_study_report` (~:315-332)
+   are the same function — the project variant adds a 7-line allowed-ids gate and one
+   kwarg; the 17-line try/except bodies are character-identical. Also
+   `_tool_get_study_report`'s `scope`/`chat_id` params are never referenced in its body.
+2. The `{"kind": "tool_call", ...}` ui-payload skeleton is hand-built five times
+   (~:54-56, 177-183, 303-311, 359-364, 405-411).
+3. All three search tools end with the same no-results/format-list tail, each repeating
+   the bare `24_000` text-budget literal (~:171, 289, 399) — the only search budget not in
+   `config.py`.
+
+### Plan
+
+Merge the report tools behind `_tool_get_study_report(args, *, report_tool_name=None,
+allowed_ids=None)`; add one `_tool_payload(...)` builder; extract the shared search tail
+and lift `24_000` into a named constant (in `config.py`, next to the other budgets).
+
+### Files
+
+- `qiita_explore/backend/helpers/agent_tools.py`
+- `qiita_explore/backend/config.py`
+
+---
+
+
+
+## TKT-067: `global_chat_crud.py` Pinned/Archived Twin Should Mirror `_set_project_chat_flag`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. `set_global_chat_pinned` / `set_global_chat_archived`
+(`store/global_chat_crud.py:134-163`) are 14 identical lines each, differing only in
+`is_pinned`/`pinned_at` vs `is_archived`/`archived_at`. `store/crud.py:452-473` already
+solved exactly this with `_set_project_chat_flag(..., flag_col=, at_col=, value=)` plus
+two 3-line wrappers.
+
+### Plan
+
+Mirror the `_set_project_chat_flag` pattern in `global_chat_crud.py` (28 lines → ~18,
+structurally consistent modules).
+
+### Files
+
+- `qiita_explore/backend/store/global_chat_crud.py`
+
+---
+
+
+
+## TKT-068: Four Route Sites Bypass `request_utils.pinned_payload()`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. `helpers/request_utils.py:47-56` defines `pinned_payload(chat_id, scope)`
+so the pinned-ids list derives from one read, but four route sites rebuild the envelope
+inline: `global_chat_routes.py:138-139` and `:196-197` (the latter does two DB reads —
+`list_pinned_studies` + `list_pinned_study_meta` — where the helper does one), and
+`chat_routes.py:155-156` and `:238-243`.
+
+### Plan
+
+Switch all four sites to `pinned_payload()`. Call-site cleanup only; no signature changes.
+
+### Files
+
+- `qiita_explore/backend/routes/chat_routes.py`
+- `qiita_explore/backend/routes/global_chat_routes.py`
+
+---
+
+
+
+## TKT-069: Triplicated Pooled-Query Envelope in `sample_search.py`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. `_probe_exists`, `_probe_study_raw`, and `_score_sample_metadata_raw`
+(`helpers/sample_search.py`, ~:94-180) each end with the same ~13-line envelope:
+`pool.getconn()` → autocommit → execute → fetchone → `except: logger.exception; return
+default` → `finally: putconn`. ~39 duplicated lines; the three differ only in return
+coercion and default value.
+
+### Plan
+
+Extract one `_pooled_scalar(pool, sql, params, tag, default, coerce)` helper. Take care
+with the differing coercions (`bool(row and row[0])` vs `int(row[0]) if ... else 0`).
+
+### Files
+
+- `qiita_explore/backend/helpers/sample_search.py`
+
+---
+
+
+
+## TKT-070: `start_barnacle.sh` / `run_agent_harness.sh` Share a 15-Line Identical Prologue
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. Both scripts open with 15 byte-identical non-blank lines (shebang,
+`set -euo pipefail`, SCRIPT_DIR, cd, `detect_env.sh` source, conda activate dance,
+`QIITA_CONFIG_FP`/`QIITA_EXPERIMENT_DB_PATH`/`MERGE_RESULTS_DIR` exports, mkdir) — ~43% of
+each file. Both files even carry comments acknowledging the duplication ("Same … as
+start_barnacle.sh").
+
+### Plan
+
+Extend `detect_env.sh` (or add a sibling `activate_env.sh` sourced fragment) to cover
+conda-activate + the three exports; both scripts collapse to ~8 unique lines each. Update
+`docs/09-operations.md:25-28` and `docs/appendix-d-configuration.md:14` alongside.
+
+### Files
+
+- `qiita_explore/start_barnacle.sh`
+- `qiita_explore/run_agent_harness.sh`
+- `qiita_explore/detect_env.sh`
+
+---
+
+
+
+## TKT-071: `PrepsTable` / `ArtifactsTable` Twin Components
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. `components.js:265-297` (`PrepsTable`) and `:300-338` (`ArtifactsTable`)
+are structurally identical: same `expanded` state, same mount effect, same
+loading/null/empty guard triple, same `slice(0, 20)` + show-more button. Only the loading
+element, data key, empty message, and row renderer differ.
+
+### Plan
+
+One `ExpandableTable({rows, headers, renderRow, loading, onMount, emptyText, loadingEl})`
+(~73 lines → ~45). Preserves the `onMount`/`detailReqRef` contract documented at
+`docs/08-frontend.md:358` unchanged.
+
+### Files
+
+- `qiita_explore/frontend/js/components.js`
+
+---
+
+
+
+## TKT-072: `SLASH_COMMANDS` / `_PLUS_ACTIONS` Dual Registry + Third Copy in `completeSlash`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. The same four commands live in two parallel registries
+(`components.js:604-609` `SLASH_COMMANDS`, `:681-686` `_PLUS_ACTIONS`) whose `insert`
+values disagree (`/model` is `'/model'` in one, `null` in the other), and
+"which commands run without an argument" is encoded a third time as a hardcoded
+`item.cmd === '/systems' || item.cmd === '/model'` in `completeSlash`
+(`app_state.js:~644`).
+
+### Plan
+
+One registry with a `runsImmediately: true` flag; `PlusMenu`, `SlashCommandMenu`, and
+`completeSlash` all read it. Related: the `/deepsearch` prefix parsing in `sendMessage`
+(`app_state.js:~718`) is in neither registry and thus undiscoverable — decide whether to
+surface it or remove it while here (removal is a behavior change).
+
+### Files
+
+- `qiita_explore/frontend/js/components.js`
+- `qiita_explore/frontend/js/app_state.js`
+
+---
+
+
+
+## TKT-073: Proj/Global Twin Logic in `app_state.js` (`sendMessage` Arms + 5 Function Pairs)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-08-29. Two related residues of proj/global duplication:
+1. `sendMessage`'s project-chat and global-chat arms (~:757-812) are ~28 identical lines
+   each; real deltas are `message: msg` vs `sendMsg`, `deep_search: true`, and which list
+   `onDone` patches (`setOpenProject(...).chats` vs `setGlobalChats`).
+2. Five twin function pairs (`setProjChatPinned`/`setGlobChatPinned`,
+   `setProjChatArchived`/`setGlobChatArchived`, `moveProjChatToProject`/
+   `moveGlobalChatToProject`, `toggleShowArchivedProj`/`toggleShowArchivedGlobal`,
+   `unarchiveProjChat`/`unarchiveGlobalChat`, ~:282-413) differing only in which list
+   state they update. The file already established the right pattern at `renameChatCore`
+   (~:418), which takes the list-patcher as a callback.
+
+### Plan
+
+Apply the `renameChatCore` shape: one implementation per operation taking a
+`patchChatList` callback; `sendMessage` computes `{bodyExtras, patchTitleInList}` from
+`workView.type` and makes one `streamChat` call.
+
+### Files
+
+- `qiita_explore/frontend/js/app_state.js`
+
+---
+
+*Generated: 2026-05-19 | Updated: 2026-08-29*
 
 ---
 

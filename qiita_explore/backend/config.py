@@ -22,12 +22,12 @@ ALLOWED_MODELS = {
 }
 
 MODEL_METADATA = {
-    "deepseek-v4-flash": {"provider": "nrp",       "tier": "evaluating", "size": "304B", "context": 1_048_576, "modalities": "—",                   "supports_tools": True},
-    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 202_752,   "modalities": "—",                   "supports_tools": True},
-    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—",                   "supports_tools": True},
-    "claude-haiku-4-5":  {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
-    "claude-sonnet-4-6": {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
-    "claude-opus-4-8":   {"provider": "anthropic", "tier": "evaluating", "size": "—",    "context": 200_000,   "modalities": "image",               "supports_tools": True},
+    "deepseek-v4-flash": {"provider": "nrp",       "tier": "evaluating", "size": "304B", "context": 1_048_576, "modalities": "—"},
+    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 202_752,   "modalities": "—"},
+    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—"},
+    "claude-haiku-4-5":  {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image"},
+    "claude-sonnet-4-6": {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image"},
+    "claude-opus-4-8":   {"provider": "anthropic", "tier": "evaluating", "size": "—",    "context": 200_000,   "modalities": "image"},
 }
 
 

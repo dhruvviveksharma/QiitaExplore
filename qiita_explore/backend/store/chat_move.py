@@ -97,7 +97,7 @@ def _move_chat_between_scopes(
             return None
         now = _now()
 
-        if to_scope == "project":
+        if to_scope == SCOPE_PROJECT:
             conn.execute(
                 """
                 INSERT INTO project_chats(

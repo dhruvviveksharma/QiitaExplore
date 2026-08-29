@@ -721,26 +721,6 @@ input, textarea { font-family: var(--sans); }
   transition: background var(--t);
 }
 .btn-isc-merge:hover { background: var(--accent-h); }
-/* ── Query plan chip ─────────────────────────────────────────── */
-.msg-query-plan {
-  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px;
-  margin-bottom: 7px; padding: 4px 8px;
-  background: var(--surface-2, #f3f4f6); border-radius: 6px;
-  font-size: 11px; font-family: monospace; color: var(--text-3);
-  max-width: 100%;
-}
-.qp-icon { font-style: normal; color: var(--accent); flex-shrink: 0; }
-.qp-desc { color: var(--text-2); font-weight: 500; }
-.qp-keywords { display: inline-flex; flex-wrap: wrap; gap: 3px; }
-.qp-kw-chip {
-  padding: 1px 6px; border-radius: 10px;
-  background: var(--accent-muted, rgba(99,102,241,.12));
-  color: var(--accent); font-size: 10px; white-space: nowrap;
-}
-.qp-mode {
-  margin-left: 2px; color: var(--text-3);
-  font-size: 10px; text-transform: lowercase; opacity: .7;
-}
 
 /* ── Markdown rendering inside msg-bubble ────────────────────── */
 .msg-bubble p { margin: 0 0 0.55em; line-height: 1.65; }
@@ -1185,7 +1165,7 @@ input, textarea { font-family: var(--sans); }
 .merge-ws-study-title { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-ws-dtypes { font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-ws-no-studies { font-size: 12px; color: var(--text-3); }
-.merges-empty, .merges-loading { padding: 40px; text-align: center; color: var(--text-2); }
+.merges-empty { padding: 40px; text-align: center; color: var(--text-2); }
 .merge-ws-card.active { border-color: var(--accent); background: var(--accent-soft); }
 
 /* ── Merges two-column layout ────────────────────────────────── */
@@ -1262,9 +1242,6 @@ input, textarea { font-family: var(--sans); }
 .sql-toggle input { accent-color: var(--accent); }
 .sql-block { background: #0a1929; border-radius: var(--radius-s); padding: 10px 14px; font-family: monospace; font-size: 12px; color: #7ec8e3; }
 .pi-filter-line { font-size: 12px; color: var(--text-2); margin: 6px 0; }
-.msg-sql-details { margin: 2px 0 4px; }
-.msg-sql-summary { cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none; }
-.msg-sql-details .sql-block { margin-top: 4px; }
 
 .browse-count { font-size: 12px; color: var(--text-3); }
 
@@ -1413,9 +1390,6 @@ input, textarea { font-family: var(--sans); }
 .modal-ws-msg { font-size: 0.8rem; color: var(--text-3); }
 .modal-id { font-size: 16px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 .modal-title { font-family: var(--sans); font-weight: 600; font-size: 17px; line-height: 1.35; margin-bottom: 8px; }
-.modal-section { margin-bottom: 14px; }
-.modal-section h4 { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing:.07em; color: var(--text-3); margin-bottom: 5px; }
-.modal-section p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; }
 .modal-card .collapsible-header {
   font-size: 10.5px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .07em; color: var(--text-3);

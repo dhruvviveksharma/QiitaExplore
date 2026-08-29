@@ -39,7 +39,7 @@ def stub_agent_imports():
     config_stub.anthropic_client = MagicMock()
     config_stub.DEFAULT_MODEL = "gemma"
     config_stub.ALLOWED_MODELS = {"gemma"}
-    config_stub.MODEL_METADATA = {"gemma": {"context": 8192, "supports_tools": True}}
+    config_stub.MODEL_METADATA = {"gemma": {"context": 8192}}
 
     # Build minimal llm_helpers stub
     llm_stub = types.ModuleType("helpers.llm_helpers")

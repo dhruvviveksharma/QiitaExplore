@@ -26,7 +26,7 @@ Agentic tool-calling runs on both streaming endpoints:
 
 Each route passes its list as the required `tools=` argument to `stream_agent`. The list is passed directly as `tools=` to `client.chat.completions.create(...)` for every NRP-Nautilus (`provider: "nrp"`) model. For Anthropic models (`provider: "anthropic"` in `config.py :: MODEL_METADATA`), `backend/helpers/agent.py :: _openai_tools_to_anthropic` reshapes each entry into `{"name", "description", "input_schema"}` — `input_schema` is the OpenAI `parameters` object, passed through unchanged. No field is added, dropped, or renamed in translation, so the JSON Schema itself — types, the `required` list, and every prose description the model reads to decide what synonyms to fill in — is identical between providers. The translation runs once per turn, at the top of `_stream_anthropic_agent`, not once per loop iteration.
 
-Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. `model_supports_tools(model)` remains in `config.py` as capability metadata; chat routes no longer branch on it.
+Provider selection happens in `config.py :: get_client(model)`, which `stream_agent` calls once to get `(llm_client, provider)`. Chat routes never branch on tool capability — every model in the roster supports tool calls (the old `model_supports_tools()` helper is gone).
 
 ### The `active_tools` mutation
 

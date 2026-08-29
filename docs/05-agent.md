@@ -15,7 +15,7 @@ Both chat endpoints always run the agentic tool loop via `stream_agent`. The for
 | Global chat | `TOOL_SCHEMAS` from `agent_tool_schemas.py` | Public Qiita (`search_studies`, `search_by_sample`) |
 | Project chat | `PROJECT_TOOL_SCHEMAS` | Local SQLite only (`search_project_studies`) |
 
-`backend/config.py :: model_supports_tools` and `MODEL_METADATA.supports_tools` remain capability metadata for callers that need to know whether a model can emit tool calls. They no longer route chat — there is no legacy planner/search fallback.
+Every model in `MODEL_METADATA` supports tool calls, and nothing branches on tool capability — there is no legacy planner/search fallback. (The old `model_supports_tools()` helper and per-model `supports_tools` flag have been removed.)
 
 Project chat is scoped: `_execute_project_tool` rejects global tool names, `/pin` and `/report` gate on current `project_studies` membership, and project-scope pin reads join membership so stale rows never surface.
 

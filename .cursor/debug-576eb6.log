@@ -1,8 +1,0 @@
-{"sessionId": "576eb6", "runId": "pre-fix", "hypothesisId": "H1", "location": "Experiment/backend/run.py:search", "message": "search_request", "data": {"query": "voldemort"}, "timestamp": 1771996643192}
-{"sessionId": "576eb6", "runId": "pre-fix", "hypothesisId": "H2", "location": "Experiment/backend/run.py:search", "message": "search_response", "data": {"where_clause": "v.visibility ILIKE %s", "params": ["%voldemort%"], "count": 0}, "timestamp": 1771996645572}
-{"sessionId":"576eb6","runId":"pre-fix","hypothesisId":"H1","location":"Experiment/frontend/app.js:handleSearch","message":"search_response","data":{"query":"voldemort","count":0},"timestamp":1771996645578}
-{"sessionId":"576eb6","runId":"pre-fix","hypothesisId":"H4","location":"Experiment/frontend/app.js:fetchProjects","message":"projects_loaded","data":{"count":4},"timestamp":1771996655756}
-{"sessionId":"576eb6","runId":"pre-fix","hypothesisId":"H4","location":"Experiment/frontend/app.js:fetchProjects","message":"projects_loaded","data":{"count":4},"timestamp":1771996676318}
-{"sessionId": "576eb6", "runId": "pre-fix", "hypothesisId": "H1", "location": "Experiment/backend/run.py:search", "message": "search_request", "data": {"query": "Voldemort"}, "timestamp": 1771996688373}
-{"sessionId": "576eb6", "runId": "pre-fix", "hypothesisId": "H2", "location": "Experiment/backend/run.py:search", "message": "search_response", "data": {"where_clause": "(s.study_title ILIKE %s OR s.study_abstract ILIKE %s)", "params": ["%voldemort%", "%voldemort%"], "count": 4}, "timestamp": 1771996690628}
-{"sessionId":"576eb6","runId":"pre-fix","hypothesisId":"H1","location":"Experiment/frontend/app.js:handleSearch","message":"search_response","data":{"query":"Voldemort","count":4},"timestamp":1771996690633}

@@ -63,7 +63,6 @@ from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,
     PINNED_STUDIES_PER_CHAT_CAP,
-    upsert_project_study_summary,
     update_project_study_data,
     get_study_detail_cache,
     upsert_study_detail_cache,
