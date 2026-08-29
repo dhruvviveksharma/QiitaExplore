@@ -276,11 +276,16 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             seen_ids[sid] = s
             merged.append(s)
 
-    merged = finalize_search_results(
-        merged, kws, resolved_pis=resolved_pis, veto_applied=veto_applied, limit=limit,
+    # Rank/veto the full merged set, then slice locally: the top `limit` go to
+    # the LLM and the in-chat cards, while the full ranked list rides only the
+    # ui_payload so the results panel can show every match.
+    full = finalize_search_results(
+        merged, kws, resolved_pis=resolved_pis, veto_applied=veto_applied, limit=None,
     )
+    merged = full[:limit]
 
-    logger.info("[search_studies] final_merged=%d (after trim to limit=%d)", len(merged), limit)
+    logger.info("[search_studies] final_merged=%d of %d (trim to limit=%d)",
+                len(merged), len(full), limit)
 
     if not merged:
         text = "No matching public studies found for those keywords."
@@ -295,6 +300,10 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     )
     pi_suffix = pi_detail_suffix(applied_pi)
     applied_filters = {"pi": applied_pi} if applied_pi.get("input") else {}
+    result_summary = (
+        f"top {len(merged)} of {len(full)} studies" if len(full) > len(merged)
+        else (f"{len(merged)} studies" if merged else "no matches")
+    )
 
     return ToolResult(
         text=text,
@@ -306,8 +315,13 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
             "sql_query":      sql_str,
             "applied_filters": applied_filters,
-            "result_summary": f"{len(merged)} studies" if merged else "no matches",
+            "result_summary": result_summary,
             "result_studies": _result_studies(merged),
+            # Full ranked match set (lean rows, no abstracts) for the results
+            # panel; kept separate from result_studies so the in-chat widget
+            # and persisted-chat size stay bounded by `limit`.
+            "all_result_studies": _result_studies(full),
+            "total_matches":  len(full),
         },
     )
 

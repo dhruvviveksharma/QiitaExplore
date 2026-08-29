@@ -514,6 +514,10 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAll
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
   const detail = done ? seg.result?.detail : null;
   const studies = seg.result?.ui_payload?.result_studies || [];
+  // Full ranked match set (search_studies only) — the panel shows every
+  // match while the in-chat cards stay at the trimmed result_studies.
+  const allStudies = seg.result?.ui_payload?.all_result_studies?.length
+    ? seg.result.ui_payload.all_result_studies : studies;
   const hasStudies = done && studies.length > 0;
   const hasArgs = (seg.args?.keywords?.length > 0) || (seg.args?.field_filters?.length > 0)
                || (seg.args?.study_id != null) || (seg.args?.study_ids?.length > 0);
@@ -525,11 +529,11 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAll
         {detail && <span className="tool-call-banner-meta">{detail}</span>}
         {hasStudies && (
           <span className="tool-call-view-all" onClick={() => onViewAllStudies?.({
-            studies,
+            studies: allStudies,
             title: label,
             detail,
           })}>
-            View all →
+            View all {allStudies.length} →
           </span>
         )}
         {done && hasArgs && (

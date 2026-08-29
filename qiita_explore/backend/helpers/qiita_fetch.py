@@ -387,6 +387,18 @@ def _fetch_study_header(study_id: int):
     return _row_to_study_header(rows[0])
 
 
+def _fetch_study_headers(study_ids):
+    """Batch variant of _fetch_study_header: one query for many ids, results
+    returned in the caller's id order (missing/non-public ids dropped)."""
+    ids = [int(s) for s in study_ids]
+    if not ids:
+        return []
+    sql = _build_study_header_query() + " AND s.study_id = ANY(%s)"
+    rows = _qiita_fetch(sql, [ids])
+    by_id = {row[0]: _row_to_study_header(row) for row in rows}
+    return [by_id[sid] for sid in ids if sid in by_id]
+
+
 def _fetch_study_detail_from_qiita(study_id: int):
     """Run prep and artifact queries for a study and return (preps, artifacts)."""
     prep_rows = _qiita_fetch(

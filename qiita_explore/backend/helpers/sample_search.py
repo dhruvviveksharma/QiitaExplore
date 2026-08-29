@@ -14,7 +14,7 @@ from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
 from services.relevance import build_pi_required_filter
-from helpers.qiita_fetch import _fetch_study_header
+from helpers.qiita_fetch import _fetch_study_headers
 from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
 logger = logging.getLogger(__name__)
@@ -258,13 +258,12 @@ def _parallel_probe(candidate_ids, submit, log_tag, scanned_label="scanned", poo
 
 
 def _hydrate_headers(ids):
-    """Fetch study-header dicts for matched IDs, tagging each with its search origin."""
-    studies = []
-    for sid in ids:
-        header = _fetch_study_header(sid)
-        if header:
-            header["via"] = "sample_metadata"
-            studies.append(header)
+    """Fetch study-header dicts for matched IDs in one batch query (hundreds of
+    ids on a deep search — the old per-id loop was serial round trips), tagging
+    each with its search origin."""
+    studies = _fetch_study_headers(ids)
+    for s in studies:
+        s["via"] = "sample_metadata"
     return studies
 
 

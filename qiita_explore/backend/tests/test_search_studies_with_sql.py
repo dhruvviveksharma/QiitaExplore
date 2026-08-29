@@ -71,6 +71,67 @@ class TestTagFilterParamPosition:
         assert tag_clause.count("%s") == 2
 
 
+def _header_row(sid, via=None):
+    row = {
+        "study_id": sid, "study_title": f"Study {sid}", "study_abstract": "a" * 50,
+        "study_alias": f"S{sid}", "metadata_complete": True,
+        "pi_name": "PI", "pi_email": "pi@x.org", "pi_affiliation": "X",
+        "lab_person_name": None, "num_samples": 10, "data_types": "16S", "num_preps": 1,
+    }
+    if via:
+        row["via"] = via
+    return row
+
+
+class TestFullResultSetInUiPayload:
+    """The LLM text and in-chat cards get the trimmed top-`limit`; the full
+    ranked set rides ui_payload (all_result_studies/total_matches) for the
+    search results panel."""
+
+    def _run(self, n_text=5, n_sample=30, limit=10):
+        import helpers.agent_tools as agent_tools_mod
+        text_rows   = [_header_row(i) for i in range(1, n_text + 1)]
+        sample_rows = [_header_row(i, via="sample_metadata") for i in range(100, 100 + n_sample)]
+        # finalize_search_results hits Postgres for sample-layer scoring —
+        # replace with a rank-preserving fake honoring the limit contract.
+        fake_finalize = lambda studies, kws, resolved_pis=None, veto_applied=False, limit=None, **kw: (
+            list(studies)[:limit] if limit else list(studies))
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=(text_rows, "SQL")), \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=sample_rows), \
+             patch.object(agent_tools_mod, "finalize_search_results", side_effect=fake_finalize):
+            return agent_tools_mod._tool_search_studies({"keywords": ["mouse"], "limit": limit})
+
+    def test_result_studies_trimmed_but_all_result_studies_full(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        ui = res.ui_payload
+        assert len(ui["result_studies"]) == 10
+        assert len(ui["all_result_studies"]) == 35
+        assert ui["total_matches"] == 35
+
+    def test_full_set_starts_with_the_trimmed_top(self):
+        res = self._run(limit=10)
+        ui = res.ui_payload
+        top_ids = [s["study_id"] for s in ui["result_studies"]]
+        assert [s["study_id"] for s in ui["all_result_studies"][:10]] == top_ids
+
+    def test_llm_text_covers_only_the_top_limit(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        assert "top 10 studies" in res.text
+        # Study ids 110+ rank below the trim line — the model must not see them.
+        assert "Study 125" not in res.text
+
+    def test_result_summary_reports_the_split(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        assert res.ui_payload["result_summary"] == "top 10 of 35 studies"
+
+    def test_no_split_summary_when_everything_fits(self):
+        res = self._run(n_text=3, n_sample=2, limit=10)
+        ui = res.ui_payload
+        assert ui["result_summary"] == "5 studies"
+        assert ui["total_matches"] == 5
+        assert len(ui["all_result_studies"]) == 5
+
+
 class TestSearchStudiesToolPassesTagsThrough:
     def test_tags_extracted_from_args_and_forwarded(self):
         import helpers.agent_tools as agent_tools_mod
