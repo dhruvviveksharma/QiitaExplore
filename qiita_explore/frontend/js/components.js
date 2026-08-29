@@ -628,7 +628,7 @@ function ChatRowMenu({
 
   return (
     <div className="cr-menu-root" ref={dd.rootRef}>
-      <button ref={dd.btnRef} className={`cr-more${dd.open ? ' cr-more-open' : ''}`}
+      <button ref={dd.btnRef} className={`cr-more${dd.open && !dd.closing ? ' cr-more-open' : ''}`}
         onClick={dd.toggle} title="More">
         <DotsIcon />
       </button>

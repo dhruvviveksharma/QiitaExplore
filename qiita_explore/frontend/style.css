@@ -292,10 +292,11 @@ input, textarea { font-family: var(--sans); }
 }
 .chat-row:hover .cr-more { opacity: 1; }
 .cr-more:hover { background: var(--border-soft); color: var(--accent); }
-/* Keep the faded box visible while the menu is open (not just on :hover),
-   so the open menu stays visually anchored to its trigger. */
+/* Faded box shown the moment the menu opens (distinct from the gray :hover
+   state, so the click visibly "latches"), kept while the menu is open, and
+   dropped as soon as a hover-away close begins — not after the fade ends. */
 .cr-more-open, .chat-row .cr-more-open {
-  opacity: 1; background: var(--border-soft); color: var(--accent);
+  opacity: 1; background: var(--accent-soft); color: var(--accent);
 }
 
 /* Shared dropdown-panel convention (see CLAUDE.md "Established Patterns:
