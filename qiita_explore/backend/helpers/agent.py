@@ -44,9 +44,12 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
     yield {"type": "segment_tool_call", "name": step_name,
            "label": _tool_label(name, args), "args": args}
     if _is_dedup_search_tool(name) and search_already_done:
-        msg = f"Only one {name} call is allowed per turn. Use the results already returned."
+        msg = (f"Only one {name} call is allowed per message, and a second search cannot "
+               f"find studies the first one missed — the complete ranked list of all matches "
+               f"is already shown to the user in the results panel. Use the results already "
+               f"returned.")
         yield {"type": "segment_tool_result", "name": step_name,
-               "label": f"{name} skipped", "detail": "duplicate search", "ui_payload": None}
+               "label": f"{name} skipped", "detail": "one search per message", "ui_payload": None}
         return (msg, True)
     t0 = time.perf_counter()
     try:

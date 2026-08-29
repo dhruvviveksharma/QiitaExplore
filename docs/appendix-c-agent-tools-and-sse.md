@@ -93,7 +93,7 @@ Full-text and sample-metadata search over public Qiita studies. No parameter is 
 | `keywords` | `array<string>` | no | Catch-all for terms outside the typed slots, or flat keyword queries. |
 | `data_types` | `array<string>` | no | AND filter over 10 valid values (`16S`, `Metagenomic`, …) — only when the user explicitly names a sequencing type. |
 | `investigation_types` | `array<string>` | no | Narrower sub-filter (~18 studies matched); discouraged by its own description. |
-| `limit` | `integer` | no | Clamped to 1–20 server-side; schema default 8. |
+| `limit` | `integer` | no | Clamped to 1–10 server-side; schema default 10. The chat/LLM list is capped at 10 — the full ranked match set rides `ui_payload.all_result_studies` to the results panel. |
 
 **Example call args**, as the model might fill them for "wild mice gut microbiome":
 
@@ -103,7 +103,7 @@ Full-text and sample-metadata search over public Qiita studies. No parameter is 
   "body_site": ["gut", "fecal", "stool"], "limit": 8 }
 ```
 
-**What the model sees back:** `_tool_search_studies` runs a text search (`search_studies_with_sql`) and a sample-metadata probe (`search_studies_by_sample_meta`) on every call — see [`04-search.md`](04-search.md) for how those are bounded and merged — then renders the merged, re-ranked, limit-trimmed list through `_format_discovery_study_list` (8,000-char budget) as `ToolResult.text`. An empty result set returns the literal string `"No matching public studies found for those keywords."` instead of an empty list.
+**What the model sees back:** `_tool_search_studies` runs a text search (`search_studies_with_sql`) and a sample-metadata probe (`search_studies_by_sample_meta`) on every call — see [`04-search.md`](04-search.md) for how those are bounded and merged — then renders the merged, re-ranked, limit-trimmed list through `_format_discovery_study_list` (24,000-char budget) as `ToolResult.text`. An empty result set returns the literal string `"No matching public studies found for those keywords."` instead of an empty list.
 
 The merge step itself is worth naming explicitly, since it determines what `via` ends up being in `ui_payload`: text-search hits (`text_studies`) and sample-metadata hits (`sample_studies`, already excluding any `study_id` the text search already found) are concatenated with text first, deduplicated by `study_id` on first occurrence — so a study appearing in both lists is tagged `via: "text"` — then re-sorted by a Python-side score (`title` match = 3, `abstract` match = 1 per keyword) and trimmed to `limit`. Sample-metadata probing prefers `organism` slot terms over the full pooled `raw_kws` when `organism` is non-empty, on the theory that the probed host-identity fields (`host_scientific_name`, etc.; see [`04-search.md`](04-search.md#the-probe)) are organism-specific and noisy against unrelated qualifier/condition terms.
 

@@ -139,7 +139,12 @@ TOOL_SCHEMAS = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max studies to return (1–20, default 10).",
+                        "description": (
+                            "How many studies to feature in the chat reply (1–10, "
+                            "default 10). The complete ranked list of every match is "
+                            "always shown to the user separately in the results panel — "
+                            "a larger limit is not a way to get more results."
+                        ),
                     },
                 },
                 "required": [],

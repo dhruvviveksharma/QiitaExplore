@@ -110,7 +110,7 @@ The `backend/data/` default directory is created at import time by `backend/stor
 | `GLOBAL_SEARCH_SQL_LIMIT_NARROW` | `50` | `backend/services/llm.py` | Row limit for narrow/targeted searches. Same `1…150` clamp. | Yes |
 | `SAMPLE_SEARCH_DEFAULT_CANDIDATES` | `40` | `backend/helpers/agent_tools.py` | How many studies the per-sample metadata probe fans out across in normal mode. | Yes |
 | `SAMPLE_SEARCH_DEEP_CANDIDATES` | `500` | `backend/helpers/agent_tools.py`, `backend/routes/study_routes.py` | Same, in deep-search mode. Selected by the `deep_search` flag. | Yes |
-| `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | `8000` | `backend/helpers/sample_search.py` | Per-connection PostgreSQL `statement_timeout`, passed as `options=f"-c statement_timeout={…}"` on the probe pool. A probe that exceeds it is killed by the server, not the client. | Yes |
+| `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | `15000` | `backend/helpers/sample_search.py` | Per-connection PostgreSQL `statement_timeout`, passed as `options=f"-c statement_timeout={…}"` on the probe pool. A probe that exceeds it is killed by the server, not the client. | Yes |
 
 Sample search is bounded on three independent axes, and all three must be understood together: candidate count (above), keywords per probe (`_MAX_KEYWORDS_PER_PROBE`, non-env), and statement timeout (above). See the non-env table.
 
@@ -205,7 +205,7 @@ The `.env` at `qiita_explore/.env` is gitignored (never committed); each deploym
 | [`QIITA_WHOAMI_TIMEOUT_SECONDS`](#env-QIITA_WHOAMI_TIMEOUT_SECONDS) | Qiita | `5` |
 | [`SAMPLE_SEARCH_DEEP_CANDIDATES`](#env-SAMPLE_SEARCH_DEEP_CANDIDATES) | Search | `500` |
 | [`SAMPLE_SEARCH_DEFAULT_CANDIDATES`](#env-SAMPLE_SEARCH_DEFAULT_CANDIDATES) | Search | `40` |
-| [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `8000` |
+| [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `15000` |
 
 Thirty-four names in total: thirty-two read by `config.py` or backend helpers, plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
 
@@ -265,7 +265,7 @@ These are literals in source. They cannot be changed without an edit and a resta
 | `PINNED_STUDIES_PER_CHAT_CAP` | `10` | `backend/store/cache.py` | Studies pinnable to one chat. `pin_study_to_chat` returns `False` past the cap rather than raising. |
 | keyword expansion cap | `80` | `backend/services/study_service.py :: expand_keyword_variants` (`return expanded[:80]`) | Applied **after** plural/singular expansion. Since most terms yield two variants, the effective input ceiling is roughly 40 terms. |
 | `_MAX_KEYWORDS_PER_PROBE` | `10` | `backend/helpers/sample_search.py` | Keywords and field filters per per-study JSONB probe; both lists are sliced to it. |
-| probe `statement_timeout` | `8000` ms | `backend/helpers/sample_search.py`, from `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | Server-side kill for a single sample probe. Listed here because the value reads like a literal — it is the env default. |
+| probe `statement_timeout` | `15000` ms | `backend/helpers/sample_search.py`, from `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | Server-side kill for a single sample probe. Listed here because the value reads like a literal — it is the env default. |
 | sample-search candidates | `40` / `500` | `backend/config.py`, via `SAMPLE_SEARCH_DEFAULT_CANDIDATES` / `SAMPLE_SEARCH_DEEP_CANDIDATES` | Normal vs. deep fan-out width. Also env-tunable. |
 | probe `pool_size` | `16` | `backend/helpers/sample_search.py` (function default) | Ceiling on probe concurrency; actual workers are `min(len(candidate_ids), pool_size)`. Independent of `PG_POOL_MAX_CONN` — this pool is created per call. |
 | probe wall-clock timeout | `max(30, len(candidate_ids) * 0.4)` s | `backend/helpers/sample_search.py` | Computed, not literal — scales with candidate count, floored at 30 seconds. |

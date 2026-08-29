@@ -219,7 +219,10 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
 
     raw_kws, detect_kws = _collect_terms(args)
-    limit          = max(1, min(20, int(args.get("limit") or 10)))
+    # Chat/LLM slice is hard-capped at 10 — the full ranked set always reaches
+    # the user via the results panel (all_result_studies), so a bigger limit
+    # buys nothing and just bloats context.
+    limit          = max(1, min(10, int(args.get("limit") or 10)))
     explicit_types = [t.strip() for t in (args.get("data_types") or []) if t]
     explicit_inv   = [t.strip() for t in (args.get("investigation_types") or []) if t]
 
@@ -245,7 +248,9 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
         where, params,
-        limit=limit * 2,
+        # Overfetch floor is decoupled from the chat cap: the text-search half
+        # of the panel's full result set must not shrink because chat shows 10.
+        limit=max(40, limit * 2),
         relevance_keywords=kws,
         data_types=effective_types,
         investigation_types=effective_inv,
@@ -289,6 +294,13 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
 
     if not merged:
         text = "No matching public studies found for those keywords."
+    elif len(full) > len(merged):
+        # The model must learn the total exists, or it will try to "search for
+        # more" — the full ranked list is already on the user's screen.
+        header = (f"search_studies returned the top {len(merged)} of {len(full)} matching "
+                  f"studies. The complete ranked list is already visible to the user in the "
+                  f"results panel ('View all {len(full)}'):")
+        text   = _format_discovery_study_list(merged, header, 24_000)
     else:
         header = f"search_studies returned the top {len(merged)} studies:"
         text   = _format_discovery_study_list(merged, header, 24_000)
