@@ -126,7 +126,8 @@ def api_global_chat_message_stream(chat_id):
         return pinned_ctx
 
     return sse_response(lambda: stream_chat_turn(
-        scope=SCOPE_GLOBAL, chat_id=chat_id, model=model, user_content=user_content,
+        scope=SCOPE_GLOBAL, chat_id=chat_id, user_id=user_id,
+        model=model, user_content=user_content,
         report_study_id=report_study_id, pin_study_ids=pin_study_ids,
         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, tools=TOOL_SCHEMAS,
         full_msgs=full_msgs, build_context=build_context, deep_search=deep_search,

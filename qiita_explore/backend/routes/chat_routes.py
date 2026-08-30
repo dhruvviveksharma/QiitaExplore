@@ -167,7 +167,8 @@ def api_chat_message_stream(project_id, chat_id):
         return None
 
     return sse_response(lambda: stream_chat_turn(
-        scope=SCOPE_PROJECT, chat_id=chat_id, model=model, user_content=user_content,
+        scope=SCOPE_PROJECT, chat_id=chat_id, user_id=user_id, project_id=project_id,
+        model=model, user_content=user_content,
         report_study_id=report_study_id, pin_study_ids=pin_study_ids,
         system_prompt=PROJECT_CHAT_SYSTEM_PROMPT, tools=PROJECT_TOOL_SCHEMAS,
         full_msgs=full_msgs, build_context=build_context, report_guard=report_guard,
