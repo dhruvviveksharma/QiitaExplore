@@ -28,7 +28,7 @@ from helpers.llm_helpers import (
 from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
-    parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
+    parse_chat_stream_body, load_history_for, sse_response, stream_samples_report,
     pin_response, unpin_response,
 )
 
@@ -114,11 +114,11 @@ def api_global_chat_message_stream(chat_id):
     if err_response is not None:
         return err_response
 
-    chat = get_global_chat(user_id, chat_id)
+    chat = get_global_chat(user_id, chat_id, include_messages=False)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
 
-    full_msgs = build_full_msgs(chat.get('messages'), user_content)
+    full_msgs = load_history_for(chat_id, SCOPE_GLOBAL, user_content)
 
     def generate():
         assistant_parts = []

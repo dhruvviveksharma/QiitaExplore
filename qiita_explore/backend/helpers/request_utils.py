@@ -8,7 +8,10 @@ from store import (
     PINNED_STUDIES_PER_CHAT_CAP,
     list_pinned_study_meta,
     unpin_study_from_chat,
+    load_project_chat_history,
+    load_global_chat_history,
     SCOPE_PROJECT,
+    SCOPE_GLOBAL,
 )
 
 
@@ -42,6 +45,14 @@ def build_full_msgs(messages, user_content):
     full_msgs = [{"role": m.get("role"), "content": m.get("content")} for m in (messages or [])]
     full_msgs.append({"role": "user", "content": user_content})
     return full_msgs
+
+
+def load_history_for(chat_id: str, scope: str, user_content: str) -> list:
+    """History for a chat turn via the lean role/content-only loaders — never
+    decodes ui_payload blobs the LLM can't use anyway."""
+    history = (load_global_chat_history(chat_id) if scope == SCOPE_GLOBAL
+               else load_project_chat_history(chat_id))
+    return build_full_msgs(history, user_content)
 
 
 def pinned_payload(chat_id: str, scope: str) -> dict:

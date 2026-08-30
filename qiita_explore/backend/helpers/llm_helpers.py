@@ -80,6 +80,16 @@ def _truncate(value, limit):
     return text[: max(0, limit - 3)] + "..."
 
 
+def _format_pi_line(pi_name, pi_affiliation) -> str:
+    """'Name (Affiliation)' with graceful degradation — shared by every
+    model-visible study block so PI rendering can't drift between them."""
+    pi  = _truncate(pi_name or "", 80)
+    aff = _truncate((pi_affiliation or "").strip(), 80)
+    if pi and aff:
+        return f"{pi} ({aff})"
+    return pi or aff or "N/A"
+
+
 _STUDY_BLOCK_SKIP_KEYS = {
     "study_id", "study_title", "study_abstract", "pi_name", "pi_email",
     "pi_affiliation", "lab_person_name", "summary_text", "added_at", "updated_at",
@@ -155,12 +165,7 @@ def _study_discovery_compact_block(study: dict) -> str:
     """One study, minimal lines for global discovery (no sample metadata dump)."""
     sid   = study.get("study_id")
     title = _truncate(study.get("study_title") or "Untitled study", 140)
-    pi    = _truncate(study.get("pi_name") or "N/A", 80)
-    aff   = _truncate((study.get("pi_affiliation") or "").strip(), 80)
-    if aff:
-        pi_line = f"{pi} ({aff})" if pi != "N/A" else aff
-    else:
-        pi_line = pi
+    pi_line = _format_pi_line(study.get("pi_name"), study.get("pi_affiliation"))
     abstract = _truncate((study.get("study_abstract") or "").strip() or "Not available", 600)
     dt       = _truncate((study.get("data_types") or "").strip(), 80)
     ns       = study.get("num_samples")

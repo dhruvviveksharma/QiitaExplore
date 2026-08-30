@@ -33,7 +33,7 @@ from helpers.qiita_fetch import _detect_mentioned_study_ids
 from helpers.pinned_context import _build_pinned_reports_context
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import (
-    parse_chat_stream_body, build_full_msgs, sse_response, stream_samples_report,
+    parse_chat_stream_body, load_history_for, sse_response, stream_samples_report,
     pin_response, unpin_response,
 )
 
@@ -129,12 +129,12 @@ def api_chat_message_stream(project_id, chat_id):
     if err_response is not None:
         return err_response
 
-    chat = get_chat(project_id, user_id, chat_id)
+    chat = get_chat(project_id, user_id, chat_id, include_messages=False)
     if not chat:
         return jsonify({'error': 'Chat not found'}), 404
 
     proj      = get_project_studies_only(project_id)
-    full_msgs = build_full_msgs(chat.get('messages'), user_content)
+    full_msgs = load_history_for(chat_id, SCOPE_PROJECT, user_content)
     member_ids = allowed_project_study_ids(project_id)
 
     def generate():

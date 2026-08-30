@@ -47,7 +47,7 @@ def global_chat_exists(user_id: str, chat_id: str) -> bool:
     return row is not None
 
 
-def get_global_chat(user_id: str, chat_id: str):
+def get_global_chat(user_id: str, chat_id: str, include_messages: bool = True):
     from store.cache import SCOPE_GLOBAL, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -62,7 +62,10 @@ def get_global_chat(user_id: str, chat_id: str):
         if row is None:
             return None
         chat = _as_dict(row)
-        chat["messages"] = _load_global_messages(conn, chat_id)
+        # include_messages=False skips the full transcript load + per-message
+        # ui_payload JSON decode — the stream routes only need ownership/meta.
+        if include_messages:
+            chat["messages"] = _load_global_messages(conn, chat_id)
         meta = _load_pinned_study_meta(conn, chat_id, SCOPE_GLOBAL)
         chat["pinned_study_meta"] = meta
         chat["pinned_studies"] = [m["study_id"] for m in meta]

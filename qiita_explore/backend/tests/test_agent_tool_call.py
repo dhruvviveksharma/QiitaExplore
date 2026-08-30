@@ -1,7 +1,7 @@
 """Unit tests for helpers.agent._execute_tool_call().
 
 Drives the generator directly and asserts on the two SSE event dicts it yields
-and the (result_text, is_search_studies) return value it produces via StopIteration.
+and the (result_text, consumed_search_slot) return value it produces via StopIteration.
 No DB, no network, no LLM required.
 """
 import sys
@@ -20,12 +20,14 @@ def _collect(gen):
         return events, stop.value
 
 
-def _make_result(text="result text", label="Done", detail="some detail", ui_payload=None):
+def _make_result(text="result text", label="Done", detail="some detail", ui_payload=None,
+                 executed=True):
     result = MagicMock()
     result.text = text
     result.label = label
     result.detail = detail
     result.ui_payload = ui_payload
+    result.executed = executed
     return result
 
 
@@ -40,6 +42,7 @@ def stub_agent_imports():
     config_stub.DEFAULT_MODEL = "gemma"
     config_stub.ALLOWED_MODELS = {"gemma"}
     config_stub.MODEL_METADATA = {"gemma": {"context": 8192}}
+    config_stub.SEARCH_CALLS_PER_MESSAGE = 5
 
     # Build minimal llm_helpers stub
     llm_stub = types.ModuleType("helpers.llm_helpers")
@@ -90,7 +93,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {"study_id": 11043}, "abc123def456",
                     scope="global", chat_id="chat1", deep_search=False,
-                    search_already_done=False,
+                    search_calls_used=0,
                 )
             )
 
@@ -98,13 +101,13 @@ class TestExecuteToolCall:
 
         call_ev = events[0]
         assert call_ev["type"] == "segment_tool_call"
-        assert call_ev["name"] == "tool_get_study_report_abc123"
+        assert call_ev["name"] == "tool_get_study_report_abc123def456"
         assert call_ev["args"] == {"study_id": 11043}
         assert "label" in call_ev
 
         result_ev = events[1]
         assert result_ev["type"] == "segment_tool_result"
-        assert result_ev["name"] == "tool_get_study_report_abc123"
+        assert result_ev["name"] == "tool_get_study_report_abc123def456"
         assert result_ev["label"] == "L"
         assert "D" in result_ev["detail"]
         assert "s" in result_ev["detail"]   # timing suffix e.g. "D · 0.0s"
@@ -113,7 +116,7 @@ class TestExecuteToolCall:
         assert retval == ("T", False)
 
     def test_search_studies_returns_true_flag(self):
-        """is_search_studies is True only when name=='search_studies'."""
+        """consumed_search_slot is True for an executed search_studies call."""
         import helpers.agent as agent_mod
         mock_result = _make_result(text="results", label="Done", detail="")
 
@@ -122,14 +125,14 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "search_studies", {"keywords": ["mouse"]}, "xyz999abc111",
                     scope="global", chat_id="chat1", deep_search=False,
-                    search_already_done=False,
+                    search_calls_used=0,
                 )
             )
 
         assert retval == ("results", True)
 
     def test_non_search_tool_returns_false_flag(self):
-        """is_search_studies is False for any tool other than search_studies."""
+        """consumed_search_slot is False for any tool other than the search tools."""
         import helpers.agent as agent_mod
         mock_result = _make_result(text="pinned", label="Pinned", detail="")
 
@@ -138,7 +141,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "pin_study", {"study_ids": [11043]}, "aaa000bbb111",
                     scope="global", chat_id="chat1", deep_search=False,
-                    search_already_done=False,
+                    search_calls_used=0,
                 )
             )
 
@@ -153,7 +156,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {"study_id": 99}, "fail12345678",
                     scope="global", chat_id="chat1", deep_search=False,
-                    search_already_done=False,
+                    search_calls_used=0,
                 )
             )
 
@@ -166,9 +169,9 @@ class TestExecuteToolCall:
         assert result_ev["ui_payload"] is None
         assert "boom" in result_ev["detail"]
 
-        text, is_search = retval
+        text, consumed = retval
         assert "boom" in text or "failed" in text.lower()
-        assert is_search is False
+        assert consumed is False
 
     def test_empty_detail_omits_dot_prefix(self):
         """When ToolResult.detail is empty, timing string has no leading '·'."""
@@ -180,7 +183,7 @@ class TestExecuteToolCall:
                 agent_mod._execute_tool_call(
                     "get_study_report", {}, "detl00000000",
                     scope="global", chat_id="chat1", deep_search=False,
-                    search_already_done=False,
+                    search_calls_used=0,
                 )
             )
 
@@ -189,11 +192,11 @@ class TestExecuteToolCall:
         assert "s" in detail   # timing like "0.0s"
 
 
-class TestToolsWithoutDedupSearches:
+class TestToolsWithinSearchBudget:
     """Regression coverage for the OpenAI-vs-Anthropic tool-shape KeyError.
 
     _stream_anthropic_agent passes Anthropic-shape tools ({"name": ...}, no
-    "function" key) into this filter once search_already_done flips True —
+    "function" key) into this filter once the search budget is spent —
     it must not assume the OpenAI {"function": {"name": ...}} shape.
     """
 
@@ -208,15 +211,15 @@ class TestToolsWithoutDedupSearches:
 
     def test_openai_shape_unaffected(self):
         import helpers.agent as agent_mod
-        result = agent_mod._tools_without_dedup_searches(self.OPENAI_TOOLS, True)
+        result = agent_mod._tools_within_search_budget(self.OPENAI_TOOLS, 5)
         assert [t["function"]["name"] for t in result] == ["get_study_report"]
 
     def test_anthropic_shape_does_not_raise(self):
         import helpers.agent as agent_mod
-        result = agent_mod._tools_without_dedup_searches(self.ANTHROPIC_TOOLS, True)
+        result = agent_mod._tools_within_search_budget(self.ANTHROPIC_TOOLS, 5)
         assert [t["name"] for t in result] == ["get_study_report"]
 
-    def test_anthropic_shape_passthrough_when_search_not_done(self):
+    def test_anthropic_shape_passthrough_under_budget(self):
         import helpers.agent as agent_mod
-        result = agent_mod._tools_without_dedup_searches(self.ANTHROPIC_TOOLS, False)
+        result = agent_mod._tools_within_search_budget(self.ANTHROPIC_TOOLS, 4)
         assert result == self.ANTHROPIC_TOOLS

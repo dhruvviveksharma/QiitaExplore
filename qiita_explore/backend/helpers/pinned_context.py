@@ -20,6 +20,7 @@ from helpers.qiita_fetch import (
     _get_or_fetch_full_samples,
     _truncate,
 )
+from helpers.llm_helpers import _format_pi_line
 
 # Conservative floor on chars-per-sample, used only to size the *fetch* so the
 # char budget is never starved by too few rows. The render loop below enforces
@@ -37,8 +38,11 @@ def _build_full_samples_block(study_id: int, budget_chars: int, *, tools_availab
     num_samples = (header or {}).get("num_samples") or (len(samples) if samples else 0)
     data_types  = (header or {}).get("data_types") or ""
 
+    # PI must appear here: the UI card shows it, so a report block without it
+    # leaves the model contradicting the screen it sits next to.
     lines = [
         f"### Study {study_id}: {_truncate(title, 140)}",
+        f"  PI: {_format_pi_line((header or {}).get('pi_name'), (header or {}).get('pi_affiliation'))}",
         f"  Data Types: {data_types or 'Not available'} | Total samples: {num_samples} | In report: {len(samples)}",
     ]
     if not samples:

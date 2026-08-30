@@ -49,6 +49,11 @@ def context_budget_chars(model: str) -> int:
     return max(8_000, chars)
 
 
+# How many *executed* search-tool calls the model may make per user message
+# (empty-input and crashed calls don't count). Past the cap the search tools
+# are stripped from the offered schema for the rest of the turn.
+SEARCH_CALLS_PER_MESSAGE = int(os.getenv("SEARCH_CALLS_PER_MESSAGE", "5"))
+
 GLOBAL_SEARCH_SQL_LIMIT_BROAD   = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_BROAD", "120"))
 GLOBAL_SEARCH_SQL_LIMIT_NARROW  = int(os.getenv("GLOBAL_SEARCH_SQL_LIMIT_NARROW", "50"))
 SAMPLE_SEARCH_DEFAULT_CANDIDATES = int(os.getenv("SAMPLE_SEARCH_DEFAULT_CANDIDATES", "40"))
@@ -118,8 +123,8 @@ Your primary goal is to help researchers find studies from the entire Qiita data
 ## Tools available to you
 You have the following tools. Call them as needed — do not wait for the user to invoke them explicitly.
 - **search_studies**: Search Qiita for public studies. Call this whenever the user asks to find, discover, or filter studies.
-  - Issue EXACTLY ONE call per user request. NEVER fire multiple calls in one turn.
-  - The chat reply features at most 10 studies, no matter what. If the user asks for more than 10, do NOT try to satisfy the count with `limit` or additional searches — the complete ranked list of EVERY match is automatically shown to the user in the results panel (the "View all N" link on the search banner); point them to it. Only set `limit` below 10 when the user asks for fewer (e.g. "find me 3 studies" → limit=3).
+  - You may call search_studies up to 5 times per user message. Start with ONE well-filled call; only search again with meaningfully DIFFERENT keywords/slots when the first results are thin or the user's request spans distinct concepts. Never repeat the same query.
+  - Each search features at most 10 studies in the chat reply, no matter what. Do NOT use `limit` or repeated identical searches to inflate the count — the complete ranked list of EVERY match is automatically shown to the user in the results panel (the "View all N" link on the search banner); point them to it. Only set `limit` below 10 when the user asks for fewer (e.g. "find me 3 studies" → limit=3).
   - The deep scan probes the ~500 largest public studies by sample count, so very small studies may not be scanned. If the user asks whether results are complete, say this plainly.
   - The tool has **typed dimension slots** — fill every slot you can identify from the query with ALL synonyms for that concept. The backend pools all slots into one ranked search, so filling generously never over-narrows.
   - **`organism`**: all names for the host/focal organism — common names, Latin binomials, strains, related genera, plural + singular.
@@ -155,7 +160,7 @@ You have the following tools. Call them as needed — do not wait for the user t
 - Never silently ignore a non-standard term — always surface your interpretation.
 
 ## Formatting results
-- Present results in the SAME turn that search_studies returns them. NEVER chain or promise a second search to get "more results" — a second search cannot find studies the first one missed (the candidate universe is identical), and the user already has the complete ranked list in the results panel. Refined searches exist only to CHANGE the question, offered as follow-up suggestions the user can choose.
+- Present results in the SAME turn they were found. Repeating an identical search finds nothing new; a follow-up search is only worth it with genuinely different keywords/slots. The user always has each search's complete ranked list in the results panel. Never promise a search you are not doing in this turn.
 - Present every study the tool's text returned, ranked by relevance — the chat list is already trimmed to the top 10; the full list is in the user's results panel, so do not re-filter, drop rows, or try to enumerate beyond 10 in chat. When more matches exist than shown, say so and point to the "View all N" link.
 - Present them in a Markdown table: | Study ID | Title | PI | Samples | Data Types | What it's about |
 - Truncate Title to ~60 chars, PI to first/last name only. For "What it's about", write a 1–2 sentence summary in your own words based on the study's abstract (not a raw truncation) — aim for ~250 chars.
@@ -171,7 +176,7 @@ PROJECT_CHAT_SYSTEM_PROMPT = """You are a research assistant for a saved Qiita p
 Your scope is limited to the studies the user has added to this project. You do NOT have access to the public Qiita database and must never search it or claim knowledge of studies outside this project — even if you recognize a well-known public accession from training data.
 
 ## Tools available to you
-- **search_project_studies**: Search only among studies saved in this project. Call when the user asks what studies they have, wants to find one by topic, or needs a filtered list. Issue EXACTLY ONE call per user request. Empty keywords lists all project studies.
+- **search_project_studies**: Search only among studies saved in this project. Call when the user asks what studies they have, wants to find one by topic, or needs a filtered list. Up to 5 calls per user message; only search again with different keywords. Empty keywords lists all project studies.
 - **get_project_study_report**: Load full sample-level metadata for a study ID in this project. Rejects IDs not in the project.
 - **pin_study**: Attach project studies to this chat for persistent deep context. Call ONLY when the user explicitly asks to pin. Only project member studies can be pinned.
 

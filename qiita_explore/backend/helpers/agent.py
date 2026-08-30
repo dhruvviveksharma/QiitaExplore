@@ -5,13 +5,13 @@ import logging
 import time
 from typing import Generator, Optional
 
-from config import get_client
+from config import get_client, SEARCH_CALLS_PER_MESSAGE
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
 from helpers.agent_tools import execute_tool
 
 logger = logging.getLogger(__name__)
 
-_DEDUP_AFTER_USE_TOOL_NAMES = frozenset({"search_studies", "search_project_studies"})
+_BUDGETED_SEARCH_TOOL_NAMES = frozenset({"search_studies", "search_project_studies"})
 
 
 def _openai_tools_to_anthropic(tools):
@@ -25,32 +25,32 @@ def _openai_tools_to_anthropic(tools):
     ]
 
 
-def _is_dedup_search_tool(name: str) -> bool:
-    return name in _DEDUP_AFTER_USE_TOOL_NAMES
+def _is_budgeted_search_tool(name: str) -> bool:
+    return name in _BUDGETED_SEARCH_TOOL_NAMES
 
 
-def _tools_without_dedup_searches(tools, search_already_done: bool):
-    if not search_already_done:
+def _tools_within_search_budget(tools, search_calls_used: int):
+    if search_calls_used < SEARCH_CALLS_PER_MESSAGE:
         return tools
-    blocked = _DEDUP_AFTER_USE_TOOL_NAMES
+    blocked = _BUDGETED_SEARCH_TOOL_NAMES
     # tools is OpenAI-shape ({"function": {"name": ...}}) on the OpenAI path,
     # Anthropic-shape ({"name": ...}) on the Anthropic path — handle both.
     return [t for t in tools if t.get("function", t)["name"] not in blocked]
 
 
-def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_already_done):
-    """Yield segment events for one tool call; return (result_text, is_dedup_search)."""
-    step_name = f"tool_{name}_{call_id[:6]}"
+def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used):
+    """Yield segment events for one tool call; return (result_text, consumed_search_slot)."""
+    step_name = f"tool_{name}_{call_id}"
     yield {"type": "segment_tool_call", "name": step_name,
            "label": _tool_label(name, args), "args": args}
-    if _is_dedup_search_tool(name) and search_already_done:
-        msg = (f"Only one {name} call is allowed per message, and a second search cannot "
-               f"find studies the first one missed — the complete ranked list of all matches "
-               f"is already shown to the user in the results panel. Use the results already "
-               f"returned.")
+    if _is_budgeted_search_tool(name) and search_calls_used >= SEARCH_CALLS_PER_MESSAGE:
+        msg = (f"{name} has already run {search_calls_used} times this message "
+               f"(max {SEARCH_CALLS_PER_MESSAGE}) — synthesize from the results you already "
+               f"have. The complete ranked list of every match is shown to the user in the "
+               f"results panel.")
         yield {"type": "segment_tool_result", "name": step_name,
-               "label": f"{name} skipped", "detail": "one search per message", "ui_payload": None}
-        return (msg, True)
+               "label": f"{name} skipped", "detail": "search limit reached", "ui_payload": None}
+        return (msg, False)
     t0 = time.perf_counter()
     try:
         result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
@@ -60,23 +60,27 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
         yield {"type": "segment_tool_result", "name": step_name,
                "label": f"{name} failed",
                "detail": f"{str(exc)[:60]} · {dt:.1f}s", "ui_payload": None}
+        # A crash is never a completed search, regardless of tool name — this
+        # must stay a literal False, or a crashing search call would consume
+        # one of the SEARCH_CALLS_PER_MESSAGE budget slots anyway.
         return (f"Tool {name} failed: {exc}", False)
     dt = time.perf_counter() - t0
     logger.info("[timing] tool=%s elapsed=%.3fs result_chars=%d", name, dt, len(result.text or ""))
     detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
     yield {"type": "segment_tool_result", "name": step_name,
            "label": result.label, "detail": detail, "ui_payload": result.ui_payload}
-    return (result.text, _is_dedup_search_tool(name))
+    # executed=False (e.g. the empty-input early return) doesn't consume a slot.
+    return (result.text, _is_budgeted_search_tool(name) and getattr(result, "executed", True))
 
 
 def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools):
     anth_tools = _openai_tools_to_anthropic(tools)
     msgs = list(api_msgs)
-    search_already_done = False
+    search_calls_used = 0
     final_had_synthesis = False
 
     for iteration in range(max_iters):
-        curr_tools = _tools_without_dedup_searches(anth_tools, search_already_done)
+        curr_tools = _tools_within_search_budget(anth_tools, search_calls_used)
         system_text, messages = _extract_system_and_messages(msgs)
         t_llm = time.perf_counter()
         ttft = None
@@ -146,13 +150,13 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
 
         tool_results = []
         for tu in tool_uses:
-            result_text, is_search = yield from _execute_tool_call(
+            result_text, consumed_search_slot = yield from _execute_tool_call(
                 tu["name"], tu["args"], tu["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_already_done=search_already_done,
+                search_calls_used=search_calls_used,
             )
-            if is_search:
-                search_already_done = True
+            if consumed_search_slot:
+                search_calls_used += 1
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
         msgs.append({"role": "user", "content": tool_results})
 
@@ -182,7 +186,7 @@ def stream_agent(
     scope: str,
     chat_id: str,
     tools: list,
-    max_iters: int = 4,
+    max_iters: int = 7,
     deep_search: bool = False,
 ) -> Generator[dict, None, None]:
     """
@@ -209,11 +213,11 @@ def stream_agent(
             llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools)
         return
 
-    search_already_done = False
+    search_calls_used = 0
     final_had_synthesis = False
 
     for iteration in range(max_iters):
-        active_tools = _tools_without_dedup_searches(tools, search_already_done)
+        active_tools = _tools_within_search_budget(tools, search_calls_used)
 
         t_llm = time.perf_counter()
         stream = llm_client.chat.completions.create(
@@ -309,13 +313,13 @@ def stream_agent(
                 args = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result_text, is_search = yield from _execute_tool_call(
+            result_text, consumed_search_slot = yield from _execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_already_done=search_already_done,
+                search_calls_used=search_calls_used,
             )
-            if is_search:
-                search_already_done = True
+            if consumed_search_slot:
+                search_calls_used += 1
             api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
