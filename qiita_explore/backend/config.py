@@ -49,6 +49,11 @@ def context_budget_chars(model: str) -> int:
     return max(8_000, chars)
 
 
+# Agent-level retry on transient LLM errors (429/5xx/connection): attempts
+# and exponential base delay (2s -> 4s -> 8s at the defaults).
+LLM_RETRY_MAX           = int(os.getenv("LLM_RETRY_MAX", "3"))
+LLM_RETRY_BASE_DELAY_MS = int(os.getenv("LLM_RETRY_BASE_DELAY_MS", "2000"))
+
 # Per-entry cap on tool-result text persisted in a turn's model_transcript —
 # long-term memory stays lean while the live turn still sees full results.
 TRANSCRIPT_TOOL_RESULT_CHARS = int(os.getenv("TRANSCRIPT_TOOL_RESULT_CHARS", "2000"))

@@ -9,6 +9,7 @@ from config import get_client, SEARCH_CALLS_PER_MESSAGE
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
 from helpers.agent_tools import execute_tool
 from helpers.chat_transcript import rows_to_provider_messages
+from helpers.llm_retry import run_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -87,50 +88,60 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
         ttft = None
         content_parts = []
         tool_uses = []
-        current_block = None
-        current_json = ""
         stop_reason = None
 
-        with anth_client.messages.stream(
-            model=resolved,
-            max_tokens=4096,
-            system=system_text,
-            messages=messages,
-            tools=curr_tools,
-        ) as stream:
-            for event in stream:
-                if ttft is None:
-                    ttft = time.perf_counter() - t_llm
-                etype = getattr(event, "type", None)
-                if etype == "content_block_start":
-                    cb = event.content_block
-                    if cb.type == "tool_use":
-                        current_block = {"id": cb.id, "name": cb.name}
-                        current_json = ""
-                    else:
-                        current_block = None
-                elif etype == "content_block_delta":
-                    d = event.delta
-                    dtype = getattr(d, "type", None)
-                    if dtype == "text_delta" and d.text:
-                        content_parts.append(d.text)
-                        yield {"type": "token", "token": d.text}
-                    elif dtype == "input_json_delta":
-                        current_json += d.partial_json or ""
-                elif etype == "content_block_stop":
-                    if current_block is not None:
-                        try:
-                            parsed = json.loads(current_json or "{}")
-                        except json.JSONDecodeError:
-                            parsed = {}
-                        tool_uses.append({
-                            "id": current_block["id"],
-                            "name": current_block["name"],
-                            "args": parsed,
-                        })
-                        current_block = None
-                elif etype == "message_delta":
-                    stop_reason = getattr(event.delta, "stop_reason", None)
+        def _attempt():
+            nonlocal ttft, stop_reason, t_llm
+            content_parts.clear(); tool_uses.clear()
+            ttft = None
+            stop_reason = None
+            t_llm = time.perf_counter()
+            current_block = None
+            current_json = ""
+            with anth_client.messages.stream(
+                model=resolved,
+                max_tokens=4096,
+                system=system_text,
+                messages=messages,
+                tools=curr_tools,
+            ) as stream:
+                for event in stream:
+                    if ttft is None:
+                        ttft = time.perf_counter() - t_llm
+                    etype = getattr(event, "type", None)
+                    if etype == "content_block_start":
+                        cb = event.content_block
+                        if cb.type == "tool_use":
+                            current_block = {"id": cb.id, "name": cb.name}
+                            current_json = ""
+                        else:
+                            current_block = None
+                    elif etype == "content_block_delta":
+                        d = event.delta
+                        dtype = getattr(d, "type", None)
+                        if dtype == "text_delta" and d.text:
+                            content_parts.append(d.text)
+                            yield {"type": "token", "token": d.text}
+                        elif dtype == "input_json_delta":
+                            current_json += d.partial_json or ""
+                    elif etype == "content_block_stop":
+                        if current_block is not None:
+                            try:
+                                parsed = json.loads(current_json or "{}")
+                            except json.JSONDecodeError:
+                                parsed = {}
+                            tool_uses.append({
+                                "id": current_block["id"],
+                                "name": current_block["name"],
+                                "args": parsed,
+                            })
+                            current_block = None
+                    elif etype == "message_delta":
+                        stop_reason = getattr(event.delta, "stop_reason", None)
+
+        yield from run_with_retry(
+            _attempt, model=resolved,
+            has_partial_output=lambda: bool(content_parts))
 
         elapsed = time.perf_counter() - t_llm
         logger.info(
@@ -174,14 +185,23 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
         logger.info("[anthropic agent] forcing synthesis — loop ended on tool results")
         sys_txt, anth_msgs = _extract_system_and_messages(msgs)
-        with anth_client.messages.stream(
-            model=resolved, max_tokens=4096, system=sys_txt, messages=anth_msgs,
-        ) as stream:
-            for event in stream:
-                if getattr(event, "type", None) == "content_block_delta":
-                    d = event.delta
-                    if getattr(d, "type", None) == "text_delta" and d.text:
-                        yield {"type": "token", "token": d.text}
+        synth_parts = []
+
+        def _synth_attempt():
+            synth_parts.clear()
+            with anth_client.messages.stream(
+                model=resolved, max_tokens=4096, system=sys_txt, messages=anth_msgs,
+            ) as stream:
+                for event in stream:
+                    if getattr(event, "type", None) == "content_block_delta":
+                        d = event.delta
+                        if getattr(d, "type", None) == "text_delta" and d.text:
+                            synth_parts.append(d.text)
+                            yield {"type": "token", "token": d.text}
+
+        yield from run_with_retry(
+            _synth_attempt, model=resolved,
+            has_partial_output=lambda: bool(synth_parts))
 
 
 def stream_agent(
@@ -240,66 +260,62 @@ def stream_agent(
     for iteration in range(max_iters):
         active_tools = _tools_within_search_budget(tools, search_calls_used)
 
-        t_llm = time.perf_counter()
-        stream = llm_client.chat.completions.create(
-            model=resolved,
-            messages=api_msgs,
-            tools=active_tools,
-            stream=True,
-            timeout=300.0,
-        )
-
+        t_llm           = time.perf_counter()
         content_parts   = []
         reasoning_parts = []
         tool_call_map   = {}
         finish_reason   = None
         ttft            = None
 
-        for chunk in stream:
-            if not chunk.choices:
-                continue
-            if ttft is None:
-                ttft = time.perf_counter() - t_llm
-            choice = chunk.choices[0]
-            finish_reason = choice.finish_reason or finish_reason
-            delta = choice.delta
+        def _attempt():
+            # Fresh slate per attempt — a retry only ever runs when nothing
+            # reached the client, so clearing internal fragments is safe.
+            nonlocal finish_reason, ttft, t_llm
+            content_parts.clear(); reasoning_parts.clear(); tool_call_map.clear()
+            finish_reason = None
+            ttft = None
+            t_llm = time.perf_counter()
+            stream = llm_client.chat.completions.create(
+                model=resolved,
+                messages=api_msgs,
+                tools=active_tools,
+                stream=True,
+                timeout=300.0,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                if ttft is None:
+                    ttft = time.perf_counter() - t_llm
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
 
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                reasoning_parts.append(reasoning)
-                yield {"type": "reasoning", "token": reasoning}
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield {"type": "reasoning", "token": reasoning}
 
-            if delta.content:
-                content_parts.append(delta.content)
-                yield {"type": "token", "token": delta.content}
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield {"type": "token", "token": delta.content}
 
-            for tc in (delta.tool_calls or []):
-                idx = tc.index
-                if idx not in tool_call_map:
-                    tool_call_map[idx] = {"id": tc.id or "", "name": "", "arguments": ""}
-                if tc.id:
-                    tool_call_map[idx]["id"] = tc.id
-                fn = tc.function
-                if fn:
-                    if fn.name:
-                        tool_call_map[idx]["name"] += fn.name
-                    if fn.arguments:
-                        tool_call_map[idx]["arguments"] += fn.arguments
+                for tc in (delta.tool_calls or []):
+                    idx = tc.index
+                    if idx not in tool_call_map:
+                        tool_call_map[idx] = {"id": tc.id or "", "name": "", "arguments": ""}
+                    if tc.id:
+                        tool_call_map[idx]["id"] = tc.id
+                    fn = tc.function
+                    if fn:
+                        if fn.name:
+                            tool_call_map[idx]["name"] += fn.name
+                        if fn.arguments:
+                            tool_call_map[idx]["arguments"] += fn.arguments
 
-            if logger.isEnabledFor(logging.DEBUG):
-                has_c = bool(delta.content)
-                has_r = bool(reasoning)
-                has_t = bool(delta.tool_calls)
-                fr    = choice.finish_reason
-                if has_c or has_r or has_t or fr:
-                    logger.debug(
-                        "[chunk iter=%d] content=%d reasoning=%d tools=%d finish=%s",
-                        iteration,
-                        len(delta.content or "") if has_c else 0,
-                        len(reasoning or "") if has_r else 0,
-                        len(delta.tool_calls or []) if has_t else 0,
-                        fr or "-",
-                    )
+        yield from run_with_retry(
+            _attempt, model=resolved,
+            has_partial_output=lambda: bool(content_parts or reasoning_parts))
 
         elapsed = time.perf_counter() - t_llm
         assistant_content   = "".join(content_parts)
@@ -358,15 +374,24 @@ def stream_agent(
 
     if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
         logger.info("[agent] forcing synthesis — loop ended on tool results")
-        synth = llm_client.chat.completions.create(
-            model=resolved, messages=api_msgs, stream=True, timeout=300.0,
-        )
-        for chunk in synth:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if delta.content:
-                yield {"type": "token", "token": delta.content}
+        synth_parts = []
+
+        def _synth_attempt():
+            synth_parts.clear()
+            synth = llm_client.chat.completions.create(
+                model=resolved, messages=api_msgs, stream=True, timeout=300.0,
+            )
+            for chunk in synth:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    synth_parts.append(delta.content)
+                    yield {"type": "token", "token": delta.content}
+
+        yield from run_with_retry(
+            _synth_attempt, model=resolved,
+            has_partial_output=lambda: bool(synth_parts))
 
 
 def _tool_label(name: str, args: dict) -> str:

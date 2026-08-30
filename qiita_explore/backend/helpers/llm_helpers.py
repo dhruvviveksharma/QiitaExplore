@@ -21,6 +21,19 @@ def _resolve_model(model):
     return DEFAULT_MODEL
 
 
+# Substrings marking a transient NRP-proxy outage in otherwise-untyped error
+# strings. Shared with helpers.llm_retry's retryable/terminal classification.
+_TRANSIENT_MARKERS = (
+    "upstream connect error",
+    "connection refused",
+    "remote connection failure",
+    "delayed connect error",
+    "connection reset",
+    "service unavailable",
+    "502", "503", "504",
+)
+
+
 def friendly_llm_error(exc, model=None):
     if isinstance(exc, _anthropic.RateLimitError):
         return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
@@ -28,16 +41,7 @@ def friendly_llm_error(exc, model=None):
         return f"{model or 'Claude'} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."
     raw = str(exc) or exc.__class__.__name__
     lowered = raw.lower()
-    connection_markers = (
-        "upstream connect error",
-        "connection refused",
-        "remote connection failure",
-        "delayed connect error",
-        "connection reset",
-        "service unavailable",
-        "502", "503", "504",
-    )
-    if any(m in lowered for m in connection_markers):
+    if any(m in lowered for m in _TRANSIENT_MARKERS):
         name = model or "the selected model"
         return f"{name} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."
     return raw
