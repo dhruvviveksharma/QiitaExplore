@@ -22,9 +22,8 @@ from helpers.llm_helpers import _sse, friendly_llm_error
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import stream_samples_report
 from store import list_pinned_study_meta
-from store.chat_turn_persist import (
-    append_user_message, append_assistant_message, load_turn_rows,
-)
+from helpers.chat_history import prepare_history
+from store.chat_turn_persist import append_user_message, append_assistant_message
 
 logger = logging.getLogger(__name__)
 
@@ -88,15 +87,26 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
 
         # ── Agentic main turn: durable split persist. The user row lands
         # before the LLM runs, so an error or Stop can no longer lose it.
-        # History rows are loaded FIRST so the new user message isn't doubled.
-        turn_rows = load_turn_rows(chat_id, scope)
-        if append_user_message(scope, chat_id, user_id, user_content,
-                               project_id=project_id) is None:
+        user_row_id = append_user_message(scope, chat_id, user_id, user_content,
+                                          project_id=project_id)
+        if user_row_id is None:
             yield _sse("error", {"error": "Chat not found"})
             return
         user_row_saved = True
 
         combined_ctx = yield from build_context()
+
+        # History replay + compaction: until_id excludes the row just saved
+        # (stream_agent appends user_content explicitly).
+        history_gen = prepare_history(chat_id, scope, model, system_prompt,
+                                      combined_ctx, until_id=user_row_id)
+        while True:
+            try:
+                ev = next(history_gen)
+            except StopIteration as stop:
+                turn_rows, history_summary = stop.value
+                break
+            yield _sse(ev["type"], {k: v for k, v in ev.items() if k != "type"})
 
         for event in stream_agent(
             full_msgs,
@@ -109,6 +119,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             tools=tools,
             turn_rows=turn_rows,
             user_content=user_content,
+            history_summary=history_summary,
         ):
             etype = event["type"]
             if etype == "transcript_append":

@@ -14,7 +14,10 @@ stub_qiita_db_and_core()
 @pytest.fixture
 def chat_turn_mod(fresh_db):
     """helpers.chat_turn re-imported so its store bindings target THIS test's
-    temp DB (fresh_db purges store* modules; helpers.* keep stale bindings)."""
+    temp DB (fresh_db purges store* modules; helpers.* keep stale bindings).
+    chat_history reloads first — chat_turn re-imports it."""
+    import helpers.chat_history as chm
+    importlib.reload(chm)
     import helpers.chat_turn as ct
     return importlib.reload(ct)
 

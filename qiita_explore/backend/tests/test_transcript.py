@@ -108,6 +108,10 @@ class TestPersistedRoundTrip:
                                                              sample_user_id, monkeypatch):
         """End-to-end memory: turn 1 runs a tool; turn 2's provider request must
         contain turn 1's tool result."""
+        # reload the chain: chat_history first (its store bindings must target
+        # THIS test's temp DB), then chat_turn (which re-imports it).
+        import helpers.chat_history as chm
+        importlib.reload(chm)
         import helpers.chat_turn as ct
         ct = importlib.reload(ct)
         import helpers.agent as agent_mod

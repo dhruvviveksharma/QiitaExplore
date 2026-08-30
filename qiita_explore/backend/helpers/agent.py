@@ -217,6 +217,7 @@ def stream_agent(
     deep_search: bool = False,
     turn_rows: Optional[list] = None,
     user_content: Optional[str] = None,
+    history_summary: Optional[str] = None,
 ) -> Generator[dict, None, None]:
     """
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
@@ -245,6 +246,9 @@ def stream_agent(
     llm_client, provider = get_client(resolved)
     if turn_rows is not None:
         system_msg = _build_api_messages([], study_context_text, system_prompt)[0]
+        if history_summary:
+            system_msg = {**system_msg, "content": system_msg["content"] +
+                          f"\n\nEARLIER CONVERSATION (compacted summary):\n{history_summary}"}
         api_msgs = ([system_msg] + rows_to_provider_messages(turn_rows, provider)
                     + [{"role": "user", "content": user_content or ""}])
     else:

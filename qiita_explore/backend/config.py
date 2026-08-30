@@ -49,6 +49,16 @@ def context_budget_chars(model: str) -> int:
     return max(8_000, chars)
 
 
+# History compaction (agent path): when the estimated chars of replayed
+# history exceed context_budget_chars(model) minus the fixed system/context
+# text minus this reserve (headroom for the turn's own live growth), older
+# turns are summarized with the same model. The newest ~KEEP_VERBATIM tokens
+# of whole turns stay verbatim. Same 3.5 chars/token heuristic as
+# context_budget_chars — deliberately no tokenizer dependency.
+HISTORY_COMPACTION_RESERVE_TOKENS = int(os.getenv("HISTORY_COMPACTION_RESERVE_TOKENS", "16384"))
+HISTORY_KEEP_VERBATIM_TOKENS      = int(os.getenv("HISTORY_KEEP_VERBATIM_TOKENS", "20000"))
+CHARS_PER_TOKEN = 3.5
+
 # Agent-level retry on transient LLM errors (429/5xx/connection): attempts
 # and exponential base delay (2s -> 4s -> 8s at the defaults).
 LLM_RETRY_MAX           = int(os.getenv("LLM_RETRY_MAX", "3"))

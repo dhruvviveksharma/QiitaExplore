@@ -77,12 +77,43 @@ def append_assistant_message(scope, chat_id, assistant_content, assistant_ui_pay
         conn.commit()
 
 
-def load_turn_rows(chat_id, scope, since_id=None):
+def get_compaction_state(chat_id, scope):
+    """{'summary': str|None, 'through_id': int|None} — the rolling history
+    summary and the message row id it covers through."""
+    chats_tbl, _ = _tables(scope)
+    with _conn() as conn:
+        row = conn.execute(
+            f"SELECT compaction_summary, compacted_through_id FROM {chats_tbl} WHERE chat_id = ?",
+            (chat_id,)).fetchone()
+    if row is None:
+        return {"summary": None, "through_id": None}
+    return {"summary": row["compaction_summary"], "through_id": row["compacted_through_id"]}
+
+
+def persist_compaction_state(chat_id, scope, *, summary, through_id):
+    chats_tbl, _ = _tables(scope)
+    with _conn() as conn:
+        conn.execute(
+            f"UPDATE {chats_tbl} SET compaction_summary = ?, compacted_through_id = ? "
+            f"WHERE chat_id = ?",
+            (summary, through_id, chat_id))
+        conn.commit()
+
+
+def load_turn_rows(chat_id, scope, since_id=None, until_id=None):
     """Rows for model replay: role/content plus the decoded model_transcript.
-    Never touches ui_payload. since_id supports compaction anchoring."""
+    Never touches ui_payload. since_id (exclusive) supports compaction
+    anchoring; until_id (exclusive) excludes the just-appended user row."""
     _, msgs_tbl = _tables(scope)
-    where = "chat_id = ?" + (" AND id > ?" if since_id is not None else "")
-    params = (chat_id, since_id) if since_id is not None else (chat_id,)
+    where = "chat_id = ?"
+    params = [chat_id]
+    if since_id is not None:
+        where += " AND id > ?"
+        params.append(since_id)
+    if until_id is not None:
+        where += " AND id < ?"
+        params.append(until_id)
+    params = tuple(params)
     with _conn() as conn:
         rows = conn.execute(
             f"SELECT id, role, content, model_transcript FROM {msgs_tbl} "
