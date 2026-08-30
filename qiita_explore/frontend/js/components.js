@@ -508,7 +508,21 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
 }
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAllStudies }) {
+// Memoized with a custom comparator: the parent re-renders on every token
+// flush, and its callback props are recreated each time (they're only read
+// inside click handlers, never render-branch conditions), so a default
+// shallow compare would never skip. Only seg / msgKey / pinnedStudyIds
+// (by value — pin toggles must re-render the card) determine the output.
+function toolCardPropsEqual(prev, next) {
+  if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
+  const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies }) {
+  const isPinned = sid => (pinnedStudyIds || []).includes(sid);
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
@@ -561,6 +575,15 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAll
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
   );
+}, toolCardPropsEqual);
+
+// ─── MarkdownText ─────────────────────────────────────────────────────────────
+// Memoized markdown rendering: streamed replies re-render once per token
+// flush, and re-parsing + re-sanitizing the whole accumulated string each
+// flush is O(n²) over the reply — the dominant cost behind streaming jank.
+function MarkdownText({ content, className }) {
+  const html = useMemo(() => renderMarkdown(content || ''), [content]);
+  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // ─── CopyResponseButton ───────────────────────────────────────────────────────
@@ -586,13 +609,13 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
     <div className="agent-msg">
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
-          <div key={i} className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.content) }} />
+          <MarkdownText key={i} content={seg.content}
+            className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
             onViewAllStudies={onViewAllStudies}
-            isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
+            pinnedStudyIds={pinnedStudyIds} />
         ) : null
       )}
       {isStreaming && !(segments || []).length && (
