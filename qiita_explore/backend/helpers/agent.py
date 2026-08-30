@@ -10,6 +10,7 @@ from helpers.llm_helpers import _build_api_messages, _extract_system_and_message
 from helpers.agent_tools import execute_tool
 from helpers.chat_transcript import rows_to_provider_messages
 from helpers.llm_retry import run_with_retry
+from helpers.turn_log import log_turn_event
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,17 @@ def _openai_tools_to_anthropic(tools):
         }
         for t in tools
     ]
+
+
+def _no_final_answer_text(max_iters, last_tool_failure):
+    """The turn must NEVER end with zero visible text — that reads as the
+    model silently dying. Say plainly why there is no synthesized answer."""
+    msg = (f"\n\n_(I ran out of tool rounds ({max_iters}) before writing a final answer — "
+           f"the tool results above are everything gathered this turn. "
+           f"Ask a follow-up to continue.)_")
+    if last_tool_failure:
+        msg += f"\n\n_(Last tool error: {last_tool_failure[:200]})_"
+    return msg
 
 
 def _is_budgeted_search_tool(name: str) -> bool:
@@ -80,6 +92,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
     msgs = list(api_msgs)
     search_calls_used = 0
     final_had_synthesis = False
+    turn_had_text = False
+    last_tool_failure = None
 
     for iteration in range(max_iters):
         curr_tools = _tools_within_search_budget(anth_tools, search_calls_used)
@@ -144,6 +158,7 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             has_partial_output=lambda: bool(content_parts))
 
         elapsed = time.perf_counter() - t_llm
+        turn_had_text = turn_had_text or bool(content_parts)
         logger.info(
             "[anthropic round %d] ttft=%.3fs total=%.3fs content=%d stop=%s tools=%d",
             iteration, ttft or -1, elapsed, len("".join(content_parts)), stop_reason, len(tool_uses),
@@ -173,6 +188,9 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             )
             if consumed_search_slot:
                 search_calls_used += 1
+            if result_text.startswith("Tool ") and " failed:" in result_text:
+                last_tool_failure = result_text
+                log_turn_event(chat_id, "tool_fail", name=tu["name"], detail=result_text)
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
             yield {"type": "transcript_append", "entry": {
                 "role": "tool", "id": tu["id"], "name": tu["name"], "text": result_text}}
@@ -180,6 +198,9 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
 
     if iteration == max_iters - 1 and stop_reason == "tool_use":
         logger.warning("anthropic agent hit max_iters=%d without stopping", max_iters)
+        log_turn_event(chat_id, "max_rounds_exhausted", rounds=max_iters)
+        yield {"type": "step_start", "name": "synthesis",
+               "label": f"Tool-round limit ({max_iters}) reached — writing final answer…"}
 
     if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
             any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
@@ -202,6 +223,17 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
         yield from run_with_retry(
             _synth_attempt, model=resolved,
             has_partial_output=lambda: bool(synth_parts))
+        turn_had_text = turn_had_text or bool(synth_parts)
+        if not synth_parts:
+            log_turn_event(chat_id, "synthesis_empty", model=resolved)
+            yield {"type": "token",
+                   "token": _no_final_answer_text(max_iters, last_tool_failure)}
+            turn_had_text = True
+
+    if not turn_had_text:
+        log_turn_event(chat_id, "turn_ended_without_text", model=resolved, stop=stop_reason)
+        yield {"type": "token",
+               "token": _no_final_answer_text(max_iters, last_tool_failure)}
 
 
 def stream_agent(
@@ -260,6 +292,8 @@ def stream_agent(
 
     search_calls_used = 0
     final_had_synthesis = False
+    turn_had_text = False
+    last_tool_failure = None
 
     for iteration in range(max_iters):
         active_tools = _tools_within_search_budget(tools, search_calls_used)
@@ -324,6 +358,7 @@ def stream_agent(
         elapsed = time.perf_counter() - t_llm
         assistant_content   = "".join(content_parts)
         assistant_reasoning = "".join(reasoning_parts)
+        turn_had_text = turn_had_text or bool(assistant_content)
 
         logger.info(
             "[round %d] ttft=%.3fs total=%.3fs content=%d chars reasoning=%d chars "
@@ -369,12 +404,18 @@ def stream_agent(
             )
             if consumed_search_slot:
                 search_calls_used += 1
+            if result_text.startswith("Tool ") and " failed:" in result_text:
+                last_tool_failure = result_text
+                log_turn_event(chat_id, "tool_fail", name=name, detail=result_text)
             api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
             yield {"type": "transcript_append", "entry": {
                 "role": "tool", "id": tc["id"], "name": name, "text": result_text}}
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
         logger.warning("agent hit max_iters=%d without stopping", max_iters)
+        log_turn_event(chat_id, "max_rounds_exhausted", rounds=max_iters)
+        yield {"type": "step_start", "name": "synthesis",
+               "label": f"Tool-round limit ({max_iters}) reached — writing final answer…"}
 
     if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
         logger.info("[agent] forcing synthesis — loop ended on tool results")
@@ -396,6 +437,20 @@ def stream_agent(
         yield from run_with_retry(
             _synth_attempt, model=resolved,
             has_partial_output=lambda: bool(synth_parts))
+        turn_had_text = turn_had_text or bool(synth_parts)
+        if not synth_parts:
+            # The synthesis call produced zero content — without this, the
+            # turn ends looking like the model silently died mid-thought.
+            log_turn_event(chat_id, "synthesis_empty", model=resolved)
+            yield {"type": "token",
+                   "token": _no_final_answer_text(max_iters, last_tool_failure)}
+            turn_had_text = True
+
+    if not turn_had_text:
+        log_turn_event(chat_id, "turn_ended_without_text", model=resolved,
+                       finish=finish_reason)
+        yield {"type": "token",
+               "token": _no_final_answer_text(max_iters, last_tool_failure)}
 
 
 def _tool_label(name: str, args: dict) -> str:

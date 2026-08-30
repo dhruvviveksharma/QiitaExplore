@@ -52,6 +52,16 @@ def _result_studies(studies, via=None):
     ]
 
 
+def _as_str_list(value):
+    """Tolerate a model sending a bare string where the schema says array —
+    iterating a string yields characters, which silently corrupts filters."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return [str(t).strip() for t in value if t and str(t).strip()]
+
+
 def _empty_input_result(tool, text, label, detail, args=None):
     """Shared shape for the 'no search criteria provided' early-return ToolResult."""
     return ToolResult(text=text, label=label, detail=detail, executed=False, ui_payload={
@@ -226,8 +236,8 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     # the user via the results panel (all_result_studies), so a bigger limit
     # buys nothing and just bloats context.
     limit          = max(1, min(10, int(args.get("limit") or 10)))
-    explicit_types = [t.strip() for t in (args.get("data_types") or []) if t]
-    explicit_inv   = [t.strip() for t in (args.get("investigation_types") or []) if t]
+    explicit_types = _as_str_list(args.get("data_types"))
+    explicit_inv   = _as_str_list(args.get("investigation_types"))
 
     logger.info(
         "[search_studies] raw_kws=%d detect_kws=%d deep=%s explicit_types=%s limit=%d veto=%s",
@@ -246,7 +256,7 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     auto_types      = detect_data_types(detect_kws)
     effective_types = list(dict.fromkeys(explicit_types + auto_types)) or None
     effective_inv   = explicit_inv or None
-    tags            = [t.strip() for t in (args.get("tags") or []) if t] or None
+    tags            = _as_str_list(args.get("tags")) or None
 
     where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
@@ -398,7 +408,7 @@ def _tool_search_by_sample(args: dict) -> ToolResult:
     field_filters = [f for f in (args.get("field_filters") or [])
                      if isinstance(f, dict) and f.get("field") and f.get("value")]
     keywords      = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
-    data_types    = [str(t).strip() for t in (args.get("data_types") or []) if t]
+    data_types    = _as_str_list(args.get("data_types"))
     limit         = max(1, min(20, int(args.get("limit") or 8)))
 
     logger.info(

@@ -1624,7 +1624,7 @@ periodic reverify, cross-user isolation, etc. — see the class list) into
 ## TKT-055: `search_studies_with_sql` Param Order May Not Match WHERE-Clause Text Order
 
 **Severity:** High
-**Status:** Open — needs live-DB verification, not fixed
+**Status:** Resolved (2026-08-30 — confirmed live exactly as predicted: every keyword+data_types search failed with `malformed array literal: "Metagenomic"`. Params reordered to match the rendered WHERE text; pinned by `test_params_bind_in_rendered_sql_order`; docs/04-search.md updated.)
 
 ### Description
 

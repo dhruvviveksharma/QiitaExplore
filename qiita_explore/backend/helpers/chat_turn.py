@@ -23,6 +23,7 @@ from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import stream_samples_report
 from store import list_pinned_study_meta
 from helpers.chat_history import prepare_history
+from helpers.turn_log import log_turn_event
 from store.chat_turn_persist import append_user_message, append_assistant_message
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
 
         # ── Agentic main turn: durable split persist. The user row lands
         # before the LLM runs, so an error or Stop can no longer lose it.
+        log_turn_event(chat_id, "turn_start", scope=scope, model=model,
+                       user_chars=len(user_content or ""))
         user_row_id = append_user_message(scope, chat_id, user_id, user_content,
                                           project_id=project_id)
         if user_row_id is None:
@@ -155,6 +158,9 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
 
         append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload,
                                  model_transcript=truncate_for_persist(transcript) or None)
+        log_turn_event(chat_id, "turn_done",
+                       chars=len("".join(assistant_parts).strip()),
+                       segments=len(segments_list))
         if ui_payload:
             yield _sse("done", _pinned_done_payload(chat_id, scope))
         else:
@@ -173,9 +179,14 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             except Exception:
                 logger.exception("failed to persist partial turn on abort for %s chat %s",
                                  scope, chat_id)
+        log_turn_event(chat_id, "turn_abort",
+                       partial_chars=len("".join(assistant_parts).strip()),
+                       segments=len(segments_list))
         raise
     except Exception as e:
         logger.exception("stream error in %s chat %s", scope, chat_id)
+        log_turn_event(chat_id, "turn_error", exc=e.__class__.__name__,
+                       detail=str(e)[:200])
         if user_row_saved and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),

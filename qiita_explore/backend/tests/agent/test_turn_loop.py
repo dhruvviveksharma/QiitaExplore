@@ -138,3 +138,65 @@ class TestAnthropicTurnLoop:
         assert len(client.calls) == 2
         assert "tools" not in client.calls[1]
         assert tokens_of(events) == "late prose"
+
+
+class TestNoSilentStop:
+    """A turn must NEVER end without visible text — the guaranteed-fallback
+    path added after a live chat ended with tool cards and no final answer."""
+
+    def test_empty_forced_synthesis_yields_fallback_text(self, run_turn):
+        # Loop exhausts max_iters on tool calls, then the forced-synthesis
+        # call streams zero content — previously the turn just went silent.
+        script = [
+            openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+            openai_text_round(""),  # synthesis round: no tokens at all
+        ]
+        fake_tool = make_fake_execute_tool(tool_result())
+        events, client, _ = run_turn(script, fake_tool, max_iters=1)
+
+        assert len(client.calls) == 2  # tool round + (empty) synthesis
+        assert "ran out of tool rounds (1)" in tokens_of(events)
+
+    def test_exhaustion_emits_visible_synthesis_step(self, run_turn):
+        script = [
+            openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+            openai_text_round("synthesized"),
+        ]
+        fake_tool = make_fake_execute_tool(tool_result())
+        events, _, _ = run_turn(script, fake_tool, max_iters=1)
+
+        steps = [e for e in events_of_type(events, "step_start")
+                 if e["name"] == "synthesis"]
+        assert len(steps) == 1
+        assert "Tool-round limit (1)" in steps[0]["label"]
+
+    def test_fallback_text_names_the_last_tool_error(self, run_turn):
+        script = [
+            openai_tool_call_round("call_1", "search_studies", '{"keywords": ["x"]}'),
+            openai_text_round(""),
+        ]
+        fake_tool = make_fake_execute_tool(RuntimeError('malformed array literal: "Metagenomic"'))
+        events, _, _ = run_turn(script, fake_tool, max_iters=1)
+
+        text = tokens_of(events)
+        assert "ran out of tool rounds" in text
+        assert 'malformed array literal: "Metagenomic"' in text
+
+    def test_anthropic_empty_synthesis_yields_fallback_text(self, run_turn):
+        script = [
+            anthropic_tool_use_round("toolu_01DDDD", "get_study_report", ['{"study_id": 1}']),
+            anthropic_text_round(""),  # synthesis streams an empty text block
+        ]
+        fake_tool = make_fake_execute_tool(tool_result())
+        events, client, _ = run_turn(script, fake_tool, provider="anthropic", max_iters=1)
+
+        assert len(client.calls) == 2
+        assert "ran out of tool rounds (1)" in tokens_of(events)
+
+    def test_normal_turn_gets_no_fallback_text(self, run_turn):
+        script = [openai_text_round("plain answer")]
+        events, _, _ = run_turn(script, make_fake_execute_tool())
+
+        text = tokens_of(events)
+        assert text == "plain answer"
+        assert "ran out of tool rounds" not in text

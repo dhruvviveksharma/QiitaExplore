@@ -176,20 +176,17 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
 
-    Param binding order (psycopg2 left-to-right):
-        score_params → data_type_filter_params → tag_filter_params → topic (WHERE) params → pi_filter_params
+    Param binding order (psycopg2 left-to-right, matching the rendered SQL):
+        score_params (SELECT) → topic (WHERE) params → data_type_filter_params
+        → tag_filter_params → pi_filter_params
 
-    NOTE this order does not actually match the WHERE text's left-to-right
-    placeholder occurrence — topic_where is built as
-    "(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)", so
-    custom_sql_where's own placeholders occur BEFORE dt_sql's/tag_sql's in
-    the rendered SQL, not after. This mismatch predates this function's tag
-    support (data_types has had the same issue) — flagging rather than
-    silently reordering, since it's explicitly documented as intentional
-    here and in docs/04-search.md, and this environment has no live
-    Postgres to verify a reorder against. tags is threaded through with the
-    SAME (possibly-wrong) relative convention as data_types, not "fixed" —
-    see the session notes / TICKETS for this specific finding.
+    topic_where renders as "(custom_sql_where) AND dt_sql AND tag_sql AND
+    (pi_filter_sql)", so the topic clause's own placeholders occur FIRST in
+    the WHERE text — the params list must match that. The old order bound
+    dt_params before the topic params, which fed a bare data-type string
+    into the keyword clause's unnest(%s::text[]) — Postgres rejected every
+    keyword+data-type search with `malformed array literal: "Metagenomic"`
+    (TKT-055, confirmed live 2026-08-30).
     """
     if params is None:
         params = []
@@ -228,7 +225,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     if pi_filter_sql:
         topic_where += f" AND ({pi_filter_sql})"
 
-    full_params = score_params + dt_params + tag_params + list(params) + list(pi_filter_params or [])
+    full_params = score_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
 
     logger.info(
         "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "

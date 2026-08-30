@@ -43,16 +43,20 @@ class TestTagFilterParamPosition:
         sql, params = _capture_call()
         assert "study_tag IN (" not in sql
 
-    def test_tag_params_land_between_dt_and_custom_params(self):
+    def test_params_bind_in_rendered_sql_order(self):
+        # TKT-055 (confirmed live): topic_where renders as
+        # "(custom) AND dt AND tag" — params must match that text order, or a
+        # data-type string binds into the keyword clause's unnest(%s::text[])
+        # and Postgres rejects it as a malformed array literal.
         sql, params = _capture_call(
             custom_sql_where="s.study_id = ANY(%s)",
             params=[[1, 2, 3]],
             data_types=["Metagenomic"],
             tags=["GOLD"],
         )
-        # Exact expected order per the function's documented (if debated)
-        # convention: score_params(none here) + dt_params + tag_params + params.
-        assert params == ["Metagenomic", "GOLD", [1, 2, 3]]
+        assert params == [[1, 2, 3], "Metagenomic", "GOLD"]
+        # and the SQL text really does place the custom clause first
+        assert sql.index("ANY(%s)") < sql.index("dt.data_type IN")
 
     def test_tag_params_land_before_pi_params(self):
         sql, params = _capture_call(

@@ -155,30 +155,23 @@ This filter is **AND**-ed onto the topic WHERE — it narrows, never broadens. `
 psycopg2 substitutes `%s` strictly left to right, so the parameter list must match the order the fragments appear in the assembled SQL:
 
 ```python
-full_params = score_params + dt_params + tag_params + list(params) + list(pi_filter_params or [])
-#              ↑ SELECT       ↑ WHERE     ↑ WHERE       ↑ WHERE        ↑ WHERE
-#              relevance      data-type   study_tag     topic          PI
-#              expression     EXISTS      EXISTS        clause         EXISTS
+full_params = score_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
+#              ↑ SELECT       ↑ WHERE        ↑ WHERE     ↑ WHERE      ↑ WHERE
+#              relevance      topic          data-type   study_tag    PI
+#              expression     clause         EXISTS      EXISTS       EXISTS
 ```
 
-Score parameters come first because the relevance expression sits in the **SELECT list**, ahead of the WHERE clause. Get this order wrong and there is no error — keywords bind into the data-type filter and vice versa, and the query returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
+Score parameters come first because the relevance expression sits in the **SELECT list**, ahead of the WHERE clause; the topic clause's own placeholders come next because `topic_where` renders as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"`. Get this order wrong and — best case — Postgres rejects the query; worst case it returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
 
-**Open question, flagged rather than fixed (2026-08-17):** `topic_where` is
-built as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"` —
-`custom_sql_where`'s own placeholders occur textually *before* `dt_sql`'s in
-the assembled WHERE clause, not after. `full_params` above puts `dt_params`
-before `list(params)` regardless. Whenever a caller supplies both a
-non-trivial `custom_sql_where` with its own placeholder (e.g. the keyword
-`unnest(%s::text[])` clause every real caller uses) **and** a non-empty
-`data_types` (or now `tags`) — which `_tool_search_studies` does routinely,
-since keyword search and auto-detected data types are both normal — this
-looks like it binds `dt_params`/`tag_params` into the topic clause's
-placeholder and vice versa, and Postgres should reject the resulting
-`unnest('SomeDataType'::text[])` as a malformed array literal. This was
-found while adding the `tags` param (which was threaded through with the
-same convention, not a fix) and could not be verified against a live
-Postgres from the environment it was found in — needs confirming against a
-real instance before deciding whether to reorder.
+**Resolved (2026-08-30, was flagged 2026-08-17 as an open question):** the
+original order bound `dt_params` *before* the topic params, misaligned with
+the rendered WHERE text. Confirmed live: every search combining keywords
+with a `data_types` filter (routine for `_tool_search_studies`, since
+"shotgun" auto-detects `Metagenomic`) fed the bare data-type string into
+the keyword clause's `unnest(%s::text[])` and failed with
+`malformed array literal: "Metagenomic"`. The order above is the corrected
+one; `tests/test_search_studies_with_sql.py ::
+test_params_bind_in_rendered_sql_order` pins it.
 
 `LIMIT` and `OFFSET` are f-string interpolated rather than bound. That is safe **because** both are `int()`-cast and clamped first (limit to 1–150, offset to ≥ 0), so no caller-controlled string reaches the SQL. It stops being safe the moment someone adds a code path that skips the clamp — binding them as parameters would remove the hazard entirely, at no cost.
 
