@@ -58,19 +58,46 @@ def append_user_message(scope, chat_id, user_id, user_content, project_id=None):
         return cur.lastrowid
 
 
-def append_assistant_message(scope, chat_id, assistant_content, assistant_ui_payload=None):
+def append_assistant_message(scope, chat_id, assistant_content, assistant_ui_payload=None,
+                             model_transcript=None):
     """Insert the assistant row — called on normal completion AND (with
-    whatever partial content accumulated) from the abort/error handlers."""
+    whatever partial content accumulated) from the abort/error handlers.
+    model_transcript is the normalized tool exchange for model replay
+    (already truncated by helpers.chat_transcript.truncate_for_persist)."""
     chats_tbl, msgs_tbl = _tables(scope)
     ui_json = json.dumps(assistant_ui_payload) if assistant_ui_payload else None
+    transcript_json = json.dumps(model_transcript) if model_transcript else None
     with _conn() as conn:
         now = _now()
         conn.execute(
-            f"INSERT INTO {msgs_tbl}(chat_id, role, content, ui_payload, created_at) "
-            f"VALUES(?, 'assistant', ?, ?, ?)",
-            (chat_id, assistant_content or "", ui_json, now))
+            f"INSERT INTO {msgs_tbl}(chat_id, role, content, ui_payload, model_transcript, created_at) "
+            f"VALUES(?, 'assistant', ?, ?, ?, ?)",
+            (chat_id, assistant_content or "", ui_json, transcript_json, now))
         conn.execute(f"UPDATE {chats_tbl} SET updated_at = ? WHERE chat_id = ?", (now, chat_id))
         conn.commit()
+
+
+def load_turn_rows(chat_id, scope, since_id=None):
+    """Rows for model replay: role/content plus the decoded model_transcript.
+    Never touches ui_payload. since_id supports compaction anchoring."""
+    _, msgs_tbl = _tables(scope)
+    where = "chat_id = ?" + (" AND id > ?" if since_id is not None else "")
+    params = (chat_id, since_id) if since_id is not None else (chat_id,)
+    with _conn() as conn:
+        rows = conn.execute(
+            f"SELECT id, role, content, model_transcript FROM {msgs_tbl} "
+            f"WHERE {where} ORDER BY id ASC", params).fetchall()
+    out = []
+    for r in rows:
+        transcript = None
+        if r["model_transcript"]:
+            try:
+                transcript = json.loads(r["model_transcript"])
+            except (ValueError, TypeError):
+                transcript = None
+        out.append({"id": r["id"], "role": r["role"], "content": r["content"],
+                    "model_transcript": transcript})
+    return out
 
 
 def load_project_chat_history(chat_id: str) -> list:

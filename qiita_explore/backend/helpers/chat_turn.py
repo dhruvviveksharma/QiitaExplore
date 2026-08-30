@@ -17,11 +17,14 @@ The genuinely scope-specific parts arrive as callables:
 import logging
 
 from helpers.agent import stream_agent
+from helpers.chat_transcript import truncate_for_persist
 from helpers.llm_helpers import _sse, friendly_llm_error
 from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import stream_samples_report
 from store import list_pinned_study_meta
-from store.chat_turn_persist import append_user_message, append_assistant_message
+from store.chat_turn_persist import (
+    append_user_message, append_assistant_message, load_turn_rows,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
     assistant_parts = []
     segments_list   = []
     current_text    = []
+    transcript      = []
     user_row_saved  = False
     try:
         if pin_study_ids is not None:
@@ -84,6 +88,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
 
         # ── Agentic main turn: durable split persist. The user row lands
         # before the LLM runs, so an error or Stop can no longer lose it.
+        # History rows are loaded FIRST so the new user message isn't doubled.
+        turn_rows = load_turn_rows(chat_id, scope)
         if append_user_message(scope, chat_id, user_id, user_content,
                                project_id=project_id) is None:
             yield _sse("error", {"error": "Chat not found"})
@@ -101,9 +107,13 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             chat_id=chat_id,
             deep_search=deep_search,
             tools=tools,
+            turn_rows=turn_rows,
+            user_content=user_content,
         ):
             etype = event["type"]
-            if etype == "agent_start":
+            if etype == "transcript_append":
+                transcript.append(event["entry"])
+            elif etype == "agent_start":
                 yield _sse("agent_start", {})
             elif etype == "token":
                 current_text.append(event["token"])
@@ -132,7 +142,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             current_text = []
         ui_payload = {"kind": "agent_segments", "segments": segments_list} if segments_list else None
 
-        append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload)
+        append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload,
+                                 model_transcript=truncate_for_persist(transcript) or None)
         if ui_payload:
             yield _sse("done", _pinned_done_payload(chat_id, scope))
         else:
@@ -146,7 +157,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         if user_row_saved and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
-                                         _partial_ui_payload(segments_list, current_text))
+                                         _partial_ui_payload(segments_list, current_text),
+                                         model_transcript=truncate_for_persist(transcript) or None)
             except Exception:
                 logger.exception("failed to persist partial turn on abort for %s chat %s",
                                  scope, chat_id)
@@ -156,7 +168,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         if user_row_saved and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
-                                         _partial_ui_payload(segments_list, current_text))
+                                         _partial_ui_payload(segments_list, current_text),
+                                         model_transcript=truncate_for_persist(transcript) or None)
             except Exception:
                 logger.exception("failed to persist partial turn on error for %s chat %s",
                                  scope, chat_id)

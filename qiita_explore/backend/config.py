@@ -49,6 +49,10 @@ def context_budget_chars(model: str) -> int:
     return max(8_000, chars)
 
 
+# Per-entry cap on tool-result text persisted in a turn's model_transcript —
+# long-term memory stays lean while the live turn still sees full results.
+TRANSCRIPT_TOOL_RESULT_CHARS = int(os.getenv("TRANSCRIPT_TOOL_RESULT_CHARS", "2000"))
+
 # How many *executed* search-tool calls the model may make per user message
 # (empty-input and crashed calls don't count). Past the cap the search tools
 # are stripped from the offered schema for the rest of the turn.

@@ -8,6 +8,7 @@ from typing import Generator, Optional
 from config import get_client, SEARCH_CALLS_PER_MESSAGE
 from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
 from helpers.agent_tools import execute_tool
+from helpers.chat_transcript import rows_to_provider_messages
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,10 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
         for tu in tool_uses:
             asst_content.append({"type": "tool_use", "id": tu["id"], "name": tu["name"], "input": tu["args"]})
         msgs.append({"role": "assistant", "content": asst_content})
+        yield {"type": "transcript_append", "entry": {
+            "role": "assistant", "text": "".join(content_parts),
+            "tool_calls": [{"id": tu["id"], "name": tu["name"], "args": tu["args"]}
+                           for tu in tool_uses]}}
 
         tool_results = []
         for tu in tool_uses:
@@ -158,6 +163,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             if consumed_search_slot:
                 search_calls_used += 1
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
+            yield {"type": "transcript_append", "entry": {
+                "role": "tool", "id": tu["id"], "name": tu["name"], "text": result_text}}
         msgs.append({"role": "user", "content": tool_results})
 
     if iteration == max_iters - 1 and stop_reason == "tool_use":
@@ -188,6 +195,8 @@ def stream_agent(
     tools: list,
     max_iters: int = 7,
     deep_search: bool = False,
+    turn_rows: Optional[list] = None,
+    user_content: Optional[str] = None,
 ) -> Generator[dict, None, None]:
     """
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
@@ -197,17 +206,29 @@ def stream_agent(
       {"type": "segment_tool_call", "name": str, "label": str, "args": dict}
       {"type": "segment_tool_result","name": str, "label": str,
                                      "detail": str, "ui_payload": dict|None}
+      {"type": "transcript_append", "entry": dict}                 — normalized tool
+                                     exchange for the caller to persist
+    When `turn_rows` is given (rows from store.chat_turn_persist.load_turn_rows
+    plus the new `user_content`), history is replayed with each prior turn's
+    persisted tool exchange in the current provider's wire shape — the model
+    remembers earlier tool results. Without it, `messages` ({role, content}
+    dicts) build the history exactly as before (harness/tests path).
     Raises on unrecoverable errors; callers should catch and emit an SSE error.
     """
     resolved = _resolve_model(model)
-    api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
 
-    logger.info("[agent_start] model=%s resolved=%s deep=%s msg_count=%d",
-                model, resolved, deep_search, len(api_msgs))
+    logger.info("[agent_start] model=%s resolved=%s deep=%s replay=%s",
+                model, resolved, deep_search, turn_rows is not None)
 
     yield {"type": "agent_start"}
 
     llm_client, provider = get_client(resolved)
+    if turn_rows is not None:
+        system_msg = _build_api_messages([], study_context_text, system_prompt)[0]
+        api_msgs = ([system_msg] + rows_to_provider_messages(turn_rows, provider)
+                    + [{"role": "user", "content": user_content or ""}])
+    else:
+        api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
     if provider == "anthropic":
         yield from _stream_anthropic_agent(
             llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools)
@@ -307,12 +328,20 @@ def stream_agent(
             ],
         })
 
+        parsed_calls = []
         for tc in ordered_calls:
-            name = tc["name"]
             try:
                 args = json.loads(tc["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
+            parsed_calls.append((tc, args))
+        yield {"type": "transcript_append", "entry": {
+            "role": "assistant", "text": assistant_content,
+            "tool_calls": [{"id": tc["id"], "name": tc["name"], "args": args}
+                           for tc, args in parsed_calls]}}
+
+        for tc, args in parsed_calls:
+            name = tc["name"]
             result_text, consumed_search_slot = yield from _execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
@@ -321,6 +350,8 @@ def stream_agent(
             if consumed_search_slot:
                 search_calls_used += 1
             api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+            yield {"type": "transcript_append", "entry": {
+                "role": "tool", "id": tc["id"], "name": name, "text": result_text}}
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
         logger.warning("agent hit max_iters=%d without stopping", max_iters)

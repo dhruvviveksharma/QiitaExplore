@@ -283,6 +283,10 @@ def _create_schema(conn):
         ("global_chats", "pinned_at", "TEXT"),
         ("global_chats", "is_archived", "INTEGER DEFAULT 0"),
         ("global_chats", "archived_at", "TEXT"),
+        # Normalized per-turn tool exchange for model replay — NULL on rows
+        # from before this column (degrades to display-text-only history).
+        ("project_chat_messages", "model_transcript", "TEXT"),
+        ("global_chat_messages", "model_transcript", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")
