@@ -2,7 +2,9 @@
 import logging
 
 from helpers.pg_pool import pooled_fetchall
-from helpers.qiita_fetch import _STUDY_COUNT_COLUMNS, _row_to_study_header
+from helpers.qiita_fetch import (
+    _PUBLIC_ARTIFACT_EXISTS, _STUDY_COUNT_COLUMNS, _row_to_study_header,
+)
 from services.relevance import RELEVANCE_WEIGHTS
 
 logger = logging.getLogger(__name__)
@@ -17,27 +19,63 @@ _IRREGULAR_VARIANTS = {
     "virus": "viruses",  "viruses": "virus",
 }
 
+# Bidirectional domain-concept groups (seeded from the agent-prompt slot
+# examples in config.py): a search naming any member also matches the rest.
+# Every member must be >= 3 chars — bare "GI" as ILIKE '%gi%' would match
+# "fungi"/"aging"/"region".
+DOMAIN_SYNONYM_GROUPS = [
+    ["gut", "intestine", "intestinal", "colon", "GI tract", "cecum",
+     "feces", "stool", "fecal"],
+    ["microbiome", "microbiota"],
+    ["soil", "rhizosphere", "sediment"],
+    ["FMT", "fecal microbiota transplant", "fecal transplant", "stool transplant"],
+    ["antibiotic", "antibiotics", "antimicrobial"],
+    ["human", "homo sapiens"],
+    ["infant", "baby", "neonatal", "neonate"],
+    ["obesity", "obese"],
+    ["IBD", "inflammatory bowel disease", "crohn", "colitis"],
+    ["cancer", "tumor", "tumour"],
+]
+_DOMAIN_INDEX = {}  # lowercased member -> list of groups (a member may sit in several)
+for _group in DOMAIN_SYNONYM_GROUPS:
+    for _term in _group:
+        _DOMAIN_INDEX.setdefault(_term.lower(), []).append(_group)
+
 
 def expand_keyword_variants(keywords):
-    """Add plural/singular variants (including mouse↔mice). Caps at 80."""
+    """Add plural/singular variants (mouse↔mice) and domain-synonym group
+    members (gut↔intestine↔stool, …). Caps at 80.
+
+    Two passes so direct user terms always survive the cap: pass 1 keeps every
+    input term plus its morphological variant; pass 2 appends domain-group
+    members (looked up by whole phrase AND per-token, so "gut microbiome"
+    pulls in "intestine" and "microbiota"). Domain members get no plural
+    expansion — substring ILIKE already makes "tumor" match "tumors".
+    Dedup is case-insensitive (ILIKE makes case duplicates pure waste).
+    """
     seen, expanded = set(), []
-    for kw in (keywords or []):
-        kw = kw.strip()
-        if not kw or kw in seen:
-            continue
-        seen.add(kw)
-        expanded.append(kw)
+
+    def _add(term):
+        tl = term.lower()
+        if tl not in seen:
+            seen.add(tl)
+            expanded.append(term)
+
+    cleaned = [kw.strip() for kw in (keywords or []) if kw and kw.strip()]
+    for kw in cleaned:
+        _add(kw)
         kl = kw.lower()
         if kl in _IRREGULAR_VARIANTS:
-            alt = _IRREGULAR_VARIANTS[kl]
-            if alt not in seen:
-                seen.add(alt)
-                expanded.append(alt)
+            _add(_IRREGULAR_VARIANTS[kl])
         elif not kl.endswith("s") and len(kl) > 2:
-            plural = kw + "s"
-            if plural not in seen:
-                seen.add(plural)
-                expanded.append(plural)
+            _add(kw + "s")
+
+    for kw in cleaned:
+        kl = kw.lower()
+        for token in [kl] + kl.split():
+            for group in _DOMAIN_INDEX.get(token, []):
+                for member in group:
+                    _add(member)
     return expanded[:80]
 
 
@@ -122,53 +160,49 @@ def build_tag_filter(tags):
     return sql, list(tags)
 
 
-def build_where_from_plan(plan: dict) -> tuple:
-    """Return (where_clause, params) for broad parameterized search from LLM plan.
-    Keywords are morphologically expanded (mouse→mice) before building clauses.
-    Searches title, abstract, alias, PI name, PI affiliation, lab contact (all OR'd)."""
-    raw = [k.strip() for k in (plan.get("keywords") or []) if len(k.strip()) >= 2]
-    keywords = expand_keyword_variants(raw)
-    if not keywords:
-        return "1=1", []
-    # Literal % must be %% — psycopg2 treats bare % as placeholders when params are passed.
-    clause = (
-        "EXISTS (SELECT 1 FROM unnest(%s::text[]) AS kw"
-        " WHERE s.study_title ILIKE ('%%' || kw || '%%')"
-        " OR s.study_abstract ILIKE ('%%' || kw || '%%')"
-        " OR s.study_alias ILIKE ('%%' || kw || '%%')"
-        " OR sp_pi.name ILIKE ('%%' || kw || '%%')"
-        " OR sp_pi.affiliation ILIKE ('%%' || kw || '%%')"
-        " OR sp_lab.name ILIKE ('%%' || kw || '%%'))"
-    )
-    return clause, [keywords]
+_KEYWORD_MATCH_CONDITION = "(rel.relevance > 0 OR rel.aux_match)"
 
 
-def build_relevance_score(keywords) -> tuple:
-    """Return (sql_expr, params) scoring each study by keyword matches.
+def build_keyword_lateral(keywords) -> tuple:
+    """Return (lateral_sql, params): one CROSS JOIN LATERAL computing
+    rel.relevance (4 scored fields, weights from RELEVANCE_WEIGHTS) and
+    rel.aux_match (PI affiliation + lab-contact name) in a single pass over
+    unnest(keywords) — one array bind serving both scoring and matching.
 
-    Keywords are morphologically expanded first.
-    Weights from RELEVANCE_WEIGHTS. Sums per-keyword scores via unnest()
-    over one array param instead of repeating the CASE block per keyword.
+    Keywords must be pre-expanded (expand_keyword_variants at the caller) —
+    no re-expansion here. Terms under 2 chars are dropped, as the replaced
+    builders (build_where_from_plan / build_relevance_score) did.
+    Returns ("", []) when nothing usable remains.
+
+    rel.relevance > 0  <=>  some kw hit title/alias/pi.name/abstract (all
+    weights positive); rel.aux_match covers the 2 extra fields the old
+    6-field match clause had. BOOL_OR ignores NULL inputs and yields NULL
+    over an all-NULL set, so _KEYWORD_MATCH_CONDITION excludes exactly the
+    rows the old EXISTS excluded (NULL LEFT-JOINed sp_pi/sp_lab included).
     """
-    kws = expand_keyword_variants(
-        [k.strip() for k in (keywords or []) if len(k.strip()) >= 2]
-    )
+    kws = [k.strip() for k in (keywords or []) if len(k.strip()) >= 2]
     if not kws:
-        return "0", []
+        return "", []
     w = RELEVANCE_WEIGHTS
-    expr = (
-        "(SELECT COALESCE(SUM("
-        f"CASE WHEN s.study_title ILIKE ('%%' || kw || '%%') THEN {w['title']} ELSE 0 END"
-        f" + CASE WHEN s.study_alias ILIKE ('%%' || kw || '%%') THEN {w['alias']} ELSE 0 END"
-        f" + CASE WHEN sp_pi.name ILIKE ('%%' || kw || '%%') THEN {w['pi']} ELSE 0 END"
-        f" + CASE WHEN s.study_abstract ILIKE ('%%' || kw || '%%') THEN {w['abstract']} ELSE 0 END"
-        "), 0) FROM unnest(%s::text[]) AS kw)"
+    # Literal % must be %% — psycopg2 treats bare % as placeholders when params are passed.
+    sql = (
+        "CROSS JOIN LATERAL (\n"
+        "        SELECT COALESCE(SUM(\n"
+        f"            CASE WHEN s.study_title ILIKE ('%%' || kw || '%%') THEN {w['title']} ELSE 0 END\n"
+        f"          + CASE WHEN s.study_alias ILIKE ('%%' || kw || '%%') THEN {w['alias']} ELSE 0 END\n"
+        f"          + CASE WHEN sp_pi.name ILIKE ('%%' || kw || '%%') THEN {w['pi']} ELSE 0 END\n"
+        f"          + CASE WHEN s.study_abstract ILIKE ('%%' || kw || '%%') THEN {w['abstract']} ELSE 0 END\n"
+        "        ), 0) AS relevance,\n"
+        "        BOOL_OR(sp_pi.affiliation ILIKE ('%%' || kw || '%%')\n"
+        "             OR sp_lab.name ILIKE ('%%' || kw || '%%')) AS aux_match\n"
+        "        FROM unnest(%s::text[]) AS kw\n"
+        "    ) rel"
     )
-    return expr, [kws]
+    return sql, [kws]
 
 
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
-                            relevance_keywords=None,
+                            relevance_keywords=None, match_keywords=None,
                             data_types=None, investigation_types=None,
                             tags=None,
                             pi_filter_sql=None, pi_filter_params=None,
@@ -176,17 +210,23 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
 
+    match_keywords = filter AND score (agent path); relevance_keywords =
+    score-only (browse path, which brings its own custom WHERE). If both are
+    given, match_keywords wins — they share one LATERAL/one array bind.
+    Both are expected pre-expanded (expand_keyword_variants at the caller).
+
     Param binding order (psycopg2 left-to-right, matching the rendered SQL):
-        score_params (SELECT) → topic (WHERE) params → data_type_filter_params
+        kw_params (FROM: CROSS JOIN LATERAL unnest(%s::text[]))
+        → topic (WHERE custom) params → data_type_filter_params
         → tag_filter_params → pi_filter_params
 
-    topic_where renders as "(custom_sql_where) AND dt_sql AND tag_sql AND
-    (pi_filter_sql)", so the topic clause's own placeholders occur FIRST in
-    the WHERE text — the params list must match that. The old order bound
-    dt_params before the topic params, which fed a bare data-type string
-    into the keyword clause's unnest(%s::text[]) — Postgres rejected every
-    keyword+data-type search with `malformed array literal: "Metagenomic"`
-    (TKT-055, confirmed live 2026-08-30).
+    The WHERE renders as "(custom_sql_where) AND dt_sql AND tag_sql AND
+    (pi_filter_sql)", so the custom clause's own placeholders occur first in
+    the WHERE text — the params list must match that. An earlier version
+    bound dt_params before the topic params, which fed a bare data-type
+    string into a keyword clause's unnest(%s::text[]) — Postgres rejected
+    every keyword+data-type search with `malformed array literal:
+    "Metagenomic"` (TKT-055, confirmed live 2026-08-30).
     """
     if params is None:
         params = []
@@ -201,22 +241,21 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         off = 0
     off = max(0, off)
 
-    # Relevance scoring: score params bind first (appear in SELECT)
-    if relevance_keywords:
-        score_expr, score_params = build_relevance_score(relevance_keywords)
-        score_select = f", ({score_expr}) AS relevance"
+    # One LATERAL does scoring and (optionally) matching — single array bind.
+    kws = match_keywords or relevance_keywords
+    lateral_sql, kw_params = build_keyword_lateral(kws) if kws else ("", [])
+    if lateral_sql:
+        score_select = ", rel.relevance AS relevance"
         order_clause = "ORDER BY relevance DESC, num_samples DESC NULLS LAST, s.study_id"
     else:
+        kw_params = []
         score_select = ""
-        score_params = []
         order_clause = "ORDER BY s.study_id"
 
-    # Data-type filter: AND-ed onto the topic WHERE (binds after score params)
+    topic_where = custom_sql_where if custom_sql_where else "1=1"
     dt_sql, dt_params = build_data_type_filter(data_types, investigation_types)
     if dt_sql:
-        topic_where = f"({custom_sql_where if custom_sql_where else '1=1'}) AND {dt_sql}"
-    else:
-        topic_where = custom_sql_where if custom_sql_where else "1=1"
+        topic_where = f"({topic_where}) AND {dt_sql}"
 
     tag_sql, tag_params = build_tag_filter(tags)
     if tag_sql:
@@ -225,17 +264,24 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     if pi_filter_sql:
         topic_where += f" AND ({pi_filter_sql})"
 
-    full_params = score_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
+    if lateral_sql and match_keywords:
+        # No params of its own — leading keeps the WHERE readable.
+        if topic_where == "1=1":
+            topic_where = _KEYWORD_MATCH_CONDITION
+        else:
+            topic_where = f"{_KEYWORD_MATCH_CONDITION} AND ({topic_where})"
+
+    full_params = kw_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
 
     logger.info(
         "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "
-        "topic_params=%d score_params=%d total_params=%d pi_filter=%s",
+        "topic_params=%d kw_params=%d total_params=%d pi_filter=%s",
         lim, off, data_types, investigation_types,
-        len(params), len(score_params), len(full_params), bool(pi_filter_sql),
+        len(params), len(kw_params), len(full_params), bool(pi_filter_sql),
     )
 
     sql = f"""
-    SELECT DISTINCT s.study_id, s.study_title, s.study_abstract,
+    SELECT s.study_id, s.study_title, s.study_abstract,
            s.study_alias, s.metadata_complete,
            sp_pi.name as pi_name, sp_pi.email as pi_email,
            sp_pi.affiliation as pi_affiliation,
@@ -250,10 +296,8 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
         ON s.principal_investigator_id = sp_pi.study_person_id
     LEFT JOIN qiita.study_person sp_lab
         ON s.lab_person_id = sp_lab.study_person_id
-    LEFT JOIN qiita.study_artifact sa ON s.study_id = sa.study_id
-    LEFT JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-    LEFT JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-    WHERE v.visibility = 'public'
+    {lateral_sql}
+    WHERE {_PUBLIC_ARTIFACT_EXISTS}
       AND ({topic_where})
     {order_clause}
     LIMIT {lim}

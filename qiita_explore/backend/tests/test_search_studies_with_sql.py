@@ -75,6 +75,54 @@ class TestTagFilterParamPosition:
         assert tag_clause.count("%s") == 2
 
 
+class TestKeywordLateralAssembly:
+    """One CROSS JOIN LATERAL replaces the old duplicated keyword blocks
+    (6-field WHERE EXISTS + 4-field relevance subquery): a single array bind
+    that both scores and (for match_keywords) filters."""
+
+    def test_match_keywords_bind_first_in_full_order(self):
+        # TKT-055-style pin for the new first slot: the kw array binds in
+        # FROM (the LATERAL), before every WHERE param.
+        sql, params = _capture_call(
+            match_keywords=["mouse", "mice"],
+            custom_sql_where="s.study_id = ANY(%s)",
+            params=[[1, 2, 3]],
+            data_types=["Metagenomic"],
+            tags=["GOLD"],
+        )
+        assert params == [["mouse", "mice"], [1, 2, 3], "Metagenomic", "GOLD"]
+        assert sql.index("unnest(%s::text[])") < sql.index("ANY(%s)")
+
+    def test_match_keywords_add_filter_condition(self):
+        sql, _ = _capture_call(match_keywords=["mouse"])
+        assert "(rel.relevance > 0 OR rel.aux_match)" in sql
+
+    def test_relevance_keywords_score_only(self):
+        sql, _ = _capture_call(relevance_keywords=["mouse"])
+        assert "CROSS JOIN LATERAL" in sql
+        assert "rel.relevance > 0" not in sql
+        assert "ORDER BY relevance DESC" in sql
+
+    def test_no_lateral_without_keywords(self):
+        sql, params = _capture_call()
+        assert "LATERAL" not in sql
+        assert "ORDER BY s.study_id" in sql
+        assert params == []
+
+    def test_no_distinct_visibility_via_exists(self):
+        # The artifact LEFT JOIN chain fanned rows out per artifact and forced
+        # SELECT DISTINCT; a correlated EXISTS has no fan-out.
+        sql, _ = _capture_call(match_keywords=["mouse"])
+        assert "SELECT DISTINCT" not in sql
+        assert "LEFT JOIN qiita.study_artifact" not in sql
+        assert "sa.study_id = s.study_id AND v.visibility = 'public'" in sql
+
+    def test_search_does_not_reexpand(self):
+        # Expansion is the caller's job — no "guts" appears here.
+        _, params = _capture_call(match_keywords=["gut"])
+        assert params == [["gut"]]
+
+
 def _header_row(sid, via=None):
     row = {
         "study_id": sid, "study_title": f"Study {sid}", "study_abstract": "a" * 50,
@@ -176,3 +224,17 @@ class TestSearchStudiesToolPassesTagsThrough:
              patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
             agent_tools_mod._tool_search_studies({"keywords": ["mouse"]})
         assert mock_sql.call_args.kwargs.get("tags") is None
+
+    def test_match_keywords_forwarded_expanded(self):
+        # The agent path passes the expanded keyword list as match_keywords —
+        # no custom_sql_where, no separate relevance_keywords bind.
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=([], "")) as mock_sql, \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
+            agent_tools_mod._tool_search_studies({"keywords": ["mouse"]})
+        assert mock_sql.call_args.args == ()
+        kwargs = mock_sql.call_args.kwargs
+        assert "mouse" in kwargs["match_keywords"]
+        assert "mice" in kwargs["match_keywords"]
+        assert "custom_sql_where" not in kwargs
+        assert "relevance_keywords" not in kwargs

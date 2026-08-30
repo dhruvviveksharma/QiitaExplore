@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from services.study_service import (
-    build_where_from_plan, search_studies_with_sql,
+    search_studies_with_sql,
     detect_data_types, expand_keyword_variants,
 )
 from services.relevance import (
@@ -258,13 +258,11 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     effective_inv   = explicit_inv or None
     tags            = _as_str_list(args.get("tags")) or None
 
-    where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
-        where, params,
+        match_keywords=kws,
         # Overfetch floor is decoupled from the chat cap: the text-search half
         # of the panel's full result set must not shrink because chat shows 10.
         limit=max(40, limit * 2),
-        relevance_keywords=kws,
         data_types=effective_types,
         investigation_types=effective_inv,
         tags=tags,

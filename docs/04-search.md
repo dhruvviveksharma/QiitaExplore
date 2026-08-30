@@ -35,7 +35,7 @@ flowchart TB
     EX["expand_keyword_variants<br/>plural/irregular · cap 80"]
     DT["detect_data_types<br/>synonym → canonical"]
 
-    SQL["<b>search_studies_with_sql</b><br/>build_relevance_score<br/>+ build_data_type_filter"]
+    SQL["<b>search_studies_with_sql</b><br/>build_keyword_lateral<br/>+ build_data_type_filter"]
     PROBE["<b>per-study JSONB probes</b><br/>bounded · timed · parallel"]
     PG[("classic Qiita<br/>PostgreSQL")]
     MERGE["merge · dedup · re-rank"]
@@ -89,23 +89,27 @@ The heuristic is crude and it is honest about being crude. Its weakness is the k
 ### The base query
 
 ```sql
-SELECT DISTINCT s.study_id, s.study_title, ...
+SELECT s.study_id, s.study_title, ...
 FROM qiita.study s
 LEFT JOIN qiita.study_person sp_pi  ON s.principal_investigator_id = sp_pi.study_person_id
 LEFT JOIN qiita.study_person sp_lab ON s.lab_person_id             = sp_lab.study_person_id
-LEFT JOIN qiita.study_artifact sa   ON s.study_id      = sa.study_id
-LEFT JOIN qiita.artifact a          ON sa.artifact_id  = a.artifact_id
-LEFT JOIN qiita.visibility v        ON a.visibility_id = v.visibility_id
-WHERE v.visibility = 'public' AND (<topic_where>)
+{keyword LATERAL, when keywords are given — see below}
+WHERE EXISTS (SELECT 1 FROM qiita.study_artifact sa
+              JOIN qiita.artifact a   ON sa.artifact_id  = a.artifact_id
+              JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+              WHERE sa.study_id = s.study_id AND v.visibility = 'public')
+  AND (<topic_where>)
 ```
 
 Plus four correlated subqueries in the SELECT list: `num_samples`, `data_types`, `num_preps`, and `is_gold`.
 
-`SELECT DISTINCT` is **required**, not stylistic: the artifact/visibility join fans a study out to one row per artifact. Note that `qiita_fetch` expresses the same public-visibility constraint as a correlated `WHERE EXISTS` instead, which avoids the fan-out and therefore needs no `DISTINCT`. The two forms are semantically equivalent; the difference is historical, and the `EXISTS` form is the better pattern.
+Public visibility is a correlated `EXISTS` (`_PUBLIC_ARTIFACT_EXISTS` in `helpers/qiita_fetch.py`, shared with `_build_study_header_query`), so there is no artifact fan-out and no `DISTINCT`. Before 2026-08-30 this was a 3-way artifact/visibility `LEFT JOIN` + `SELECT DISTINCT`, which re-evaluated every SELECT subquery once *per artifact* before deduping.
 
 ### Relevance scoring (two layers)
 
-**Layer 1 — SQL** (`build_relevance_score` in `study_service.py`): one `unnest(%s::text[])` block sums per-keyword weights:
+**Layer 1 — SQL** (`build_keyword_lateral` in `study_service.py`): one `CROSS JOIN LATERAL` over a single `unnest(%s::text[])` computes two columns per study row:
+
+- `rel.relevance` — per-keyword weights summed over 4 fields:
 
 | Field | Weight |
 | ----- | ------ |
@@ -114,13 +118,15 @@ Plus four correlated subqueries in the SELECT list: `num_samples`, `data_types`,
 | `study_alias` | 15 |
 | PI name | 20 |
 
+- `rel.aux_match` — `BOOL_OR` over the 2 extra fields (PI affiliation, lab-contact name).
+
+The agent path passes `match_keywords`, which both scores and **filters** with `(rel.relevance > 0 OR rel.aux_match)`; the browse path passes `relevance_keywords` (score-only, keeping its own custom WHERE). One array bind serves both roles — previously the same keyword block rendered twice (a 6-field `EXISTS` filter from `build_where_from_plan` plus a 4-field relevance subquery from `build_relevance_score`, both since deleted) and bound the array twice.
+
 **Layer 2 — sample metadata** (`score_studies_sample_layer` in `sample_search.py`): after text + sample hits merge, each merged study is probed once. Full `sample_values::text` is searched; **+1 per keyword** with at least one sample match.
 
 Final ordering: `relevance DESC, num_samples DESC NULLS LAST, s.study_id`.
 
-`build_where_from_plan` uses the same `unnest(%s::text[])` pattern (one array param) instead of repeating a 6-column OR per keyword.
-
-Note the asymmetry: **scoring** looks at 4 fields, while **matching** in `build_where_from_plan` looks at 6 (adding PI affiliation and lab contact name). A study matched solely on lab-contact name therefore scores zero and sorts last.
+Note the asymmetry survives the rewrite: **scoring** looks at 4 fields, while **matching** covers 6 (`relevance > 0` covers the 4 scored fields exactly, since all weights are positive; `aux_match` adds PI affiliation and lab contact name). A study matched solely on lab-contact name therefore scores zero and sorts last.
 
 ### PI veto (resolve before filter)
 
@@ -155,13 +161,13 @@ This filter is **AND**-ed onto the topic WHERE — it narrows, never broadens. `
 psycopg2 substitutes `%s` strictly left to right, so the parameter list must match the order the fragments appear in the assembled SQL:
 
 ```python
-full_params = score_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
-#              ↑ SELECT       ↑ WHERE        ↑ WHERE     ↑ WHERE      ↑ WHERE
-#              relevance      topic          data-type   study_tag    PI
-#              expression     clause         EXISTS      EXISTS       EXISTS
+full_params = kw_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
+#              ↑ FROM      ↑ WHERE        ↑ WHERE     ↑ WHERE      ↑ WHERE
+#              keyword     topic          data-type   study_tag    PI
+#              LATERAL     clause         EXISTS      EXISTS       EXISTS
 ```
 
-Score parameters come first because the relevance expression sits in the **SELECT list**, ahead of the WHERE clause; the topic clause's own placeholders come next because `topic_where` renders as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"`. Get this order wrong and — best case — Postgres rejects the query; worst case it returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
+Keyword parameters come first because the LATERAL sits in the **FROM clause**, ahead of the WHERE; the topic clause's own placeholders come next because `topic_where` renders as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"` (the match condition prepended for `match_keywords` binds nothing). Get this order wrong and — best case — Postgres rejects the query; worst case it returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
 
 **Resolved (2026-08-30, was flagged 2026-08-17 as an open question):** the
 original order bound `dt_params` *before* the topic params, misaligned with
@@ -171,15 +177,19 @@ with a `data_types` filter (routine for `_tool_search_studies`, since
 the keyword clause's `unnest(%s::text[])` and failed with
 `malformed array literal: "Metagenomic"`. The order above is the corrected
 one; `tests/test_search_studies_with_sql.py ::
-test_params_bind_in_rendered_sql_order` pins it.
+test_params_bind_in_rendered_sql_order` pins the WHERE-side order and
+`test_match_keywords_bind_first_in_full_order` pins the keyword slot.
 
 `LIMIT` and `OFFSET` are f-string interpolated rather than bound. That is safe **because** both are `int()`-cast and clamped first (limit to 1–150, offset to ≥ 0), so no caller-controlled string reaches the SQL. It stops being safe the moment someone adds a code path that skips the clamp — binding them as parameters would remove the hazard entirely, at no cost.
 
 ### Keyword expansion
 
-`expand_keyword_variants` adds morphological variants before either builder runs: an irregular map handles `mouse ↔ mice`, `bacterium ↔ bacteria`; otherwise a naive `+s` plural is appended. **The result is capped at 80 terms.**
+`expand_keyword_variants` runs **once per search, at the caller** (`agent_tools._tool_search_studies` and the `/api/search` route); `build_keyword_lateral` binds the list as given and never re-expands (previously the builders re-expanded, so an agent search expanded up to 3×). Two passes:
 
-Two things to note. The cap applies *after* expansion, so it corresponds to roughly 40 input terms. Both `build_where_from_plan` and `build_relevance_score` bind **one** `text[]` parameter each (via `unnest`), so SQL text and param count no longer grow linearly with keyword count.
+1. **Morphological** — an irregular map handles `mouse ↔ mice`, `bacterium ↔ bacteria`; otherwise a naive `+s` plural. Dedup is case-insensitive (ILIKE makes case duplicates pure waste).
+2. **Domain synonyms** — `DOMAIN_SYNONYM_GROUPS` (bidirectional concept groups: gut/intestine/stool/…, microbiome/microbiota, soil/rhizosphere/sediment, FMT, antibiotic, human, infant, obesity, IBD, cancer). Each keyword is looked up as a whole phrase AND per token, so `"gut microbiome"` pulls in `intestine` and `microbiota`. Group members get no plural expansion (substring ILIKE already matches "tumors"), and every member must be ≥ 3 chars — bare `GI` as `ILIKE '%gi%'` would match "fungi"/"aging" (pinned by `test_no_member_shorter_than_3_chars`).
+
+**The result is capped at 80 terms**, applied after both passes — direct user terms (pass 1) always precede domain padding, so they can never be pushed out by synonyms. The whole list binds as **one** `text[]` parameter, so SQL text and param count don't grow with keyword count.
 
 ---
 
@@ -256,13 +266,13 @@ That last point is the important one. **A timeout degrades recall; it never fail
 
 > **TKT-024 —** `/api/search` **latency ranges from 86 ms to 13.5 s** across the benchmark suite in `backend/tests/benchmarks/`. These are measured numbers, not estimates.
 
-Three compounding causes:
+Three compounding causes (one now partly resolved):
 
 1. **Leading-wildcard** `ILIKE` **with no supporting index.** Every clause is `ILIKE '%term%'`, which no B-tree can serve. Each is a sequential scan over `qiita.study`.
-2. **Term count multiplies the work.** 80 expanded terms × 6 fields = 480 comparisons per row in the WHERE, plus 320 more in the relevance expression.
-3. `SELECT DISTINCT` **with** `ORDER BY relevance` **defeats LIMIT pushdown.** Both the relevance expression and the deduplication must be evaluated for the full matching set before any row can be discarded, so `LIMIT 8` does not reduce the work — it only reduces what is returned. The four correlated subqueries per surviving row add to that.
+2. **Term count multiplies the work.** At the 80-term cap that is 480 comparisons per row (6 fields × 80 terms) — down from 800 before the single-LATERAL rewrite, which folded the separate WHERE filter (6×80) and relevance expression (4×80) into one 6-field pass.
+3. ~~`SELECT DISTINCT` with `ORDER BY relevance` defeats LIMIT pushdown.~~ **Partly resolved 2026-08-30:** the artifact fan-out + `DISTINCT` is gone (visibility is a correlated `EXISTS`), so the SELECT subqueries and relevance are no longer re-evaluated per artifact. What remains: `ORDER BY relevance` still forces relevance and `num_samples` evaluation for the full matching set before `LIMIT` can discard anything, plus the other correlated subqueries per matching row.
 
-The indicated fix is `pg_trgm` GIN trigram indexes on `study_title` and `study_abstract`, which are what make leading-wildcard matching indexable. That is the highest-leverage change available. Restructuring the query to select IDs first and hydrate afterward would address the pushdown issue separately.
+The indicated fix is `pg_trgm` GIN trigram indexes on `study_title` and `study_abstract`, which are what make leading-wildcard matching indexable. That is the highest-leverage change available. Restructuring the query to select IDs first and hydrate afterward would shave the remaining per-matching-row subqueries — deliberately deferred (only `data_types`/`num_preps`/`is_gold` are deferrable, the un-indexable scan dominates, and it would re-expand the param-order surface right after TKT-055); it stays under TKT-024.
 
 > **On the cited precedent.** TKT-024 points at `patches/93.sql` as in-repo precedent for the trigram approach. **That file does not exist in this repository** and never has — `git log --all -- patches/93.sql` returns nothing, and there is no `patches/` directory. The reference is to classic Qiita's own migration history, not to anything here. The technique is sound; the citation is not actionable from this repo, and applying it means writing a new migration against a database QiitaExplore only reads.
 >

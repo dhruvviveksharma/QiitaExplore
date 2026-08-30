@@ -64,6 +64,16 @@ _STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             FROM qiita.study_prep_template spt3
             WHERE spt3.study_id = s.study_id) AS num_preps"""
 
+# Public-visibility gate shared by _build_study_header_query and
+# services.study_service.search_studies_with_sql — a correlated EXISTS has no
+# artifact fan-out, so callers need no DISTINCT.
+_PUBLIC_ARTIFACT_EXISTS = """EXISTS (
+        SELECT 1 FROM qiita.study_artifact sa
+        JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+        JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+        WHERE sa.study_id = s.study_id AND v.visibility = 'public'
+    )"""
+
 
 def _build_study_header_query(distinct=False):
     """Shared SELECT/FROM/JOIN for study-header rows. Caller appends its own WHERE/ORDER/LIMIT."""
@@ -79,12 +89,7 @@ def _build_study_header_query(distinct=False):
         ON s.principal_investigator_id = sp_pi.study_person_id
     LEFT JOIN qiita.study_person sp_lab
         ON s.lab_person_id = sp_lab.study_person_id
-    WHERE EXISTS (
-        SELECT 1 FROM qiita.study_artifact sa
-        JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-        JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-        WHERE sa.study_id = s.study_id AND v.visibility = 'public'
-    )
+    WHERE {_PUBLIC_ARTIFACT_EXISTS}
     """
 
 
