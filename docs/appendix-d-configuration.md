@@ -235,12 +235,13 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 ## Model roster
 
-Six models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `minimax-m2`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
+Seven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `minimax-m2`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
 
 | Name | Provider | Tier | Size | Context (tokens) | Modalities | Budget (chars) |
 |---|---|---|---|---|---|---|
+| `qwen3-small` | nrp | main | 27B | 1,000,000 | image, video | 3,472,000 |
 | `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | 3,642,016 |
-| `glm-5` | nrp | evaluating | 744B | 202,752 | — | 681,632 |
+| `glm-5` | nrp | evaluating | 744B | 300,000 | — | 1,022,000 |
 | `minimax-m2` *(default)* | nrp | evaluating | 230B | 204,800 | — | 688,800 |
 | `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | 672,000 |
 | `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | 672,000 |

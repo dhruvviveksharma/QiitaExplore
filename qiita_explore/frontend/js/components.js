@@ -725,8 +725,10 @@ function SlashCommandMenu({ matches, activeIndex, onPick }) {
 
 // ─── ModelPickerCard ──────────────────────────────────────────────────────────
 const _NRP_MODELS = [
+  ['qwen3-small','Qwen 3 Small — Fast'],
   ['deepseek-v4-flash','DeepSeek V4 Flash (304B)'],
-  ['glm-5','GLM-5 (744B)'], ['minimax-m2','Minimax M2 (230B)'],
+  ['minimax-m2','Minimax M2 — Medium'],
+  ['glm-5','GLM-5 — High thinking'],
 ];
 const _CLAUDE_MODELS = [
   ['claude-haiku-4-5','Claude Haiku 4.5'],
