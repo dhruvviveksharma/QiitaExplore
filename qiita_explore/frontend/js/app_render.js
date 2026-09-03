@@ -557,7 +557,7 @@ function renderApp(s, account) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /></div>}
+              {searching && <div className="state-loading"><InfinityLoader w={100} h={62} /></div>}
 
               {!searching && (
                 <>
