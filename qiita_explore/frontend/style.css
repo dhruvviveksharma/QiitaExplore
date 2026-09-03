@@ -1222,6 +1222,7 @@ input, textarea { font-family: var(--sans); }
   padding: 9px 14px;
   font-size: 13.5px;
   background: var(--surface);
+  color: var(--text);
   outline: none;
   transition: border-color var(--t);
 }
