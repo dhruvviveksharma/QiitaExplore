@@ -51,9 +51,9 @@ stateDiagram-v2
         [*] --> Schema
         Schema: build active_tools
         note right of Schema
-            search_already_done?
-              yes → 4 tools (search_studies removed)
-              no  → all 5 tools
+            search_calls_used ≥ SEARCH_CALLS_PER_MESSAGE (5)?
+              yes → search tools removed from the schema
+              no  → all tools
         end note
         Schema --> Stream: chat.completions.create(stream=True)
         Stream --> Accumulate: content · reasoning · tool_call fragments
@@ -63,39 +63,42 @@ stateDiagram-v2
     Iterate --> Execute: finish_reason == "tool_calls"
 
     Execute: run each call, yield<br/>segment_tool_call + segment_tool_result
-    Execute --> Iterate: append tool results,<br/>next iteration (max 4)
+    Execute --> Iterate: append tool results,<br/>next iteration (max 7)
     Execute --> Exhausted: iteration == max_iters − 1
 
-    Exhausted: log warning
+    Exhausted: log max_rounds_exhausted,<br/>emit step_start "synthesis"
     Exhausted --> ForcedSynthesis
     Done --> ForcedSynthesis: if no prose was emitted
     Done --> [*]: prose emitted
     ForcedSynthesis: re-call model with NO tools,<br/>stream result as tokens
+    ForcedSynthesis --> Fallback: streamed nothing
     ForcedSynthesis --> [*]
+    Fallback: guaranteed reason-aware<br/>fallback token (never silent)
+    Fallback --> [*]
 ```
 
 
 
-Up to four iterations. Each one streams a completion, accumulating three things in parallel: prose content, reasoning content, and tool-call fragments — the last reassembled from streamed deltas into `tool_call_map[index] = {id, name, arguments}` by string-concatenating name and argument fragments as they arrive.
+Up to seven iterations. Each one streams a completion, accumulating three things in parallel: prose content, reasoning content, and tool-call fragments — the last reassembled from streamed deltas into `tool_call_map[index] = {id, name, arguments}` by string-concatenating name and argument fragments as they arrive.
 
 The loop exits when `finish_reason != "tool_calls"` or no tool calls were requested. Otherwise it appends the assistant message with its `tool_calls`, executes each call in index order, appends a `{"role": "tool", ...}` message per result, and iterates.
 
-### The one-search invariant
+### The search budget
 
 This is the best idea in the codebase, and it is worth understanding as a general technique.
 
-The system prompt tells the model to call `search_studies` exactly once. Prompts are advisory — a model that gets disappointing results will happily search again with different terms, burning iterations and latency while producing a worse answer than synthesising what it already has.
+The system prompt tells the model it may call `search_studies` up to five times per message, refining keywords only when results are thin. Prompts are advisory — a model that gets disappointing results will happily search again and again with near-identical terms, burning iterations and latency while producing a worse answer than synthesising what it already has.
 
 So the constraint is not left to the prompt:
 
 ```python
-if search_already_done:
-    active_tools = [t for t in TOOL_SCHEMAS if t["function"]["name"] != "search_studies"]
-else:
-    active_tools = TOOL_SCHEMAS
+def _tools_within_search_budget(tools, search_calls_used):
+    if search_calls_used < SEARCH_CALLS_PER_MESSAGE:   # default 5
+        return tools
+    return [t for t in tools if t.get("function", t)["name"] not in _BUDGETED_SEARCH_TOOL_NAMES]
 ```
 
-**Once a search completes, the tool ceases to exist.** The model is not refused, not scolded, not corrected — the capability is simply absent from the schema it is given on the next turn. There is no failure mode to recover from because there is no failure. The same gating is implemented in the Anthropic path.
+Both loops count *executed* searches — `_execute_tool_call` reports `consumed_search_slot=True` only when a search tool actually ran (an empty-input early return or a crash does not spend a slot). **Once the budget is spent, the search tools cease to exist.** The model is not refused, not scolded, not corrected — the capability is simply absent from the schema it is given on the next round (and a call that slips through anyway short-circuits with "synthesize from the results you have"). There is no failure mode to recover from because there is no failure. The same gating is implemented in the Anthropic path; `tests/agent/test_search_budget.py` pins both the accounting and the schema consequence.
 
 The general principle: *when a constraint matters, encode it in the interface rather than the instructions.* A prompt rule is a request; a schema mutation is a fact. Everything the model cannot do, it cannot attempt.
 
@@ -209,7 +212,7 @@ Stated plainly, because the opposite is a reasonable assumption:
 
 Two properties follow, and the second matters more:
 
-- **Injection is structurally impossible**, not defended against. There is no path from model output to SQL text. The only interpolated values anywhere are table names and `LIMIT`/`OFFSET`, all `int()`-cast first (see [`04-search.md`](04-search.md)).
+- **Injection is structurally impossible**, not defended against. There is no path from model output to SQL text. The only interpolated values anywhere are table names and `LIMIT`, `int()`-cast and clamped first (see [`04-search.md`](04-search.md); the dead `OFFSET` parameter was removed 2026-08-31).
 - **Every query is bounded by construction.** The tool schema caps `limit` at 20; candidate sets are capped at 40 or 500; statement timeouts are attached at the connection. The model cannot express an unbounded query because the vocabulary contains no way to say it.
 
 The cost is expressiveness. Questions the tool set cannot phrase cannot be asked: *"what is the average sample count per data type"*, *"which PIs publish across the most body sites"*, anything requiring aggregation, grouping, or a join the builders do not implement. Users hit this wall, and the answer today is "that query isn't available."

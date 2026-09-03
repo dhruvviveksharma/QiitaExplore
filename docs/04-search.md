@@ -122,7 +122,7 @@ Public visibility is a correlated `EXISTS` (`_PUBLIC_ARTIFACT_EXISTS` in `helper
 
 The agent path passes `match_keywords`, which both scores and **filters** with `(rel.relevance > 0 OR rel.aux_match)`; the browse path passes `relevance_keywords` (score-only, keeping its own custom WHERE). One array bind serves both roles — previously the same keyword block rendered twice (a 6-field `EXISTS` filter from `build_where_from_plan` plus a 4-field relevance subquery from `build_relevance_score`, both since deleted) and bound the array twice.
 
-**Layer 2 — sample metadata** (`score_studies_sample_layer` in `sample_search.py`): after text + sample hits merge, each merged study is probed once. Full `sample_values::text` is searched; **+1 per keyword** with at least one sample match.
+**Layer 2 — sample metadata** (`score_studies_sample_layer` in `sample_search.py`): after text + sample hits merge, each merged study is probed once. Full `sample_values::text` is searched; **+1 per keyword** with at least one sample match — over the first `_MAX_KEYWORDS_PER_PROBE` (10) terms of the expanded list only (direct user terms lead that list, so the cap sheds synonym padding). The sample layer's maximum contribution is therefore +10, not +80; pinned by `tests/test_sample_search_caps.py`.
 
 Final ordering: `relevance DESC, num_samples DESC NULLS LAST, s.study_id`.
 
@@ -257,7 +257,7 @@ That last point is the important one. **A timeout degrades recall; it never fail
 
 ### Merging with text results
 
-`backend/helpers/agent_tools.py :: _tool_search_studies` runs both searches on every call. Text search over-fetches at `limit × 2`; sample search uses full expanded keywords against `sample_values::text`. Results merge, receive unified relevance scoring (text + sample layer), PI veto when resolved, then trim to `limit`. Each study is tagged `via: "text"` or `via: "sample_metadata"`.
+`backend/helpers/agent_tools.py :: _tool_search_studies` runs both searches on every call. Text search over-fetches at `limit × 2`; sample search probes `sample_values::text` with the first `_MAX_KEYWORDS_PER_PROBE` (10) expanded keywords per study (the whole list used to be bound, which let a synonym-expanded query blow through the per-study probe timeout and silently drop recall). Results merge, receive unified relevance scoring (text + sample layer), PI veto when resolved, then trim to `limit`. Each study is tagged `via: "text"` or `via: "sample_metadata"`.
 
 ---
 

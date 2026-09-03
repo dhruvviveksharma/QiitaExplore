@@ -2214,3 +2214,200 @@ Apply the `renameChatCore` shape: one implementation per operation taking a
 
 ---
 
+## TKT-074: Naive `+s` Plural Expansion Adds Terms Subsumed by Substring ILIKE
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03 in the review of 2928129b/94db9b98. Every matcher downstream of
+`expand_keyword_variants` is substring `ILIKE '%kw%'`, so a document containing
+"guts" already contains "gut" — the `+s` variant can never add a match, only cost
+(6 ILIKE comparisons per row per dead term in the main query, one JSONB scan per
+probed study). The same applies to `"antibiotics"` sitting next to `"antibiotic"`
+in `DOMAIN_SYNONYM_GROUPS`. Only the irregular map (mouse↔mice) adds recall. The
+tiered rewrite kept the `+s` tier because it predates it; nothing depends on it.
+
+### Plan
+
+Drop the `+s` tier (keep `_IRREGULAR_VARIANTS`), remove subsumed group members,
+add a test that no expanded term contains another expanded term as a substring.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py`
+- `qiita_explore/backend/tests/test_relevance.py`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
+
+## TKT-075: `build_keyword_lateral` Computes an Unused `aux_match` on the Browse Path
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03 in the review of 2928129b. The browse `/api/search` route passes
+`relevance_keywords` (score-only; it brings its own custom WHERE), so
+`_KEYWORD_MATCH_CONDITION` is never appended and `rel.aux_match` is never read —
+yet the LATERAL unconditionally evaluates the `BOOL_OR` over `sp_pi.affiliation`
+and `sp_lab.name` for every keyword on every scored row. Postgres *may* prune the
+unused subquery output, but that is planner-internal behavior, not a contract.
+
+### Plan
+
+`build_keyword_lateral(keywords, include_aux=True)`; the score-only branch of
+`search_studies_with_sql` passes `include_aux=False`.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
+
+## TKT-076: `reasoning` Events Are Dead — Dropped by the Dispatcher, Never Rendered
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03. `stream_agent` yields `{"type": "reasoning", "token": ...}` for
+models that emit `reasoning_content`, but `stream_chat_turn`'s dispatcher has no
+branch for it (nor did the pre-phase-1 route closures) and the frontend has never
+handled a `reasoning` SSE event. The yield exists only for the dev harness. Either
+render thinking (dispatcher branch + a collapsed "thinking" block in
+`AgentMessageBubble`) or delete the yield and its `reasoning_parts` accounting.
+
+### Plan
+
+Decide render-or-remove; if render, the frontend needs an SSE handler and a
+collapsed disclosure component, and `has_partial_output` in the retry gate must
+keep counting reasoning as client-visible output.
+
+### Files
+
+- `qiita_explore/backend/helpers/agent.py`
+- `qiita_explore/backend/helpers/chat_turn.py`
+- `qiita_explore/frontend/js/app_state.js`, `components.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
+
+## TKT-077: Turn-Log Lifecycle Lines Do Not Always Pair
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03 in the review of 1cff17df/94db9b98. `agent_turns.log` exists to
+answer "where did this turn stop?" by pairing `turn_start` with a terminal event,
+but: (1) `turn_start` is logged before the chat-existence check in
+`stream_chat_turn`, so a message to a deleted chat leaves an orphan start;
+(2) the pin-flow and samples-report branches never log `turn_start`, yet the
+shared `except Exception`/`except GeneratorExit` handlers log `turn_error`/
+`turn_abort` for them — orphan terminal lines; (3) on 2026-08-31 the Anthropic
+`turn_ended_without_text` kwarg was renamed `stop=` → `finish=` to match the
+OpenAI loop (no consumers existed yet; noted here for anyone grepping old files).
+
+### Plan
+
+Log `turn_start` after `append_user_message` returns a row id; give the pin/report
+branches their own `turn_start` (with `kind=pin|report`) or suppress terminal
+events for them; add a test that every logged turn has exactly one start and one
+terminal event.
+
+### Files
+
+- `qiita_explore/backend/helpers/chat_turn.py`
+- `qiita_explore/backend/tests/test_durable_turns.py`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
+
+## TKT-078: Synonym Example Lists Live in Three Places With One-Way Provenance
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03. The gut/soil/FMT/antibiotic synonym examples exist in
+`config.py` (system prompt), `helpers/agent_tool_schemas.py` (tool descriptions),
+and `services/study_service.py :: DOMAIN_SYNONYM_GROUPS` (backend expansion). Only
+the last is vetted for substring safety (≥ 3 chars, no "colon"→"colonization");
+the prompt/schema lists steer the model to emit terms directly into
+`match_keywords` with no such guard. The 94db9b98 review found "colon" removed
+from the groups but still present in both prompt lists — this drift is the
+mechanism. The three lists are deliberately not identical (the prompt lists
+include recall-maximizing terms too broad for deterministic ILIKE), so "one feeds
+the others" is not the fix; a single source with two views is.
+
+### Plan
+
+`services/synonyms.py` owning (a) the vetted groups and (b) the wider LLM-guidance
+superset; `config.py` and `agent_tool_schemas.py` render their example strings
+from it; `test_no_member_shorter_than_3_chars` and a substring-collision test
+cover both views.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py`
+- `qiita_explore/backend/config.py`
+- `qiita_explore/backend/helpers/agent_tool_schemas.py`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
+
+## TKT-079: Step Events Are Transient — Agent Bubbles Render Differently Live vs. After Reload
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Found 2026-09-03 in the review of 94db9b98. `stream_chat_turn` now forwards
+`step_start`/`step_done` and `AgentMessageBubble` renders `m.steps`/`m.pendingStep`,
+so context-prep, retry, and the round-limit `synthesis` notice appear above the
+answer during the session. None of it is persisted into `ui_payload`, so the same
+message renders without them after reload. The `synthesis` step also has no
+`step_done` (closed by `done`), and the retry step's persisted label is the
+progress verb "Retrying now". Steps have always been session-only in this app —
+this ticket records the now-more-visible inconsistency rather than a regression.
+
+### Plan
+
+Either persist completed steps as a `{type: "step"}` segment in `ui_payload`
+(so hydration renders them), or document steps as live-only and give the
+`synthesis` notice a `step_done` once the synthesis call returns.
+
+### Files
+
+- `qiita_explore/backend/helpers/chat_turn.py`
+- `qiita_explore/backend/helpers/agent.py`
+- `qiita_explore/frontend/js/components.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-03*
+
+---
