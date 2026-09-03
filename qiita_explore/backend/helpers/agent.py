@@ -29,17 +29,17 @@ def _openai_tools_to_anthropic(tools):
 
 
 def _no_final_answer_text(max_iters, last_tool_failure, reason):
-    """Guaranteed non-empty text so a silent turn never reads as the model
-    dying mid-thought. reason="rounds": max_iters exhausted on tool calls.
-    reason="empty": the model returned nothing with no tool calls — round
-    exhaustion never happened, so that wording would be false."""
+    """Guaranteed non-empty text so a silent turn never reads as the model dying.
+    reason: "rounds" = max_iters exhausted; "synthesis" = stopped after tool calls
+    short of the limit, synthesis empty; "empty" = no text and no tool calls."""
     if reason == "empty":
         msg = ("\n\n_(The model returned an empty response — no text and no "
                "tool calls. Try again or rephrase.)_")
     else:
-        msg = (f"\n\n_(I ran out of tool rounds ({max_iters}) before writing a final answer — "
-               f"the tool results above are everything gathered this turn. "
-               f"Ask a follow-up to continue.)_")
+        why = (f"I ran out of tool rounds ({max_iters})" if reason == "rounds"
+               else "The model stopped after its tool calls")
+        msg = (f"\n\n_({why} before writing a final answer — the tool results "
+               f"above are everything gathered this turn. Ask a follow-up to continue.)_")
     if last_tool_failure:
         msg += f"\n\n_(Last tool error: {last_tool_failure[:200]})_"
     return msg
@@ -77,9 +77,7 @@ def _tools_within_search_budget(tools, search_calls_used: int):
 
 def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used):
     """Yield segment events for one tool call; return (result_text,
-    consumed_search_slot, failed) — `failed` is the structured fact of a
-    raise, replacing callers sniffing result_text for this function's
-    own error string."""
+    consumed_search_slot, failed) — `failed` is the structured fact of a raise."""
     step_name = f"tool_{name}_{call_id}"
     yield {"type": "segment_tool_call", "name": step_name,
            "label": _tool_label(name, args), "args": args}
@@ -224,7 +222,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                 "role": "tool", "id": tu["id"], "name": tu["name"], "text": result_text}}
         msgs.append({"role": "user", "content": tool_results})
 
-    if iteration == max_iters - 1 and stop_reason == "tool_use":
+    exhausted = iteration == max_iters - 1 and stop_reason == "tool_use"
+    if exhausted:
         yield from _emit_round_limit_notice(chat_id, max_iters, "anthropic")
 
     if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
@@ -250,7 +249,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             has_partial_output=lambda: bool(synth_parts))
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
-            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty", "rounds",
+            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
+                                        "rounds" if exhausted else "synthesis",
                                         max_iters, last_tool_failure)
             turn_had_text = True
 
@@ -282,6 +282,8 @@ def stream_agent(
       {"type": "segment_tool_call", "name": str, "label": str, "args": dict}
       {"type": "segment_tool_result","name": str, "label": str,
                                      "detail": str, "ui_payload": dict|None}
+      {"type": "step_start",        "name": str, "label": str}   — retry / synthesis notice
+      {"type": "step_done",         "name": str, "label": str}   — retry finished
       {"type": "transcript_append", "entry": dict}                 — normalized tool
                                      exchange for the caller to persist
     When `turn_rows` is given (rows from store.chat_turn_persist.load_turn_rows
@@ -435,7 +437,8 @@ def stream_agent(
             yield {"type": "transcript_append", "entry": {
                 "role": "tool", "id": tc["id"], "name": name, "text": result_text}}
 
-    if iteration == max_iters - 1 and finish_reason == "tool_calls":
+    exhausted = iteration == max_iters - 1 and finish_reason == "tool_calls"
+    if exhausted:
         yield from _emit_round_limit_notice(chat_id, max_iters, "openai")
 
     if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
@@ -460,7 +463,8 @@ def stream_agent(
             has_partial_output=lambda: bool(synth_parts))
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
-            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty", "rounds",
+            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
+                                        "rounds" if exhausted else "synthesis",
                                         max_iters, last_tool_failure)
             turn_had_text = True
 

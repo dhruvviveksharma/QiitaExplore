@@ -56,7 +56,7 @@ TOOL_SCHEMAS = [
                         "items": {"type": "string"},
                         "description": (
                             "Anatomical location or environmental niche. Include ontology synonyms. "
-                            "e.g. gut → [\"gut\",\"intestine\",\"colon\",\"gastrointestinal\",\"GI tract\","
+                            "e.g. gut → [\"gut\",\"intestine\",\"gastrointestinal\",\"GI tract\","
                             "\"cecum\",\"ileum\",\"jejunum\",\"feces\",\"stool\",\"fecal\",\"host-associated\"]. "
                             "e.g. soil → [\"soil\",\"rhizosphere\",\"sediment\",\"terrestrial\",\"earth\"]"
                         ),

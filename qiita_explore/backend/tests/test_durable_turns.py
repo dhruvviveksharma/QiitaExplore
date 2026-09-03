@@ -149,6 +149,8 @@ class TestDurablePersistence:
         # (the "done" frame already yielded, but next() never called again)
         # must not re-persist the assistant row a second time.
         events = [{"type": "agent_start"}, {"type": "token", "token": "final answer"}]
+        logged = []
+        chat_turn_mod.log_turn_event = lambda cid, ev, **f: logged.append(ev)
         gen = _turn(chat_turn_mod, global_chat, sample_user_id, events)
         for frame in gen:
             if "event: done" in frame:
@@ -158,6 +160,9 @@ class TestDurablePersistence:
         msgs = _messages(global_chat_crud, sample_user_id, global_chat)
         assert [m["role"] for m in msgs] == ["user", "assistant"]
         assert msgs[1]["content"] == "final answer"
+        # ...and the turn log must not record a completed turn as aborted.
+        assert "turn_done" in logged
+        assert "turn_abort" not in logged
 
 
 @pytest.fixture

@@ -218,3 +218,29 @@ class TestNoSilentStop:
         text = tokens_of(events)
         assert "empty response" in text
         assert "ran out of tool rounds" not in text
+
+    def test_early_stop_after_tools_does_not_claim_round_exhaustion(self, run_turn):
+        # One tool round, then the model stops with no text on round 2 of 7 —
+        # forced synthesis runs and also produces nothing. The round budget was
+        # never exhausted, so the fallback must not say it was.
+        script = [
+            openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+            openai_text_round(""),  # reused for the (empty) forced synthesis too
+        ]
+        events, client, _ = run_turn(script, make_fake_execute_tool(tool_result()))
+
+        assert len(client.calls) == 3  # tool round + empty stop round + synthesis
+        text = tokens_of(events)
+        assert "stopped after its tool calls" in text
+        assert "ran out of tool rounds" not in text
+
+    def test_anthropic_early_stop_after_tools_does_not_claim_round_exhaustion(self, run_turn):
+        script = [
+            anthropic_tool_use_round("toolu_01EEEE", "get_study_report", ['{"study_id": 1}']),
+            anthropic_text_round(""),
+        ]
+        events, _, _ = run_turn(script, make_fake_execute_tool(tool_result()), provider="anthropic")
+
+        text = tokens_of(events)
+        assert "stopped after its tool calls" in text
+        assert "ran out of tool rounds" not in text

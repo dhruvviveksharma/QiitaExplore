@@ -635,7 +635,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
             pinnedStudyIds={pinnedStudyIds} />
         ) : null
       )}
-      {isStreaming && !(segments || []).length && !pendingStep && (
+      {isStreaming && !(segments || []).length && !steps?.length && !pendingStep && (
         <InfinityLoader w={80} h={50} />
       )}
       {!isStreaming && textContent && <CopyResponseButton text={textContent} />}

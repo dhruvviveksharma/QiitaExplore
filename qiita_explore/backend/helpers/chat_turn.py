@@ -197,9 +197,10 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             except Exception:
                 logger.exception("failed to persist partial turn on abort for %s chat %s",
                                  scope, chat_id)
-        log_turn_event(chat_id, "turn_abort",
-                       partial_chars=len("".join(assistant_parts).strip()),
-                       segments=len(segments_list))
+        if not assistant_persisted:  # a Stop landing on the done frame is not an abort
+            log_turn_event(chat_id, "turn_abort",
+                           partial_chars=len("".join(assistant_parts).strip()),
+                           segments=len(segments_list))
         raise
     except Exception as e:
         logger.exception("stream error in %s chat %s", scope, chat_id)

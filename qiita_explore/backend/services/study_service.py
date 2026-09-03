@@ -19,10 +19,10 @@ _IRREGULAR_VARIANTS = {
     "virus": "viruses",  "viruses": "virus",
 }
 
-# Bidirectional domain-concept groups (seeded from the agent-prompt slot
-# examples in config.py): a search naming any member also matches the rest.
-# Every member must be >= 3 chars — bare "GI" as ILIKE '%gi%' would match
-# "fungi"/"aging"/"region".
+# Bidirectional domain-concept groups (a vetted subset of the agent-prompt
+# slot examples in config.py): a search naming any member also matches the
+# rest. Every member must be >= 3 chars and substring-safe — bare "GI" as
+# ILIKE '%gi%' would match "fungi"/"aging"; "colon" would match "colonization".
 DOMAIN_SYNONYM_GROUPS = [
     ["gut", "intestine", "intestinal", "GI tract", "cecum",
      "feces", "stool", "fecal"],

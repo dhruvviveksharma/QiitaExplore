@@ -154,8 +154,13 @@ class TestGlobalStream:
         assert len(step_starts) == 1
         assert "Tool-round limit" in step_starts[0]["label"]
 
+        # Position of the synthesis event itself — not the first step_start in
+        # the stream, which on a project chat would be the pre-agent context
+        # prep step and invert this ordering.
+        synth_idx = next(i for i, (e, d) in enumerate(events)
+                         if e == "step_start" and d.get("name") == "synthesis")
         names = [e for e, _ in events]
-        assert names.index("agent_start") < names.index("step_start")
+        assert names.index("agent_start") < synth_idx
         assert names[-1] == "done"
 
     def test_tokens_concatenate_to_the_reply(self, client, logged_in, fake_turn):

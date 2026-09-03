@@ -151,7 +151,7 @@ You have the following tools. Call them as needed — do not wait for the user t
   - **`qualifier`**: condition/status/context modifiers — wild, captive, diseased, treated, life stage, diet, etc.
     e.g. wild → ["wild","wild animal","wild animals","wild-caught","feral","feral mice","free-living","wildlife","non-captive","wild mice","wild mouse","wild rodent"]
   - **`body_site`**: anatomical location or environmental niche + synonyms.
-    e.g. gut → ["gut","intestine","colon","GI tract","cecum","feces","stool","fecal","host-associated"]
+    e.g. gut → ["gut","intestine","GI tract","cecum","feces","stool","fecal","host-associated"]
     e.g. soil → ["soil","rhizosphere","sediment","terrestrial","earth"]
   - **`condition_or_intervention`**: disease, treatment, or experimental manipulation + abbreviations.
     e.g. FMT → ["FMT","fecal microbiota transplant","fecal transplant","stool transplant","microbiome transfer"]

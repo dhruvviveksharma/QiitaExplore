@@ -73,7 +73,20 @@ def test_logging_never_raises(turn_log):
 def test_multiline_values_stay_on_one_line(turn_log):
     tl, fp = turn_log
     tl.log_turn_event("c1", "tool_fail",
-                      detail='bad\nLINE 2: ...\n^')
+                      detail='bad\r\nLINE 2: ...\n^')
     lines = fp.read_text().strip().splitlines()
     assert len(lines) == 1
     assert "LINE 2:" in lines[0]
+
+
+def test_unwritable_path_warns_once_and_degrades_to_noop(turn_log, monkeypatch, tmp_path, caplog):
+    # The handler is opened eagerly so a bad path fails HERE, once, with a
+    # warning — a lazily-opened handler would fail inside every emit and be
+    # swallowed silently by log_turn_event, disabling the log with no trace.
+    tl, _ = turn_log
+    monkeypatch.setenv("AGENT_TURN_LOG_FP", str(tmp_path / "no-such-dir" / "agent_turns.log"))
+    with caplog.at_level(logging.WARNING, logger="helpers.turn_log"):
+        tl.log_turn_event("c1", "turn_start")
+        tl.log_turn_event("c1", "turn_done")  # cached — must not warn again
+    warnings = [r for r in caplog.records if "agent turn log disabled" in r.getMessage()]
+    assert len(warnings) == 1
