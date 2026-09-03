@@ -1,8 +1,8 @@
 """Unit tests for helpers.agent._execute_tool_call().
 
 Drives the generator directly and asserts on the two SSE event dicts it yields
-and the (result_text, consumed_search_slot) return value it produces via StopIteration.
-No DB, no network, no LLM required.
+and the (result_text, consumed_search_slot, failed) return value it produces
+via StopIteration. No DB, no network, no LLM required.
 """
 import sys
 import types
@@ -113,7 +113,7 @@ class TestExecuteToolCall:
         assert "s" in result_ev["detail"]   # timing suffix e.g. "D · 0.0s"
         assert result_ev["ui_payload"] == {"k": 1}
 
-        assert retval == ("T", False)
+        assert retval == ("T", False, False)
 
     def test_search_studies_returns_true_flag(self):
         """consumed_search_slot is True for an executed search_studies call."""
@@ -129,7 +129,7 @@ class TestExecuteToolCall:
                 )
             )
 
-        assert retval == ("results", True)
+        assert retval == ("results", True, False)
 
     def test_non_search_tool_returns_false_flag(self):
         """consumed_search_slot is False for any tool other than the search tools."""
@@ -148,7 +148,9 @@ class TestExecuteToolCall:
         assert retval[1] is False
 
     def test_tool_failure_yields_error_event_and_returns_failure_text(self):
-        """When execute_tool raises, yields failure segment_tool_result; returns (error_text, False)."""
+        """When execute_tool raises, yields failure segment_tool_result; returns
+        (error_text, False, True) — failed=True is the structured flag callers
+        use instead of sniffing error_text."""
         import helpers.agent as agent_mod
 
         with patch.object(agent_mod, "execute_tool", side_effect=RuntimeError("boom")):
@@ -169,9 +171,10 @@ class TestExecuteToolCall:
         assert result_ev["ui_payload"] is None
         assert "boom" in result_ev["detail"]
 
-        text, consumed = retval
+        text, consumed, failed = retval
         assert "boom" in text or "failed" in text.lower()
         assert consumed is False
+        assert failed is True
 
     def test_empty_detail_omits_dot_prefix(self):
         """When ToolResult.detail is empty, timing string has no leading '·'."""

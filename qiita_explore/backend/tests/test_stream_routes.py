@@ -127,6 +127,37 @@ class TestGlobalStream:
         assert names[-1] == "done"
         assert "error" not in names
 
+    def test_max_iters_exhaustion_forwards_synthesis_step(self, client, logged_in, monkeypatch):
+        # stream_chat_turn's SSE dispatcher must forward step_start/step_done —
+        # previously only transcript_append/agent_start/token/segment_* were
+        # forwarded, so the "writing final answer" notice never reached the
+        # browser on round-limit exhaustion.
+        from tests.agent.fakes import FakeOpenAIClient, openai_text_round, openai_tool_call_round
+        import helpers.agent as agent_mod
+        import helpers.chat_title as title_mod
+
+        script = [openai_tool_call_round(f"call_{i}", "get_study_report", '{"study_id": 1}')
+                  for i in range(7)] + [openai_text_round("synth")]
+        fake_client = FakeOpenAIClient(script)
+
+        monkeypatch.setattr(agent_mod, "get_client", lambda model: (fake_client, "nrp"))
+        monkeypatch.setattr(agent_mod, "execute_tool",
+                           lambda name, args, *, scope, chat_id, deep_search=False: _tool_result())
+        monkeypatch.setattr(title_mod, "llm_chat", lambda *a, **k: "Route title")
+
+        chat_id = _new_global_chat(client, logged_in)
+        resp = client.post(f"/api/global-chats/{chat_id}/message/stream",
+                           json={"message": "q", "model": "minimax-m2"}, headers=logged_in)
+        events = parse_sse(resp.get_data(as_text=True))
+
+        step_starts = [d for e, d in events if e == "step_start" and d.get("name") == "synthesis"]
+        assert len(step_starts) == 1
+        assert "Tool-round limit" in step_starts[0]["label"]
+
+        names = [e for e, _ in events]
+        assert names.index("agent_start") < names.index("step_start")
+        assert names[-1] == "done"
+
     def test_tokens_concatenate_to_the_reply(self, client, logged_in, fake_turn):
         chat_id = _new_global_chat(client, logged_in)
         resp = client.post(f"/api/global-chats/{chat_id}/message/stream",

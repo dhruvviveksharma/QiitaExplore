@@ -23,13 +23,14 @@ def _capture_call(**kwargs):
 
 
 class TestTagFilterParamPosition:
-    """tags is threaded through with the SAME relative-ordering convention
-    data_types already used (dt_params, then tag_params, then the custom
-    WHERE's own params) — see the docstring note in search_studies_with_sql
-    about this convention not matching the WHERE text's literal left-to-right
-    placeholder order. This test locks in that tag_params lands immediately
-    after dt_params, matching tag_sql's position immediately after dt_sql in
-    the WHERE text (unambiguous regardless of the custom/dt question)."""
+    """Params bind in rendered-SQL-text order (psycopg2 left-to-right):
+    keyword LATERAL (FROM) -> custom topic clause -> data-type EXISTS ->
+    tag EXISTS -> PI EXISTS. See TKT-055 for the incident this order fixes.
+    test_params_bind_in_rendered_sql_order pins the WHERE-side order;
+    test_match_keywords_bind_first_in_full_order (TestKeywordLateralAssembly)
+    pins the keyword slot. This class locks in that tag_params lands
+    immediately after dt_params, matching tag_sql's position immediately
+    after dt_sql in the WHERE text."""
 
     def test_tag_clause_present_when_tags_given(self):
         sql, params = _capture_call(tags=["GOLD"])
@@ -238,3 +239,23 @@ class TestSearchStudiesToolPassesTagsThrough:
         assert "mice" in kwargs["match_keywords"]
         assert "custom_sql_where" not in kwargs
         assert "relevance_keywords" not in kwargs
+
+    def test_bare_string_dimension_slot_is_not_iterated_per_character(self):
+        # A model sending a bare string where the schema says array (e.g.
+        # organism="mouse" instead of ["mouse"]) must not silently corrupt
+        # the search into single-character filters.
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=([], "")) as mock_sql, \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
+            agent_tools_mod._tool_search_studies({"organism": "mouse"})
+        match_keywords = mock_sql.call_args.kwargs["match_keywords"]
+        assert "mouse" in match_keywords
+        assert "m" not in match_keywords
+
+    def test_search_by_sample_bare_string_keywords_not_iterated_per_character(self):
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_by_field_filters",
+                          return_value=[]) as mock_search:
+            agent_tools_mod._tool_search_by_sample({"keywords": "mouse"})
+        keywords = mock_search.call_args.kwargs["keywords"]
+        assert keywords == ["mouse"]

@@ -603,10 +603,27 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep }) {
   const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
+      {(steps?.length > 0 || pendingStep) && (
+        <div className="msg-steps">
+          {(steps || []).map((step, si) => (
+            <div key={si} className="msg-step-done">
+              <span className="step-dot" />
+              <span className="step-label">{step.label}</span>
+              {step.detail && <span className="step-detail"> · {step.detail}</span>}
+            </div>
+          ))}
+          {pendingStep && (
+            <div className="msg-step-pending">
+              <div className="step-spinner" />
+              <span className="step-label">{pendingStep.label}</span>
+            </div>
+          )}
+        </div>
+      )}
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
           <MarkdownText key={i} content={seg.content}
@@ -618,7 +635,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
             pinnedStudyIds={pinnedStudyIds} />
         ) : null
       )}
-      {isStreaming && !(segments || []).length && (
+      {isStreaming && !(segments || []).length && !pendingStep && (
         <InfinityLoader w={80} h={50} />
       )}
       {!isStreaming && textContent && <CopyResponseButton text={textContent} />}

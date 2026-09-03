@@ -1,6 +1,7 @@
 """Smoke tests for helpers/turn_log.py — the per-turn lifecycle log that
 answers "when and where did the LLM stop responding?"."""
 import importlib
+import logging
 
 import pytest
 
@@ -9,18 +10,27 @@ from tests.conftest import stub_qiita_db_and_core
 stub_qiita_db_and_core()
 
 
+def _clear_singleton_handlers():
+    """agent.turns is a process-global named logger — a stale handler from
+    an earlier test (or an earlier call in this same test) survives even
+    after the module-level `_logger` cache is reset, unless cleared here."""
+    log = logging.getLogger("agent.turns")
+    for h in list(log.handlers):
+        h.close()
+        log.removeHandler(h)
+
+
 @pytest.fixture
 def turn_log(monkeypatch, tmp_path):
     """Fresh turn_log module writing to a temp file; resets the cached logger
-    so neither this test nor later ones inherit the wrong handler."""
+    (module global AND the singleton's handlers) so neither this test nor
+    later ones inherit the wrong handler."""
     import helpers.turn_log as tl
     monkeypatch.setenv("AGENT_TURN_LOG_FP", str(tmp_path / "agent_turns.log"))
+    _clear_singleton_handlers()
     tl._logger = None
     yield tl, tmp_path / "agent_turns.log"
-    if tl._logger is not None:
-        for h in list(tl._logger.handlers):
-            h.close()
-            tl._logger.removeHandler(h)
+    _clear_singleton_handlers()
     tl._logger = None
 
 
@@ -47,9 +57,23 @@ def test_field_values_truncate_at_200_chars(turn_log):
 
 
 def test_logging_never_raises(turn_log):
-    tl, _ = turn_log
+    tl, fp = turn_log
     # Unserializable-ish values and a broken logger must both be swallowed.
     tl.log_turn_event(None, "weird", obj=object())
     tl._logger = None
     importlib.reload(tl)  # re-imported module still logs without raising
     tl.log_turn_event("c2", "after_reload")
+
+    # The named "agent.turns" logger is process-global; resetting only the
+    # module-level cache must not stack a second handler onto it.
+    lines = [l for l in fp.read_text().strip().splitlines() if "after_reload" in l]
+    assert len(lines) == 1
+
+
+def test_multiline_values_stay_on_one_line(turn_log):
+    tl, fp = turn_log
+    tl.log_turn_event("c1", "tool_fail",
+                      detail='bad\nLINE 2: ...\n^')
+    lines = fp.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert "LINE 2:" in lines[0]

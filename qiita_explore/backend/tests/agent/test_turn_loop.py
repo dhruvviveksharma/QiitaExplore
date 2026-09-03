@@ -200,3 +200,21 @@ class TestNoSilentStop:
         text = tokens_of(events)
         assert text == "plain answer"
         assert "ran out of tool rounds" not in text
+
+    def test_empty_response_gets_reason_aware_wording(self, run_turn):
+        # The model returns nothing on round 0 with no tool calls at all —
+        # round exhaustion never happened, so the fallback must not claim it.
+        script = [openai_text_round("")]
+        events, _, _ = run_turn(script, make_fake_execute_tool())
+
+        text = tokens_of(events)
+        assert "empty response" in text
+        assert "ran out of tool rounds" not in text
+
+    def test_anthropic_empty_response_gets_reason_aware_wording(self, run_turn):
+        script = [anthropic_text_round("")]
+        events, _, _ = run_turn(script, make_fake_execute_tool(), provider="anthropic")
+
+        text = tokens_of(events)
+        assert "empty response" in text
+        assert "ran out of tool rounds" not in text

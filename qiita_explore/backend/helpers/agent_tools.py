@@ -71,16 +71,13 @@ def _empty_input_result(tool, text, label, detail, args=None):
 
 def _collect_terms(args: dict) -> tuple:
     """Pool dimension slots and entity texts into (raw_kws, detect_kws)."""
-    def _clean(lst):
-        return [str(k).strip() for k in (lst or []) if str(k).strip()]
-
     entities = normalize_entities(args)
     entity_texts = [e["text"] for e in entities]
 
     seen, raw_kws = set(), []
     for slot in ("organism", "qualifier", "body_site",
                  "condition_or_intervention", "project_or_pi", "keywords"):
-        for t in _clean(args.get(slot) or []):
+        for t in _as_str_list(args.get(slot)):
             if t not in seen:
                 seen.add(t)
                 raw_kws.append(t)
@@ -89,7 +86,7 @@ def _collect_terms(args: dict) -> tuple:
             seen.add(t)
             raw_kws.append(t)
 
-    detect_kws = _clean(args.get("keywords") or [])
+    detect_kws = _as_str_list(args.get("keywords"))
     return raw_kws, detect_kws
 
 
@@ -405,7 +402,7 @@ def _tool_pin_study(args: dict, *, scope: str, chat_id: str) -> ToolResult:
 def _tool_search_by_sample(args: dict) -> ToolResult:
     field_filters = [f for f in (args.get("field_filters") or [])
                      if isinstance(f, dict) and f.get("field") and f.get("value")]
-    keywords      = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
+    keywords      = _as_str_list(args.get("keywords"))
     data_types    = _as_str_list(args.get("data_types"))
     limit         = max(1, min(20, int(args.get("limit") or 8)))
 

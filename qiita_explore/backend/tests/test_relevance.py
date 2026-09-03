@@ -85,8 +85,11 @@ class TestDomainSynonymExpansion:
         assert "mice" in out
 
     def test_direct_terms_survive_cap(self):
-        # Domain padding must never push a direct user term past the 80 cap.
-        direct = [f"term{i:02d}" for i in range(35)] + ["gut", "soil", "IBD", "cancer", "FMT"]
+        # Domain padding (and each term's OWN morphological variant) must
+        # never push a later direct user term past the 80 cap — 45 direct
+        # terms already exceeds what pass-1-interleaved-with-variants could
+        # fit (41 fillers + their "+s" plurals alone is 82 slots).
+        direct = [f"term{i:02d}" for i in range(41)] + ["gut", "soil", "IBD", "cancer"]
         out = expand_keyword_variants(direct)
         assert len(out) <= 80
         for t in direct:

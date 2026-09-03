@@ -180,16 +180,17 @@ one; `tests/test_search_studies_with_sql.py ::
 test_params_bind_in_rendered_sql_order` pins the WHERE-side order and
 `test_match_keywords_bind_first_in_full_order` pins the keyword slot.
 
-`LIMIT` and `OFFSET` are f-string interpolated rather than bound. That is safe **because** both are `int()`-cast and clamped first (limit to 1–150, offset to ≥ 0), so no caller-controlled string reaches the SQL. It stops being safe the moment someone adds a code path that skips the clamp — binding them as parameters would remove the hazard entirely, at no cost.
+`LIMIT` is f-string interpolated rather than bound. That is safe **because** it is `int()`-cast and clamped first (1–150), so no caller-controlled string reaches the SQL. It stops being safe the moment someone adds a code path that skips the clamp — binding it as a parameter would remove the hazard entirely, at no cost. (`OFFSET` was removed 2026-08-31 — dead: no caller ever passed it.)
 
 ### Keyword expansion
 
-`expand_keyword_variants` runs **once per search, at the caller** (`agent_tools._tool_search_studies` and the `/api/search` route); `build_keyword_lateral` binds the list as given and never re-expands (previously the builders re-expanded, so an agent search expanded up to 3×). Two passes:
+`expand_keyword_variants` runs **once per search, at the caller** (`agent_tools._tool_search_studies` and the `/api/search` route); `build_keyword_lateral` binds the list as given and never re-expands (previously the builders re-expanded, so an agent search expanded up to 3×). Three tiers, each completed in full before the next runs:
 
-1. **Morphological** — an irregular map handles `mouse ↔ mice`, `bacterium ↔ bacteria`; otherwise a naive `+s` plural. Dedup is case-insensitive (ILIKE makes case duplicates pure waste).
-2. **Domain synonyms** — `DOMAIN_SYNONYM_GROUPS` (bidirectional concept groups: gut/intestine/stool/…, microbiome/microbiota, soil/rhizosphere/sediment, FMT, antibiotic, human, infant, obesity, IBD, cancer). Each keyword is looked up as a whole phrase AND per token, so `"gut microbiome"` pulls in `intestine` and `microbiota`. Group members get no plural expansion (substring ILIKE already matches "tumors"), and every member must be ≥ 3 chars — bare `GI` as `ILIKE '%gi%'` would match "fungi"/"aging" (pinned by `test_no_member_shorter_than_3_chars`).
+1. **Direct terms** — every cleaned input term, verbatim.
+2. **Morphological** — an irregular map handles `mouse ↔ mice`, `bacterium ↔ bacteria`; otherwise a naive `+s` plural. Dedup is case-insensitive (ILIKE makes case duplicates pure waste).
+3. **Domain synonyms** — `DOMAIN_SYNONYM_GROUPS` (bidirectional concept groups: gut/intestine/stool/…, microbiome/microbiota, soil/rhizosphere/sediment, FMT, antibiotic, human, infant, obesity, IBD, cancer). Each keyword is looked up as a whole phrase AND per token, so `"gut microbiome"` pulls in `intestine` and `microbiota`. Group members get no plural expansion (substring ILIKE already matches "tumors"), and every member must be ≥ 3 chars — bare `GI` as `ILIKE '%gi%'` would match "fungi"/"aging" (pinned by `test_no_member_shorter_than_3_chars`).
 
-**The result is capped at 80 terms**, applied after both passes — direct user terms (pass 1) always precede domain padding, so they can never be pushed out by synonyms. The whole list binds as **one** `text[]` parameter, so SQL text and param count don't grow with keyword count.
+**The result is capped at 80 terms**, applied after all three tiers. Tiering (not just ordering within one pass) is load-bearing: an earlier version interleaved each direct term with its own morphological variant in a single loop, so more than ~40 direct terms could push a *later* direct term past the cap before its own variants or any synonyms were even considered (fixed 2026-08-31, pinned by `test_direct_terms_survive_cap` with 45 direct terms). Now tier 1 alone occupies the first N slots unconditionally, so direct user terms can never be pushed out by their own variants or by synonyms. The whole list binds as **one** `text[]` parameter, so SQL text and param count don't grow with keyword count.
 
 ---
 

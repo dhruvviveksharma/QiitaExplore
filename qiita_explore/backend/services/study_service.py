@@ -24,7 +24,7 @@ _IRREGULAR_VARIANTS = {
 # Every member must be >= 3 chars — bare "GI" as ILIKE '%gi%' would match
 # "fungi"/"aging"/"region".
 DOMAIN_SYNONYM_GROUPS = [
-    ["gut", "intestine", "intestinal", "colon", "GI tract", "cecum",
+    ["gut", "intestine", "intestinal", "GI tract", "cecum",
      "feces", "stool", "fecal"],
     ["microbiome", "microbiota"],
     ["soil", "rhizosphere", "sediment"],
@@ -46,12 +46,14 @@ def expand_keyword_variants(keywords):
     """Add plural/singular variants (mouse↔mice) and domain-synonym group
     members (gut↔intestine↔stool, …). Caps at 80.
 
-    Two passes so direct user terms always survive the cap: pass 1 keeps every
-    input term plus its morphological variant; pass 2 appends domain-group
-    members (looked up by whole phrase AND per-token, so "gut microbiome"
-    pulls in "intestine" and "microbiota"). Domain members get no plural
-    expansion — substring ILIKE already makes "tumor" match "tumors".
-    Dedup is case-insensitive (ILIKE makes case duplicates pure waste).
+    Three tiers, each fully completed before the next, so direct user terms
+    can never be pushed past the cap by their own variants or synonyms:
+    (1) every cleaned input term, (2) each term's morphological variant,
+    (3) domain-group members (looked up by whole phrase AND per-token, so
+    "gut microbiome" pulls in "intestine" and "microbiota"). Domain members
+    get no plural expansion — substring ILIKE already makes "tumor" match
+    "tumors". Dedup is case-insensitive (ILIKE makes case duplicates pure
+    waste).
     """
     seen, expanded = set(), []
 
@@ -62,8 +64,11 @@ def expand_keyword_variants(keywords):
             expanded.append(term)
 
     cleaned = [kw.strip() for kw in (keywords or []) if kw and kw.strip()]
+
     for kw in cleaned:
         _add(kw)
+
+    for kw in cleaned:
         kl = kw.lower()
         if kl in _IRREGULAR_VARIANTS:
             _add(_IRREGULAR_VARIANTS[kl])
@@ -201,7 +206,7 @@ def build_keyword_lateral(keywords) -> tuple:
     return sql, [kws]
 
 
-def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0,
+def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
                             relevance_keywords=None, match_keywords=None,
                             data_types=None, investigation_types=None,
                             tags=None,
@@ -235,11 +240,6 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     except (TypeError, ValueError):
         lim = 50
     lim = max(1, min(150, lim))
-    try:
-        off = int(offset)
-    except (TypeError, ValueError):
-        off = 0
-    off = max(0, off)
 
     # One LATERAL does scoring and (optionally) matching — single array bind.
     kws = match_keywords or relevance_keywords
@@ -274,9 +274,9 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
     full_params = kw_params + list(params) + dt_params + tag_params + list(pi_filter_params or [])
 
     logger.info(
-        "[sql] search limit=%d offset=%d data_types=%s investigation_types=%s "
+        "[sql] search limit=%d data_types=%s investigation_types=%s "
         "topic_params=%d kw_params=%d total_params=%d pi_filter=%s",
-        lim, off, data_types, investigation_types,
+        lim, data_types, investigation_types,
         len(params), len(kw_params), len(full_params), bool(pi_filter_sql),
     )
 
@@ -301,7 +301,6 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50, offset=0
       AND ({topic_where})
     {order_clause}
     LIMIT {lim}
-    OFFSET {off}
     """
 
     if logger.isEnabledFor(logging.DEBUG):

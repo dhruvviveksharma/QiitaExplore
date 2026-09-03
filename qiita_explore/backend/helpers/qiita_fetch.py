@@ -64,8 +64,9 @@ _STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             FROM qiita.study_prep_template spt3
             WHERE spt3.study_id = s.study_id) AS num_preps"""
 
-# Public-visibility gate shared by _build_study_header_query and
-# services.study_service.search_studies_with_sql — a correlated EXISTS has no
+# Public-visibility gate shared by _build_study_header_query,
+# services.study_service.search_studies_with_sql, and
+# helpers.sample_search._get_candidate_ids — a correlated EXISTS has no
 # artifact fan-out, so callers need no DISTINCT.
 _PUBLIC_ARTIFACT_EXISTS = """EXISTS (
         SELECT 1 FROM qiita.study_artifact sa

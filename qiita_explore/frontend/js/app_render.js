@@ -673,7 +673,9 @@ function renderApp(s, account) {
                           onMergeStudy={study => { setPendingMergeStudy(study); openMergePanel(true); }}
                           onOpenStudy={openStudyModal}
                           onViewAllStudies={openSearchResultsPanel}
-                          pinnedStudyIds={pinnedMeta.map(p => p.study_id)} />
+                          pinnedStudyIds={pinnedMeta.map(p => p.study_id)}
+                          steps={m.steps || []}
+                          pendingStep={m.pendingStep} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (

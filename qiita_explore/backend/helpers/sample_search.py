@@ -14,7 +14,7 @@ from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
 from services.relevance import build_pi_required_filter
-from helpers.qiita_fetch import _fetch_study_headers
+from helpers.qiita_fetch import _fetch_study_headers, _PUBLIC_ARTIFACT_EXISTS
 from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
 logger = logging.getLogger(__name__)
@@ -42,15 +42,12 @@ def _get_candidate_ids(data_types, exclude_ids, max_candidates, resolved_pis=Non
     try:
         with TRN:
             TRN.add(f"""
-                SELECT DISTINCT s.study_id,
+                SELECT s.study_id,
                     (SELECT COUNT(*) FROM qiita.study_sample ss
                      WHERE ss.study_id = s.study_id) AS n
                 FROM qiita.study s
                 {joins}
-                LEFT JOIN qiita.study_artifact sa ON s.study_id = sa.study_id
-                LEFT JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-                LEFT JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-                WHERE v.visibility = 'public'
+                WHERE {_PUBLIC_ARTIFACT_EXISTS}
                 {extra_where}
                 ORDER BY n DESC NULLS LAST
                 LIMIT %s
@@ -115,6 +112,10 @@ def _probe_study_raw(pool, study_id, kws):
     kws = [k.strip() for k in kws if k.strip()]
     if not kws:
         return False
+    # Direct user terms come first in the expanded list (see
+    # study_service.expand_keyword_variants' tiering), so this cap sheds
+    # synonym padding under the probe timeout, not user terms.
+    kws = kws[:_MAX_KEYWORDS_PER_PROBE]
     sid = int(study_id)
     sql = f"""
         SELECT EXISTS (
@@ -147,6 +148,9 @@ def _score_sample_metadata_raw(pool, study_id, keywords):
     kws = [k.strip() for k in (keywords or []) if k.strip()]
     if not kws:
         return 0
+    # See _probe_study_raw — direct user terms lead the expanded list, so
+    # this cap sheds synonym padding, not user terms.
+    kws = kws[:_MAX_KEYWORDS_PER_PROBE]
     sid = int(study_id)
     sql = f"""
         SELECT COUNT(DISTINCT kw)

@@ -28,15 +28,38 @@ def _openai_tools_to_anthropic(tools):
     ]
 
 
-def _no_final_answer_text(max_iters, last_tool_failure):
-    """The turn must NEVER end with zero visible text — that reads as the
-    model silently dying. Say plainly why there is no synthesized answer."""
-    msg = (f"\n\n_(I ran out of tool rounds ({max_iters}) before writing a final answer — "
-           f"the tool results above are everything gathered this turn. "
-           f"Ask a follow-up to continue.)_")
+def _no_final_answer_text(max_iters, last_tool_failure, reason):
+    """Guaranteed non-empty text so a silent turn never reads as the model
+    dying mid-thought. reason="rounds": max_iters exhausted on tool calls.
+    reason="empty": the model returned nothing with no tool calls — round
+    exhaustion never happened, so that wording would be false."""
+    if reason == "empty":
+        msg = ("\n\n_(The model returned an empty response — no text and no "
+               "tool calls. Try again or rephrase.)_")
+    else:
+        msg = (f"\n\n_(I ran out of tool rounds ({max_iters}) before writing a final answer — "
+               f"the tool results above are everything gathered this turn. "
+               f"Ask a follow-up to continue.)_")
     if last_tool_failure:
         msg += f"\n\n_(Last tool error: {last_tool_failure[:200]})_"
     return msg
+
+
+def _emit_round_limit_notice(chat_id, max_iters, provider):
+    """Visible 'writing final answer' step on round-budget exhaustion —
+    shared by both loops so they cannot drift."""
+    logger.warning("%s agent hit max_iters=%d without stopping", provider, max_iters)
+    log_turn_event(chat_id, "max_rounds_exhausted", rounds=max_iters)
+    yield {"type": "step_start", "name": "synthesis",
+           "label": f"Tool-round limit ({max_iters}) reached — writing final answer…"}
+
+
+def _emit_silent_end(chat_id, model, event, reason, max_iters, last_tool_failure, **log_fields):
+    """Log the terminal event and yield the guaranteed fallback token —
+    shared by both loops so they cannot drift."""
+    log_turn_event(chat_id, event, model=model, **log_fields)
+    yield {"type": "token",
+           "token": _no_final_answer_text(max_iters, last_tool_failure, reason)}
 
 
 def _is_budgeted_search_tool(name: str) -> bool:
@@ -53,7 +76,10 @@ def _tools_within_search_budget(tools, search_calls_used: int):
 
 
 def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used):
-    """Yield segment events for one tool call; return (result_text, consumed_search_slot)."""
+    """Yield segment events for one tool call; return (result_text,
+    consumed_search_slot, failed) — `failed` is the structured fact of a
+    raise, replacing callers sniffing result_text for this function's
+    own error string."""
     step_name = f"tool_{name}_{call_id}"
     yield {"type": "segment_tool_call", "name": step_name,
            "label": _tool_label(name, args), "args": args}
@@ -64,7 +90,7 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
                f"results panel.")
         yield {"type": "segment_tool_result", "name": step_name,
                "label": f"{name} skipped", "detail": "search limit reached", "ui_payload": None}
-        return (msg, False)
+        return (msg, False, False)
     t0 = time.perf_counter()
     try:
         result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
@@ -74,17 +100,19 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
         yield {"type": "segment_tool_result", "name": step_name,
                "label": f"{name} failed",
                "detail": f"{str(exc)[:60]} · {dt:.1f}s", "ui_payload": None}
+        result_text = f"Tool {name} failed: {exc}"
+        log_turn_event(chat_id, "tool_fail", name=name, detail=result_text)
         # A crash is never a completed search, regardless of tool name — this
         # must stay a literal False, or a crashing search call would consume
         # one of the SEARCH_CALLS_PER_MESSAGE budget slots anyway.
-        return (f"Tool {name} failed: {exc}", False)
+        return (result_text, False, True)
     dt = time.perf_counter() - t0
     logger.info("[timing] tool=%s elapsed=%.3fs result_chars=%d", name, dt, len(result.text or ""))
     detail = f"{result.detail} · {dt:.1f}s" if result.detail else f"{dt:.1f}s"
     yield {"type": "segment_tool_result", "name": step_name,
            "label": result.label, "detail": detail, "ui_payload": result.ui_payload}
     # executed=False (e.g. the empty-input early return) doesn't consume a slot.
-    return (result.text, _is_budgeted_search_tool(name) and getattr(result, "executed", True))
+    return (result.text, _is_budgeted_search_tool(name) and getattr(result, "executed", True), False)
 
 
 def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools):
@@ -181,26 +209,22 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
 
         tool_results = []
         for tu in tool_uses:
-            result_text, consumed_search_slot = yield from _execute_tool_call(
+            result_text, consumed_search_slot, failed = yield from _execute_tool_call(
                 tu["name"], tu["args"], tu["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
                 search_calls_used=search_calls_used,
             )
             if consumed_search_slot:
                 search_calls_used += 1
-            if result_text.startswith("Tool ") and " failed:" in result_text:
+            if failed:
                 last_tool_failure = result_text
-                log_turn_event(chat_id, "tool_fail", name=tu["name"], detail=result_text)
             tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_text})
             yield {"type": "transcript_append", "entry": {
                 "role": "tool", "id": tu["id"], "name": tu["name"], "text": result_text}}
         msgs.append({"role": "user", "content": tool_results})
 
     if iteration == max_iters - 1 and stop_reason == "tool_use":
-        logger.warning("anthropic agent hit max_iters=%d without stopping", max_iters)
-        log_turn_event(chat_id, "max_rounds_exhausted", rounds=max_iters)
-        yield {"type": "step_start", "name": "synthesis",
-               "label": f"Tool-round limit ({max_iters}) reached — writing final answer…"}
+        yield from _emit_round_limit_notice(chat_id, max_iters, "anthropic")
 
     if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
             any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
@@ -225,15 +249,13 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             has_partial_output=lambda: bool(synth_parts))
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
-            log_turn_event(chat_id, "synthesis_empty", model=resolved)
-            yield {"type": "token",
-                   "token": _no_final_answer_text(max_iters, last_tool_failure)}
+            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty", "rounds",
+                                        max_iters, last_tool_failure)
             turn_had_text = True
 
     if not turn_had_text:
-        log_turn_event(chat_id, "turn_ended_without_text", model=resolved, stop=stop_reason)
-        yield {"type": "token",
-               "token": _no_final_answer_text(max_iters, last_tool_failure)}
+        yield from _emit_silent_end(chat_id, resolved, "turn_ended_without_text", "empty",
+                                    max_iters, last_tool_failure, finish=stop_reason)
 
 
 def stream_agent(
@@ -397,25 +419,21 @@ def stream_agent(
 
         for tc, args in parsed_calls:
             name = tc["name"]
-            result_text, consumed_search_slot = yield from _execute_tool_call(
+            result_text, consumed_search_slot, failed = yield from _execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
                 search_calls_used=search_calls_used,
             )
             if consumed_search_slot:
                 search_calls_used += 1
-            if result_text.startswith("Tool ") and " failed:" in result_text:
+            if failed:
                 last_tool_failure = result_text
-                log_turn_event(chat_id, "tool_fail", name=name, detail=result_text)
             api_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
             yield {"type": "transcript_append", "entry": {
                 "role": "tool", "id": tc["id"], "name": name, "text": result_text}}
 
     if iteration == max_iters - 1 and finish_reason == "tool_calls":
-        logger.warning("agent hit max_iters=%d without stopping", max_iters)
-        log_turn_event(chat_id, "max_rounds_exhausted", rounds=max_iters)
-        yield {"type": "step_start", "name": "synthesis",
-               "label": f"Tool-round limit ({max_iters}) reached — writing final answer…"}
+        yield from _emit_round_limit_notice(chat_id, max_iters, "openai")
 
     if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
         logger.info("[agent] forcing synthesis — loop ended on tool results")
@@ -439,18 +457,13 @@ def stream_agent(
             has_partial_output=lambda: bool(synth_parts))
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
-            # The synthesis call produced zero content — without this, the
-            # turn ends looking like the model silently died mid-thought.
-            log_turn_event(chat_id, "synthesis_empty", model=resolved)
-            yield {"type": "token",
-                   "token": _no_final_answer_text(max_iters, last_tool_failure)}
+            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty", "rounds",
+                                        max_iters, last_tool_failure)
             turn_had_text = True
 
     if not turn_had_text:
-        log_turn_event(chat_id, "turn_ended_without_text", model=resolved,
-                       finish=finish_reason)
-        yield {"type": "token",
-               "token": _no_final_answer_text(max_iters, last_tool_failure)}
+        yield from _emit_silent_end(chat_id, resolved, "turn_ended_without_text", "empty",
+                                    max_iters, last_tool_failure, finish=finish_reason)
 
 
 def _tool_label(name: str, args: dict) -> str:

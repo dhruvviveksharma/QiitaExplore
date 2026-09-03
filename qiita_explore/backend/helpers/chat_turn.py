@@ -61,6 +61,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
     current_text    = []
     transcript      = []
     user_row_saved  = False
+    assistant_persisted = False
     title_job       = None
     try:
         # Started before anything else persists, so a slash-command first
@@ -168,6 +169,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
                 yield _sse("segment_tool_result", {"name": event["name"], "label": event["label"],
                                                    "detail": event.get("detail", ""),
                                                    "ui_payload": event.get("ui_payload")})
+            elif etype in ("step_start", "step_done"):
+                yield _sse(etype, {k: v for k, v in event.items() if k != "type"})
         if current_text:
             segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
             current_text = []
@@ -175,6 +178,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
 
         append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload,
                                  model_transcript=truncate_for_persist(transcript) or None)
+        assistant_persisted = True
         log_turn_event(chat_id, "turn_done",
                        chars=len("".join(assistant_parts).strip()),
                        segments=len(segments_list))
@@ -185,7 +189,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         # a closing generator from yielding) — persist the partial turn and
         # re-raise. A failure to persist degrades to today's behavior (lost
         # partial), never to a crash during generator close.
-        if user_row_saved and (assistant_parts or segments_list):
+        if user_row_saved and not assistant_persisted and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
                                          _partial_ui_payload(segments_list, current_text),
@@ -201,7 +205,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         logger.exception("stream error in %s chat %s", scope, chat_id)
         log_turn_event(chat_id, "turn_error", exc=e.__class__.__name__,
                        detail=str(e)[:200])
-        if user_row_saved and (assistant_parts or segments_list):
+        if user_row_saved and not assistant_persisted and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
                                          _partial_ui_payload(segments_list, current_text),

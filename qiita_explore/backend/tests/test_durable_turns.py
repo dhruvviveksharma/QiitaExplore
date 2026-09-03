@@ -143,6 +143,22 @@ class TestDurablePersistence:
         assert any("event: error" in f for f in frames)
         assert global_chat_crud.get_global_chat(sample_user_id, "no-such-chat") is None
 
+    def test_stop_at_completion_does_not_double_persist(self, chat_turn_mod, global_chat_crud,
+                                                        sample_user_id, global_chat):
+        # A Stop/disconnect landing at the exact moment the turn finished
+        # (the "done" frame already yielded, but next() never called again)
+        # must not re-persist the assistant row a second time.
+        events = [{"type": "agent_start"}, {"type": "token", "token": "final answer"}]
+        gen = _turn(chat_turn_mod, global_chat, sample_user_id, events)
+        for frame in gen:
+            if "event: done" in frame:
+                break
+        gen.close()  # raises GeneratorExit right at the "done" yield
+
+        msgs = _messages(global_chat_crud, sample_user_id, global_chat)
+        assert [m["role"] for m in msgs] == ["user", "assistant"]
+        assert msgs[1]["content"] == "final answer"
+
 
 @pytest.fixture
 def untitled_chat(global_chat_crud, sample_user_id):
