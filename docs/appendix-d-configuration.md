@@ -110,7 +110,7 @@ The `backend/data/` default directory is created at import time by `backend/stor
 | `GLOBAL_SEARCH_SQL_LIMIT_NARROW` | `50` | `backend/services/llm.py` | Row limit for narrow/targeted searches. Same `1…150` clamp. | Yes |
 | `SAMPLE_SEARCH_DEFAULT_CANDIDATES` | `40` | `backend/helpers/agent_tools.py` | How many studies the per-sample metadata probe fans out across in normal mode. | Yes |
 | `SAMPLE_SEARCH_DEEP_CANDIDATES` | `500` | `backend/helpers/agent_tools.py`, `backend/routes/study_routes.py` | Same, in deep-search mode. Selected by the `deep_search` flag. | Yes |
-| `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | `8000` | `backend/helpers/sample_search.py` | Per-connection PostgreSQL `statement_timeout`, passed as `options=f"-c statement_timeout={…}"` on the probe pool. A probe that exceeds it is killed by the server, not the client. | Yes |
+| `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | `15000` | `backend/helpers/sample_search.py` | Per-connection PostgreSQL `statement_timeout`, passed as `options=f"-c statement_timeout={…}"` on the probe pool. A probe that exceeds it is killed by the server, not the client. | Yes |
 
 Sample search is bounded on three independent axes, and all three must be understood together: candidate count (above), keywords per probe (`_MAX_KEYWORDS_PER_PROBE`, non-env), and statement timeout (above). See the non-env table.
 
@@ -171,7 +171,7 @@ QIITA_BASE_DATA_DIR=/path/to/qiita/data
 
 Plus `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` exported by `start_barnacle.sh`. Everything else has a default that is at least defensible.
 
-For comparison, the `.env` currently checked in at `qiita_explore/.env` sets four keys: `DIRECTORY` (read by nothing in the backend), `API_KEY`, `QIITA_CONTROL_PLANE_URL`, and `QIITA_PUBLIC_LOGIN_URL`.
+The `.env` at `qiita_explore/.env` is gitignored (never committed); each deployment maintains its own. A typical one sets `API_KEY`, `QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, and the `QIITA_EXPLORE_*` cookie/CORS overrides for its topology.
 
 ### Alphabetical index
 
@@ -205,7 +205,7 @@ For comparison, the `.env` currently checked in at `qiita_explore/.env` sets fou
 | [`QIITA_WHOAMI_TIMEOUT_SECONDS`](#env-QIITA_WHOAMI_TIMEOUT_SECONDS) | Qiita | `5` |
 | [`SAMPLE_SEARCH_DEEP_CANDIDATES`](#env-SAMPLE_SEARCH_DEEP_CANDIDATES) | Search | `500` |
 | [`SAMPLE_SEARCH_DEFAULT_CANDIDATES`](#env-SAMPLE_SEARCH_DEFAULT_CANDIDATES) | Search | `40` |
-| [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `8000` |
+| [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `15000` |
 
 Thirty-four names in total: thirty-two read by `config.py` or backend helpers, plus `QIITA_CONFIG_FP` (vendored `qiita_core`) and `BARNACLE_URL` (tests only).
 
@@ -235,26 +235,23 @@ Thirty-four names in total: thirty-two read by `config.py` or backend helpers, p
 
 ## Model roster
 
-Ten models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `gemma`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
+Seven models in `ALLOWED_MODELS`, each with an entry in `MODEL_METADATA` (`backend/config.py`). `DEFAULT_MODEL` is `minimax-m2`. The budget column is derived, not stored — `backend/config.py :: context_budget_chars` computes `max(8000, int((context_tokens - 8000) * 3.5))`. The `8000` reserve and the `3.5` chars-per-token ratio are both literals in that function.
 
-| Name | Provider | Tier | Size | Context (tokens) | Modalities | `supports_tools` | Budget (chars) |
-|---|---|---|---|---|---|---|---|
-| `qwen3` | nrp | main | 397B | 1,010,000 | image, video | yes | 3,507,000 |
-| `qwen3-small` | nrp | main | 27B | 1,010,000 | image, video | yes | 3,507,000 |
-| `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | yes | 3,642,016 |
-| `gemma` *(default)* | nrp | main | 31B | 262,144 | image, video | yes | 889,504 |
-| `kimi` | nrp | evaluating | 1T | 262,144 | image, video | yes | 889,504 |
-| `glm-5` | nrp | evaluating | 744B | 202,752 | — | yes | 681,632 |
-| `minimax-m2` | nrp | evaluating | 230B | 204,800 | — | yes | 688,800 |
-| `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | yes | 672,000 |
-| `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | yes | 672,000 |
-| `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | yes | 672,000 |
+| Name | Provider | Tier | Size | Context (tokens) | Modalities | Budget (chars) |
+|---|---|---|---|---|---|---|
+| `qwen3-small` | nrp | main | 27B | 1,000,000 | image, video | 3,472,000 |
+| `deepseek-v4-flash` | nrp | evaluating | 304B | 1,048,576 | — | 3,642,016 |
+| `glm-5` | nrp | evaluating | 744B | 300,000 | — | 1,022,000 |
+| `minimax-m2` *(default)* | nrp | evaluating | 230B | 204,800 | — | 688,800 |
+| `claude-haiku-4-5` | anthropic | main | — | 200,000 | image | 672,000 |
+| `claude-sonnet-4-6` | anthropic | main | — | 200,000 | image | 672,000 |
+| `claude-opus-4-8` | anthropic | evaluating | — | 200,000 | image | 672,000 |
 
-**`supports_tools`** in `MODEL_METADATA` records whether a model can emit streaming tool calls. Chat routes always call `stream_agent` regardless; the field remains for other callers and future model additions.
+Every model in the roster supports streaming tool calls; chat routes always call `stream_agent`. (A per-model `supports_tools` flag and a `model_supports_tools()` helper existed historically but were removed once nothing branched on them.)
 
 `provider` splits along a second axis: `backend/config.py :: get_client` returns the shared NRP `OpenAI` client for `provider: "nrp"`, and a freshly constructed `anthropic.Anthropic` for `provider: "anthropic"`. The agent loop has two separate implementations behind one signature — `_stream_anthropic_agent` versus the inline OpenAI loop in `backend/helpers/agent.py :: stream_agent`.
 
-Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in `get_client` and `context_budget_chars`. `model_supports_tools` defaults an unrecognized name to `False`.
+Unknown or empty model names fall back to `DEFAULT_MODEL` metadata in `get_client` and `context_budget_chars`.
 
 ---
 
@@ -269,7 +266,7 @@ These are literals in source. They cannot be changed without an edit and a resta
 | `PINNED_STUDIES_PER_CHAT_CAP` | `10` | `backend/store/cache.py` | Studies pinnable to one chat. `pin_study_to_chat` returns `False` past the cap rather than raising. |
 | keyword expansion cap | `80` | `backend/services/study_service.py :: expand_keyword_variants` (`return expanded[:80]`) | Applied **after** plural/singular expansion. Since most terms yield two variants, the effective input ceiling is roughly 40 terms. |
 | `_MAX_KEYWORDS_PER_PROBE` | `10` | `backend/helpers/sample_search.py` | Keywords and field filters per per-study JSONB probe; both lists are sliced to it. |
-| probe `statement_timeout` | `8000` ms | `backend/helpers/sample_search.py`, from `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | Server-side kill for a single sample probe. Listed here because the value reads like a literal — it is the env default. |
+| probe `statement_timeout` | `15000` ms | `backend/helpers/sample_search.py`, from `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` | Server-side kill for a single sample probe. Listed here because the value reads like a literal — it is the env default. |
 | sample-search candidates | `40` / `500` | `backend/config.py`, via `SAMPLE_SEARCH_DEFAULT_CANDIDATES` / `SAMPLE_SEARCH_DEEP_CANDIDATES` | Normal vs. deep fan-out width. Also env-tunable. |
 | probe `pool_size` | `16` | `backend/helpers/sample_search.py` (function default) | Ceiling on probe concurrency; actual workers are `min(len(candidate_ids), pool_size)`. Independent of `PG_POOL_MAX_CONN` — this pool is created per call. |
 | probe wall-clock timeout | `max(30, len(candidate_ids) * 0.4)` s | `backend/helpers/sample_search.py` | Computed, not literal — scales with candidate count, floored at 30 seconds. |
@@ -297,7 +294,7 @@ Three prompts live as module-level string literals at the bottom of `backend/con
 
 **`GLOBAL_CHAT_SYSTEM_PROMPT`** — global discovery chat (`global_chat_routes.py`, `agent_harness.py`). Carries the agent operating manual for `search_studies` dimension slots, data-type mapping, and the one-search rule.
 
-**The distinction that matters: prompt instructions are advisory; the tool schema is mechanical.** "Issue EXACTLY ONE call per user request" is a request the model may ignore. What actually enforces it is code — `stream_agent` sets `search_already_done` after the first search and **removes `search_studies` from the tool list** on subsequent iterations, so a second call is not merely discouraged but unrepresentable. The same split applies throughout: the prompt asks for a `limit`, `backend/helpers/agent_tools.py` clamps it to `1…20`; the prompt asks the model not to over-narrow, the backend pools all slots into one ranked query regardless. When behavior must hold, look for it in the schema and the loop, not the prose. See [`05-agent.md`](05-agent.md).
+**The distinction that matters: prompt instructions are advisory; the tool schema is mechanical.** "You may call search_studies up to 5 times per user message" is a request the model may ignore. What actually enforces it is code — both agent loops count executed searches (`search_calls_used`) and, once `SEARCH_CALLS_PER_MESSAGE` is reached, `_tools_within_search_budget` **removes the search tools from the schema** on subsequent iterations, so a sixth call is not merely discouraged but unrepresentable. The same split applies throughout: the prompt asks for a `limit`, `backend/helpers/agent_tools.py` clamps it to `1…20`; the prompt asks the model not to over-narrow, the backend pools all slots into one ranked query regardless. When behavior must hold, look for it in the schema and the loop, not the prose. See [`05-agent.md`](05-agent.md).
 
 Both prompts are import-time constants. Editing them requires a restart, and neither is exposed through any API.
 

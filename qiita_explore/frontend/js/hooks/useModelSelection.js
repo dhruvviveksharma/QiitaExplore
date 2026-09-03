@@ -4,8 +4,8 @@ function useModelSelection(chatId) {
   const [selectedModel, setSelectedModelState] = useState(() => {
     try {
       const saved = localStorage.getItem('llm:model');
-      return (saved && _VALID_MODELS.has(saved)) ? saved : 'qwen3';
-    } catch (_) { return 'qwen3'; }
+      return (saved && _VALID_MODELS.has(saved)) ? saved : 'minimax-m2';
+    } catch (_) { return 'minimax-m2'; }
   });
   const setSelectedModel = (value) => {
     setSelectedModelState(value);
@@ -19,9 +19,9 @@ function useModelSelection(chatId) {
   useEffect(() => {
     try {
       const perChat = chatId ? localStorage.getItem(`model:chat:${chatId}`) : null;
-      const global  = localStorage.getItem('llm:model') || 'qwen3';
+      const global  = localStorage.getItem('llm:model') || 'minimax-m2';
       const effective = (perChat && _VALID_MODELS.has(perChat)) ? perChat
-                      : (_VALID_MODELS.has(global) ? global : 'qwen3');
+                      : (_VALID_MODELS.has(global) ? global : 'minimax-m2');
       setSelectedModelState(effective);
     } catch (_) {}
   }, [chatId]);

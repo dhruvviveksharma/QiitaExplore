@@ -23,13 +23,14 @@ def _capture_call(**kwargs):
 
 
 class TestTagFilterParamPosition:
-    """tags is threaded through with the SAME relative-ordering convention
-    data_types already used (dt_params, then tag_params, then the custom
-    WHERE's own params) — see the docstring note in search_studies_with_sql
-    about this convention not matching the WHERE text's literal left-to-right
-    placeholder order. This test locks in that tag_params lands immediately
-    after dt_params, matching tag_sql's position immediately after dt_sql in
-    the WHERE text (unambiguous regardless of the custom/dt question)."""
+    """Params bind in rendered-SQL-text order (psycopg2 left-to-right):
+    keyword LATERAL (FROM) -> custom topic clause -> data-type EXISTS ->
+    tag EXISTS -> PI EXISTS. See TKT-055 for the incident this order fixes.
+    test_params_bind_in_rendered_sql_order pins the WHERE-side order;
+    test_match_keywords_bind_first_in_full_order (TestKeywordLateralAssembly)
+    pins the keyword slot. This class locks in that tag_params lands
+    immediately after dt_params, matching tag_sql's position immediately
+    after dt_sql in the WHERE text."""
 
     def test_tag_clause_present_when_tags_given(self):
         sql, params = _capture_call(tags=["GOLD"])
@@ -43,16 +44,20 @@ class TestTagFilterParamPosition:
         sql, params = _capture_call()
         assert "study_tag IN (" not in sql
 
-    def test_tag_params_land_between_dt_and_custom_params(self):
+    def test_params_bind_in_rendered_sql_order(self):
+        # TKT-055 (confirmed live): topic_where renders as
+        # "(custom) AND dt AND tag" — params must match that text order, or a
+        # data-type string binds into the keyword clause's unnest(%s::text[])
+        # and Postgres rejects it as a malformed array literal.
         sql, params = _capture_call(
             custom_sql_where="s.study_id = ANY(%s)",
             params=[[1, 2, 3]],
             data_types=["Metagenomic"],
             tags=["GOLD"],
         )
-        # Exact expected order per the function's documented (if debated)
-        # convention: score_params(none here) + dt_params + tag_params + params.
-        assert params == ["Metagenomic", "GOLD", [1, 2, 3]]
+        assert params == [[1, 2, 3], "Metagenomic", "GOLD"]
+        # and the SQL text really does place the custom clause first
+        assert sql.index("ANY(%s)") < sql.index("dt.data_type IN")
 
     def test_tag_params_land_before_pi_params(self):
         sql, params = _capture_call(
@@ -71,6 +76,140 @@ class TestTagFilterParamPosition:
         assert tag_clause.count("%s") == 2
 
 
+class TestKeywordLateralAssembly:
+    """One CROSS JOIN LATERAL replaces the old duplicated keyword blocks
+    (6-field WHERE EXISTS + 4-field relevance subquery): a single array bind
+    that both scores and (for match_keywords) filters."""
+
+    def test_match_keywords_bind_first_in_full_order(self):
+        # TKT-055-style pin for the new first slot: the kw array binds in
+        # FROM (the LATERAL), before every WHERE param.
+        sql, params = _capture_call(
+            match_keywords=["mouse", "mice"],
+            custom_sql_where="s.study_id = ANY(%s)",
+            params=[[1, 2, 3]],
+            data_types=["Metagenomic"],
+            tags=["GOLD"],
+        )
+        assert params == [["mouse", "mice"], [1, 2, 3], "Metagenomic", "GOLD"]
+        assert sql.index("unnest(%s::text[])") < sql.index("ANY(%s)")
+
+    def test_match_keywords_add_filter_condition(self):
+        sql, _ = _capture_call(match_keywords=["mouse"])
+        assert "(rel.relevance > 0 OR rel.aux_match)" in sql
+
+    def test_relevance_keywords_score_only(self):
+        sql, _ = _capture_call(relevance_keywords=["mouse"])
+        assert "CROSS JOIN LATERAL" in sql
+        assert "rel.relevance > 0" not in sql
+        assert "ORDER BY relevance DESC" in sql
+
+    def test_no_lateral_without_keywords(self):
+        sql, params = _capture_call()
+        assert "LATERAL" not in sql
+        assert "ORDER BY s.study_id" in sql
+        assert params == []
+
+    def test_no_distinct_visibility_via_exists(self):
+        # The artifact LEFT JOIN chain fanned rows out per artifact and forced
+        # SELECT DISTINCT; a correlated EXISTS has no fan-out.
+        sql, _ = _capture_call(match_keywords=["mouse"])
+        assert "SELECT DISTINCT" not in sql
+        assert "LEFT JOIN qiita.study_artifact" not in sql
+        assert "sa.study_id = s.study_id AND v.visibility = 'public'" in sql
+
+    def test_search_does_not_reexpand(self):
+        # Expansion is the caller's job — no "guts" appears here.
+        _, params = _capture_call(match_keywords=["gut"])
+        assert params == [["gut"]]
+
+
+def _header_row(sid, via=None):
+    row = {
+        "study_id": sid, "study_title": f"Study {sid}", "study_abstract": "a" * 50,
+        "study_alias": f"S{sid}", "metadata_complete": True,
+        "pi_name": "PI", "pi_email": "pi@x.org", "pi_affiliation": "X",
+        "lab_person_name": None, "num_samples": 10, "data_types": "16S", "num_preps": 1,
+    }
+    if via:
+        row["via"] = via
+    return row
+
+
+class TestFullResultSetInUiPayload:
+    """The LLM text and in-chat cards get the trimmed top-`limit`; the full
+    ranked set rides ui_payload (all_result_studies/total_matches) for the
+    search results panel."""
+
+    def _run(self, n_text=5, n_sample=30, limit=10):
+        import helpers.agent_tools as agent_tools_mod
+        text_rows   = [_header_row(i) for i in range(1, n_text + 1)]
+        sample_rows = [_header_row(i, via="sample_metadata") for i in range(100, 100 + n_sample)]
+        # finalize_search_results hits Postgres for sample-layer scoring —
+        # replace with a rank-preserving fake honoring the limit contract.
+        def fake_finalize(studies, kws, resolved_pis=None, veto_applied=False, limit=None, **kw):
+            return list(studies)[:limit] if limit else list(studies)
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=(text_rows, "SQL")) as mock_sql, \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=sample_rows), \
+             patch.object(agent_tools_mod, "finalize_search_results", side_effect=fake_finalize):
+            res = agent_tools_mod._tool_search_studies({"keywords": ["mouse"], "limit": limit})
+        self._last_sql_call = mock_sql.call_args
+        return res
+
+    def test_result_studies_trimmed_but_all_result_studies_full(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        ui = res.ui_payload
+        assert len(ui["result_studies"]) == 10
+        assert len(ui["all_result_studies"]) == 35
+        assert ui["total_matches"] == 35
+
+    def test_full_set_starts_with_the_trimmed_top(self):
+        res = self._run(limit=10)
+        ui = res.ui_payload
+        top_ids = [s["study_id"] for s in ui["result_studies"]]
+        assert [s["study_id"] for s in ui["all_result_studies"][:10]] == top_ids
+
+    def test_llm_text_covers_only_the_top_limit(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        assert "top 10 of 35 matching studies" in res.text
+        # Study ids 110+ rank below the trim line — the model must not see them.
+        assert "Study 125" not in res.text
+
+    def test_result_summary_reports_the_split(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        assert res.ui_payload["result_summary"] == "top 10 of 35 studies"
+
+    def test_no_split_summary_when_everything_fits(self):
+        res = self._run(n_text=3, n_sample=2, limit=10)
+        ui = res.ui_payload
+        assert ui["result_summary"] == "5 studies"
+        assert ui["total_matches"] == 5
+        assert len(ui["all_result_studies"]) == 5
+
+    def test_limit_is_hard_capped_at_10(self):
+        res = self._run(n_text=5, n_sample=30, limit=20)
+        ui = res.ui_payload
+        assert len(ui["result_studies"]) == 10
+        assert len(ui["all_result_studies"]) == 35
+
+    def test_sql_overfetch_floor_is_decoupled_from_chat_cap(self):
+        self._run(limit=10)
+        # max(40, limit * 2) — the panel's text-search half must not shrink
+        # because the chat slice is capped at 10.
+        assert self._last_sql_call.kwargs.get("limit") == 40
+
+    def test_llm_text_names_total_and_results_panel_when_trimmed(self):
+        res = self._run(n_text=5, n_sample=30, limit=10)
+        assert "top 10 of 35 matching studies" in res.text
+        assert "results panel" in res.text
+        assert "View all 35" in res.text
+
+    def test_llm_text_plain_when_not_trimmed(self):
+        res = self._run(n_text=3, n_sample=2, limit=10)
+        assert "top 5 studies" in res.text
+        assert "results panel" not in res.text
+
+
 class TestSearchStudiesToolPassesTagsThrough:
     def test_tags_extracted_from_args_and_forwarded(self):
         import helpers.agent_tools as agent_tools_mod
@@ -86,3 +225,37 @@ class TestSearchStudiesToolPassesTagsThrough:
              patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
             agent_tools_mod._tool_search_studies({"keywords": ["mouse"]})
         assert mock_sql.call_args.kwargs.get("tags") is None
+
+    def test_match_keywords_forwarded_expanded(self):
+        # The agent path passes the expanded keyword list as match_keywords —
+        # no custom_sql_where, no separate relevance_keywords bind.
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=([], "")) as mock_sql, \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
+            agent_tools_mod._tool_search_studies({"keywords": ["mouse"]})
+        assert mock_sql.call_args.args == ()
+        kwargs = mock_sql.call_args.kwargs
+        assert "mouse" in kwargs["match_keywords"]
+        assert "mice" in kwargs["match_keywords"]
+        assert "custom_sql_where" not in kwargs
+        assert "relevance_keywords" not in kwargs
+
+    def test_bare_string_dimension_slot_is_not_iterated_per_character(self):
+        # A model sending a bare string where the schema says array (e.g.
+        # organism="mouse" instead of ["mouse"]) must not silently corrupt
+        # the search into single-character filters.
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=([], "")) as mock_sql, \
+             patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=[]):
+            agent_tools_mod._tool_search_studies({"organism": "mouse"})
+        match_keywords = mock_sql.call_args.kwargs["match_keywords"]
+        assert "mouse" in match_keywords
+        assert "m" not in match_keywords
+
+    def test_search_by_sample_bare_string_keywords_not_iterated_per_character(self):
+        import helpers.agent_tools as agent_tools_mod
+        with patch.object(agent_tools_mod, "search_studies_by_field_filters",
+                          return_value=[]) as mock_search:
+            agent_tools_mod._tool_search_by_sample({"keywords": "mouse"})
+        keywords = mock_search.call_args.kwargs["keywords"]
+        assert keywords == ["mouse"]

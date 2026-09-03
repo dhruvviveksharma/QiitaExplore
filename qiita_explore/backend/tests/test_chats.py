@@ -1,5 +1,4 @@
 """Tests for chat functionality."""
-import pytest
 
 
 class TestProjectChats:

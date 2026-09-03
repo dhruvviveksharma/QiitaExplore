@@ -415,7 +415,7 @@ Response:
 
 ### api_create_chat
 
-`POST /api/projects/<project_id>/chats` — session + CSRF. Body accepts `message` or `first_message`, plus optional `model` and `title`. **404** for an unknown project. When a first message is present the handler runs a **blocking, non-streaming** `llm_chat` turn with project study context and persists both messages before responding. Returns the full chat object. (`backend/routes/chat_routes.py :: api_create_chat`)
+`POST /api/projects/<project_id>/chats` — session + CSRF. Body accepts `message` or `first_message`, plus optional `model` and `title`. **404** for an unknown project. When a first message is present the handler runs a **blocking, non-streaming** `llm_chat` turn with project study context and persists both messages before responding. A `title`/`first_message` passed here is treated as user-set and never replaced by the background LLM-titling job (that job only runs from the streaming turn path — see [`06-streaming-and-chat.md`](06-streaming-and-chat.md)). Returns the full chat object. (`backend/routes/chat_routes.py :: api_create_chat`)
 
 ### api_get_chat
 

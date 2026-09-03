@@ -44,6 +44,11 @@ from .chat_move import (  # noqa: F401
     move_project_chat_to_global,
 )
 
+from .chat_turn_persist import (  # noqa: F401
+    load_project_chat_history,
+    load_global_chat_history,
+)
+
 from .merge_crud import (  # noqa: F401
     create_workspace,
     list_workspaces,
@@ -63,7 +68,6 @@ from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,
     PINNED_STUDIES_PER_CHAT_CAP,
-    upsert_project_study_summary,
     update_project_study_data,
     get_study_detail_cache,
     upsert_study_detail_cache,

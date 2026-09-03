@@ -30,7 +30,7 @@ function renderApp(s, account) {
     setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setMergeWorkspaceId, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
@@ -48,12 +48,12 @@ function renderApp(s, account) {
     taRef, bottomRef,
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
-    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
+    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
   } = s;
 
@@ -158,6 +158,7 @@ function renderApp(s, account) {
                             <span className="rename-hint">✎</span>
                           </div>
                         )}
+                        {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                         {c.updated_at && (
                           <div className="cr-date">
                             {formatDate(c.updated_at)}
@@ -217,6 +218,7 @@ function renderApp(s, account) {
                             <span className="rename-hint">✎</span>
                           </div>
                         )}
+                        {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                         {c.updated_at && (
                           <div className="cr-date">
                             {formatDate(c.updated_at)}
@@ -318,6 +320,7 @@ function renderApp(s, account) {
                     <span className="rename-hint">✎</span>
                   </div>
                 )}
+                {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                 {c.updated_at && (
                   <div className="cr-date">
                     {formatDate(c.updated_at)}
@@ -375,6 +378,7 @@ function renderApp(s, account) {
                     <span className="rename-hint">✎</span>
                   </div>
                 )}
+                {!!c.is_pinned && <span className="cr-pin" title="Pinned"><PinIcon size={11} /></span>}
                 {c.updated_at && (
                   <div className="cr-date">
                     {formatDate(c.updated_at)}
@@ -408,7 +412,7 @@ function renderApp(s, account) {
       {/* ══════════════════ MAIN ══════════════════════ */}
       <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
-        <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}`}>
+        <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}${isChat ? scrollCollapse.barClass : ''}`}>
           {(view.type === 'browse' || view.type === 'merges') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
@@ -485,7 +489,9 @@ function renderApp(s, account) {
           </div>
         )}
 
-        <div className="content">
+        <div className="content"
+          onWheel={isChat ? scrollCollapse.onWheel : undefined}
+          onScroll={isChat ? scrollCollapse.onScroll : undefined}>
 
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
@@ -505,7 +511,6 @@ function renderApp(s, account) {
                       pendingStudy={pendingMergeStudy}
                       clearPendingStudy={() => setPendingMergeStudy(null)}
                       onClose={() => setMergeWorkspaceId(null)}
-                      embedded
                     />
                   : <div className="merges-detail-empty">Open a workspace to view it here</div>
                 }
@@ -552,7 +557,7 @@ function renderApp(s, account) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /><br />Deep searching sample metadata…</div>}
+              {searching && <div className="state-loading"><InfinityLoader w={100} h={62} /></div>}
 
               {!searching && (
                 <>
@@ -668,7 +673,9 @@ function renderApp(s, account) {
                           onMergeStudy={study => { setPendingMergeStudy(study); openMergePanel(true); }}
                           onOpenStudy={openStudyModal}
                           onViewAllStudies={openSearchResultsPanel}
-                          pinnedStudyIds={pinnedMeta.map(p => p.study_id)} />
+                          pinnedStudyIds={pinnedMeta.map(p => p.study_id)}
+                          steps={m.steps || []}
+                          pendingStep={m.pendingStep} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
@@ -696,11 +703,9 @@ function renderApp(s, account) {
                             <InfinityLoader w={80} h={50} />
                           ) : (!m.isStreaming || m.content) ? (
                             <>
-                              <div
+                              <MarkdownText
                                 className={`msg-bubble${m.isStreaming ? ' streaming' : ''}`}
-                                dangerouslySetInnerHTML={{
-                                  __html: renderMarkdown(m.content || (!m.isStreaming ? '*No response*' : ''))
-                                }}
+                                content={m.content || (!m.isStreaming ? '*No response*' : '')}
                               />
                               {m.isStreaming && m.content && <div style={{marginTop:'6px'}}><InfinityLoader w={64} h={40} /></div>}
                               {!m.isStreaming && m.content && <CopyResponseButton text={m.content} />}
@@ -808,7 +813,10 @@ function renderApp(s, account) {
                     title="Click or type /model to change">
                 {selectedModel}
               </span>
-              <button className="composer-send" onClick={sendMessage} disabled={!canSend}>↑</button>
+              <button className="composer-send" onClick={sending ? stopGenerating : sendMessage}
+                disabled={!sending && !canSend} title={sending ? 'Stop generating' : 'Send'}>
+                {sending ? '■' : '↑'}
+              </button>
             </div>
           </div>
           {compErr && <div className="composer-error">{compErr}</div>}

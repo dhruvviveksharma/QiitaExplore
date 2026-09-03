@@ -50,7 +50,7 @@ class TestDetailEndpointAllowsPublic:
 class TestChatPlannerPathRespectsVisibility:
     """3.3 — Chat planner keyword searches find expected studies and exclude non-public ones.
 
-    Simulates build_where_from_plan output by passing keyword strings to /api/search.
+    Simulates the agent keyword path by passing keyword strings to /api/search.
     """
 
     @pytest.mark.parametrize("keywords,expected_id", CHAT_PLANNER_CASES)

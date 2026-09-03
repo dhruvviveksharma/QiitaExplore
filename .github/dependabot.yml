@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keep GitHub Actions pins fresh (this repo previously rotted on @v2).
+  # Deliberately NOT enabling the pip ecosystem: the range/pin split between
+  # requirements.txt and requirements.prod.txt is intentional.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

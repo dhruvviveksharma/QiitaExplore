@@ -33,8 +33,8 @@ def _header(num_samples, title="A Study", data_types="16S"):
 
 class TestPerStudyBudget:
     def test_flat_constant_on_a_large_model(self, pinned):
-        # gemma: 889,504 chars * 0.65 / 5 = 115,635 -> the 60k constant wins
-        assert pinned._pinned_per_study_budget(5, "gemma") == 60_000
+        # deepseek-v4-flash: 3,642,016 chars * 0.65 / 5 = 473,462 -> the 60k constant wins
+        assert pinned._pinned_per_study_budget(5, "deepseek-v4-flash") == 60_000
 
     def test_clamp_fires_on_a_131k_model(self, pinned, monkeypatch):
         # A synthetic small-context model (131,072 tokens, like the smallest
@@ -55,7 +55,7 @@ class TestPerStudyBudget:
         assert per * 5 < context_budget_chars("test-small-model")
 
     def test_single_pin_gets_the_full_constant_everywhere(self, pinned):
-        for model in ("deepseek-v4-flash", "gemma", "qwen3"):
+        for model in ("deepseek-v4-flash", "glm-5", "minimax-m2"):
             assert pinned._pinned_per_study_budget(1, model) == 60_000
 
 
@@ -68,7 +68,7 @@ class TestInlineAndManifest:
         monkeypatch.setattr(pinned, "_fetch_study_header_cached",
                             lambda sid: _header(42, title=f"Study {sid} title"))
 
-        text = pinned._build_pinned_reports_context([1, 2, 3, 4, 5, 6, 7], "gemma")
+        text = pinned._build_pinned_reports_context([1, 2, 3, 4, 5, 6, 7], "deepseek-v4-flash")
 
         for sid in (1, 2, 3, 4, 5):
             assert f"### Study {sid}: inlined" in text
@@ -82,11 +82,11 @@ class TestInlineAndManifest:
     def test_no_manifest_section_when_everything_is_inlined(self, pinned, monkeypatch):
         monkeypatch.setattr(pinned, "_build_full_samples_block",
                             lambda sid, budget_chars, **kw: f"### Study {sid}")
-        text = pinned._build_pinned_reports_context([1, 2], "gemma")
+        text = pinned._build_pinned_reports_context([1, 2], "deepseek-v4-flash")
         assert "ALSO PINNED" not in text
 
     def test_empty_returns_none(self, pinned):
-        assert pinned._build_pinned_reports_context([], "gemma") is None
+        assert pinned._build_pinned_reports_context([], "deepseek-v4-flash") is None
 
     def test_without_tools_every_study_is_inlined(self, pinned, monkeypatch):
         """Project chat and /pin stream through llm_chat_stream with no tools, so
@@ -95,7 +95,7 @@ class TestInlineAndManifest:
         monkeypatch.setattr(pinned, "_build_full_samples_block",
                             lambda sid, budget_chars, **kw: f"### Study {sid}: inlined")
         text = pinned._build_pinned_reports_context(
-            [1, 2, 3, 4, 5, 6, 7], "gemma", tools_available=False)
+            [1, 2, 3, 4, 5, 6, 7], "deepseek-v4-flash", tools_available=False)
 
         for sid in range(1, 8):
             assert f"### Study {sid}: inlined" in text
@@ -106,11 +106,11 @@ class TestInlineAndManifest:
         seen = []
         monkeypatch.setattr(pinned, "_build_full_samples_block",
                             lambda sid, budget_chars, **kw: seen.append(budget_chars) or "x")
-        pinned._build_pinned_reports_context([1, 2, 3, 4, 5, 6, 7], "gemma",
+        pinned._build_pinned_reports_context([1, 2, 3, 4, 5, 6, 7], "deepseek-v4-flash",
                                              tools_available=False)
         # 7 studies share the window, not 5 — otherwise 7 x 60k would be handed out.
         assert len(seen) == 7
-        assert all(b == pinned._pinned_per_study_budget(7, "gemma") for b in seen)
+        assert all(b == pinned._pinned_per_study_budget(7, "deepseek-v4-flash") for b in seen)
 
     def test_truncation_notice_omits_the_hatch_without_tools(self, pinned, monkeypatch):
         monkeypatch.setattr(pinned, "_fetch_study_header_cached", lambda sid: _header(4736))
@@ -135,7 +135,6 @@ class TestFullSamplesCache:
 
     @pytest.fixture
     def cached(self, qfetch, monkeypatch):
-        import json
         store = {}
         monkeypatch.setattr(qfetch, "get_study_detail_cache", lambda sid: store.get(int(sid)))
         def _upsert(sid, *a, full_samples_json=None, full_samples_limit=None, **kw):

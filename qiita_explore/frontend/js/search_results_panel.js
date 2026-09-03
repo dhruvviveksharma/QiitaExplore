@@ -1,6 +1,13 @@
-// Right-hand drawer listing search_studies result_studies in relevance order.
+// Right-hand drawer listing a search_studies result set in relevance order.
+// Deep searches can carry hundreds of matches, so rows render in windows of
+// _PANEL_PAGE with a show-more button — no virtualization machinery needed.
+const _PANEL_PAGE = 100;
+
 function SearchResultsPanel({ studies, title, detail, closing, onClose, onExited, onPin, onMerge, onOpen, isPinned }) {
   const list = studies || [];
+  const [shown, setShown] = useState(_PANEL_PAGE);
+  useEffect(() => { setShown(_PANEL_PAGE); }, [studies]);
+  const visible = list.slice(0, shown);
   const exited = useRef(false);
   const finish = () => {
     if (exited.current) return;
@@ -41,7 +48,7 @@ function SearchResultsPanel({ studies, title, detail, closing, onClose, onExited
           <p className="search-results-empty">No studies in this result set.</p>
         ) : (
           <div className="search-results-list">
-            {list.map((s, i) => (
+            {visible.map((s, i) => (
               <div key={s.study_id} className="search-results-row">
                 <span className="search-results-rank" aria-label={`Rank ${i + 1}`}>#{i + 1}</span>
                 <div className="search-results-card-wrap">
@@ -55,6 +62,11 @@ function SearchResultsPanel({ studies, title, detail, closing, onClose, onExited
                 </div>
               </div>
             ))}
+            {shown < list.length && (
+              <button className="show-more-btn" onClick={() => setShown(n => n + _PANEL_PAGE)}>
+                Show {Math.min(_PANEL_PAGE, list.length - shown)} more ({list.length - shown} remaining)
+              </button>
+            )}
           </div>
         )}
       </div>

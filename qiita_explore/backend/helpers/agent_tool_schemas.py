@@ -19,7 +19,8 @@ TOOL_SCHEMAS = [
             "name": "search_studies",
             "description": (
                 "Search the Qiita public microbiome database for studies. "
-                "Issue EXACTLY ONE call per user request — never multiple calls with different filters. "
+                "Up to 5 calls per user message — start with one well-filled call and only "
+                "search again with meaningfully different keywords when results are thin. "
                 "Fill every typed slot you can identify from the query with ALL synonyms for that concept. "
                 "The backend pools all slots into one ranked search, so filling generously never over-narrows. "
                 "Include ALL relevant terms from the full conversation so refinements accumulate. "
@@ -55,7 +56,7 @@ TOOL_SCHEMAS = [
                         "items": {"type": "string"},
                         "description": (
                             "Anatomical location or environmental niche. Include ontology synonyms. "
-                            "e.g. gut → [\"gut\",\"intestine\",\"colon\",\"gastrointestinal\",\"GI tract\","
+                            "e.g. gut → [\"gut\",\"intestine\",\"gastrointestinal\",\"GI tract\","
                             "\"cecum\",\"ileum\",\"jejunum\",\"feces\",\"stool\",\"fecal\",\"host-associated\"]. "
                             "e.g. soil → [\"soil\",\"rhizosphere\",\"sediment\",\"terrestrial\",\"earth\"]"
                         ),
@@ -139,7 +140,12 @@ TOOL_SCHEMAS = [
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max studies to return (1–20, default 10).",
+                        "description": (
+                            "How many studies to feature in the chat reply (1–10, "
+                            "default 10). The complete ranked list of every match is "
+                            "always shown to the user separately in the results panel — "
+                            "a larger limit is not a way to get more results."
+                        ),
                     },
                 },
                 "required": [],
@@ -237,7 +243,7 @@ PROJECT_TOOL_SCHEMAS = [
             "name": "search_project_studies",
             "description": (
                 "Search studies saved in this project only. "
-                "Issue EXACTLY ONE call per user request. "
+                "Up to 5 calls per user message — only search again with different keywords. "
                 "Empty keywords lists all project studies. "
                 "You cannot search the public Qiita database from project chat."
             ),

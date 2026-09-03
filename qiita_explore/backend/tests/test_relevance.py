@@ -2,13 +2,15 @@
 
 from unittest.mock import patch
 
-import pytest
 
 from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()
 
-from services.study_service import build_relevance_score, build_where_from_plan, build_tag_filter
+from services.study_service import (
+    DOMAIN_SYNONYM_GROUPS, build_keyword_lateral, build_tag_filter,
+    expand_keyword_variants,
+)
 from services.relevance import (
     RELEVANCE_WEIGHTS,
     score_study_text_fields,
@@ -23,44 +25,81 @@ from services.relevance import (
 from services.llm import browse_query_to_sql
 
 
-class TestBuildRelevanceScore:
-    def test_new_weight_literals(self):
-        expr, params = build_relevance_score(["mouse", "gut"])
-        assert f"THEN {RELEVANCE_WEIGHTS['title']}" in expr
-        assert f"THEN {RELEVANCE_WEIGHTS['alias']}" in expr
-        assert f"THEN {RELEVANCE_WEIGHTS['pi']}" in expr
-        assert f"THEN {RELEVANCE_WEIGHTS['abstract']}" in expr
+class TestBuildKeywordLateral:
+    def test_weight_literals(self):
+        sql, _ = build_keyword_lateral(["mouse", "gut"])
+        assert f"THEN {RELEVANCE_WEIGHTS['title']}" in sql
+        assert f"THEN {RELEVANCE_WEIGHTS['alias']}" in sql
+        assert f"THEN {RELEVANCE_WEIGHTS['pi']}" in sql
+        assert f"THEN {RELEVANCE_WEIGHTS['abstract']}" in sql
 
     def test_single_array_param(self):
-        _, params = build_relevance_score(["alpha", "beta", "gamma"])
-        assert len(params) == 1
-        assert isinstance(params[0], list)
+        sql, params = build_keyword_lateral(["alpha", "beta", "gamma"])
+        assert params == [["alpha", "beta", "gamma"]]
+        assert sql.count("%s") == 1
 
     def test_literal_pct_escaped_for_psycopg2(self):
         """Bare % in SQL + params → IndexError in psycopg2; wildcards must be %%."""
-        expr, params = build_relevance_score(["skin microbiome", "forensic"])
-        assert "('%%' || kw || '%%')" in expr
-        assert expr.count("%s") == 1
+        sql, params = build_keyword_lateral(["skin microbiome", "forensic"])
+        assert "('%%' || kw || '%%')" in sql
         # Simulate psycopg2 placeholder interpolation — must not raise IndexError.
-        formatted = expr % tuple(params)
+        formatted = sql % tuple(params)
         assert "ILIKE ('%' || kw || '%')" in formatted
 
+    def test_aux_match_covers_affiliation_and_lab(self):
+        sql, _ = build_keyword_lateral(["mouse"])
+        bool_or = sql[sql.index("BOOL_OR"):]
+        assert "sp_pi.affiliation" in bool_or
+        assert "sp_lab.name" in bool_or
+        # pi.name is scored (relevance > 0 covers it), not in aux_match
+        assert "sp_pi.name" in sql[:sql.index("BOOL_OR")]
 
-class TestBuildWhereFromPlan:
-    def test_single_array_param(self):
-        clause, params = build_where_from_plan({"keywords": ["mouse", "gut"]})
-        assert "unnest(%s::text[])" in clause
-        assert len(params) == 1
-        assert isinstance(params[0], list)
+    def test_no_reexpansion(self):
+        # Expansion is the caller's job — the builder binds keywords as given.
+        _, params = build_keyword_lateral(["mouse"])
+        assert params == [["mouse"]]
 
-    def test_literal_pct_escaped_for_psycopg2(self):
-        clause, params = build_where_from_plan(
-            {"keywords": ["skin microbiome", "forensic"]}
-        )
-        assert "('%%' || kw || '%%')" in clause
-        assert clause.count("%s") == 1
-        formatted = clause % tuple(params)
-        assert "ILIKE ('%' || kw || '%')" in formatted
+    def test_empty_when_no_usable_keywords(self):
+        assert build_keyword_lateral([]) == ("", [])
+        assert build_keyword_lateral(None) == ("", [])
+        assert build_keyword_lateral(["a"]) == ("", [])
+
+
+class TestDomainSynonymExpansion:
+    def test_group_members_added(self):
+        out = expand_keyword_variants(["gut"])
+        assert "intestine" in out
+        assert "stool" in out
+
+    def test_bidirectional(self):
+        assert "gut" in expand_keyword_variants(["stool"])
+
+    def test_token_lookup_inside_phrase(self):
+        out = expand_keyword_variants(["gut microbiome"])
+        assert "intestine" in out
+        assert "microbiota" in out
+
+    def test_case_insensitive_dedup(self):
+        out = expand_keyword_variants(["Mouse", "mouse"])
+        assert [t for t in out if t.lower() == "mouse"] == ["Mouse"]
+        assert "mice" in out
+
+    def test_direct_terms_survive_cap(self):
+        # Domain padding (and each term's OWN morphological variant) must
+        # never push a later direct user term past the 80 cap — 45 direct
+        # terms already exceeds what pass-1-interleaved-with-variants could
+        # fit (41 fillers + their "+s" plurals alone is 82 slots).
+        direct = [f"term{i:02d}" for i in range(41)] + ["gut", "soil", "IBD", "cancer"]
+        out = expand_keyword_variants(direct)
+        assert len(out) <= 80
+        for t in direct:
+            assert t in out
+
+    def test_no_member_shorter_than_3_chars(self):
+        # Bare "GI" as ILIKE '%gi%' matches fungi/aging/region — never allow it.
+        for group in DOMAIN_SYNONYM_GROUPS:
+            for member in group:
+                assert len(member) >= 3, member
 
 
 class TestBuildPiRequiredFilter:

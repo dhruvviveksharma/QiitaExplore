@@ -84,6 +84,7 @@ qiita_db/support_files/patches/test_db_sql/91.sql
 *.log
 
 # Study data files
+*.biom
 *.qz
 *.qza
 *.qzv
@@ -92,6 +93,8 @@ qiita_db/support_files/patches/test_db_sql/91.sql
 *.fq.gz
 *.fq
 *.txt
+# `*.txt` above is for study-data dumps; requirements manifests are code.
+!requirements*.txt
 *.pdf
 test_data_studies/
 qiita_config.cfg

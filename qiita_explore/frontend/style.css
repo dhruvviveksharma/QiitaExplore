@@ -264,6 +264,7 @@ input, textarea { font-family: var(--sans); }
   min-width: 0; flex: 1;
 }
 .cr-date  { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--text-3); flex-shrink: 0; margin-left: 4px; }
+.cr-pin   { display: flex; align-items: center; color: var(--text-3); flex-shrink: 0; margin-left: 6px; }
 
 .cr-del {
   opacity: 0;
@@ -291,6 +292,12 @@ input, textarea { font-family: var(--sans); }
 }
 .chat-row:hover .cr-more { opacity: 1; }
 .cr-more:hover { background: var(--border-soft); color: var(--accent); }
+/* Faded box shown the moment the menu opens (distinct from the gray :hover
+   state, so the click visibly "latches"), kept while the menu is open, and
+   dropped as soon as a hover-away close begins — not after the fade ends. */
+.cr-more-open, .chat-row .cr-more-open {
+  opacity: 1; background: var(--accent-soft); color: var(--accent);
+}
 
 /* Shared dropdown-panel convention (see CLAUDE.md "Established Patterns:
    Dropdown UI") — despite the cr- ("chat-row") prefix from where this was
@@ -307,7 +314,15 @@ input, textarea { font-family: var(--sans); }
   border-radius: var(--radius-l);
   box-shadow: 0 8px 26px rgba(0,0,0,.13), 0 1px 3px rgba(0,0,0,.07);
   padding: 4px 0;
+  animation: cr-menu-in .12s ease;
+  transition: opacity .13s ease, transform .13s ease;
 }
+@keyframes cr-menu-in {
+  from { opacity: 0; transform: translateY(-3px); }
+}
+/* Applied by useDropdown during the hover-away fade; the panel unmounts
+   once the transition finishes. */
+.cr-menu-closing { opacity: 0; transform: translateY(-3px); pointer-events: none; }
 .cr-menu-item {
   width: 100%; text-align: left; padding: 8px 14px;
   font-size: 12.5px; color: var(--text-2);
@@ -406,11 +421,18 @@ input, textarea { font-family: var(--sans); }
   padding: 0 8px 0 16px;
   gap: 10px;
   flex-shrink: 0;
+  transition: height var(--t);
 }
 /* With a pinned bar below, the two stack into one shape: square the join and
    drop the border that would otherwise draw a line across the middle. */
 .topbar.has-sources-bar { border-radius: var(--radius-m) var(--radius-m) 0 0; border-bottom: none; }
-.topbar-title { font-size: 14px; font-weight: 500; color: var(--text); }
+/* Compact state (useScrollCollapse, chat view only): a deliberate scroll-down
+   shrinks the bar; scrolling back up or reaching the top restores it. */
+.topbar.compact { height: 34px; }
+.topbar.compact .topbar-title { font-size: 12px; }
+.topbar.compact .auth-avatar { width: 26px; height: 26px; font-size: 11px; }
+.topbar.compact .topbar-badge { display: none; }
+.topbar-title { font-size: 14px; font-weight: 500; color: var(--text); transition: font-size var(--t); }
 .topbar-title.editable { cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-title.editable:hover .rename-hint { opacity: 1; }
 .topbar-title-input {
@@ -721,26 +743,6 @@ input, textarea { font-family: var(--sans); }
   transition: background var(--t);
 }
 .btn-isc-merge:hover { background: var(--accent-h); }
-/* ── Query plan chip ─────────────────────────────────────────── */
-.msg-query-plan {
-  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px;
-  margin-bottom: 7px; padding: 4px 8px;
-  background: var(--surface-2, #f3f4f6); border-radius: 6px;
-  font-size: 11px; font-family: monospace; color: var(--text-3);
-  max-width: 100%;
-}
-.qp-icon { font-style: normal; color: var(--accent); flex-shrink: 0; }
-.qp-desc { color: var(--text-2); font-weight: 500; }
-.qp-keywords { display: inline-flex; flex-wrap: wrap; gap: 3px; }
-.qp-kw-chip {
-  padding: 1px 6px; border-radius: 10px;
-  background: var(--accent-muted, rgba(99,102,241,.12));
-  color: var(--accent); font-size: 10px; white-space: nowrap;
-}
-.qp-mode {
-  margin-left: 2px; color: var(--text-3);
-  font-size: 10px; text-transform: lowercase; opacity: .7;
-}
 
 /* ── Markdown rendering inside msg-bubble ────────────────────── */
 .msg-bubble p { margin: 0 0 0.55em; line-height: 1.65; }
@@ -1185,7 +1187,7 @@ input, textarea { font-family: var(--sans); }
 .merge-ws-study-title { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-ws-dtypes { font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-ws-no-studies { font-size: 12px; color: var(--text-3); }
-.merges-empty, .merges-loading { padding: 40px; text-align: center; color: var(--text-2); }
+.merges-empty { padding: 40px; text-align: center; color: var(--text-2); }
 .merge-ws-card.active { border-color: var(--accent); background: var(--accent-soft); }
 
 /* ── Merges two-column layout ────────────────────────────────── */
@@ -1203,7 +1205,7 @@ input, textarea { font-family: var(--sans); }
 
 /* ── Browse panel ────────────────────────────────────────────── */
 .browse-panel {
-  max-width: 860px;
+  max-width: 1040px; /* wide enough for 3 columns of .studies-grid's 320px cards */
   width: 100%;  /* same auto-margin flex-item caveat as .chat-messages */
   margin: 0 auto;
   padding: 28px 24px;
@@ -1220,6 +1222,7 @@ input, textarea { font-family: var(--sans); }
   padding: 9px 14px;
   font-size: 13.5px;
   background: var(--surface);
+  color: var(--text);
   outline: none;
   transition: border-color var(--t);
 }
@@ -1262,9 +1265,6 @@ input, textarea { font-family: var(--sans); }
 .sql-toggle input { accent-color: var(--accent); }
 .sql-block { background: #0a1929; border-radius: var(--radius-s); padding: 10px 14px; font-family: monospace; font-size: 12px; color: #7ec8e3; }
 .pi-filter-line { font-size: 12px; color: var(--text-2); margin: 6px 0; }
-.msg-sql-details { margin: 2px 0 4px; }
-.msg-sql-summary { cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none; }
-.msg-sql-details .sql-block { margin-top: 4px; }
 
 .browse-count { font-size: 12px; color: var(--text-3); }
 
@@ -1321,7 +1321,7 @@ input, textarea { font-family: var(--sans); }
 }
 .study-card-pi { font-size: 11.5px; color: var(--text-3); border-top: 1px solid var(--border-soft); padding-top: 7px; }
 
-.state-loading { text-align: center; padding: 40px; color: var(--text-3); font-size: 13px; }
+.state-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; color: var(--text-3); font-size: 13px; }
 .spinner {
   display: inline-block; width: 20px; height: 20px;
   border: 2px solid var(--border); border-top-color: var(--accent);
@@ -1413,9 +1413,6 @@ input, textarea { font-family: var(--sans); }
 .modal-ws-msg { font-size: 0.8rem; color: var(--text-3); }
 .modal-id { font-size: 16px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 .modal-title { font-family: var(--sans); font-weight: 600; font-size: 17px; line-height: 1.35; margin-bottom: 8px; }
-.modal-section { margin-bottom: 14px; }
-.modal-section h4 { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing:.07em; color: var(--text-3); margin-bottom: 5px; }
-.modal-section p { font-size: 13.5px; color: var(--text-2); line-height: 1.65; }
 .modal-card .collapsible-header {
   font-size: 10.5px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .07em; color: var(--text-3);
@@ -1985,7 +1982,7 @@ input, textarea { font-family: var(--sans); }
   font-size: 12.5px; font-weight: 650;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(0,0,0,.06);
-  transition: background var(--t);
+  transition: background var(--t), width var(--t), height var(--t);
 }
 .auth-avatar:hover { background: var(--accent-h); }
 .auth-account-menu {

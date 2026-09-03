@@ -70,7 +70,6 @@ def _move_chat_between_scopes(
     """
     resolved_user = _resolve_user(user_id)
     src_chats_tbl = "project_chats" if from_scope == SCOPE_PROJECT else "global_chats"
-    dst_chats_tbl = "project_chats" if to_scope == SCOPE_PROJECT else "global_chats"
     src_msgs_tbl  = "project_chat_messages" if from_scope == SCOPE_PROJECT else "global_chat_messages"
     dst_msgs_tbl  = "project_chat_messages" if to_scope == SCOPE_PROJECT else "global_chat_messages"
 
@@ -98,7 +97,7 @@ def _move_chat_between_scopes(
             return None
         now = _now()
 
-        if to_scope == "project":
+        if to_scope == SCOPE_PROJECT:
             conn.execute(
                 """
                 INSERT INTO project_chats(

@@ -45,8 +45,8 @@ The buffer-and-split-on-blank-line detail matters: a frame can arrive across two
 | `segment_tool_call`   | agentic    | A tool invocation began                                  |
 | `segment_tool_result` | agentic    | That invocation returned                                 |
 | `token`               | both       | One chunk of assistant text                              |
-| `step_start`          | pin/report/context prep | A named phase began (`build_context`, `load_samples`, …) |
-| `step_done`           | pin/report/context prep | That phase finished                                      |
+| `step_start`          | pin/report/context prep, agent loop (`synthesis`), `llm_retry` (`retry`) | A named phase began (`build_context`, `load_samples`, `synthesis`, …) |
+| `step_done`           | pin/report/context prep, `llm_retry` | That phase finished (`synthesis` has no `step_done`; `done` closes it) |
 | `ui`                  | both       | A structured render payload replaces the text body       |
 | `done`                | both       | Turn complete; carries title and pinned studies          |
 | `error`               | both       | Turn failed; carries a user-facing message               |
@@ -65,7 +65,7 @@ Both streams use the same agent segment contract. The difference is scope and wh
 | --------------------------- | ---------------------- | --------------------------- |
 | Agentic path                | always (`PROJECT_TOOL_SCHEMAS`) | always (`TOOL_SCHEMAS`) |
 | `agent_start` / `segment_*` | yes                    | yes                         |
-| `step_start` / `step_done`  | context prep, pin, report | pinned_reports, pin, report |
+| `step_start` / `step_done`  | context prep, pin, report, agent synthesis, retry | pinned_reports, pin, report, agent synthesis, retry |
 | Tool search surface         | project SQLite only    | public Qiita DB             |
 | Frontend handlers wired     | `onTokenAgent`, segment handlers | same                        |
 
@@ -238,7 +238,7 @@ With two not-done segments sharing a `name`, the server would complete one and t
 
 > **The invariant that makes these equivalent:** the synthetic `name` is suffixed with the provider's call id, so **no two live tool segments ever share a name**. With at most one match, first-match and every-match are the same operation.
 >
-> This holds today. It would break if tool naming were changed to drop the call-id suffix, or if the same tool were invoked twice concurrently within one assistant turn. The [one-search invariant](05-agent.md) reduces the exposure but does not eliminate it — nothing prevents the model from requesting two `get_study_report` calls in a single turn, and the current loop executes them sequentially, which is what keeps this safe.
+> This holds today. It would break if tool naming were changed to drop the call-id suffix, or if the same tool were invoked twice concurrently within one assistant turn. The [search budget](05-agent.md) reduces the exposure but does not eliminate it — nothing prevents the model from requesting two `get_study_report` calls in a single turn, and the current loop executes them sequentially, which is what keeps this safe.
 >
 > Making the client `break` on first match would remove the dependence on that invariant, at no cost.
 
@@ -277,6 +277,8 @@ Marking every text segment `done` kills the streaming cursor; copying into `m.ui
 On reload, `hydrateChatCache` renames each message's `ui_payload` to `ui` and **sets** `segments: null` — so hydrated messages take the `m.ui.segments` fallback path described above. It is a no-op if the chat is already cached, so history is fetched once per chat per session.
 
 `done` also carries the chat title and the authoritative pinned-study list, which are reconciled into local state without a refetch. When `pinned_studies` is absent, existing pins are left untouched rather than cleared — the distinction between "no pins" and "not reported" is preserved.
+
+The title itself starts as a fast, deterministic truncation of the first message; a background thread (`helpers/chat_title.py`) generates a real title from it during that same turn, and `helpers/chat_turn.py` joins that thread — for at most 5s — right before building the `done` payload, so the LLM title can ride along on the same frame instead of requiring a second round trip. If the join times out, `done` reports the provisional truncation instead, and the LLM title (if it lands afterward) surfaces only on the next reload or chat-list fetch.
 
 Two other `ui.kind` values round-trip through the same mechanism: `samples_report` (a study report bubble) and `systems_status`.
 

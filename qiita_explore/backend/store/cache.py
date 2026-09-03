@@ -2,31 +2,13 @@
 
 from datetime import datetime
 
-from .db import _conn, _as_dict, _now, _resolve_user
-from .crud import _project_exists
+from .db import _conn, _as_dict, _now
 
 SCOPE_PROJECT = "project"
 SCOPE_GLOBAL  = "global"
 PINNED_STUDIES_PER_CHAT_CAP = 10
 
 _STUDY_DETAIL_CACHE_TTL_HOURS = 6
-
-
-def upsert_project_study_summary(project_id: str, user_id: str, study_id: int, summary_text: str):
-    resolved_user = _resolve_user(user_id)
-    with _conn() as conn:
-        if not _project_exists(conn, project_id, resolved_user):
-            return False
-        conn.execute(
-            """
-            UPDATE project_studies
-            SET summary_text = ?, updated_at = ?
-            WHERE project_id = ? AND study_id = ?
-            """,
-            (summary_text or "", _now(), project_id, int(study_id)),
-        )
-        conn.commit()
-    return True
 
 
 def update_project_study_data(

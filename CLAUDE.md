@@ -31,7 +31,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 | Frontend   | React (Babel standalone, no build step)  | `qiita_explore/frontend/js/` |
 | Local DB   | SQLite under `/ddn_scratch/.../QiitaExploreDB/{deployment\|dev}/` | set by `detect_env.sh` via `QIITA_EXPERIMENT_DB_PATH` |
 | Qiita DB   | PostgreSQL (read-only via `TRN`)         | `qiita_db.sql_connection` |
-| LLM        | gemma3 via NRP-Nautilus (OpenAI-compat)  | `qiita_explore/backend/helpers/llm_helpers.py` |
+| LLM        | minimax-m2 / deepseek-v4-flash / glm-5 via NRP-Nautilus, plus Anthropic Claude (OpenAI-compat) | `qiita_explore/backend/helpers/llm_helpers.py` |
 
 **Backend runtime:** We do not run `python run.py` or Flask’s dev server. Start and test the API only with `bash qiita_explore/start_barnacle.sh` (Gunicorn, 4 workers, 2 threads, `gthread`).
 

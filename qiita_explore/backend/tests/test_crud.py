@@ -1,5 +1,4 @@
 """Tests for CRUD operations on projects."""
-import pytest
 
 
 class TestProjectCRUD:

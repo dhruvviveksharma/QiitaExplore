@@ -290,7 +290,7 @@ class TestLegacyClaim:
 
     def test_second_claim_conflicts(self, fresh_db, monkeypatch, crud):
         import config
-        from store.legacy_claim import claim_legacy_default, LegacyClaimConflict
+        from store.legacy_claim import claim_legacy_default
         monkeypatch.setattr(config, "QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", 42)
         crud.create_project("default", "Legacy Proj")
         claim_legacy_default("42")

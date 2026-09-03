@@ -1,5 +1,4 @@
 """Tests for project studies functionality."""
-import pytest
 
 
 class TestProjectStudies:

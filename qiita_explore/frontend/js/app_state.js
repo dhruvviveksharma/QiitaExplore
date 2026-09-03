@@ -69,6 +69,7 @@ function useAppState() {
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
+  const scrollCollapse = useScrollCollapse(view.chatId);
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
@@ -241,7 +242,8 @@ function useAppState() {
   const newProjChat = async (projId) => {
     const chat = await createProjChatAndSeed(projId, 'New chat').catch(() => null);
     if (!chat) return;
-    setOpenProject(prev => prev ? { ...prev, chats: [{ ...chat, messages: [] }, ...(prev.chats || [])] } : prev);
+    // sortChatsForDisplay keeps pinned chats above the new (unpinned) one
+    setOpenProject(prev => prev ? { ...prev, chats: sortChatsForDisplay([{ ...chat, messages: [] }, ...(prev.chats || [])]) } : prev);
     setView({ type: 'project-chat', projId, chatId: chat.chat_id });
     setCompErr('');
   };
@@ -489,24 +491,29 @@ function useAppState() {
       };
     });
 
-  // `fallbackTitle` is only adopted when the chat's title is still the
-  // auto-generated default — a chat the user already renamed (or one whose
-  // title was already auto-set by a prior turn) is left untouched, so
-  // finishing a later message never clobbers a rename.
-  const applyStreamDone = (chatId, fallbackTitle, pinnedList, pinnedMeta) => {
-    patchLast(chatId, m => {
-      const next = { ...m, isStreaming: false, pendingStep: null };
-      if (m.segments !== null) {
-        const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
-        next.segments = frozen;
-        next.ui = { kind: 'agent_segments', segments: frozen };
-      }
-      return next;
-    });
+  // Shared by normal completion (applyStreamDone) and an early Stop: ends
+  // the message's streaming state while keeping whatever content/segments
+  // already arrived, rather than requiring a `done` event.
+  const _finalizeStreamedMessage = (m) => {
+    const next = { ...m, isStreaming: false, pendingStep: null };
+    if (m.segments !== null) {
+      const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
+      next.segments = frozen;
+      next.ui = { kind: 'agent_segments', segments: frozen };
+    }
+    return next;
+  };
+
+  // The server is the source of truth for the title: `done` always carries
+  // the chat's current stored value — the provisional first-60-chars title,
+  // an LLM-generated replacement, or a rename that landed mid-turn — so
+  // applying it here can never clobber a rename.
+  const applyStreamDone = (chatId, payload) => {
+    patchLast(chatId, _finalizeStreamedMessage);
     setChatCache(prev => {
       const cur = prev[chatId] || {};
-      const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
-      const nextTitle = cur.title === 'New chat' ? fallbackTitle : cur.title;
+      const nextMeta = payload?.pinned_study_meta != null ? payload.pinned_study_meta : (cur.pinnedStudyMeta || []);
+      const nextTitle = payload?.title ?? cur.title;
       return { ...prev, [chatId]: { ...cur, title: nextTitle, pinnedStudyMeta: nextMeta } };
     });
   };
@@ -675,7 +682,7 @@ function useAppState() {
         pinnedStudyMeta: chat.pinned_study_meta || [],
       },
     }));
-    setGlobalChats(prev => [chat, ...prev]);
+    setGlobalChats(prev => sortChatsForDisplay([chat, ...prev]));
     return chat;
   };
 
@@ -716,6 +723,10 @@ function useAppState() {
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
 
+    // Visible in the catch block so a Stop (AbortError) can finalize the
+    // in-flight message for whichever chat this send was targeting.
+    let chatId = null;
+
     try {
       // ── Normalize browse → new global chat ──────────────────────────────────
       let workView = view;
@@ -731,7 +742,7 @@ function useAppState() {
 
       // ── /systems ────────────────────────────────────────────────────────────
       if (/^\/systems\b/i.test(msg)) {
-        const chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
+        chatId = (workView.type === 'project-chat' || workView.type === 'global-chat')
           ? await ensureChatId(workView, '/systems')
           : null;
         if (!chatId) return;
@@ -746,7 +757,7 @@ function useAppState() {
 
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
-        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
+        chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -763,19 +774,18 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
-              setOpenProject(prev => prev ? {
+              applyStreamDone(chatId, payload);
+              if (payload?.title) setOpenProject(prev => prev ? {
                 ...prev,
                 chats: (prev.chats || []).map(c =>
-                  c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c),
+                  c.chat_id === chatId ? { ...c, title: payload.title } : c),
               } : prev);
             },
           },
         );
 
       } else if (workView.type === 'global-chat') {
-        const chatId = await ensureChatId(workView, truncateTitle(displayMsg));
+        chatId = await ensureChatId(workView, truncateTitle(displayMsg));
         optimisticAppend(chatId, displayMsg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
@@ -793,20 +803,27 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_studies ?? null, payload?.pinned_study_meta ?? null);
-              setGlobalChats(prev => prev.map(c =>
-                c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c));
+              applyStreamDone(chatId, payload);
+              if (payload?.title) setGlobalChats(prev => prev.map(c =>
+                c.chat_id === chatId ? { ...c, title: payload.title } : c));
             },
           },
         );
       }
     } catch (e) {
-      if (e.name !== 'AbortError') setCompErr(e.message || 'Failed to send');
+      if (e.name === 'AbortError') {
+        // User clicked Stop: end the message's streaming state but keep
+        // whatever content/segments already arrived (no `done` event fires).
+        if (chatId) patchLast(chatId, _finalizeStreamedMessage);
+      } else {
+        setCompErr(e.message || 'Failed to send');
+      }
     } finally {
       setSending(false);
     }
   };
+
+  const stopGenerating = () => abortRef.current?.abort();
 
   // ─── modal ────────────────────────────────────────────────────────────────────
   const openStudyModal = async (study) => {
@@ -911,7 +928,7 @@ function useAppState() {
     setQuery, setResults, setSearched, setSqlQuery, setAppliedFilters, setShowSql,
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
-    setMergeWorkspaceId, setShowMergePanel, setPendingMergeStudy,
+    setMergeWorkspaceId, setPendingMergeStudy,
     setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
@@ -932,13 +949,13 @@ function useAppState() {
     // handlers
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
-    unpinStudy, pinStudy, sendMessage, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     // derived
-    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
+    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
   };
 }

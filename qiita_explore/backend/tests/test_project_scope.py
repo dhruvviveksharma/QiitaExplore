@@ -127,24 +127,24 @@ class TestProjectTools:
 
 
 class TestAgentDedup:
-    def test_search_studies_returns_dedup_flag(self):
+    def test_search_studies_consumes_a_budget_slot(self):
         import helpers.agent as agent_mod
-        mock_result = MagicMock(text="ok", label="L", detail="D", ui_payload=None)
+        mock_result = MagicMock(text="ok", label="L", detail="D", ui_payload=None, executed=True)
         with patch.object(agent_mod, "execute_tool", return_value=mock_result):
             events, retval = _collect(agent_mod._execute_tool_call(
                 "search_studies", {"keywords": ["a"]}, "id0001",
                 scope=SCOPE_GLOBAL, chat_id="c", deep_search=False,
-                search_already_done=False))
+                search_calls_used=0))
         assert retval[1] is True
 
-    def test_duplicate_search_skipped_when_already_done(self):
+    def test_search_skipped_when_budget_exhausted(self):
         import helpers.agent as agent_mod
         events, retval = _collect(agent_mod._execute_tool_call(
             "search_project_studies", {"keywords": ["a"]}, "id0002",
             scope=SCOPE_PROJECT, chat_id="c", deep_search=False,
-            search_already_done=True))
-        assert "Only one" in retval[0]
-        assert retval[1] is True
+            search_calls_used=5))
+        assert "max 5" in retval[0]
+        assert retval[1] is False
 
 
 def _collect(gen):

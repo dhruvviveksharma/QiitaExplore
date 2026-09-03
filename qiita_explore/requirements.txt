@@ -5,6 +5,7 @@ python-dotenv>=1.0.0
 
 # LLM client
 openai>=1.40,<3.0
+anthropic>=0.40,<2.0
 
 # Data stack (transitive dependency of biom-format)
 numpy<2.0

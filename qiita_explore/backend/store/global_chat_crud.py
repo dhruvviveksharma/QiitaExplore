@@ -3,8 +3,8 @@ to keep crud.py under the 500-line cap."""
 
 import uuid
 
-from .db import _conn, _as_dict, _now, _resolve_user, _chat_title
-from .crud import _decode_ui, _insert_chat_message_pair, _resolved_chat_title
+from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
+from .crud import _decode_ui, _insert_chat_message_pair
 
 
 def list_global_chats(user_id: str, limit: int = 200, include_archived: bool = False):
@@ -47,7 +47,7 @@ def global_chat_exists(user_id: str, chat_id: str) -> bool:
     return row is not None
 
 
-def get_global_chat(user_id: str, chat_id: str):
+def get_global_chat(user_id: str, chat_id: str, include_messages: bool = True):
     from store.cache import SCOPE_GLOBAL, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -62,7 +62,10 @@ def get_global_chat(user_id: str, chat_id: str):
         if row is None:
             return None
         chat = _as_dict(row)
-        chat["messages"] = _load_global_messages(conn, chat_id)
+        # include_messages=False skips the full transcript load + per-message
+        # ui_payload JSON decode — the stream routes only need ownership/meta.
+        if include_messages:
+            chat["messages"] = _load_global_messages(conn, chat_id)
         meta = _load_pinned_study_meta(conn, chat_id, SCOPE_GLOBAL)
         chat["pinned_study_meta"] = meta
         chat["pinned_studies"] = [m["study_id"] for m in meta]
@@ -93,7 +96,7 @@ def append_global_chat_messages(
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         row = conn.execute(
-            "SELECT title FROM global_chats WHERE user_id = ? AND chat_id = ?",
+            "SELECT 1 FROM global_chats WHERE user_id = ? AND chat_id = ?",
             (resolved_user, chat_id),
         ).fetchone()
         if row is None:
@@ -104,10 +107,13 @@ def append_global_chat_messages(
             conn, "global_chat_messages", chat_id,
             user_content, assistant_content, assistant_ui_payload, now,
         )
-        title = _resolved_chat_title(row["title"], user_content)
+        # Atomic conditional write, not a read-then-write: a background
+        # chat-title job (helpers/chat_title.py) may commit an LLM-generated
+        # title concurrently, and a stale read here would clobber it.
         conn.execute(
-            "UPDATE global_chats SET title = ?, updated_at = ? WHERE user_id = ? AND chat_id = ?",
-            (title, now, resolved_user, chat_id),
+            "UPDATE global_chats SET title = CASE WHEN title = ? THEN ? ELSE title END, "
+            "updated_at = ? WHERE user_id = ? AND chat_id = ?",
+            (UNTITLED, _chat_title(user_content), now, resolved_user, chat_id),
         )
         conn.commit()
 

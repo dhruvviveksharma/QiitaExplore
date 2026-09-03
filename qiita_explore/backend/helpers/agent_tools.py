@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from services.study_service import (
-    build_where_from_plan, search_studies_with_sql,
+    search_studies_with_sql,
     detect_data_types, expand_keyword_variants,
 )
 from services.relevance import (
@@ -29,6 +29,9 @@ class ToolResult:
     label: str                         # Shown in step_done UI
     detail: str = ""                   # Shown as sub-label in step_done UI
     ui_payload: Optional[dict] = None  # If set, emitted as a `ui` SSE event
+    executed: bool = True              # False when no real work happened (e.g.
+                                       # empty-input early return) — such calls
+                                       # must not consume a search-budget slot.
 
 
 def _result_studies(studies, via=None):
@@ -49,25 +52,32 @@ def _result_studies(studies, via=None):
     ]
 
 
+def _as_str_list(value):
+    """Tolerate a model sending a bare string where the schema says array —
+    iterating a string yields characters, which silently corrupts filters."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return [str(t).strip() for t in value if t and str(t).strip()]
+
+
 def _empty_input_result(tool, text, label, detail, args=None):
     """Shared shape for the 'no search criteria provided' early-return ToolResult."""
-    return ToolResult(text=text, label=label, detail=detail, ui_payload={
+    return ToolResult(text=text, label=label, detail=detail, executed=False, ui_payload={
         "kind": "tool_call", "tool": tool, "args": args or {}, "result_summary": detail,
     })
 
 
 def _collect_terms(args: dict) -> tuple:
     """Pool dimension slots and entity texts into (raw_kws, detect_kws)."""
-    def _clean(lst):
-        return [str(k).strip() for k in (lst or []) if str(k).strip()]
-
     entities = normalize_entities(args)
     entity_texts = [e["text"] for e in entities]
 
     seen, raw_kws = set(), []
     for slot in ("organism", "qualifier", "body_site",
                  "condition_or_intervention", "project_or_pi", "keywords"):
-        for t in _clean(args.get(slot) or []):
+        for t in _as_str_list(args.get(slot)):
             if t not in seen:
                 seen.add(t)
                 raw_kws.append(t)
@@ -76,7 +86,7 @@ def _collect_terms(args: dict) -> tuple:
             seen.add(t)
             raw_kws.append(t)
 
-    detect_kws = _clean(args.get("keywords") or [])
+    detect_kws = _as_str_list(args.get("keywords"))
     return raw_kws, detect_kws
 
 
@@ -219,9 +229,12 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
 
     raw_kws, detect_kws = _collect_terms(args)
-    limit          = max(1, min(20, int(args.get("limit") or 10)))
-    explicit_types = [t.strip() for t in (args.get("data_types") or []) if t]
-    explicit_inv   = [t.strip() for t in (args.get("investigation_types") or []) if t]
+    # Chat/LLM slice is hard-capped at 10 — the full ranked set always reaches
+    # the user via the results panel (all_result_studies), so a bigger limit
+    # buys nothing and just bloats context.
+    limit          = max(1, min(10, int(args.get("limit") or 10)))
+    explicit_types = _as_str_list(args.get("data_types"))
+    explicit_inv   = _as_str_list(args.get("investigation_types"))
 
     logger.info(
         "[search_studies] raw_kws=%d detect_kws=%d deep=%s explicit_types=%s limit=%d veto=%s",
@@ -240,13 +253,13 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     auto_types      = detect_data_types(detect_kws)
     effective_types = list(dict.fromkeys(explicit_types + auto_types)) or None
     effective_inv   = explicit_inv or None
-    tags            = [t.strip() for t in (args.get("tags") or []) if t] or None
+    tags            = _as_str_list(args.get("tags")) or None
 
-    where, params = build_where_from_plan({"keywords": kws})
     text_studies, sql_str = search_studies_with_sql(
-        where, params,
-        limit=limit * 2,
-        relevance_keywords=kws,
+        match_keywords=kws,
+        # Overfetch floor is decoupled from the chat cap: the text-search half
+        # of the panel's full result set must not shrink because chat shows 10.
+        limit=max(40, limit * 2),
         data_types=effective_types,
         investigation_types=effective_inv,
         tags=tags,
@@ -276,14 +289,26 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             seen_ids[sid] = s
             merged.append(s)
 
-    merged = finalize_search_results(
-        merged, kws, resolved_pis=resolved_pis, veto_applied=veto_applied, limit=limit,
+    # Rank/veto the full merged set, then slice locally: the top `limit` go to
+    # the LLM and the in-chat cards, while the full ranked list rides only the
+    # ui_payload so the results panel can show every match.
+    full = finalize_search_results(
+        merged, kws, resolved_pis=resolved_pis, veto_applied=veto_applied, limit=None,
     )
+    merged = full[:limit]
 
-    logger.info("[search_studies] final_merged=%d (after trim to limit=%d)", len(merged), limit)
+    logger.info("[search_studies] final_merged=%d of %d (trim to limit=%d)",
+                len(merged), len(full), limit)
 
     if not merged:
         text = "No matching public studies found for those keywords."
+    elif len(full) > len(merged):
+        # The model must learn the total exists, or it will try to "search for
+        # more" — the full ranked list is already on the user's screen.
+        header = (f"search_studies returned the top {len(merged)} of {len(full)} matching "
+                  f"studies. The complete ranked list is already visible to the user in the "
+                  f"results panel ('View all {len(full)}'):")
+        text   = _format_discovery_study_list(merged, header, 24_000)
     else:
         header = f"search_studies returned the top {len(merged)} studies:"
         text   = _format_discovery_study_list(merged, header, 24_000)
@@ -295,6 +320,10 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
     )
     pi_suffix = pi_detail_suffix(applied_pi)
     applied_filters = {"pi": applied_pi} if applied_pi.get("input") else {}
+    result_summary = (
+        f"top {len(merged)} of {len(full)} studies" if len(full) > len(merged)
+        else (f"{len(merged)} studies" if merged else "no matches")
+    )
 
     return ToolResult(
         text=text,
@@ -306,8 +335,13 @@ def _tool_search_studies(args: dict, *, deep_search: bool = False) -> ToolResult
             "args":           {"keywords": raw_kws, "data_types": effective_types, "limit": limit},
             "sql_query":      sql_str,
             "applied_filters": applied_filters,
-            "result_summary": f"{len(merged)} studies" if merged else "no matches",
+            "result_summary": result_summary,
             "result_studies": _result_studies(merged),
+            # Full ranked match set (lean rows, no abstracts) for the results
+            # panel; kept separate from result_studies so the in-chat widget
+            # and persisted-chat size stay bounded by `limit`.
+            "all_result_studies": _result_studies(full),
+            "total_matches":  len(full),
         },
     )
 
@@ -368,8 +402,8 @@ def _tool_pin_study(args: dict, *, scope: str, chat_id: str) -> ToolResult:
 def _tool_search_by_sample(args: dict) -> ToolResult:
     field_filters = [f for f in (args.get("field_filters") or [])
                      if isinstance(f, dict) and f.get("field") and f.get("value")]
-    keywords      = [str(k).strip() for k in (args.get("keywords") or []) if str(k).strip()]
-    data_types    = [str(t).strip() for t in (args.get("data_types") or []) if t]
+    keywords      = _as_str_list(args.get("keywords"))
+    data_types    = _as_str_list(args.get("data_types"))
     limit         = max(1, min(20, int(args.get("limit") or 8)))
 
     logger.info(

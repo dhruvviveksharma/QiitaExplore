@@ -21,6 +21,19 @@ def _resolve_model(model):
     return DEFAULT_MODEL
 
 
+# Substrings marking a transient NRP-proxy outage in otherwise-untyped error
+# strings. Shared with helpers.llm_retry's retryable/terminal classification.
+_TRANSIENT_MARKERS = (
+    "upstream connect error",
+    "connection refused",
+    "remote connection failure",
+    "delayed connect error",
+    "connection reset",
+    "service unavailable",
+    "502", "503", "504",
+)
+
+
 def friendly_llm_error(exc, model=None):
     if isinstance(exc, _anthropic.RateLimitError):
         return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
@@ -28,16 +41,7 @@ def friendly_llm_error(exc, model=None):
         return f"{model or 'Claude'} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."
     raw = str(exc) or exc.__class__.__name__
     lowered = raw.lower()
-    connection_markers = (
-        "upstream connect error",
-        "connection refused",
-        "remote connection failure",
-        "delayed connect error",
-        "connection reset",
-        "service unavailable",
-        "502", "503", "504",
-    )
-    if any(m in lowered for m in connection_markers):
+    if any(m in lowered for m in _TRANSIENT_MARKERS):
         name = model or "the selected model"
         return f"{name} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."
     return raw
@@ -78,6 +82,16 @@ def _truncate(value, limit):
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 3)] + "..."
+
+
+def _format_pi_line(pi_name, pi_affiliation) -> str:
+    """'Name (Affiliation)' with graceful degradation — shared by every
+    model-visible study block so PI rendering can't drift between them."""
+    pi  = _truncate(pi_name or "", 80)
+    aff = _truncate((pi_affiliation or "").strip(), 80)
+    if pi and aff:
+        return f"{pi} ({aff})"
+    return pi or aff or "N/A"
 
 
 _STUDY_BLOCK_SKIP_KEYS = {
@@ -155,12 +169,7 @@ def _study_discovery_compact_block(study: dict) -> str:
     """One study, minimal lines for global discovery (no sample metadata dump)."""
     sid   = study.get("study_id")
     title = _truncate(study.get("study_title") or "Untitled study", 140)
-    pi    = _truncate(study.get("pi_name") or "N/A", 80)
-    aff   = _truncate((study.get("pi_affiliation") or "").strip(), 80)
-    if aff:
-        pi_line = f"{pi} ({aff})" if pi != "N/A" else aff
-    else:
-        pi_line = pi
+    pi_line = _format_pi_line(study.get("pi_name"), study.get("pi_affiliation"))
     abstract = _truncate((study.get("study_abstract") or "").strip() or "Not available", 600)
     dt       = _truncate((study.get("data_types") or "").strip(), 80)
     ns       = study.get("num_samples")

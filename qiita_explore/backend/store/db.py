@@ -41,8 +41,11 @@ def _resolve_user(user_id):
     return (user_id or "").strip() or "default"
 
 
+UNTITLED = "New chat"
+
+
 def _chat_title(raw):
-    return (raw or "New chat")[:60].strip() or "New chat"
+    return (raw or UNTITLED)[:60].strip() or UNTITLED
 
 
 def _reconcile_legacy_users_table(conn):
@@ -283,6 +286,16 @@ def _create_schema(conn):
         ("global_chats", "pinned_at", "TEXT"),
         ("global_chats", "is_archived", "INTEGER DEFAULT 0"),
         ("global_chats", "archived_at", "TEXT"),
+        # Normalized per-turn tool exchange for model replay — NULL on rows
+        # from before this column (degrades to display-text-only history).
+        ("project_chat_messages", "model_transcript", "TEXT"),
+        ("global_chat_messages", "model_transcript", "TEXT"),
+        # History compaction: rolling summary of turns up to (and including)
+        # message row id compacted_through_id; NULL = never compacted.
+        ("project_chats", "compaction_summary", "TEXT"),
+        ("project_chats", "compacted_through_id", "INTEGER"),
+        ("global_chats", "compaction_summary", "TEXT"),
+        ("global_chats", "compacted_through_id", "INTEGER"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")

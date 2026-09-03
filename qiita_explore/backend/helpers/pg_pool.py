@@ -46,10 +46,3 @@ def pooled_fetchall(sql, params=None):
             return cur.fetchall()
     finally:
         pool.putconn(conn)
-
-
-def close_pool():
-    global _pool
-    if _pool is not None:
-        _pool.closeall()
-        _pool = None

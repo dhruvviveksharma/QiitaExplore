@@ -64,6 +64,17 @@ _STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             FROM qiita.study_prep_template spt3
             WHERE spt3.study_id = s.study_id) AS num_preps"""
 
+# Public-visibility gate shared by _build_study_header_query,
+# services.study_service.search_studies_with_sql, and
+# helpers.sample_search._get_candidate_ids — a correlated EXISTS has no
+# artifact fan-out, so callers need no DISTINCT.
+_PUBLIC_ARTIFACT_EXISTS = """EXISTS (
+        SELECT 1 FROM qiita.study_artifact sa
+        JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+        JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+        WHERE sa.study_id = s.study_id AND v.visibility = 'public'
+    )"""
+
 
 def _build_study_header_query(distinct=False):
     """Shared SELECT/FROM/JOIN for study-header rows. Caller appends its own WHERE/ORDER/LIMIT."""
@@ -79,12 +90,7 @@ def _build_study_header_query(distinct=False):
         ON s.principal_investigator_id = sp_pi.study_person_id
     LEFT JOIN qiita.study_person sp_lab
         ON s.lab_person_id = sp_lab.study_person_id
-    WHERE EXISTS (
-        SELECT 1 FROM qiita.study_artifact sa
-        JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
-        JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
-        WHERE sa.study_id = s.study_id AND v.visibility = 'public'
-    )
+    WHERE {_PUBLIC_ARTIFACT_EXISTS}
     """
 
 
@@ -385,6 +391,18 @@ def _fetch_study_header(study_id: int):
     if not rows:
         return None
     return _row_to_study_header(rows[0])
+
+
+def _fetch_study_headers(study_ids):
+    """Batch variant of _fetch_study_header: one query for many ids, results
+    returned in the caller's id order (missing/non-public ids dropped)."""
+    ids = [int(s) for s in study_ids]
+    if not ids:
+        return []
+    sql = _build_study_header_query() + " AND s.study_id = ANY(%s)"
+    rows = _qiita_fetch(sql, [ids])
+    by_id = {row[0]: _row_to_study_header(row) for row in rows}
+    return [by_id[sid] for sid in ids if sid in by_id]
 
 
 def _fetch_study_detail_from_qiita(study_id: int):

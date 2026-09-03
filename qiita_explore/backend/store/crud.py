@@ -3,7 +3,7 @@
 import json
 import uuid
 
-from .db import _conn, _as_dict, _now, _resolve_user, _chat_title
+from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 
 PROJECT_STUDIES_CAP = 20
 
@@ -318,7 +318,7 @@ def project_chat_exists(project_id: str, user_id: str, chat_id: str) -> bool:
     return row is not None
 
 
-def get_chat(project_id: str, user_id: str, chat_id: str):
+def get_chat(project_id: str, user_id: str, chat_id: str, include_messages: bool = True):
     from store.cache import SCOPE_PROJECT, _load_pinned_study_meta
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
@@ -334,7 +334,10 @@ def get_chat(project_id: str, user_id: str, chat_id: str):
         if row is None:
             return None
         chat = _as_dict(row)
-        chat["messages"] = _load_project_chat_messages(conn, chat_id)
+        # include_messages=False skips the full transcript load + per-message
+        # ui_payload JSON decode — the stream routes only need ownership/meta.
+        if include_messages:
+            chat["messages"] = _load_project_chat_messages(conn, chat_id)
         meta = _load_pinned_study_meta(conn, chat_id, SCOPE_PROJECT)
         chat["pinned_study_meta"] = meta
         chat["pinned_studies"] = [m["study_id"] for m in meta]
@@ -389,13 +392,6 @@ def _insert_chat_message_pair(
     )
 
 
-def _resolved_chat_title(existing_title: str, user_content: str) -> str:
-    title = existing_title or "New chat"
-    if title == "New chat":
-        title = _chat_title(user_content)
-    return title
-
-
 def append_chat_messages(
     project_id: str,
     user_id: str,
@@ -407,7 +403,7 @@ def append_chat_messages(
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         exists = conn.execute(
-            "SELECT chat_id, title FROM project_chats WHERE project_id = ? AND user_id = ? AND chat_id = ?",
+            "SELECT 1 FROM project_chats WHERE project_id = ? AND user_id = ? AND chat_id = ?",
             (project_id, resolved_user, chat_id),
         ).fetchone()
         if exists is None:
@@ -418,10 +414,13 @@ def append_chat_messages(
             conn, "project_chat_messages", chat_id,
             user_content, assistant_content, assistant_ui_payload, now,
         )
-        title = _resolved_chat_title(exists["title"], user_content)
+        # Atomic conditional write, not a read-then-write: a background
+        # chat-title job (helpers/chat_title.py) may commit an LLM-generated
+        # title concurrently, and a stale read here would clobber it.
         conn.execute(
-            "UPDATE project_chats SET title = ?, updated_at = ? WHERE chat_id = ?",
-            (title, now, chat_id),
+            "UPDATE project_chats SET title = CASE WHEN title = ? THEN ? ELSE title END, "
+            "updated_at = ? WHERE chat_id = ?",
+            (UNTITLED, _chat_title(user_content), now, chat_id),
         )
         conn.execute(
             "UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",

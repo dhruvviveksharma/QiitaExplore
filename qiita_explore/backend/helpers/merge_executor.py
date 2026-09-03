@@ -1,8 +1,9 @@
 """Execute a BIOM merge job locally via subprocess (dev mode).
 
-TODO (before merging to master): replace _run_local with SFTP+SSH pipeline
-using paramiko — upload BIOMs to remote node, ssh exec, download result.
-Same on_status interface; only the internals change.
+TODO (before merging to master): replace run_merge_job's local-subprocess
+internals with an SFTP+SSH pipeline using paramiko — upload BIOMs to remote
+node, ssh exec, download result. Same on_status interface; only the
+internals change.
 """
 
 import csv

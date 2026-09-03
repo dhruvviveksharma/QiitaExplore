@@ -378,7 +378,6 @@ function SystemsStatusBubble({ ui }) {
 
 // ─── SamplesReportBubble ──────────────────────────────────────────────────────
 function SamplesReportBubble({ ui, messageKey }) {
-  if (!ui) return null;
   const { header = {}, samples = [], study_id } = ui;
   const numSamples = header.num_samples != null ? header.num_samples : samples.length;
   const [detail,        setDetail]        = useState(null);
@@ -509,12 +508,30 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
 }
 
 // ─── ToolCallCard ─────────────────────────────────────────────────────────────
-function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAllStudies }) {
+// Memoized with a custom comparator: the parent re-renders on every token
+// flush, and its callback props are recreated each time (they're only read
+// inside click handlers, never render-branch conditions), so a default
+// shallow compare would never skip. Only seg / msgKey / pinnedStudyIds
+// (by value — pin toggles must re-render the card) determine the output.
+function toolCardPropsEqual(prev, next) {
+  if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
+  const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies }) {
+  const isPinned = sid => (pinnedStudyIds || []).includes(sid);
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
   const label  = done ? (seg.result?.label || seg.label) : seg.label;
   const detail = done ? seg.result?.detail : null;
   const studies = seg.result?.ui_payload?.result_studies || [];
+  // Full ranked match set (search_studies only) — the panel shows every
+  // match while the in-chat cards stay at the trimmed result_studies.
+  const allStudies = seg.result?.ui_payload?.all_result_studies?.length
+    ? seg.result.ui_payload.all_result_studies : studies;
   const hasStudies = done && studies.length > 0;
   const hasArgs = (seg.args?.keywords?.length > 0) || (seg.args?.field_filters?.length > 0)
                || (seg.args?.study_id != null) || (seg.args?.study_ids?.length > 0);
@@ -526,11 +543,11 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAll
         {detail && <span className="tool-call-banner-meta">{detail}</span>}
         {hasStudies && (
           <span className="tool-call-view-all" onClick={() => onViewAllStudies?.({
-            studies,
+            studies: allStudies,
             title: label,
             detail,
           })}>
-            View all →
+            View all {allStudies.length} →
           </span>
         )}
         {done && hasArgs && (
@@ -558,6 +575,15 @@ function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, isPinned, onViewAll
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
   );
+}, toolCardPropsEqual);
+
+// ─── MarkdownText ─────────────────────────────────────────────────────────────
+// Memoized markdown rendering: streamed replies re-render once per token
+// flush, and re-parsing + re-sanitizing the whole accumulated string each
+// flush is O(n²) over the reply — the dominant cost behind streaming jank.
+function MarkdownText({ content, className }) {
+  const html = useMemo(() => renderMarkdown(content || ''), [content]);
+  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // ─── CopyResponseButton ───────────────────────────────────────────────────────
@@ -577,22 +603,39 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep }) {
   const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
+      {(steps?.length > 0 || pendingStep) && (
+        <div className="msg-steps">
+          {(steps || []).map((step, si) => (
+            <div key={si} className="msg-step-done">
+              <span className="step-dot" />
+              <span className="step-label">{step.label}</span>
+              {step.detail && <span className="step-detail"> · {step.detail}</span>}
+            </div>
+          ))}
+          {pendingStep && (
+            <div className="msg-step-pending">
+              <div className="step-spinner" />
+              <span className="step-label">{pendingStep.label}</span>
+            </div>
+          )}
+        </div>
+      )}
       {(segments || []).map((seg, i) =>
         seg.type === 'text' && seg.content ? (
-          <div key={i} className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.content) }} />
+          <MarkdownText key={i} content={seg.content}
+            className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`} />
         ) : seg.type === 'tool' ? (
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
             onViewAllStudies={onViewAllStudies}
-            isPinned={sid => (pinnedStudyIds || []).includes(sid)} />
+            pinnedStudyIds={pinnedStudyIds} />
         ) : null
       )}
-      {isStreaming && !(segments || []).length && (
+      {isStreaming && !(segments || []).length && !steps?.length && !pendingStep && (
         <InfinityLoader w={80} h={50} />
       )}
       {!isStreaming && textContent && <CopyResponseButton text={textContent} />}
@@ -629,11 +672,12 @@ function ChatRowMenu({
 
   return (
     <div className="cr-menu-root" ref={dd.rootRef}>
-      <button ref={dd.btnRef} className="cr-more" onClick={dd.toggle} title="More">
+      <button ref={dd.btnRef} className={`cr-more${dd.open && !dd.closing ? ' cr-more-open' : ''}`}
+        onClick={dd.toggle} title="More">
         <DotsIcon />
       </button>
       {dd.open && dd.pos && (
-        <div className="cr-menu" style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
+        <div className={dd.menuClass} style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
           <button className="cr-menu-item" onClick={() => { onRename(); close(); }}>Rename</button>
           <div className="cr-menu-sep" />
           <button className="cr-menu-item" onClick={() => { onTogglePin(); close(); }}>
@@ -721,10 +765,10 @@ function SlashCommandMenu({ matches, activeIndex, onPick }) {
 
 // ─── ModelPickerCard ──────────────────────────────────────────────────────────
 const _NRP_MODELS = [
-  ['qwen3','Qwen 3 (397B)'], ['qwen3-small','Qwen 3 Small (27B)'],
-  ['deepseek-v4-flash','DeepSeek V4 Flash (304B)'], ['gemma','Gemma (31B)'],
-  ['kimi','Kimi (1T)'],
-  ['glm-5','GLM-5 (744B)'], ['minimax-m2','Minimax M2 (230B)'],
+  ['qwen3-small','Qwen 3 Small — Fast'],
+  ['deepseek-v4-flash','DeepSeek V4 Flash (304B)'],
+  ['minimax-m2','Minimax M2 — Medium'],
+  ['glm-5','GLM-5 — High thinking'],
 ];
 const _CLAUDE_MODELS = [
   ['claude-haiku-4-5','Claude Haiku 4.5'],
