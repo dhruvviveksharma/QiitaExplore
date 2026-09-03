@@ -134,7 +134,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
 
         def _attempt():
             nonlocal ttft, stop_reason, t_llm
-            content_parts.clear(); tool_uses.clear()
+            content_parts.clear()
+            tool_uses.clear()
             ttft = None
             stop_reason = None
             t_llm = time.perf_counter()
@@ -331,7 +332,9 @@ def stream_agent(
             # Fresh slate per attempt — a retry only ever runs when nothing
             # reached the client, so clearing internal fragments is safe.
             nonlocal finish_reason, ttft, t_llm
-            content_parts.clear(); reasoning_parts.clear(); tool_call_map.clear()
+            content_parts.clear()
+            reasoning_parts.clear()
+            tool_call_map.clear()
             finish_reason = None
             ttft = None
             t_llm = time.perf_counter()

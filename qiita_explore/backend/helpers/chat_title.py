@@ -40,7 +40,7 @@ _MAX_INPUT_CHARS = 1500
 
 def _clean_title(raw):
     text = _THINK_BLOCK_RE.sub("", raw or "").strip()
-    line = next((l.strip() for l in text.splitlines() if l.strip()), "")
+    line = next((s.strip() for s in text.splitlines() if s.strip()), "")
     line = line.strip("\"'*# ").rstrip(".")
     return line[:_MAX_TITLE_CHARS].strip()
 

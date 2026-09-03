@@ -147,8 +147,8 @@ class TestFullResultSetInUiPayload:
         sample_rows = [_header_row(i, via="sample_metadata") for i in range(100, 100 + n_sample)]
         # finalize_search_results hits Postgres for sample-layer scoring —
         # replace with a rank-preserving fake honoring the limit contract.
-        fake_finalize = lambda studies, kws, resolved_pis=None, veto_applied=False, limit=None, **kw: (
-            list(studies)[:limit] if limit else list(studies))
+        def fake_finalize(studies, kws, resolved_pis=None, veto_applied=False, limit=None, **kw):
+            return list(studies)[:limit] if limit else list(studies)
         with patch.object(agent_tools_mod, "search_studies_with_sql", return_value=(text_rows, "SQL")) as mock_sql, \
              patch.object(agent_tools_mod, "search_studies_by_sample_meta", return_value=sample_rows), \
              patch.object(agent_tools_mod, "finalize_search_results", side_effect=fake_finalize):

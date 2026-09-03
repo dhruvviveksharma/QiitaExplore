@@ -8,7 +8,7 @@ from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()
 
-from helpers.request_utils import build_full_msgs, load_history_for  # noqa: E402
+from helpers.request_utils import build_full_msgs  # noqa: E402
 
 
 def _seed_global_chat(global_chat_crud, user_id, n_turns=3):

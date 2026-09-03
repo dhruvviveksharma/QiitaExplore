@@ -9,7 +9,7 @@ from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()
 
-from helpers.sample_search import (
+from helpers.sample_search import (  # noqa: E402
     _MAX_KEYWORDS_PER_PROBE, _probe_study_raw, _score_sample_metadata_raw,
 )
 

@@ -98,8 +98,8 @@ def parse_sse(raw_text):
         if not frame or frame.startswith(":"):
             continue
         lines = frame.split("\n")
-        ev = next((l[len("event: "):] for l in lines if l.startswith("event: ")), None)
-        data = next((l[len("data: "):] for l in lines if l.startswith("data: ")), None)
+        ev = next((line[len("event: "):] for line in lines if line.startswith("event: ")), None)
+        data = next((line[len("data: "):] for line in lines if line.startswith("data: ")), None)
         if ev is not None:
             events.append((ev, json.loads(data) if data else {}))
     return events

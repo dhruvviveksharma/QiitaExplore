@@ -4,8 +4,6 @@ previously the model had zero memory of prior tool calls/results.
 """
 import importlib
 
-import pytest
-
 from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()

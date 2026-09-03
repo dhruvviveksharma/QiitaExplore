@@ -66,7 +66,7 @@ def test_logging_never_raises(turn_log):
 
     # The named "agent.turns" logger is process-global; resetting only the
     # module-level cache must not stack a second handler onto it.
-    lines = [l for l in fp.read_text().strip().splitlines() if "after_reload" in l]
+    lines = [line for line in fp.read_text().strip().splitlines() if "after_reload" in line]
     assert len(lines) == 1
 
 
