@@ -15,8 +15,7 @@ Two pieces live here:
 """
 import json
 
-from .db import _conn, _now, _resolve_user
-from .crud import _resolved_chat_title
+from .db import _conn, _now, _resolve_user, _chat_title, UNTITLED
 
 SCOPE_GLOBAL = "global"
 
@@ -30,17 +29,22 @@ def _tables(scope):
 def append_user_message(scope, chat_id, user_id, user_content, project_id=None):
     """Insert the user row and bump title/updated_at NOW, before the turn runs.
     Returns the new row id, or None if the chat isn't found/owned (same 404
-    semantics the combined append had)."""
+    semantics the combined append had).
+
+    The title write is an atomic conditional UPDATE, not a read-then-write:
+    a background chat-title job (helpers/chat_title.py) may commit an
+    LLM-generated title concurrently, and a stale read here would clobber it
+    regardless of which of the two writes lands first."""
     chats_tbl, msgs_tbl = _tables(scope)
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
         if scope == SCOPE_GLOBAL:
             row = conn.execute(
-                f"SELECT title FROM {chats_tbl} WHERE user_id = ? AND chat_id = ?",
+                f"SELECT 1 FROM {chats_tbl} WHERE user_id = ? AND chat_id = ?",
                 (resolved_user, chat_id)).fetchone()
         else:
             row = conn.execute(
-                f"SELECT title FROM {chats_tbl} WHERE project_id = ? AND user_id = ? AND chat_id = ?",
+                f"SELECT 1 FROM {chats_tbl} WHERE project_id = ? AND user_id = ? AND chat_id = ?",
                 (project_id, resolved_user, chat_id)).fetchone()
         if row is None:
             return None
@@ -48,14 +52,37 @@ def append_user_message(scope, chat_id, user_id, user_content, project_id=None):
         cur = conn.execute(
             f"INSERT INTO {msgs_tbl}(chat_id, role, content, created_at) VALUES(?, 'user', ?, ?)",
             (chat_id, user_content or "", now))
-        title = _resolved_chat_title(row["title"], user_content)
-        conn.execute(f"UPDATE {chats_tbl} SET title = ?, updated_at = ? WHERE chat_id = ?",
-                     (title, now, chat_id))
+        conn.execute(
+            f"UPDATE {chats_tbl} SET title = CASE WHEN title = ? THEN ? ELSE title END, "
+            f"updated_at = ? WHERE chat_id = ?",
+            (UNTITLED, _chat_title(user_content), now, chat_id))
         if scope != SCOPE_GLOBAL and project_id:
             conn.execute("UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",
                          (now, project_id, resolved_user))
         conn.commit()
         return cur.lastrowid
+
+
+def get_chat_title(chat_id, scope):
+    """The chat's current stored title, or None if the chat doesn't exist."""
+    chats_tbl, _ = _tables(scope)
+    with _conn() as conn:
+        row = conn.execute(f"SELECT title FROM {chats_tbl} WHERE chat_id = ?", (chat_id,)).fetchone()
+    return row["title"] if row is not None else None
+
+
+def set_auto_title(chat_id, scope, title, user_content):
+    """Replace the provisional title with an LLM-generated one — but only if
+    nothing else has claimed the row since: an explicit rename (any other
+    string) wins over a late-arriving title-generation thread."""
+    chats_tbl, _ = _tables(scope)
+    provisional = _chat_title(user_content)
+    with _conn() as conn:
+        cur = conn.execute(
+            f"UPDATE {chats_tbl} SET title = ? WHERE chat_id = ? AND title IN (?, ?)",
+            (title, chat_id, provisional, UNTITLED))
+        conn.commit()
+        return cur.rowcount == 1
 
 
 def append_assistant_message(scope, chat_id, assistant_content, assistant_ui_payload=None,

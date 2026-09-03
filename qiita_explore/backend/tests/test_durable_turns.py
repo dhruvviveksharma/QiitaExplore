@@ -3,6 +3,8 @@ a Stop (GeneratorExit) or mid-turn error persists whatever partial assistant
 output accumulated — previously an aborted/failed turn lost everything.
 """
 import importlib
+import json
+import threading
 
 import pytest
 
@@ -49,6 +51,13 @@ def _turn(chat_turn_mod, chat_id, user_id, agent_events, user_content="hello"):
 
 def _messages(global_chat_crud, user_id, chat_id):
     return global_chat_crud.get_global_chat(user_id, chat_id)["messages"]
+
+
+def _done_payload(frames):
+    for frame in frames:
+        if frame.startswith("event: done"):
+            return json.loads(frame.split("data: ", 1)[1].strip())
+    return None
 
 
 class TestDurablePersistence:
@@ -133,3 +142,106 @@ class TestDurablePersistence:
         frames = list(gen)
         assert any("event: error" in f for f in frames)
         assert global_chat_crud.get_global_chat(sample_user_id, "no-such-chat") is None
+
+
+@pytest.fixture
+def untitled_chat(global_chat_crud, sample_user_id):
+    """A chat with no explicit title — still "New chat" — the only state that
+    arms the title-generation thread."""
+    return global_chat_crud.create_global_chat(sample_user_id)["chat_id"]
+
+
+@pytest.fixture
+def fake_title(monkeypatch):
+    """Stub the LLM boundary chat_turn calls through (helpers.chat_title is
+    store-free, so it needs no reload — see the module's own docstring)."""
+    import helpers.chat_title as title_mod
+    calls = []
+
+    def fake_llm_chat(*a, **k):
+        calls.append((a, k))
+        return "Gut Microbiome Overview"
+
+    monkeypatch.setattr(title_mod, "llm_chat", fake_llm_chat)
+    return calls
+
+
+class TestAutoTitleOnFirstTurn:
+
+    def test_first_turn_done_carries_llm_title(self, chat_turn_mod, global_chat_crud,
+                                               sample_user_id, untitled_chat, fake_title):
+        events = [{"type": "agent_start"}, {"type": "token", "token": "answer"}]
+        frames = list(_turn(chat_turn_mod, untitled_chat, sample_user_id, events,
+                            user_content="find gut studies"))
+        done = _done_payload(frames)
+        assert done["title"] == "Gut Microbiome Overview"
+        assert len(fake_title) == 1
+        loaded = global_chat_crud.get_global_chat(sample_user_id, untitled_chat)
+        assert loaded["title"] == "Gut Microbiome Overview"
+
+    def test_second_turn_makes_no_llm_call_and_keeps_title(self, chat_turn_mod, global_chat_crud,
+                                                            sample_user_id, untitled_chat, fake_title):
+        events = [{"type": "agent_start"}, {"type": "token", "token": "answer"}]
+        list(_turn(chat_turn_mod, untitled_chat, sample_user_id, events, user_content="find gut studies"))
+        assert len(fake_title) == 1
+
+        frames = list(_turn(chat_turn_mod, untitled_chat, sample_user_id, events,
+                            user_content="follow-up question"))
+        done = _done_payload(frames)
+        assert done["title"] == "Gut Microbiome Overview"
+        assert len(fake_title) == 1  # no second LLM call
+
+    def test_explicitly_titled_chat_skips_the_llm(self, chat_turn_mod, global_chat_crud,
+                                                  sample_user_id, global_chat, fake_title):
+        events = [{"type": "agent_start"}, {"type": "token", "token": "answer"}]
+        frames = list(_turn(chat_turn_mod, global_chat, sample_user_id, events))
+        done = _done_payload(frames)
+        assert done["title"] == "durability test"
+        assert fake_title == []
+
+    def test_llm_failure_leaves_the_provisional_truncation(self, chat_turn_mod, global_chat_crud,
+                                                            sample_user_id, untitled_chat, monkeypatch):
+        import helpers.chat_title as title_mod
+
+        def boom(*a, **k):
+            raise RuntimeError("nrp down")
+        monkeypatch.setattr(title_mod, "llm_chat", boom)
+
+        events = [{"type": "agent_start"}, {"type": "token", "token": "answer"}]
+        frames = list(_turn(chat_turn_mod, untitled_chat, sample_user_id, events,
+                            user_content="find gut studies"))
+        done = _done_payload(frames)
+        assert done["title"] == "find gut studies"
+        loaded = global_chat_crud.get_global_chat(sample_user_id, untitled_chat)
+        assert loaded["title"] == "find gut studies"
+
+    def test_rename_that_lands_mid_turn_wins_over_the_llm_title(self, chat_turn_mod, global_chat_crud,
+                                                                sample_user_id, untitled_chat, monkeypatch):
+        """The title thread races the turn's own provisional-title write.
+        Force a deterministic ordering (provisional write, then rename, then
+        the LLM's late persist attempt) with an Event rather than relying on
+        real scheduling — otherwise this test would be flaky either way."""
+        import helpers.chat_title as title_mod
+        provisional_written = threading.Event()
+
+        real_append_user_message = chat_turn_mod.append_user_message
+
+        def wrapped_append_user_message(*a, **k):
+            result = real_append_user_message(*a, **k)
+            provisional_written.set()
+            return result
+        chat_turn_mod.append_user_message = wrapped_append_user_message
+
+        def fake_llm_chat(*a, **k):
+            assert provisional_written.wait(2.0)
+            global_chat_crud.update_global_chat_title(sample_user_id, untitled_chat, "My rename")
+            return "LLM title"
+        monkeypatch.setattr(title_mod, "llm_chat", fake_llm_chat)
+
+        events = [{"type": "agent_start"}, {"type": "token", "token": "answer"}]
+        frames = list(_turn(chat_turn_mod, untitled_chat, sample_user_id, events,
+                            user_content="find gut studies"))
+        done = _done_payload(frames)
+        assert done["title"] == "My rename"
+        loaded = global_chat_crud.get_global_chat(sample_user_id, untitled_chat)
+        assert loaded["title"] == "My rename"

@@ -23,17 +23,24 @@ from helpers.pin_flow import stream_pin_flow
 from helpers.request_utils import stream_samples_report
 from store import list_pinned_study_meta
 from helpers.chat_history import prepare_history
+from helpers.chat_title import start_title_job, finish_title_job
 from helpers.turn_log import log_turn_event
-from store.chat_turn_persist import append_user_message, append_assistant_message
+from store.chat_turn_persist import (
+    append_user_message, append_assistant_message,
+    get_chat_title, set_auto_title, UNTITLED,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _pinned_done_payload(chat_id, scope):
-    meta = list_pinned_study_meta(chat_id, scope)
-    return {"chat_id": chat_id, "persisted": True,
-            "pinned_studies": [m["study_id"] for m in meta],
-            "pinned_study_meta": meta}
+def _done_payload(chat_id, scope, title_job, *, pinned):
+    finish_title_job(title_job)
+    done = {"chat_id": chat_id, "persisted": True, "title": get_chat_title(chat_id, scope)}
+    if pinned:
+        meta = list_pinned_study_meta(chat_id, scope)
+        done["pinned_studies"] = [m["study_id"] for m in meta]
+        done["pinned_study_meta"] = meta
+    return done
 
 
 def _partial_ui_payload(segments_list, current_text):
@@ -54,7 +61,17 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
     current_text    = []
     transcript      = []
     user_row_saved  = False
+    title_job       = None
     try:
+        # Started before anything else persists, so a slash-command first
+        # message (pin/report) gets a real title too — and before
+        # append_user_message writes the provisional truncation, so the gate
+        # below still sees "New chat" on a brand-new chat.
+        if get_chat_title(chat_id, scope) == UNTITLED:
+            title_job = start_title_job(
+                user_content, model,
+                lambda t: set_auto_title(chat_id, scope, t, user_content))
+
         if pin_study_ids is not None:
             all_pinned = yield from stream_pin_flow(
                 pin_study_ids=pin_study_ids,
@@ -65,7 +82,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
                 system_prompt=system_prompt,
                 persist=persist,
             )
-            done = _pinned_done_payload(chat_id, scope)
+            done = _done_payload(chat_id, scope, title_job, pinned=True)
             done["pinned_studies"] = all_pinned
             yield _sse("done", done)
             return
@@ -83,7 +100,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             else:
                 assistant_parts, ui_payload = yield from stream_samples_report(report_study_id)
             persist("".join(assistant_parts).strip(), ui_payload)
-            yield _sse("done", {"chat_id": chat_id, "persisted": True})
+            yield _sse("done", _done_payload(chat_id, scope, title_job, pinned=False))
             return
 
         # ── Agentic main turn: durable split persist. The user row lands
@@ -161,10 +178,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         log_turn_event(chat_id, "turn_done",
                        chars=len("".join(assistant_parts).strip()),
                        segments=len(segments_list))
-        if ui_payload:
-            yield _sse("done", _pinned_done_payload(chat_id, scope))
-        else:
-            yield _sse("done", {"chat_id": chat_id, "persisted": True})
+        yield _sse("done", _done_payload(chat_id, scope, title_job, pinned=bool(ui_payload)))
     except GeneratorExit:
         # Stop button / client disconnect: WSGI closes this generator, raising
         # here at the suspended yield. MUST NOT yield anything (Python forbids

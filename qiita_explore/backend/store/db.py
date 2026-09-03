@@ -41,8 +41,11 @@ def _resolve_user(user_id):
     return (user_id or "").strip() or "default"
 
 
+UNTITLED = "New chat"
+
+
 def _chat_title(raw):
-    return (raw or "New chat")[:60].strip() or "New chat"
+    return (raw or UNTITLED)[:60].strip() or UNTITLED
 
 
 def _reconcile_legacy_users_table(conn):

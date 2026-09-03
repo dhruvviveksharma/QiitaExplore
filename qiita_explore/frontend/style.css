@@ -421,11 +421,18 @@ input, textarea { font-family: var(--sans); }
   padding: 0 8px 0 16px;
   gap: 10px;
   flex-shrink: 0;
+  transition: height var(--t);
 }
 /* With a pinned bar below, the two stack into one shape: square the join and
    drop the border that would otherwise draw a line across the middle. */
 .topbar.has-sources-bar { border-radius: var(--radius-m) var(--radius-m) 0 0; border-bottom: none; }
-.topbar-title { font-size: 14px; font-weight: 500; color: var(--text); }
+/* Compact state (useScrollCollapse, chat view only): a deliberate scroll-down
+   shrinks the bar; scrolling back up or reaching the top restores it. */
+.topbar.compact { height: 34px; }
+.topbar.compact .topbar-title { font-size: 12px; }
+.topbar.compact .auth-avatar { width: 26px; height: 26px; font-size: 11px; }
+.topbar.compact .topbar-badge { display: none; }
+.topbar-title { font-size: 14px; font-weight: 500; color: var(--text); transition: font-size var(--t); }
 .topbar-title.editable { cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-title.editable:hover .rename-hint { opacity: 1; }
 .topbar-title-input {
@@ -1313,7 +1320,7 @@ input, textarea { font-family: var(--sans); }
 }
 .study-card-pi { font-size: 11.5px; color: var(--text-3); border-top: 1px solid var(--border-soft); padding-top: 7px; }
 
-.state-loading { text-align: center; padding: 40px; color: var(--text-3); font-size: 13px; }
+.state-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; color: var(--text-3); font-size: 13px; }
 .spinner {
   display: inline-block; width: 20px; height: 20px;
   border: 2px solid var(--border); border-top-color: var(--accent);
@@ -1974,7 +1981,7 @@ input, textarea { font-family: var(--sans); }
   font-size: 12.5px; font-weight: 650;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(0,0,0,.06);
-  transition: background var(--t);
+  transition: background var(--t), width var(--t), height var(--t);
 }
 .auth-avatar:hover { background: var(--accent-h); }
 .auth-account-menu {

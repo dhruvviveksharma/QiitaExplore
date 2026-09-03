@@ -103,6 +103,7 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/auth.js`                    | 179   | `useAuth`, `ConnectQiita`, `LegacyClaimBanner`, `AccountBar`                                                         |
 | `frontend/js/components.js`              | 684   | Shared components — samples browser, prep/artifact tables, agent bubbles, model picker, slash menu                   |
 | `frontend/js/hooks/useModelSelection.js` | 30    | Model choice with per-chat and global `localStorage` persistence                                                     |
+| `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
 | `frontend/js/app_state.js`               | 633   | `useAppState()` — the whole application state and every action                                                       |
 | `frontend/js/app_render.js`              | 601   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
 | `frontend/js/merge_artifacts.js`         | 354   | Artifact graph filtering, BIOM cards, pipeline breadcrumb, global BIOM selector                                      |
@@ -481,7 +482,7 @@ Both scopes use the agentic segment renderer. The difference is authorization an
 - **Global chat** passes `TOOL_SCHEMAS` — public `search_studies`, `get_study_report`, `pin_study`, and optional deep sample search.
 - **Project chat** passes `PROJECT_TOOL_SCHEMAS` — `search_project_studies` (SQLite membership only), `get_project_study_report`, and `pin_study`. The model cannot call public search tools even if it tries.
 
-Compare the two `streamChat` call sites in `frontend/js/app_state.js :: sendMessage`. Both branches pass `onTokenAgent`, `onAgentStart`, `onSegmentToolCall`, `onSegmentToolResult`, and `onDone`. The project branch also updates the sidebar title from the `done` event.
+Compare the two `streamChat` call sites in `frontend/js/app_state.js :: sendMessage`. Both branches pass `onTokenAgent`, `onAgentStart`, `onSegmentToolCall`, `onSegmentToolResult`, and `onDone`; both `onDone` handlers apply `payload.title` to their chat's cache entry via `applyStreamDone` and, when present, patch the matching sidebar row (`openProject.chats` for project, `globalChats` for global) from the same value.
 
 The full protocol — SSE event types, segment construction, and `ui_payload` persistence — is in [`06-streaming-and-chat.md`](06-streaming-and-chat.md).
 

@@ -218,13 +218,13 @@ A conversation thread scoped to one project.
 | `chat_id` | TEXT | no (PK) | — | 8-char UUID prefix. |
 | `project_id` | TEXT | no | — | Owning project. |
 | `user_id` | TEXT | no | — | Owner, duplicated from the project for direct filtering. |
-| `title` | TEXT | yes | — | First 60 chars of the first user message; `"New chat"` until then. |
+| `title` | TEXT | yes | — | `"New chat"` until the first message; then the first 60 chars of that message immediately; then replaced by an LLM-generated title (`helpers/chat_title.py`) once the first turn finishes. |
 | `created_at` | TEXT | yes | — | Creation timestamp. |
 | `updated_at` | TEXT | yes | — | Last message append; the sidebar sort key. |
 
 **Keys/constraints:** PK on `chat_id`. FK `project_id → projects(project_id) ON DELETE CASCADE`. `user_id` is redundant with `projects.user_id` but is stored so chat queries filter on both without a join — the CRUD layer consistently uses `WHERE project_id = ? AND user_id = ?`.
 
-**Writes owned by:** `backend/store/crud.py` — `create_chat`, `append_chat_messages` (title + `updated_at`), `delete_chat`. Cascades to `project_chat_messages` on delete; does **not** cascade to `chat_pinned_studies`, which is left orphaned. The title is set once: `backend/store/crud.py :: _resolved_chat_title` only overwrites when the current title is still the literal `"New chat"`.
+**Writes owned by:** `backend/store/crud.py` — `create_chat`, `append_chat_messages` (provisional title + `updated_at`), `delete_chat`; `backend/store/chat_turn_persist.py` — `append_user_message` (provisional title, atomic conditional write) and `set_auto_title` (the LLM title, driven from `helpers/chat_title.py` via `helpers/chat_turn.py`). Cascades to `project_chat_messages` on delete; does **not** cascade to `chat_pinned_studies`, which is left orphaned. Both auto-title writers use a `CASE`/`IN` guard against the current row rather than a stale read, so the provisional write and the LLM write can never clobber each other regardless of which lands first; only an explicit `update_chat_title` PATCH changes the title afterwards. Renaming a chat to exactly the provisional string or to `"New chat"` is indistinguishable from the default, so a later LLM title can still land on it.
 
 **Legacy claim:** one of the **5 root ownership tables**. See [`02-authentication.md`](02-authentication.md).
 
@@ -279,7 +279,7 @@ A conversation thread not scoped to any project — the entry point for the agen
 |---|---|---|---|---|
 | `chat_id` | TEXT | no (PK) | — | 8-char UUID prefix. |
 | `user_id` | TEXT | no | — | Owner. |
-| `title` | TEXT | yes | — | First 60 chars of the first user message; `"New chat"` until then. |
+| `title` | TEXT | yes | — | `"New chat"` until the first message; then the first 60 chars of that message immediately; then replaced by an LLM-generated title (`helpers/chat_title.py`) once the first turn finishes. |
 | `created_at` | TEXT | yes | — | Creation timestamp. |
 | `updated_at` | TEXT | yes | — | Last message append; the sidebar sort key. |
 

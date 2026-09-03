@@ -69,6 +69,7 @@ def fake_turn(monkeypatch):
     with a one-search-then-text script."""
     from tests.agent.fakes import FakeOpenAIClient, openai_text_round, openai_tool_call_round
     import helpers.agent as agent_mod
+    import helpers.chat_title as title_mod
 
     script = [
         openai_tool_call_round("call_stream_1", "search_studies", '{"keywords": ["ibd"]}'),
@@ -83,6 +84,9 @@ def fake_turn(monkeypatch):
 
     monkeypatch.setattr(agent_mod, "get_client", lambda model: (fake_client, "nrp"))
     monkeypatch.setattr(agent_mod, "execute_tool", fake_execute_tool)
+    # Every test here streams on a fresh ("New chat") chat, which starts a
+    # title-generation thread — stub it so no test makes a real LLM call.
+    monkeypatch.setattr(title_mod, "llm_chat", lambda *a, **k: "Route title")
     fake_client.tool_calls = calls
     return fake_client
 
@@ -165,6 +169,15 @@ class TestGlobalStream:
         assert done["persisted"] is True
         assert done["pinned_studies"] == []
         assert done["pinned_study_meta"] == []
+
+    def test_first_turn_done_carries_title(self, client, logged_in, fake_turn):
+        chat_id = _new_global_chat(client, logged_in)
+        resp = client.post(f"/api/global-chats/{chat_id}/message/stream",
+                           json={"message": "q", "model": "minimax-m2"}, headers=logged_in)
+        done = dict(parse_sse(resp.get_data(as_text=True)))["done"]
+        assert done["title"] == "Route title"
+        listed = client.get("/api/global-chats", headers=logged_in).get_json()["chats"]
+        assert next(c for c in listed if c["chat_id"] == chat_id)["title"] == "Route title"
 
     def test_deep_search_flag_reaches_the_tool(self, client, logged_in, fake_turn):
         chat_id = _new_global_chat(client, logged_in)

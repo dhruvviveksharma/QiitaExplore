@@ -278,6 +278,8 @@ On reload, `hydrateChatCache` renames each message's `ui_payload` to `ui` and **
 
 `done` also carries the chat title and the authoritative pinned-study list, which are reconciled into local state without a refetch. When `pinned_studies` is absent, existing pins are left untouched rather than cleared — the distinction between "no pins" and "not reported" is preserved.
 
+The title itself starts as a fast, deterministic truncation of the first message; a background thread (`helpers/chat_title.py`) generates a real title from it during that same turn, and `helpers/chat_turn.py` joins that thread — for at most 5s — right before building the `done` payload, so the LLM title can ride along on the same frame instead of requiring a second round trip. If the join times out, `done` reports the provisional truncation instead, and the LLM title (if it lands afterward) surfaces only on the next reload or chat-list fetch.
+
 Two other `ui.kind` values round-trip through the same mechanism: `samples_report` (a study report bubble) and `systems_status`.
 
 ---

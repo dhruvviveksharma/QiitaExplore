@@ -69,6 +69,7 @@ function useAppState() {
   const [slashIndex,     setSlashIndex]     = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
+  const scrollCollapse = useScrollCollapse(view.chatId);
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
@@ -503,16 +504,16 @@ function useAppState() {
     return next;
   };
 
-  // `fallbackTitle` is only adopted when the chat's title is still the
-  // auto-generated default — a chat the user already renamed (or one whose
-  // title was already auto-set by a prior turn) is left untouched, so
-  // finishing a later message never clobbers a rename.
-  const applyStreamDone = (chatId, fallbackTitle, pinnedMeta) => {
+  // The server is the source of truth for the title: `done` always carries
+  // the chat's current stored value — the provisional first-60-chars title,
+  // an LLM-generated replacement, or a rename that landed mid-turn — so
+  // applying it here can never clobber a rename.
+  const applyStreamDone = (chatId, payload) => {
     patchLast(chatId, _finalizeStreamedMessage);
     setChatCache(prev => {
       const cur = prev[chatId] || {};
-      const nextMeta = pinnedMeta != null ? pinnedMeta : (cur.pinnedStudyMeta || []);
-      const nextTitle = cur.title === 'New chat' ? fallbackTitle : cur.title;
+      const nextMeta = payload?.pinned_study_meta != null ? payload.pinned_study_meta : (cur.pinnedStudyMeta || []);
+      const nextTitle = payload?.title ?? cur.title;
       return { ...prev, [chatId]: { ...cur, title: nextTitle, pinnedStudyMeta: nextMeta } };
     });
   };
@@ -773,12 +774,11 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_study_meta ?? null);
-              setOpenProject(prev => prev ? {
+              applyStreamDone(chatId, payload);
+              if (payload?.title) setOpenProject(prev => prev ? {
                 ...prev,
                 chats: (prev.chats || []).map(c =>
-                  c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c),
+                  c.chat_id === chatId ? { ...c, title: payload.title } : c),
               } : prev);
             },
           },
@@ -803,10 +803,9 @@ function useAppState() {
             onSegmentToolCall:   onSegmentToolCall(chatId),
             onSegmentToolResult: onSegmentToolResult(chatId),
             onDone: (payload) => {
-              const title = truncateTitle(displayMsg);
-              applyStreamDone(chatId, title, payload?.pinned_study_meta ?? null);
-              setGlobalChats(prev => prev.map(c =>
-                c.chat_id === chatId && c.title === 'New chat' ? { ...c, title } : c));
+              applyStreamDone(chatId, payload);
+              if (payload?.title) setGlobalChats(prev => prev.map(c =>
+                c.chat_id === chatId ? { ...c, title: payload.title } : c));
             },
           },
         );
@@ -956,7 +955,7 @@ function useAppState() {
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     // derived
-    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
+    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
   };
 }

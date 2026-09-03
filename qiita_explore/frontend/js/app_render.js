@@ -53,7 +53,7 @@ function renderApp(s, account) {
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
-    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle,
+    projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
   } = s;
 
@@ -412,7 +412,7 @@ function renderApp(s, account) {
       {/* ══════════════════ MAIN ══════════════════════ */}
       <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
-        <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}`}>
+        <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}${isChat ? scrollCollapse.barClass : ''}`}>
           {(view.type === 'browse' || view.type === 'merges') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
@@ -489,7 +489,9 @@ function renderApp(s, account) {
           </div>
         )}
 
-        <div className="content">
+        <div className="content"
+          onWheel={isChat ? scrollCollapse.onWheel : undefined}
+          onScroll={isChat ? scrollCollapse.onScroll : undefined}>
 
           {/* ── MERGES ── */}
           {view.type === 'merges' && (
@@ -555,7 +557,7 @@ function renderApp(s, account) {
                 </>
               )}
 
-              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /><br />Deep searching sample metadata…</div>}
+              {searching && <div className="state-loading"><HelixLoader w={160} h={80} /></div>}
 
               {!searching && (
                 <>
