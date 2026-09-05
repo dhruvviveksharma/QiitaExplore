@@ -12,6 +12,7 @@ function useAppState() {
   const [openProject, setOpenProject] = useState(null);
   const [view,        setView]        = useState(() => parseHash(window.location.hash).view);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const agg = useAggregations(); // Sample Aggregation list + mutators (js/aggregations.js)
   const [chatCache,   setChatCache]   = useState({});
   const [globalChats, setGlobalChats] = useState([]);
   const [projInnerTab, setProjInnerTab] = useState('chats');
@@ -931,6 +932,7 @@ function useAppState() {
       return chatCache[view.chatId]?.title || proj?.name || 'Project Chat';
     }
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
+    if (view.type === 'aggregations') return 'Sample Aggregation';
     return 'Browse Studies';
   }, [view, chatCache, projects]);
 
@@ -974,5 +976,6 @@ function useAppState() {
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
+    agg,
   };
 }

@@ -56,6 +56,7 @@ function renderApp(s, account) {
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches,
+    agg,
   } = s;
 
   // One list of {study_id, study_title}; ids are derived where a bare id is
@@ -414,15 +415,17 @@ function renderApp(s, account) {
       <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}${isChat ? scrollCollapse.barClass : ''}`}>
-          {(view.type === 'browse' || view.type === 'merges') ? (
+          {(view.type === 'browse' || view.type === 'merges' || view.type === 'aggregations') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
                 onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
+              <button className={`topbar-nav${view.type === 'aggregations' ? ' active' : ''}`}
+                onClick={() => { setView({ type: 'aggregations' }); setSidebarCollapsed(true); }}>Sample Aggregation</button>
               {SHOW_MERGES && (
                 <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
                   onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
               )}
-              {view.type === 'merges' && (
+              {(view.type === 'merges' || view.type === 'aggregations') && (
                 <button
                   className="sidebar-toggle-btn"
                   title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
@@ -519,6 +522,9 @@ function renderApp(s, account) {
             </div>
           )}
 
+          {/* ── SAMPLE AGGREGATION ── */}
+          {view.type === 'aggregations' && <AggregationsTab agg={agg} />}
+
           {/* ── BROWSE ── */}
           {view.type === 'browse' && (
             <div className="browse-panel">
@@ -596,6 +602,7 @@ function renderApp(s, account) {
                                   {inCtx ? '✓ Pinned' : '+ Pin'}
                                 </button>
                               )}
+                              <AggregateCardButton study={study} agg={agg} />
                               {SHOW_MERGES && (
                                 <button className="btn-card-merge"
                                   onClick={() => {
@@ -736,7 +743,7 @@ function renderApp(s, account) {
         </div>
 
         {/* Composer */}
-        {view.type !== 'merges' && <div className="composer-wrap">
+        {view.type !== 'merges' && view.type !== 'aggregations' && <div className="composer-wrap">
           {showModelPicker && (
             <ModelPickerCard
               current={selectedModel}
