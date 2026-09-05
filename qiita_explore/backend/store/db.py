@@ -225,6 +225,28 @@ def _create_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_ws ON merge_jobs(workspace_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_user ON merge_jobs(user_id, created_at DESC);
 
+        CREATE TABLE IF NOT EXISTS aggregations (
+            aggregation_id TEXT PRIMARY KEY,
+            user_id        TEXT NOT NULL,
+            name           TEXT NOT NULL,
+            created_at     TEXT,
+            updated_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_aggregations_user ON aggregations(user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS aggregation_studies (
+            aggregation_id       TEXT NOT NULL,
+            study_id             INTEGER NOT NULL,
+            study_title          TEXT,
+            data_types           TEXT,
+            num_samples          INTEGER,
+            num_preps            INTEGER,
+            fastq_artifact_count INTEGER,
+            added_at             TEXT,
+            PRIMARY KEY (aggregation_id, study_id),
+            FOREIGN KEY (aggregation_id) REFERENCES aggregations(aggregation_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS biom_sample_cache (
             artifact_id     INTEGER PRIMARY KEY,
             num_samples     INTEGER,

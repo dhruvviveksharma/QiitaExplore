@@ -64,6 +64,17 @@ from .merge_crud import (  # noqa: F401
     update_merge_job_status,
 )
 
+from .aggregation_crud import (  # noqa: F401
+    AGGREGATION_STUDIES_CAP,
+    list_aggregations,
+    create_aggregation,
+    get_aggregation,
+    rename_aggregation,
+    delete_aggregation,
+    add_study_to_aggregation,
+    remove_study_from_aggregation,
+)
+
 from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,

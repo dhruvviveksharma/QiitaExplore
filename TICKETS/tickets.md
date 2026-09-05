@@ -2246,6 +2246,38 @@ Select `dd.subdirectory` in both queries and branch in Python the way
 
 ---
 
+## TKT-075: Aggregated FASTQ Manifest — Duplicate Sample-IDs and Mixed Read Layouts
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Added 2026-09-04 with the Sample Aggregation tab. `helpers/fastq_manifest.fetch_aggregate_manifest`
+folds every `per_sample_FASTQ` artifact across every prep of every study in an aggregation into one
+QIIME2 V2 manifest, with two deliberate simplifications:
+
+1. A sample-id present in more than one artifact (the same sample in a 16S and a shotgun prep, or
+   two raw artifacts on one prep) is emitted once — the first occurrence in ascending
+   `(study_id, prep_template_id, artifact_id)` order wins; the rest are dropped with a
+   `logging.warning` count. There is no per-prep/artifact selection in the UI.
+2. If any artifact is paired-end the header is the paired one, so single-end rows carry an empty
+   `reverse-absolute-filepath` cell. QIIME2's `PairedEndFastqManifestPhred33V2` import will reject
+   those rows without hand-editing.
+
+### Plan
+
+If users hit either case: add an optional per-study prep/artifact picker to the aggregation detail
+(mirroring `merge_workspace_studies.chosen_artifact_ids`), or emit one manifest per read layout.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregations.js`
+
+---
+
 *Generated: 2026-05-19 | Updated: 2026-09-04*
 
 ---
