@@ -5,13 +5,14 @@ routes/merge_routes.py to keep it under the 500-line cap.
 import json
 import os
 
-from flask import g, jsonify, request, send_file
+from flask import Response, g, jsonify, request, send_file
 
 from run import app
 from store import get_merge_job, get_study_detail_cache
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.biom_samples import get_biom_sample_ids
-from helpers.qiita_fetch import _qiita_fetch
+from helpers.fastq_manifest import fetch_manifest, to_tsv
+from helpers.qiita_fetch import _qiita_fetch, is_study_public
 from helpers.merge_helpers import _get_artifacts
 
 _FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
@@ -115,6 +116,25 @@ def download_artifact_file(artifact_id, filepath_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 403
     return send_file(real_path, as_attachment=True, download_name=filename)
+
+
+@app.route("/api/artifacts/<int:artifact_id>/fastq-manifest", methods=["GET"])
+def download_fastq_manifest(artifact_id):
+    """QIIME2 V2 manifest (TSV) mapping each sample to its FASTQ path(s) on qmounts."""
+    study_id = request.args.get("study_id", type=int)
+    if not study_id:
+        return jsonify({"error": "study_id required"}), 400
+    if not is_study_public(study_id):
+        return jsonify({"error": "Study not found or not public"}), 404
+    try:
+        prep_id, rows, paired = fetch_manifest(study_id, artifact_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    return Response(
+        to_tsv(rows, paired),
+        mimetype="text/tab-separated-values",
+        headers={"Content-Disposition": f"attachment; filename=manifest_prep{prep_id}_artifact{artifact_id}.tsv"},
+    )
 
 
 @app.route("/api/merge-jobs/<job_id>/download", methods=["GET"])

@@ -2476,6 +2476,42 @@ Loose ends from the 2026-09-12 browse relevance + facet-filter work:
 
 ---
 
+## TKT-082: Artifact Path SQL Ignores `data_directory.subdirectory`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-09-04 while adding the per-sample FASTQ manifest. `helpers/artifact_graph.py:109`
+and `helpers/qiita_fetch.py:440` both hardcode
+`dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath`, unconditionally inserting the
+artifact_id segment. Canonical Qiita (`qiita_db/util.py:706 _path_builder`) only does so
+when `data_directory.subdirectory = true`. Live DB: 13 legacy `raw_data` per_sample_FASTQ
+artifacts (+241 legacy `FASTQ`) have `subdirectory = false`, so the built path is wrong, e.g.
+`/qmounts/qiita_data/raw_data/2214/360_SRR1561443.fastq.gz` (absent) vs
+`/qmounts/qiita_data/raw_data/360_SRR1561443.fastq.gz` (exists). Four of these are in public
+studies (artifacts 2516/study 1939, 2512/1998, 2451 and 2561/10251), so their per-file
+download links 403 ("File not found on disk") today.
+
+Related residue: `_abs()` / `QIITA_BASE_DATA_DIR` prefixing is copied four times
+(`artifact_graph.py:18`, `qiita_fetch.py:457`, `biom_samples.py:12`, `merge_executor.py:83`).
+
+### Plan
+
+Select `dd.subdirectory` in both queries and branch in Python the way
+`helpers/fastq_manifest.build_manifest_rows` does; collapse the four `_abs` copies onto
+`artifact_graph._abs`.
+
+### Files
+
+- `qiita_explore/backend/helpers/artifact_graph.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/biom_samples.py`
+- `qiita_explore/backend/helpers/merge_executor.py`
+
+---
+
 *Generated: 2026-09-03 | Updated: 2026-09-12*
 
 ---

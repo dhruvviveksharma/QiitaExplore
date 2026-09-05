@@ -2,7 +2,7 @@
 // Globals in scope: React, useState, useEffect, useRef (utils.js),
 //   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js),
 //   ArtifactOutputsView, prepReachableSet (merge_artifacts.js),
-//   ProvenanceForest (merge_tree.js)
+//   ProvenanceForest (merge_tree.js), FastqManifestSection (fastq_manifest.js)
 
 // ── Add to project ────────────────────────────────────────────────────────────
 
@@ -388,6 +388,8 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
               subtitle={detail ? `${(detail.preps || []).length}` : undefined} defaultOpen>
               <PrepsTable detail={detail} loading={loading} />
             </CollapsibleSection>
+
+            <FastqManifestSection detail={detail} studyId={study.study_id} />
 
             {!loading && detail && (
               <CollapsibleSection id="study-modal-samples" title="Samples"
