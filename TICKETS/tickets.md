@@ -616,6 +616,11 @@ migration rather than an app-code change
 - `qiita_explore/backend/services/llm.py` (`_keyword_clause_sql`)
 - New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
 
+**Related (2026-09-12):** pure study-ID browse queries (`550`, `study id 550`) no
+longer touch the `ILIKE` path at all — `browse_query_to_sql` short-circuits them to
+`s.study_id = ANY(%s)` and the route skips the deep probe. Text queries are
+unchanged; TKT-080 is the in-repo alternative to the upstream index.
+
 ---
 
 
@@ -2408,6 +2413,69 @@ Either persist completed steps as a `{type: "step"}` segment in `ui_payload`
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-09-03*
+## TKT-080: Local Search Index (FTS) for Browse + Agent Text Search
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Browse and agent text search are leading-wildcard `ILIKE` scans over `qiita.study`
+(TKT-024: 86 ms – 13.5 s). The indicated Postgres fix — `pg_trgm` GIN indexes — is an
+upstream ask, because QiitaExplore's access to classic Qiita is read-only, and it has
+not happened. The alternative this codebase *can* ship is a local search index: sync
+study headers (title, alias, abstract, PI, affiliation, data types, year added, sample
+count) into SQLite FTS5 (or a `search_documents` table in a Postgres we own), rank with
+BM25 plus the existing field weights, and hydrate hits from Qiita by id. Sample-metadata
+search stays on the bounded JSONB probes; a per-sample document index is a later step.
+`docs/11-roadmap.md` already lists "maintain a local index" as the option that removes
+the dependency at the cost of a second source of truth.
+
+### Plan
+
+1. `store/search_index.py`: FTS5 table + a sync job (full rebuild, hourly or on demand)
+   fed by `_build_study_header_query()` rows.
+2. `search_studies_with_sql` gains an index-backed path for `relevance_keywords` /
+   `match_keywords` while the index is fresh; falls back to SQL when it is stale.
+3. Re-run `tests/benchmarks/search_latency.py` / `concurrent_bench.py` before/after.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py`
+- `qiita_explore/backend/store/` (new module)
+- `qiita_explore/backend/routes/study_routes.py`, `helpers/agent_tools.py`
+
+---
+
+## TKT-081: Browse Search Follow-ups (ID-Boost Edge Cases, Filter-Only Paging)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Loose ends from the 2026-09-12 browse relevance + facet-filter work:
+
+- **Year-like integers in mixed queries.** `2019 cohort` now boosts public study 2019
+  (+1000) to the top, because every bare integer is a study-ID candidate. A 1900–2100
+  exemption *when other keywords are present* is the one-line fix if it bites; pure-ID
+  queries should keep matching study 2019 exactly.
+- **Filter-only browsing is capped.** Empty query + filters returns LIMIT 120 by sample
+  count with no "show more" — the Browse grid has no pagination at all.
+- **Each filter click with a text query re-runs the deep probe** (up to 500 studies).
+  Filter-only clicks skip it (no terms to probe). The frontend drops stale responses
+  behind a sequence counter but cannot cancel the server-side work.
+- `app_state.js` (+17) and `app_render.js` (+4) grew again; both remain over the
+  500-line cap (TKT-011 / TKT-036 / TKT-037). `qiita_fetch.py` sits at 485/500.
+
+### Files
+
+- `qiita_explore/backend/services/llm.py` (`browse_query_to_sql`)
+- `qiita_explore/backend/routes/study_routes.py`
+- `qiita_explore/frontend/js/app_state.js`, `qiita_explore/frontend/js/app_render.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-12*
 
 ---

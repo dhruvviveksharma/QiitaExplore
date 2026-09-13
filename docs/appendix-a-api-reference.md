@@ -82,13 +82,14 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | GET | `/api/auth/legacy-default` | `api_auth_legacy_default` | session | Whether legacy `"default"` data can be claimed |
 | POST | `/api/auth/claim-default` | `api_auth_claim_default` | session | Claim legacy `"default"`-owned rows |
 
-### Studies — `backend/routes/study_routes.py` (7)
+### Studies — `backend/routes/study_routes.py` (8)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
 | GET | `/api/studies/<int:study_id>/detail` | `api_study_detail` | session | Preps, artifacts, artifact graph, samples |
 | GET | `/api/studies/<int:study_id>/samples/<path:sample_id>` | `api_sample_detail` | session | All metadata fields for one sample |
-| POST | `/api/search` | `search` | session | LLM-planned study search |
+| POST | `/api/search` | `search` | session | Browse search: regex planner, relevance ranking, facet filters |
+| GET | `/api/search/facets` | `api_search_facets` | session | PI / data-type / year-added option lists for the Browse filters |
 | GET | `/api/systems` | `api_systems` | session | Live health probe of every allowed model |
 | GET | `/api/settings` | `api_get_settings` | session | Whether an Anthropic key is stored |
 | POST | `/api/settings` | `api_post_settings` | session | Store an Anthropic API key |
@@ -279,36 +280,56 @@ Returns `{"sample_id": "...", "fields": {...}}` for one sample, reading `sample_
 
 `POST /api/search` — session + CSRF.
 
-The browse-grid search. An LLM translates natural language into a SQL `WHERE` fragment, which is then executed against the Qiita study tables.
+The browse-grid search. A regex planner (`browse_query_to_sql` — no LLM, despite the module name) turns the text into a SQL `WHERE` fragment; optional facet filters narrow it; results are ranked by relevance.
 
-Request:
+Request (`filters` and every key inside it are optional; `{"query": q}` alone still works):
 
 ```json
-{ "query": "infant gut microbiome", "deep_search": false }
+{ "query": "550 mouse gut", "deep_search": true,
+  "filters": { "pis": ["Rob Knight"], "data_types": ["16S"], "year_min": 2012, "year_max": 2020 } }
 ```
 
-Empty `query` → **400** `{"error": "Query is required"}`.
+Empty `query` **with no filters** → **400** `{"error": "Query is required"}`. Empty `query` with filters is filter-only browsing (LIMIT 120, ordered by sample count). A non-integer `year_min`/`year_max` → **400**. `pis` is capped at 50 names, `data_types` at 20; an inverted year range is swapped.
 
 Behavior:
 
-1. `llm_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, `applied_filters`, and PI resolution metadata. Missing pieces default to `1=1`, `[]`, and `50`.
-2. `search_studies_with_sql(...)` runs the text search with expanded keywords as `relevance_keywords` (title 30, alias 15, PI 20, abstract 10 per hit). Sample-metadata layer adds +1 per matching keyword on merged results. PI veto applies only when `resolve_pi` finds a match in `study_person`.
-3. When `deep_search` is true, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB (full text), bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500). Results merge and re-rank with the same unified scorer.
+1. `browse_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, `study_ids`, `id_only`, `phrase`, `applied_filters`, and PI resolution metadata. Bare integers are study IDs, never keywords; an `id_only` plan is exactly `s.study_id = ANY(%s)`.
+2. `build_browse_filter_where` ANDs PI names / year bounds into that WHERE (`sp_pi.name = ANY(%s)`, `EXTRACT(YEAR FROM s.first_contact) >= / <= %s`); data types pass through `search_studies_with_sql(data_types=...)`.
+3. `search_studies_with_sql(...)` runs the text search with expanded keywords as `relevance_keywords` (title 30, alias 15, PI 20, abstract 10 per hit, +1000 for a study whose id was in the query, +25 when the whole query appears in the title). PI veto applies only when `resolve_pi` finds a match in `study_person`.
+4. When `deep_search` is true **and** the plan is not `id_only` **and** there are terms to probe, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB, bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500) and narrowed by the filters' data types / PIs / years. Merged rows are then gated exactly by `study_passes_browse_filters` and re-ranked by `finalize_search_results` (same weights, +1 per keyword with a sample-metadata hit).
 
-Response echoes the plan and `applied_filters`:
+Response echoes the plan, the PI `applied_filters`, and the normalised `filters` (`null` when none were sent); every row carries `year` (year the study was added to Qiita):
 
 ```json
 {
-  "results": [],
-  "sql_query": { "keywords": [], "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } } },
+  "results": [{ "study_id": 550, "study_title": "…", "year": 2015, "relevance": 1030, "...": "..." }],
+  "sql_query": { "keywords": ["mouse", "gut"], "study_ids": [550], "id_only": false, "phrase": "mouse gut",
+                 "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } } },
   "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } },
-  "count": 0
+  "filters": { "pis": ["Rob Knight"], "data_types": ["16S"], "year_min": 2012, "year_max": 2020 },
+  "count": 1
 }
 ```
 
 Any exception is caught, traceback-printed, and returned as **500** with `str(e)`.
 
 `backend/routes/study_routes.py :: search`
+
+### api_search_facets
+
+`GET /api/search/facets` — session.
+
+Option lists for the Browse filter pickers, over public studies only, recomputed at most every 6 h per Gunicorn worker (`services/browse_filters.py :: get_search_facets`). PIs are grouped by `study_person.name` — the same column the `pis` filter matches on.
+
+```json
+{
+  "pis": [{ "name": "Rob Knight", "count": 312 }],
+  "years": { "min": 2011, "max": 2026 },
+  "data_types": [{ "name": "16S", "count": 1450 }]
+}
+```
+
+`backend/routes/study_routes.py :: api_search_facets`
 
 ### api_systems
 

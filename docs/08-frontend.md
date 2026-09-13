@@ -104,6 +104,8 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/components.js`              | 684   | Shared components — samples browser, prep/artifact tables, agent bubbles, model picker, slash menu                   |
 | `frontend/js/hooks/useModelSelection.js` | 30    | Model choice with per-chat and global `localStorage` persistence                                                     |
 | `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
+| `frontend/js/browse_filters.js`          | 173   | Browse facet filters — `useBrowseFilters`, `FacetMultiSelect` (multi-select `useDropdown`), `YearRangeSlider`, `BrowseFilterBar` |
+| `frontend/browse_filters.css`            | 75    | Styles for the above (kept out of `style.css`, which is over the line cap)                                          |
 | `frontend/js/app_state.js`               | 633   | `useAppState()` — the whole application state and every action                                                       |
 | `frontend/js/app_render.js`              | 601   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
 | `frontend/js/merge_artifacts.js`         | 354   | Artifact graph filtering, BIOM cards, pipeline breadcrumb, global BIOM selector                                      |

@@ -30,7 +30,7 @@ flowchart TB
     E2["<b>search_studies</b><br/>agent tool"]
     E3["<b>search_by_sample</b><br/>agent tool"]
 
-    P1["llm_query_to_sql<br/><i>(regex — no LLM)</i>"]
+    P1["browse_query_to_sql<br/><i>(regex — no LLM)</i>"]
     P2["_collect_terms<br/>6 typed slots, priority order"]
     EX["expand_keyword_variants<br/>plural/irregular · cap 80"]
     DT["detect_data_types<br/>synonym → canonical"]
@@ -64,19 +64,26 @@ Three entry points, three different ways of turning intent into terms, and then 
 
 ## Path 1 — the browse box
 
-`POST /api/search` runs `backend/services/llm.py :: llm_query_to_sql`.
+`POST /api/search` runs `backend/services/llm.py :: browse_query_to_sql`.
 
-> **The name is a trap. There is no LLM in this function.** It is pure regex and set arithmetic — no model call, no network. The name is a leftover from an earlier design. Renaming it is a small, worthwhile cleanup.
+> **There is no LLM in this function** — it was called `llm_query_to_sql` until 2026-09, and the module name `llm.py` is the last leftover of that design. It is pure regex and set arithmetic: no model call, no network.
 
 What it actually does:
 
 1. Tokenize the query, lowercase, drop a stop-word list (`find`, `show`, `studies`, `about`, `with`, …) and anything under 3 characters.
-2. Decide **broad vs. narrow**. A `_BREADTH_RE` match (`many`, `all`, `several`, `overview`, `comprehensive`, `survey`, `explore`, …) **or** four or more surviving keywords means broad.
-3. Broad → first 6 keywords, joined with `OR`, limit `GLOBAL_SEARCH_SQL_LIMIT_BROAD` (120). Narrow → first 2 keywords, joined with `AND`, limit `..._NARROW` (50).
-4. A `by <Capitalized Name>` pattern adds a PI name/affiliation clause.
-5. Bare integers become `s.study_id = ANY(%s)`, OR'd with the text clause — so pasting a study ID finds it directly.
+2. **Bare integers are study-ID candidates, never text keywords.** `550`, `study 550`, `study id 550`, `#550` all reduce to `study_ids = [550]`; with no text keywords left the plan is `id_only`, the WHERE is exactly `s.study_id = ANY(%s)` — no `ILIKE`, no relevance LATERAL — and the route skips the sample-metadata fan-out. (Before 2026-09 "550" was *also* `ILIKE`'d across every abstract, so studies mentioning "5500 samples" scored 10 while study 550 scored 0 on its own text and sorted below them.) A mixed query such as `550 mouse gut` keeps the OR'd exact match and boosts it — see the weights table below.
+3. Decide **broad vs. narrow**. A `_BREADTH_RE` match (`many`, `all`, `several`, `overview`, `comprehensive`, `survey`, `explore`, …) **or** four or more surviving keywords means broad.
+4. Broad → the 6 most informative keywords (`_pick_keywords`), joined with `OR`, limit `GLOBAL_SEARCH_SQL_LIMIT_BROAD` (120). Narrow → the best 2, joined with `AND`, limit `..._NARROW` (50).
+5. A `by <Capitalized Name>` pattern adds a PI name/affiliation clause.
+6. The whole cleaned query (before the narrow trim) is returned as `phrase`, for the title-phrase bonus.
 
-The heuristic is crude and it is honest about being crude. Its weakness is the keyword truncation: a narrow query keeps only the **first two** surviving tokens in input order, with no notion of which are informative. "high fat diet mouse gut" narrows to `high AND fat`.
+The heuristic is crude and it is honest about being crude; `_pick_keywords` at least prefers long, non-modifier tokens over "high"/"low" when it trims.
+
+### Browse facet filters (added 2026-09)
+
+The request body may carry `filters: {pis, data_types, year_min, year_max}` (shapes in [appendix A](appendix-a-api-reference.md#search)). `backend/services/browse_filters.py` turns PI names and the year range into one AND-fragment (`sp_pi.name = ANY(%s)`, `EXTRACT(YEAR FROM s.first_contact) >= / <= %s`) that the route ANDs into the planner's custom WHERE — so it binds in the **topic slot** and the builder's param order below gains no new slot. Data types go through the existing `data_types=` kwarg. Deep-search rows are hydrated by id and never see that WHERE, so `study_passes_browse_filters` re-applies all three filters in Python over the merged list, and `_get_candidate_ids` narrows the probe set by data type, PI and year up front. An empty query with filters is allowed (filter-only browsing): no keywords → no LATERAL → `ORDER BY num_samples DESC NULLS LAST, s.study_id`, LIMIT 120. `GET /api/search/facets` serves the picker lists — PI counts, data-type counts, year range over public studies — from a 6 h per-worker cache.
+
+"Year" is `qiita.study.first_contact`: when the study was created in Qiita. Qiita stores no publication date (`study_publication` holds DOI/PubMed IDs only), so the UI says **"Year added"**. Every study-header row now carries `year` (`_STUDY_COUNT_COLUMNS`).
 
 ---
 
@@ -117,14 +124,18 @@ Public visibility is a correlated `EXISTS` (`_PUBLIC_ARTIFACT_EXISTS` in `helper
 | `study_abstract` | 10 |
 | `study_alias` | 15 |
 | PI name | 20 |
+| exact study-ID match (`boost_study_ids`) | +1000, once per study, **outside** the per-keyword sum |
+| whole cleaned query in the title (`title_phrase`) | +25 |
 
 - `rel.aux_match` — `BOOL_OR` over the 2 extra fields (PI affiliation, lab-contact name).
+
+The two bonuses are browse-only (the agent path passes neither) and bind inside the LATERAL, ahead of the keyword array, so they live in the `kw_params` slot. `finalize_search_results` recomputes relevance in Python and would silently undo them, so it mirrors both.
 
 The agent path passes `match_keywords`, which both scores and **filters** with `(rel.relevance > 0 OR rel.aux_match)`; the browse path passes `relevance_keywords` (score-only, keeping its own custom WHERE). One array bind serves both roles — previously the same keyword block rendered twice (a 6-field `EXISTS` filter from `build_where_from_plan` plus a 4-field relevance subquery from `build_relevance_score`, both since deleted) and bound the array twice.
 
 **Layer 2 — sample metadata** (`score_studies_sample_layer` in `sample_search.py`): after text + sample hits merge, each merged study is probed once. Full `sample_values::text` is searched; **+1 per keyword** with at least one sample match — over the first `_MAX_KEYWORDS_PER_PROBE` (10) terms of the expanded list only (direct user terms lead that list, so the cap sheds synonym padding). The sample layer's maximum contribution is therefore +10, not +80; pinned by `tests/test_sample_search_caps.py`.
 
-Final ordering: `relevance DESC, num_samples DESC NULLS LAST, s.study_id`.
+Final ordering: `relevance DESC, num_samples DESC NULLS LAST, s.study_id`. Without keywords (ID-only or filter-only browse) there is no LATERAL and the order is `num_samples DESC NULLS LAST, s.study_id`.
 
 Note the asymmetry survives the rewrite: **scoring** looks at 4 fields, while **matching** covers 6 (`relevance > 0` covers the 4 scored fields exactly, since all weights are positive; `aux_match` adds PI affiliation and lab contact name). A study matched solely on lab-contact name therefore scores zero and sorts last.
 
@@ -167,7 +178,7 @@ full_params = kw_params + list(params) + dt_params + tag_params + list(pi_filter
 #              LATERAL     clause         EXISTS      EXISTS       EXISTS
 ```
 
-Keyword parameters come first because the LATERAL sits in the **FROM clause**, ahead of the WHERE; the topic clause's own placeholders come next because `topic_where` renders as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"` (the match condition prepended for `match_keywords` binds nothing). Get this order wrong and — best case — Postgres rejects the query; worst case it returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
+`kw_params` is *every* `%s` inside the LATERAL, in rendered order — `[boost study ids]` → `'%phrase%'` → the keyword array — exactly as `build_keyword_lateral` returns them. Keyword parameters come first because the LATERAL sits in the **FROM clause**, ahead of the WHERE; the topic clause's own placeholders come next because `topic_where` renders as `"(custom_sql_where) AND dt_sql AND tag_sql AND (pi_filter_sql)"` (the match condition prepended for `match_keywords` binds nothing). Get this order wrong and — best case — Postgres rejects the query; worst case it returns confidently wrong results. The docstring on `search_studies_with_sql` states the order; keep it accurate if you touch the assembly.
 
 **Resolved (2026-08-30, was flagged 2026-08-17 as an open question):** the
 original order bound `dt_params` *before* the topic params, misaligned with
