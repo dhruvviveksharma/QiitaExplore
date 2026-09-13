@@ -75,6 +75,18 @@
 .agg-samples-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; min-height: 22px; }
 .agg-samples-msg { font-size: 11.5px; color: var(--text-3); }
 
+/* ── Show filter segmented control + FASTQ/FASTA columns ──────────────── */
+.agg-seg { display: flex; border: 1px solid var(--border-soft); border-radius: var(--radius-s); overflow: hidden; flex-shrink: 0; }
+.agg-seg button {
+  padding: 4px 10px; font-size: 11.5px; color: var(--text-2); background: var(--surface);
+  border: none; border-right: 1px solid var(--border-soft); cursor: pointer; white-space: nowrap;
+}
+.agg-seg button:last-child { border-right: none; }
+.agg-seg button:hover { background: var(--accent-soft); }
+.agg-seg button.on { background: var(--accent-soft); color: var(--accent-h); font-weight: 600; }
+.agg-file-yes { color: var(--accent-h); font-weight: 600; }
+.agg-file-no { color: var(--text-3); }
+
 /* ── metadata pane (third column, only while a sample is picked) ───────── */
 .agg-meta-col { width: 340px; flex-shrink: 0; overflow-y: auto; border-left: 1px solid var(--border-soft); padding: 12px; }
 .agg-meta-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -84,6 +96,9 @@
 .agg-detail-title { font-size: 16px; font-weight: 600; }
 .agg-detail-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
 .agg-disabled { opacity: .5; cursor: not-allowed; }
+.agg-download-col { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.agg-download-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.agg-download-hint { font-size: 11px; color: var(--text-3); text-align: right; max-width: 320px; }
 
 /* ── Browse-card picker ──────────────────────────────────────────────── */
 .agg-menu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
