@@ -8,7 +8,12 @@
 // ancestor. A dropdown inside any scrolling container (the sidebar,
 // eventually a scrolling modal body, etc.) would otherwise get clipped by
 // that container's overflow for any trigger near its edge.
-function useDropdown(computePos) {
+//
+// Options: { hoverClose: false } keeps the panel open when the cursor
+// leaves it — for multi-select pickers with a search box, where the user
+// types with the mouse resting elsewhere. Outside-click and Escape still
+// close it.
+function useDropdown(computePos, { hoverClose = true } = {}) {
   const [open,    setOpen]    = useState(false);
   const [pos,     setPos]     = useState(null);
   // While true the panel is still mounted but fading out (.cr-menu-closing);
@@ -45,8 +50,10 @@ function useDropdown(computePos) {
     const onEnter = () => { clearTimers(); setClosing(false); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    el?.addEventListener('mouseleave', onLeave);
-    el?.addEventListener('mouseenter', onEnter);
+    if (hoverClose) {
+      el?.addEventListener('mouseleave', onLeave);
+      el?.addEventListener('mouseenter', onEnter);
+    }
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);

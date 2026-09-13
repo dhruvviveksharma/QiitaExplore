@@ -11,6 +11,10 @@
        using 127.0.0.1 (not localhost) so it matches this page's host --
        see docs/08-frontend.md ("API base resolution") for why. Example:
        <meta name="api-base" content="http://127.0.0.1:5001/api"> -->
+  <!-- #TODO revert before merging to master: Live Server (5503) + tunneled
+       dev backend (5002, per detect_env.sh for non-master branches) are
+       different origins, so the relative default can't reach it. -->
+  <meta name="api-base" content="http://127.0.0.1:5002/api">
   <title>QiitaExplore</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -18,6 +22,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css?v=63" />
+  <link rel="stylesheet" href="browse_filters.css?v=1" />
 </head>
 <body>
   <div id="root"></div>
@@ -29,7 +34,7 @@
   <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
   <script type="text/babel" src="js/utils.js?v=10"></script>
   <script type="text/babel" src="js/icons.js?v=5"></script>
-  <script type="text/babel" src="js/hooks/useDropdown.js?v=3"></script>
+  <script type="text/babel" src="js/hooks/useDropdown.js?v=4"></script>
   <script type="text/babel" src="js/loaders.js?v=5"></script>
   <script type="text/babel" src="js/auth.js?v=7"></script>
   <script type="text/babel" src="js/components.js?v=21"></script>
@@ -37,8 +42,9 @@
   <script type="text/babel" src="js/hooks/useModelSelection.js?v=1"></script>
   <script type="text/babel" src="js/hooks/useUrlSync.js?v=1"></script>
   <script type="text/babel" src="js/hooks/useScrollCollapse.js?v=1"></script>
-  <script type="text/babel" src="js/app_state.js?v=24"></script>
-  <script type="text/babel" src="js/app_render.js?v=41"></script>
+  <script type="text/babel" src="js/browse_filters.js?v=1"></script>
+  <script type="text/babel" src="js/app_state.js?v=25"></script>
+  <script type="text/babel" src="js/app_render.js?v=42"></script>
   <script type="text/babel" src="js/merge_artifacts.js?v=9"></script>
   <script type="text/babel" src="js/merge_tree.js?v=9"></script>
   <script type="text/babel" src="js/merge_detail.js?v=7"></script>

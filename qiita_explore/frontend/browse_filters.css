@@ -1,0 +1,75 @@
+/* Browse facet filters — js/browse_filters.js. Kept out of style.css (already
+   over the 500-line cap). Theme tokens only, so dark mode follows. */
+
+.bf-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Triggers: .dd-trigger from style.css, restyled to sit next to .browse-chip */
+.bf-trigger { padding: 5px 10px; min-width: 110px; border-radius: var(--radius-m); background: var(--surface); }
+.bf-trigger:disabled { opacity: .5; cursor: default; }
+.bf-trigger.active { border-color: var(--accent); color: var(--accent-h); background: var(--accent-soft); }
+.bf-trigger-n {
+  display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px;
+  border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  background: var(--accent); color: #fff;
+}
+
+/* Panel: .cr-menu from style.css, wider and scrollable */
+.bf-menu { width: 280px; max-height: 340px; overflow-y: auto; }
+.bf-search {
+  display: block; width: calc(100% - 16px); margin: 4px 8px 6px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--bg); color: var(--text); font-size: 12.5px;
+}
+.bf-search:focus { outline: none; border-color: var(--accent); }
+.bf-item { justify-content: flex-start; gap: 8px; }
+.bf-item.on { color: var(--accent-h); }
+.bf-check { width: 14px; flex-shrink: 0; display: inline-flex; color: var(--accent); }
+.bf-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bf-count { flex-shrink: 0; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.bf-empty { padding: 8px 14px; font-size: 12px; color: var(--text-3); }
+
+/* Year-added dual slider: two native range inputs stacked on one track. The
+   inputs ignore the pointer; only their thumbs take it. */
+.bf-range-wrap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+.bf-range-wrap.active .bf-range-values { color: var(--accent-h); font-weight: 600; }
+.bf-range-label { color: var(--text-3); }
+.bf-range { position: relative; width: 180px; height: 24px; }
+.bf-range-track { position: absolute; left: 0; right: 0; top: 10px; height: 4px; border-radius: 2px; background: var(--border); }
+.bf-range-fill  { position: absolute; top: 10px; height: 4px; border-radius: 2px; background: var(--accent); }
+.bf-range input[type=range] {
+  position: absolute; left: 0; top: 0; width: 100%; height: 24px; margin: 0;
+  background: none; pointer-events: none; -webkit-appearance: none; appearance: none;
+}
+.bf-range input[type=range]:focus { outline: none; }
+.bf-range input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 24px; }
+.bf-range input[type=range]::-moz-range-track { background: transparent; height: 24px; }
+.bf-range input[type=range]::-webkit-slider-thumb {
+  pointer-events: auto; -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; margin-top: 5px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--surface); cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.bf-range input[type=range]::-moz-range-thumb {
+  pointer-events: auto; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--surface); cursor: pointer;
+}
+.bf-range input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent-soft); }
+.bf-range-values { min-width: 82px; font-variant-numeric: tabular-nums; }
+
+/* Active-filter chips */
+.bf-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bf-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 10px;
+  border-radius: 999px; font-size: 12px; background: var(--accent-soft); color: var(--accent-h);
+}
+.bf-chip-x { border: none; background: none; color: inherit; font-size: 14px; line-height: 1; padding: 0 2px; cursor: pointer; opacity: .7; }
+.bf-chip-x:hover { opacity: 1; }
+.bf-clear { border: none; background: none; font-size: 12px; color: var(--text-3); cursor: pointer; text-decoration: underline; padding: 0 4px; }
+.bf-clear:hover { color: var(--accent); }
+
+/* Year badge on study cards, next to .study-id-badge */
+.study-year-badge {
+  font-size: 11px; font-weight: 600;
+  background: var(--bg-2); color: var(--text-2);
+  border-radius: 999px; padding: 2px 8px; flex-shrink: 0;
+}

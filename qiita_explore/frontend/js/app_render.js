@@ -36,7 +36,7 @@ function renderApp(s, account) {
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
@@ -49,6 +49,7 @@ function renderApp(s, account) {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    applyBrowseFilters,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
@@ -529,11 +530,12 @@ function renderApp(s, account) {
                   onChange={e => setQuery(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && doSearch()}
                 />
-                <button className="btn-search" onClick={() => doSearch()} disabled={searching || !query.trim()}>
+                <button className="btn-search" onClick={() => doSearch()}
+                  disabled={searching || (!query.trim() && !hasBrowseFilters(bf.filters))}>
                   {searching ? '…' : 'Search'}
                 </button>
                 {searched && (
-                  <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
+                  <button className="btn-clear" onClick={() => { setQuery(''); bf.clear(); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
                     Clear
                   </button>
                 )}
@@ -545,6 +547,7 @@ function renderApp(s, account) {
                 ))}
               </div>
 
+              <BrowseFilterBar facets={bf.facets} filters={bf.filters} onChange={applyBrowseFilters} />
 
               {(sqlQuery || appliedFilters?.pi) && (
                 <>
@@ -578,6 +581,7 @@ function renderApp(s, account) {
                           <div className="study-card-top">
                             <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
                               <span className="study-id-badge">ID {study.study_id}</span>
+                              {study.year != null && <span className="study-year-badge" title="Year added to Qiita">{study.year}</span>}
                               {study.is_gold && <span className="gold-badge">GOLD</span>}
                             </div>
                             <div className="study-card-actions" onClick={e => e.stopPropagation()}>

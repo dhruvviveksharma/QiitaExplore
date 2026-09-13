@@ -23,6 +23,9 @@ function useAppState() {
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [showSql,      setShowSql]      = useState(false);
+  // Browse facet filters (PI / data type / year added) — js/browse_filters.js.
+  const bf = useBrowseFilters();
+  const searchSeqRef = useRef(0);
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
@@ -883,12 +886,22 @@ function useAppState() {
     if (res.ok) { const d = await res.json(); if (d.project) setOpenProject(d.project); }
   };
 
-  const doSearch = async (override) => {
+  const doSearch = async (override, filtersOverride) => {
     const q = (override ?? query).trim();
-    if (!q) return;
+    const f = filtersOverride ?? bf.filters;
+    if (!q && !hasBrowseFilters(f)) {
+      // Nothing to search by (e.g. the last filter chip was removed with an
+      // empty box) — back to the GOLD grid.
+      setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null);
+      return;
+    }
     if (override) setQuery(override);
     setSearching(true); setSearched(false);
-    const res = await apiPost('/search', { query: q, deep_search: true });
+    // Filter clicks fire back-to-back; a slow earlier response must not
+    // overwrite a later one.
+    const seq = ++searchSeqRef.current;
+    const res = await apiPost('/search', { query: q, deep_search: true, filters: browseFiltersBody(f) });
+    if (seq !== searchSeqRef.current) return;
     if (res.ok) {
       const d = await res.json();
       setResults(d.results || []);
@@ -898,6 +911,9 @@ function useAppState() {
     else setResults([]);
     setSearched(true); setSearching(false);
   };
+  // Passes the next filters explicitly — bf.filters is still the old value
+  // in this closure.
+  const applyBrowseFilters = next => { bf.setFilters(next); doSearch(undefined, next); };
 
   // ─── derived ──────────────────────────────────────────────────────────────────
   const projStudyIds   = useMemo(() => (openProject?.studies || []).map(s => s.study_id), [openProject]);
@@ -935,7 +951,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
+    query, results, searching, searched, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
@@ -950,6 +966,7 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    applyBrowseFilters,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
