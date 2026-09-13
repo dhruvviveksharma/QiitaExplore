@@ -1,10 +1,12 @@
-// Sample Aggregation — a user's named set of studies whose per_sample_FASTQ
-// artifacts feed one QIIME2 V2 manifest (GET /api/aggregations/<id>/manifest,
-// helpers/fastq_manifest.fetch_aggregate_manifest). Three pieces live here:
-// the state hook (called once in useAppState), the Browse-card picker, and
-// the "Sample Aggregation" tab.
-// Globals in scope: React, useState, useEffect (utils.js), apiJson, API (utils.js),
-//   useDropdown (hooks/useDropdown.js), WreathLoader (loaders.js), splitTypes (components.js)
+// Sample Aggregation — a user's named set of samples, grouped by study, whose
+// per-sample sequence files feed one CSV (GET /api/aggregations/<id>/export.csv).
+// Three pieces live here: the state hook (called once in useAppState), the
+// Browse-card picker ("+ Aggregate" adds the whole study, every sample
+// checked), and the "Sample Aggregation" tab shell. The detail side (card
+// grid, sample table, metadata pane) is aggregation_detail.js.
+// Globals in scope: React, useState, useEffect (utils.js), apiJson (utils.js),
+//   useDropdown (hooks/useDropdown.js), WreathLoader (loaders.js),
+//   AggregationDetail, SampleMetadataPane, _plural (aggregation_detail.js)
 
 function useAggregations() {
   const [aggregations, setAggregations] = useState(null); // null until the first GET resolves
@@ -35,21 +37,28 @@ function useAggregations() {
     replace(await apiJson(`/aggregations/${id}/studies`, { method: 'POST', body: JSON.stringify({ study }) }));
   const removeStudy = async (id, studyId) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}`, { method: 'DELETE' }));
+  // body: {add:[…], remove:[…]} or {select:'all'|'none'|'matching', q}
+  const setSamples = async (id, studyId, body) =>
+    replace(await apiJson(`/aggregations/${id}/studies/${studyId}/samples`, { method: 'PATCH', body: JSON.stringify(body) }));
 
-  return { aggregations, create, rename, remove, addStudy, removeStudy };
+  return { aggregations, create, rename, remove, addStudy, removeStudy, setSamples };
 }
 
-// The header fields the server snapshots onto aggregation_studies — same
-// shape AddToProjectBar (study_modal.js) sends, plus num_preps.
+// The header the server snapshots onto aggregation_studies so the tab can
+// render a Browse-style card without a Qiita round-trip. Search results carry
+// no is_gold key (only the GOLD list does), hence the coercion.
 const _aggStudyBody = (study) => ({
   study_id: study.study_id,
   study_title: study.study_title,
+  study_abstract: study.study_abstract ?? null,
   data_types: study.data_types || '',
   num_samples: study.num_samples ?? null,
   num_preps: study.num_preps ?? null,
+  pi_name: study.pi_name ?? null,
+  pi_affiliation: study.pi_affiliation ?? null,
+  year: study.year ?? null,
+  is_gold: !!study.is_gold,
 });
-
-const _plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // Browse-card picker. Same trigger/panel/dismiss shape as ProjectPickerDropdown
 // (study_modal.js), right-aligned like ChatRowMenu because it sits at the
@@ -105,60 +114,16 @@ function AggregateCardButton({ study, agg }) {
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
 
-function AggregationDetail({ a, agg }) {
-  const studies = a.studies || [];
-  const fastqTotal = studies.reduce((n, s) => n + (s.fastq_artifact_count || 0), 0);
-  // Plain link like FileLink (merge_artifacts.js) and the per-artifact manifest
-  // (fastq_manifest.js): the session cookie rides along on top-level navigation.
-  const href = `${API}/aggregations/${a.aggregation_id}/manifest`;
-
-  return (
-    <div className="agg-detail">
-      <div className="agg-detail-head">
-        <div>
-          <div className="agg-detail-title">{a.name}</div>
-          <div className="agg-detail-sub">
-            {_plural(studies.length, 'study', 'studies')} · {_plural(fastqTotal, 'per-sample FASTQ artifact', 'per-sample FASTQ artifacts')}
-          </div>
-        </div>
-        {fastqTotal > 0
-          ? <a className="ao-file-btn" target="_blank" rel="noreferrer" href={href}>↓ Download QIIME2 manifest</a>
-          : <span className="ao-file-btn agg-disabled" title="Add a study that has per-sample FASTQ artifacts">↓ Download QIIME2 manifest</span>}
-      </div>
-      {studies.length === 0
-        ? <div className="agg-empty">No studies yet — click <strong>+ Aggregate</strong> on a study card in Browse.</div>
-        : (
-          <table className="prep-table">
-            <thead>
-              <tr><th>ID</th><th>Title</th><th>Data types</th><th>Samples</th><th>FASTQ artifacts</th><th></th></tr>
-            </thead>
-            <tbody>
-              {studies.map(s => (
-                <tr key={s.study_id}>
-                  <td>{s.study_id}</td>
-                  <td>{s.study_title || 'Untitled study'}</td>
-                  <td>{splitTypes(s.data_types).map(t => <span key={t} className="dtype-chip">{t}</span>)}</td>
-                  <td>{s.num_samples ?? '—'}</td>
-                  <td>{s.fastq_artifact_count ?? '—'}</td>
-                  <td>
-                    <button className="agg-remove" title="Remove study"
-                      onClick={() => agg.removeStudy(a.aggregation_id, s.study_id)}>×</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-    </div>
-  );
-}
-
 function AggregationsTab({ agg }) {
   const [activeId,  setActiveId]  = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editVal,   setEditVal]   = useState('');
+  // {study_id, sample_id} whose metadata fills the right-hand pane; lives here
+  // (not in the detail) so it survives collapsing the study's sample table.
+  const [picked,    setPicked]    = useState(null);
   const list   = agg.aggregations;
   const active = (list || []).find(a => a.aggregation_id === activeId) || null;
+  useEffect(() => { setPicked(null); }, [activeId]);
 
   const createNew = async () => {
     const name = prompt('Aggregation name:', 'Untitled');
@@ -214,9 +179,14 @@ function AggregationsTab({ agg }) {
       </div>
       <div className="agg-detail-col">
         {active
-          ? <AggregationDetail key={active.aggregation_id} a={active} agg={agg} />
+          ? <AggregationDetail key={active.aggregation_id} a={active} agg={agg} picked={picked} onPickSample={setPicked} />
           : <div className="agg-detail-empty">Select an aggregation to view it here</div>}
       </div>
+      {picked && (
+        <div className="agg-meta-col">
+          <SampleMetadataPane picked={picked} onClose={() => setPicked(null)} />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,11 +1,12 @@
-/* Sample Aggregation tab + Browse-card picker (js/aggregations.js).
+/* Sample Aggregation tab + Browse-card picker (js/aggregations.js,
+   js/aggregation_detail.js).
    Sibling of style.css — that file is far past the 500-line cap, so new
    feature CSS lands here and index.html links it right after style.css.
    Reuses the shared primitives from style.css (.cr-menu*, .rename-hint,
    .btn-card-add, .ao-file-btn, .prep-table, .dtype-chip, .merge-btn-ghost);
    every color below is a token, so .app.dark needs no overrides. */
 
-/* ── two-column layout (same geometry as .merges-layout) ─────────────── */
+/* ── layout: list | detail | (metadata pane while a sample is picked) ── */
 .agg-layout { display: flex; flex: 1; height: 100%; overflow: hidden; }
 .agg-list-col {
   width: 300px; flex-shrink: 0; overflow-y: auto;
@@ -47,7 +48,38 @@
 .agg-remove:hover { background: #fce7f3; color: var(--accent); }
 
 /* ── detail column ───────────────────────────────────────────────────── */
-.agg-detail { max-width: 900px; }
+/* ── detail column: card grid + expanded sample table ─────────────────── */
+.agg-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.agg-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.agg-grid .study-card { min-width: 0; }
+.study-card.agg-expanded { border-color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.agg-sel-count { font-size: 11.5px; color: var(--text-3); align-self: center; white-space: nowrap; }
+
+.agg-samples-panel {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-m);
+  padding: 12px 14px; margin: -4px 0 16px; background: var(--surface);
+}
+.agg-samples-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; }
+.agg-samples-title { color: var(--text-2); white-space: nowrap; }
+.agg-samples-toolbar .samples-search { flex: 1; min-width: 200px; }
+.agg-samples-count { color: var(--text-3); white-space: nowrap; }
+.agg-samples-wrap { max-height: 480px; overflow: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-s); }
+.agg-samples-wrap .prep-table { margin-top: 0; }
+.agg-samples-wrap .prep-table th { position: sticky; top: 0; background: var(--surface); z-index: 1; padding-left: 8px; }
+.agg-samples-wrap .prep-table td { padding-left: 8px; }
+.agg-samples-wrap input[type=checkbox] { accent-color: var(--accent); margin: 0; display: block; }
+.agg-sample-id { color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+.agg-sample-id:hover { text-decoration: underline; }
+.agg-row-active td { background: var(--accent-soft); }
+.agg-samples-empty { color: var(--text-3); font-size: 11.5px; padding: 10px 8px; }
+.agg-samples-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; min-height: 22px; }
+.agg-samples-msg { font-size: 11.5px; color: var(--text-3); }
+
+/* ── metadata pane (third column, only while a sample is picked) ───────── */
+.agg-meta-col { width: 340px; flex-shrink: 0; overflow-y: auto; border-left: 1px solid var(--border-soft); padding: 12px; }
+.agg-meta-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.agg-meta-sample { font-size: 13px; font-weight: 600; word-break: break-all; }
+.agg-meta-study { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .agg-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .agg-detail-title { font-size: 16px; font-weight: 600; }
 .agg-detail-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
