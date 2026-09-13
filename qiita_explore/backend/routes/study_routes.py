@@ -172,6 +172,12 @@ def search():
         resolved_pis = sql_query.get('resolved_pis') or []
         veto_applied = bool(sql_query.get('veto_applied'))
         pi_sql, pi_params = build_pi_required_filter(resolved_pis) if veto_applied else (None, [])
+        # Exact-ID boost only matters when text keywords compete for the
+        # ranking; a pure-ID query is already isolated by its WHERE clause.
+        study_ids = sql_query.get('study_ids') or []
+        id_only   = bool(sql_query.get('id_only'))
+        boost_ids = study_ids if (study_ids and expanded_kws) else None
+        phrase    = sql_query.get('phrase')
         # Detected from the query text (e.g. "gold studies") plus any explicit
         # tags an API caller supplies directly — deduped, order preserved.
         explicit_tags = [t for t in (data.get('tags') or []) if isinstance(t, str) and t]
@@ -183,11 +189,15 @@ def search():
             tags=tags,
             pi_filter_sql=pi_sql,
             pi_filter_params=pi_params,
+            boost_study_ids=boost_ids,
+            title_phrase=phrase,
         )
         if not isinstance(text_results, list):
             text_results = []
 
-        if deep_search:
+        # A pasted study ID has nothing to gain from probing 500 studies'
+        # sample metadata for a digit string (sample IDs are full of them).
+        if deep_search and not id_only:
             probe_kws = expanded_kws or [w for w in user_query.split() if len(w) >= 2]
             seen_ids = {s['study_id'] for s in text_results}
             meta_results = search_studies_by_sample_meta(
@@ -204,6 +214,7 @@ def search():
             text_results = finalize_search_results(
                 text_results, expanded_kws,
                 resolved_pis=resolved_pis, veto_applied=veto_applied,
+                boost_study_ids=boost_ids, title_phrase=phrase,
             )
 
         applied_filters = sql_query.get('applied_filters') or {}

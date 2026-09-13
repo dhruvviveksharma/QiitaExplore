@@ -93,7 +93,18 @@ def browse_query_to_sql(user_query: str) -> dict:
     }
 
     words    = re.findall(r'\b[a-zA-Z0-9]+\b', user_query.lower())
-    keywords = [w for w in words if w not in _STOP_WORDS and len(w) >= 3]
+    # Bare integers are study-ID candidates, never text keywords: "550" as
+    # ILIKE '%550%' matched every abstract mentioning "5500 samples" and
+    # outranked study 550 itself (which scored 0). <= 9 digits keeps the
+    # array bind inside Postgres integer range.
+    numeric_ids = list(dict.fromkeys(int(w) for w in words if w.isdigit() and len(w) <= 9))
+    keywords = [w for w in words if w not in _STOP_WORDS and len(w) >= 3 and not w.isdigit()]
+    # Whole-query title bonus input, taken before _pick_keywords trims so
+    # "american gut project" keeps its middle word.
+    phrase  = " ".join(keywords) if len(keywords) >= 2 else None
+    # Pure-ID query ("550", "study id 550", "#550"): exact rows only, no
+    # text clause, and the route skips the sample-metadata fan-out.
+    id_only = bool(numeric_ids) and not keywords
 
     broad = bool(_BREADTH_RE.search(user_query)) or (len(keywords) >= 4)
     if broad:
@@ -132,7 +143,6 @@ def browse_query_to_sql(user_query: str) -> dict:
 
     text_where = " AND ".join(text_clauses) if text_clauses else ""
 
-    numeric_ids = [int(n) for n in re.findall(r'\b\d+\b', user_query)]
     if numeric_ids and text_where:
         where_clause = f"({text_where}) OR s.study_id = ANY(%s)"
         params.append(numeric_ids)
@@ -150,8 +160,11 @@ def browse_query_to_sql(user_query: str) -> dict:
         "where_clause": where_clause,
         "params": params,
         "search_limit": search_limit,
-        "match_mode": "broad" if broad else "narrow",
+        "match_mode": "id" if id_only else ("broad" if broad else "narrow"),
         "keywords": kw_use,
+        "study_ids": numeric_ids,
+        "id_only": id_only,
+        "phrase": phrase,
         "applied_filters": applied_filters,
         "resolved_pis": resolved if veto_applied else [],
         "veto_applied": veto_applied,

@@ -168,11 +168,19 @@ def build_tag_filter(tags):
 _KEYWORD_MATCH_CONDITION = "(rel.relevance > 0 OR rel.aux_match)"
 
 
-def build_keyword_lateral(keywords) -> tuple:
+def build_keyword_lateral(keywords, boost_study_ids=None, title_phrase=None) -> tuple:
     """Return (lateral_sql, params): one CROSS JOIN LATERAL computing
     rel.relevance (4 scored fields, weights from RELEVANCE_WEIGHTS) and
     rel.aux_match (PI affiliation + lab-contact name) in a single pass over
     unnest(keywords) — one array bind serving both scoring and matching.
+
+    boost_study_ids: exact study_id matches add RELEVANCE_WEIGHTS['exact_id'],
+    once per study, *outside* the per-keyword SUM (so it isn't multiplied by
+    keyword count) — a pasted ID must outrank every incidental text hit.
+    title_phrase: the whole cleaned query appearing in the title adds
+    RELEVANCE_WEIGHTS['title_phrase']. Every %s here is the kw_params slot of
+    search_studies_with_sql; rendered order is [boost ids] -> ['%phrase%'] ->
+    keyword array, and the returned params follow that order.
 
     Keywords must be pre-expanded (expand_keyword_variants at the caller) —
     no re-expansion here. Terms under 2 chars are dropped, as the replaced
@@ -189,6 +197,13 @@ def build_keyword_lateral(keywords) -> tuple:
     if not kws:
         return "", []
     w = RELEVANCE_WEIGHTS
+    extra_sql, extra_params = "", []
+    if boost_study_ids:
+        extra_sql += f"\n        + CASE WHEN s.study_id = ANY(%s) THEN {w['exact_id']} ELSE 0 END"
+        extra_params.append([int(sid) for sid in boost_study_ids])
+    if title_phrase:
+        extra_sql += f"\n        + CASE WHEN s.study_title ILIKE %s THEN {w['title_phrase']} ELSE 0 END"
+        extra_params.append(f"%{title_phrase}%")
     # Literal % must be %% — psycopg2 treats bare % as placeholders when params are passed.
     sql = (
         "CROSS JOIN LATERAL (\n"
@@ -197,13 +212,13 @@ def build_keyword_lateral(keywords) -> tuple:
         f"          + CASE WHEN s.study_alias ILIKE ('%%' || kw || '%%') THEN {w['alias']} ELSE 0 END\n"
         f"          + CASE WHEN sp_pi.name ILIKE ('%%' || kw || '%%') THEN {w['pi']} ELSE 0 END\n"
         f"          + CASE WHEN s.study_abstract ILIKE ('%%' || kw || '%%') THEN {w['abstract']} ELSE 0 END\n"
-        "        ), 0) AS relevance,\n"
+        "        ), 0)" + extra_sql + " AS relevance,\n"
         "        BOOL_OR(sp_pi.affiliation ILIKE ('%%' || kw || '%%')\n"
         "             OR sp_lab.name ILIKE ('%%' || kw || '%%')) AS aux_match\n"
         "        FROM unnest(%s::text[]) AS kw\n"
         "    ) rel"
     )
-    return sql, [kws]
+    return sql, extra_params + [kws]
 
 
 def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
@@ -211,6 +226,7 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
                             data_types=None, investigation_types=None,
                             tags=None,
                             pi_filter_sql=None, pi_filter_params=None,
+                            boost_study_ids=None, title_phrase=None,
                             return_sql=False):
     """Search public studies with an optional topic WHERE clause, relevance ranking,
     and a data-type AND filter.
@@ -219,9 +235,13 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
     score-only (browse path, which brings its own custom WHERE). If both are
     given, match_keywords wins — they share one LATERAL/one array bind.
     Both are expected pre-expanded (expand_keyword_variants at the caller).
+    boost_study_ids / title_phrase feed build_keyword_lateral's bonuses and
+    only take effect when keywords are given (no keywords → no LATERAL; a
+    pure-ID browse query is already isolated by its own WHERE).
 
     Param binding order (psycopg2 left-to-right, matching the rendered SQL):
-        kw_params (FROM: CROSS JOIN LATERAL unnest(%s::text[]))
+        kw_params (FROM: every %s inside the CROSS JOIN LATERAL, in rendered
+        order [boost ids] → ['%phrase%'] → unnest(%s::text[]) keyword array)
         → topic (WHERE custom) params → data_type_filter_params
         → tag_filter_params → pi_filter_params
 
@@ -243,14 +263,18 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
 
     # One LATERAL does scoring and (optionally) matching — single array bind.
     kws = match_keywords or relevance_keywords
-    lateral_sql, kw_params = build_keyword_lateral(kws) if kws else ("", [])
+    lateral_sql, kw_params = (
+        build_keyword_lateral(kws, boost_study_ids, title_phrase) if kws else ("", [])
+    )
     if lateral_sql:
         score_select = ", rel.relevance AS relevance"
         order_clause = "ORDER BY relevance DESC, num_samples DESC NULLS LAST, s.study_id"
     else:
+        # No text to rank by (filter-only / ID-only browse): largest studies
+        # first, so the LIMIT keeps the ones worth seeing.
         kw_params = []
         score_select = ""
-        order_clause = "ORDER BY s.study_id"
+        order_clause = "ORDER BY num_samples DESC NULLS LAST, s.study_id"
 
     topic_where = custom_sql_where if custom_sql_where else "1=1"
     dt_sql, dt_params = build_data_type_filter(data_types, investigation_types)
