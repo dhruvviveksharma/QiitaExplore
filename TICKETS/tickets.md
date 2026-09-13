@@ -2577,7 +2577,7 @@ and emit `file_type = preprocessed_fasta`.
 ## TKT-084: Aggregate CSV — O(samples × files) run_prefix Matching, No "Resolvable" Count
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Resolved (2026-09-13)
 
 ### Description
 
@@ -2596,14 +2596,30 @@ easier to add than the old study-level tab did. Two related gaps:
   1445: 6,346 samples, 5,090 distinct prefixes → ~1,250 can never resolve), silently
   produce fewer CSV rows than the badge suggests.
 
-### Plan
+### Resolution (2026-09-13)
 
-- Bucket files by their leading prefix characters (or pre-sort files and binary-search
-  candidates) so each sample scans a handful of files, not all of them; keep the
-  longest-first / claim-once semantics.
-- Add `GET /api/aggregations/<id>/export-preview` returning `{selected, resolvable}` per
-  study, computed with the same matcher, and show it next to the download button.
-- Stream the CSV response or run the export off the request thread for large aggregations.
+The premise was measured, not estimated, and turned out wrong: `build_manifest_rows`
+matches within one *prep* — its own samples against its own files — never the whole
+study at once. AGP's 41,600 samples are spread across 192 preps, and the largest single
+prep has only 756 samples, so the quadratic term is bounded by prep size, not study
+size. Measured live on barnacle: the files query for all of AGP returns 132,948 rows in
+0.6 s, the 192 per-prep sample-list queries take 0.3 s, and the matcher over all 293
+artifacts takes 0.7 s total. A fully selected AGP resolves 7,354 of 41,600 samples to a
+file in under two seconds — no bucketing or pre-sorting was needed.
+
+The "no resolvable count" gap is fixed directly: every sample-page row now carries
+`fastq`/`fasta` availability (`helpers/fastq_manifest.summarize_sample_files`, cached in
+`study_detail_cache.sample_files_json` — `helpers/fastq_manifest.get_sample_files`), the
+sample table sorts files-first with an all/with-files/without-files filter and a
+"K with files" count, and "Select all with files" checks exactly what the CSV export
+can contain. See `docs/appendix-a-api-reference.md` (`api_aggregation_study_samples`,
+`api_set_aggregation_samples`) and `docs/appendix-b-sqlite-schema.md`
+(`table-study_detail_cache`).
+
+**Residual, not worth fixing at today's scale:** `_STUDIES_FILES_SQL` still loads every
+file row of up to 50 studies into memory before grouping. The measurements above show
+this is fine for AGP-sized studies; revisit only if a study far larger is ever
+aggregated.
 
 ### Files
 

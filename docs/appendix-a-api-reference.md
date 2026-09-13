@@ -169,7 +169,7 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | DELETE | `/api/aggregations/<aggregation_id>` | `api_delete_aggregation` | session | Delete (cascades to studies and samples) |
 | POST | `/api/aggregations/<aggregation_id>/studies` | `api_add_study_to_aggregation` | session | Add a whole study — every sample checked |
 | DELETE | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_remove_study_from_aggregation` | session | Remove a study and its checked samples |
-| GET | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_aggregation_study_samples` | session | One page of the study's samples with `selected` flags |
+| GET | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_aggregation_study_samples` | session | One page of the study's samples, files-first, with `selected`/`fastq`/`fasta` flags |
 | PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_set_aggregation_samples` | session | Check / uncheck samples (`add` / `remove` or `select`) |
 | GET | `/api/aggregations/<aggregation_id>/export.csv` | `download_aggregation_csv` | session | CSV of the checked samples' per-sample sequence files |
 
@@ -745,23 +745,28 @@ A Sample Aggregation is a user-owned, named set of **samples** grouped by study 
 
 ### api_aggregation_study_samples
 
-`GET /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples?offset=0&limit=200&q=` — `limit` 1–500 (a page is one SQLite `IN (…)` bind list, kept under the 999-variable ceiling), `q` = case-insensitive substring over the sample id or any metadata value (`sample_values::text ILIKE`). Response:
+`GET /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples?offset=0&limit=200&q=&show=all` — `limit` 1–500 (a page is one SQLite `IN (…)` bind list, kept under the 999-variable ceiling), `q` = case-insensitive substring over the sample id or any metadata value (`sample_values::text ILIKE`), `show` = `all` | `with_files` | `without_files` (**400** for anything else). Response:
 
 ```json
-{ "study_id": 232, "total": 115, "offset": 0, "limit": 200,
+{ "study_id": 232, "total": 115, "offset": 0, "limit": 200, "with_files": 88,
   "columns": ["sample_type", "host_body_site", "env_material", "empo_3"], "selected_count": 113,
-  "rows": [{ "sample_id": "232.…", "selected": true, "fields": { "sample_type": "…", "…": "…" } }] }
+  "rows": [{ "sample_id": "232.…", "selected": true, "fastq": "paired", "fasta": false,
+             "fields": { "sample_type": "…", "…": "…" } }] }
 ```
 
-`columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
+Paging happens in **Python**, not SQL: `helpers.study_samples.list_study_sample_ids` / `matching_sample_ids` (id-sorted) are cross-referenced against `helpers.fastq_manifest.get_sample_files` (`{sample_id: [fastq, fasta]}`, see appendix B), `show` filters that combined list, and it is then stably re-sorted files-first (samples with a file first, original id order preserved within each group) before the `offset`/`limit` slice — a plain SQL `LIMIT`/`OFFSET` over `qiita.sample_<id>` cannot express availability-first ordering. `with_files` is the count of samples with a file **within the `q`-filtered set, before `show` narrows it** — it is the fixed "N" for the tab's "With files (N)" toggle regardless of which `show` value is currently selected. Per row, `fastq` is `"paired"` | `"single"` | `null` and `fasta` is a bool. `columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
 
 ### api_set_aggregation_samples
 
-`PATCH /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` — body either `{"add": [...], "remove": [...]}` (≤ 50,000 ids each) or `{"select": "all" | "none" | "matching", "q": "..."}` (`matching` requires `q` and checks every sample the filter hits). Returns the full aggregation; **400** on any other body. Ids are stored as given — a bogus id is counted but never resolves to a file in the CSV.
+`PATCH /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` — body either `{"add": [...], "remove": [...]}` (≤ 50,000 ids each) or `{"select": "all" | "none" | "with_files" | "matching", "q": "..."}`. `"all"` / `"none"` / `"with_files"` **replace** the whole selection (`"with_files"` checks every sample that resolves to a per-sample sequence file — exactly what the CSV export can contain, optionally narrowed by `q`); `"matching"` (requires `q`) **adds** every sample the filter hits to whatever is already checked. Returns the full aggregation; **400** on any other body. Ids are stored as given — a bogus id is counted but never resolves to a file in the CSV.
 
 ### download_aggregation_csv
 
-`GET /api/aggregations/<aggregation_id>/export.csv` — `text/csv`, `Content-Disposition: attachment; filename=aggregation_<id>_samples.csv`. Header `study_id,sample_id,file_path_in_qmounts,data_type,file_type`; one row per per-sample sequence file of every checked sample — `per_sample_FASTQ` reads as `raw_forward_seqs` / `raw_reverse_seqs` (a paired sample is two rows) and Qiita's per-sample `FASTA` uploads as `raw_fasta`. A sample in two preps appears once per data type. Files are matched to samples by `run_prefix` over the prep's **full** sample list and only then filtered to the checked set (`helpers/fastq_manifest.build_csv_rows` — longest-prefix-first claiming needs every sample present). Samples with no resolvable file are omitted. **400** `No samples selected`; **404** when the studies have no per-sample sequence artifact or no checked sample resolves. Plain link from the tab: the session cookie rides along on top-level navigation and GET carries no CSRF.
+`GET /api/aggregations/<aggregation_id>/export.csv?spreadsheet=` — `text/csv`, `Content-Disposition: attachment; filename=aggregation_<id>_samples.csv` (or `..._samples_spreadsheet.csv` when `spreadsheet` is truthy). Header `study_id,sample_id,file_path_in_qmounts,data_type,file_type`; one row per per-sample sequence file of every checked sample — `per_sample_FASTQ` reads as `raw_forward_seqs` / `raw_reverse_seqs` (a paired sample is two rows) and Qiita's per-sample `FASTA` uploads as `raw_fasta`. A sample in two preps appears once per data type. Files are matched to samples by `run_prefix` over the prep's **full** sample list and only then filtered to the checked set (`helpers/fastq_manifest.build_csv_rows` — longest-prefix-first claiming needs every sample present). Samples with no resolvable file are omitted. **400** `No samples selected`; **404** when the studies have no per-sample sequence artifact or no checked sample resolves.
+
+`?spreadsheet=1` wraps `sample_id` as `="…"` (`to_csv(rows, spreadsheet_safe=True)`) so Excel / Numbers / LibreOffice keep an id like `10317.000001062` as text — opened plain, that column parses as a float and rounds to a display that is indistinguishable from `study_id`, which is what "the sample id shows the study id" turned out to be. The default (no `spreadsheet` param) stays plain for pandas/scripts.
+
+Plain link from the tab either way: the session cookie rides along on top-level navigation and GET carries no CSRF.
 
 `backend/routes/aggregation_routes.py`
 

@@ -330,6 +330,7 @@ Cached expensive per-study reads from the Qiita PostgreSQL database — prep tem
 | `prep_metadata_json` | TEXT | yes | — | *(migration)* Map of `str(prep_template_id)` → per-prep metadata summary. |
 | `samples_json` | TEXT | yes | — | *(migration)* Sample list capped at 200 rows, for the study-detail modal. |
 | `total_samples` | INTEGER | yes | — | *(migration)* True total sample count, uncapped, paired with `samples_json`. |
+| `sample_files_json` | TEXT | yes | — | *(migration)* `{sample_id: [fastq, fasta]}` — which of the study's samples resolve to a per-sample sequence file, and whether the FASTQ is paired (2), single (1), or absent (0); FASTA is 0/1. Only samples with at least one file appear. Computed by `helpers/fastq_manifest.compute_sample_files` and cached here by `get_sample_files`, which the Sample Aggregation tab's samples-page route reads on every request for files-first ordering. |
 
 **Keys/constraints:** PK on `study_id`. No FK — `study_id` points into PostgreSQL.
 
@@ -644,8 +645,9 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 10 | `merge_workspace_studies` | `chosen_artifact_ids TEXT` | Multi-artifact merge selection, superseding the scalar `chosen_artifact_id`. Old rows are handled at read time by `_hydrate_study` rather than backfilled. |
 | 11–12 | `project_chat_messages`, `global_chat_messages` | `ui_payload TEXT` | Structured rendering payloads — this is what persists agentic tool-call segments across a page reload. |
 | 13–17 | `aggregation_studies` | `study_abstract TEXT`, `pi_name TEXT`, `pi_affiliation TEXT`, `year INTEGER`, `is_gold INTEGER` | Study-header snapshot so the Sample Aggregation tab renders Browse-style cards without a Qiita round trip (2026-09-12). |
+| 18 | `study_detail_cache` | `sample_files_json TEXT` | Per-sample FASTQ/FASTA availability map, so the Sample Aggregation tab's sample table can sort files-first and offer a with-files/without-files filter without recomputing on every page (2026-09-13). |
 
-Five of the seventeen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
+Six of the eighteen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
 
 ### 4. TinyDB import (one time only)
 
