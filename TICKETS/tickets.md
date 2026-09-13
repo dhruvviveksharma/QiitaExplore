@@ -2621,11 +2621,216 @@ file row of up to 50 studies into memory before grouping. The measurements above
 this is fine for AGP-sized studies; revisit only if a study far larger is ever
 aggregated.
 
+**Caveat added by code review (2026-09-13):** the measurements above are all from AGP
+(largest prep 756 samples); this ticket's own worst case, prep 1445 (6,346 samples ×
+5,090 files, cited in the Description), was never separately measured before closing.
+The "no resolvable count" fix also isn't complete end to end: the sample table's counts
+mix a q-filtered `with_files` with an unfiltered `selected` total (no single number says
+how many *checked* samples are exportable), so a selection of only file-less samples
+still shows both download links enabled and opens a 404 JSON error on click rather than
+disabling the buttons. See TKT-089 and TKT-090.
+
 ### Files
 
 - `qiita_explore/backend/helpers/fastq_manifest.py`
 - `qiita_explore/backend/routes/aggregation_routes.py`
 - `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-086: Sample-Availability Cache Poisons `study_detail_cache` for Other Readers
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+`helpers/fastq_manifest.py :: get_sample_files` (2026-09-13) caches its per-study
+FASTQ/FASTA availability map in `study_detail_cache.sample_files_json`, using the same
+COALESCE upsert as every other writer of that table. Two problems fall out of that
+choice, both confirmed by code review:
+
+1. **False cache hits.** `routes/study_routes.py:51-56` and `routes/project_routes.py:37-41`
+   both branch on `if cached:` (row truthiness), not on whether the specific column they
+   need is populated. `get_sample_files` can be the first writer ever for a study —
+   inserting a row with `preps_json`/`artifacts_json` still `NULL`. Opening that study's
+   modal, or adding it to a project, within the next 6 hours then reads `preps=[]`,
+   `artifacts=[]` as a genuine cache hit; `study_routes.py` even persists `"[]"` back via
+   COALESCE, making the empty result durable for the rest of the window.
+2. **No real TTL for the new column.** `cached_at` is row-wide (`cached_at =
+   excluded.cached_at`, unconditional). Any other writer touching the row (modal open,
+   project enrichment, LLM context build) renews `cached_at` without recomputing
+   `sample_files_json`, so a per-sample artifact that finishes processing after the map
+   was first cached can show `—`/`—` indefinitely, well past the 6h the code's own
+   docstring claims. Conversely, the aggregation route's own recompute on an expired row
+   resurrects hours-old `preps_json`/`artifacts_json`/`artifact_graph_json` under a fresh
+   `cached_at`.
+
+See `docs/appendix-b-sqlite-schema.md` § "The COALESCE upsert pattern" (third limit) for
+the general mechanism this exploits.
+
+### Plan
+
+Give the availability map its own table (e.g. `study_sample_files_cache(study_id,
+sample_files_json, cached_at)`, same shape as `biom_sample_cache`) instead of a column on
+`study_detail_cache`, so it has an independent TTL and cannot be mistaken for a
+preps/artifacts hit. At minimum, `study_routes.py` and `project_routes.py` must key on
+the specific column (`cached.get("preps_json") is not None`) rather than row truthiness.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/store/cache.py`
+- `qiita_explore/backend/routes/study_routes.py`
+- `qiita_explore/backend/routes/project_routes.py`
+
+---
+
+## TKT-087: "Select All With Files" Silently Clears the Rest of the Selection When Filtered
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`PATCH .../samples` with `{"select": "with_files"}` always does `clear: True` (replace
+semantics), and the frontend's "Select all with files" button (`aggregation_detail.js`)
+always sends the current filter as `q`. Combined, checking the box while a filter is
+typed replaces the *entire* selection with just the filtered with-files subset, silently
+dropping every previously-checked sample outside the filter — with no confirmation, and
+a tooltip ("Check exactly the samples the CSV can contain") that doesn't warn of this.
+
+A related, smaller mismatch: the "Select matching (N)" button's `N` is the `show`-filtered
+`total` from the last page response, but the action it triggers (`select: "matching"`)
+adds every `q` match regardless of `show` — so with `show=without_files` set, the button
+can read "Select matching (30)" and actually add 130.
+
+### Failure scenario
+
+5,000 AGP samples checked. User types "stool" (200 matches, 150 with files), clicks
+"Select all with files" → selection replaced with those 150; the other 4,850 previously
+checked samples are gone.
+
+### Plan
+
+Make `with_files` additive like `matching` (or require an explicit "replace" confirmation
+before combining `clear` with a `q`-narrowed id list), and compute the "Select matching"
+button's displayed count from the same `q`-only total that `matching` actually adds
+(independent of `show`), or clearly label it as a `show`-scoped count if that's the
+intended behavior.
+
+### Files
+
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-088: Bulk-Action Reload Can Overwrite a Concurrent Show/Filter Change
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`AggregationSampleTable.bulk()` awaits the PATCH, then reloads with the `q`/`show`
+values captured in its own closure at click time. If the user changes `show` (or the
+filter) while that PATCH is still in flight, the `[q, show]` effect fires its own
+`load()` with a newer sequence number, but `bulk()`'s reload — issued after the effect's,
+since it was waiting on the PATCH — can still resolve second and win, leaving the table
+showing rows for the *old* `show` value while the newly-clicked segment button stays
+highlighted as active.
+
+### Plan
+
+Have `bulk()` skip its own reload when its captured `(q, show)` no longer matches the
+current state (or drop the reload entirely and rely on the `[q, show]` effect / a
+patch-from-response-body update instead, consistent with the no-refresh pattern used
+elsewhere).
+
+### Files
+
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-089: Samples Page Always Loads and Sorts the Full Sample-ID List in Python
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`GET .../samples` fetches every sample id of the study (up to 41,600 for AGP) on every
+request — first page, each debounced filter keystroke, each Show toggle, each "Load
+more" — builds a `files` membership check per id, and stable-sorts the whole list in
+Python, on the premise (stated in the route's docstring) that SQL `LIMIT`/`OFFSET`
+cannot express files-first ordering. That premise doesn't hold: a `LEFT JOIN
+unnest(%s::text[]) ... ORDER BY (wf.sample_id IS NOT NULL) DESC, sample_id LIMIT %s
+OFFSET %s`, with the with-files id list bound as a parameter, does the ordering,
+filtering, and `with_files` count in one round trip. The current approach is fine at
+today's sizes (~50 ms) but re-does full-study work on the hottest interactive path in the
+tab, inside a gthread worker shared with SSE chat.
+
+### Plan
+
+If this becomes a bottleneck (larger studies, more concurrent tab users), push the
+ordering into the SQL query instead of Python, keeping `fetch_samples_by_ids`'s shape for
+the metadata columns.
+
+### Files
+
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/backend/helpers/study_samples.py`
+
+---
+
+## TKT-090: Sample-Table Toolbar Mixes Filtered/Unfiltered Scopes; No "Exportable Selected" Count
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The sample table's toolbar count line concatenates the unfiltered "`selected` of
+`num_samples`" with the `q`-filtered `with_files` count, so the two halves of the same
+sentence describe different scopes (e.g. "5,000 of 41,600 selected · 120 with files"
+when the 120 is only among the current filter's matches, not the 5,000 selected).
+Separately, nothing in the tab — toolbar, header, or the two download buttons — shows how
+many of the *checked* samples actually resolve to a file, so a selection of only
+file-less samples still renders both download links enabled; clicking one opens a new
+tab with the 404 JSON error instead of a disabled control or a "0 exportable" hint.
+
+A few smaller, lower-priority items surfaced by the same review, bundled here rather
+than filed separately:
+
+- `helpers/fastq_manifest.py :: compute_sample_files` is a one-line wrapper with exactly
+  one caller (`get_sample_files`); could be inlined.
+- `helpers/study_samples.py :: fetch_samples_by_ids` sorts rows into input order, but its
+  only caller (`aggregation_routes.py`) immediately builds a `by_id` dict and iterates the
+  page itself — the sort is dead work.
+- The per-worker TTL-memo pattern is now hand-rolled three times (`_sample_files_memo`
+  here, `_columns_cache` in `study_samples.py`, `_fetch_study_header_cached` in
+  `qiita_fetch.py`) with no shared helper.
+- Test coverage gaps: `select: "with_files"` combined with `q` (TKT-087's replace
+  behavior) has no test; the samples route's `fields = {c: None}` fallback for an id
+  Qiita returns no metadata row for is never exercised; nothing pins `with_files` staying
+  constant across `show` values.
+
+### Plan
+
+Compute `with_files` (or a `selected_with_files` count) server-side per study, alongside
+the existing `selected_by_study`/`get_sample_files`, so cards, header, toolbar, and the
+download buttons can all derive from one number instead of the page-scoped, filter-scoped
+one currently used only by the toolbar. Address the bundled minor items opportunistically
+when next touching this file.
+
+### Files
+
+- `qiita_explore/frontend/js/aggregation_detail.js`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/helpers/study_samples.py`
 
 ---
 

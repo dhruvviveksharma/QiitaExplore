@@ -695,11 +695,13 @@ Those two positional `None`s are `preps_json` and `artifacts_json` — explicitl
 
 **Where else it appears.** `backend/store/cache.py :: update_project_study_data` uses the same shape as a plain `UPDATE ... SET col = COALESCE(?, col)` for the four `project_studies` enrichment columns. The pattern is worth reaching for whenever several independent producers fill different columns of one row.
 
-**Two limits to keep in mind.**
+**Three limits to keep in mind.**
 
 First, `None` and "explicitly clear this column" become indistinguishable — there is no way to write a NULL through this interface. For a cache that is fine; for a table where clearing is meaningful, it is not. `backend/store/merge_crud.py :: update_merge_job_status` deliberately does *not* COALESCE `error_message` and `result_path`, precisely because clearing a stale error on a retry is a real requirement.
 
 Second, `cached_at` is the one field assigned unconditionally: `cached_at = excluded.cached_at`. The TTL is therefore per-row, not per-column. Writing one fresh column resets the 6-hour clock for every other column in that row, including columns that were already hours old — so a row can be reported as a cache hit while some of its payload is older than the TTL nominally allows.
+
+Third, and sharpest in practice: a row existing is not the same as a row holding what a given reader needs, but `backend/routes/study_routes.py` and `backend/routes/project_routes.py` both branch on `if cached:` rather than on the specific column they read. `helpers/fastq_manifest.py :: get_sample_files` (added 2026-09-13, see `sample_files_json` above) can be the *first* writer for a study that has never had its modal opened — it inserts a row with `preps_json`/`artifacts_json` still `NULL`. Those two readers then treat that row as a full hit, `json.loads(None or "[]")` to `[]`, and — for `study_routes.py` — persist that `"[]"` back via COALESCE, making the empty result durable for the rest of the TTL window. Any reader added against this table must check its own column (`cached.get("preps_json") is not None`), not row truthiness. See TKT-086.
 
 ---
 
