@@ -577,59 +577,31 @@ function renderApp(s, account) {
                     {displayStudies.map(study => {
                       const inProj = projStudyIds.includes(study.study_id);
                       const inCtx  = ctxStudyIds.includes(study.study_id);
-                      const dataTypeList = splitTypes(study.data_types);
-                      const metaParts = [
-                        study.num_samples != null ? `${study.num_samples} samples` : null,
-                        study.num_preps    != null ? `${study.num_preps} preps`    : null,
-                      ].filter(Boolean);
                       return (
-                        <div key={study.study_id} className="study-card" onClick={() => openStudyModal(study)}>
-                          <div className="study-card-top">
-                            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
-                              <span className="study-id-badge">ID {study.study_id}</span>
-                              {study.year != null && <span className="study-year-badge" title="Year added to Qiita">{study.year}</span>}
-                              {study.is_gold && <span className="gold-badge">GOLD</span>}
-                            </div>
-                            <div className="study-card-actions" onClick={e => e.stopPropagation()}>
-                              {openProjId ? (
-                                <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
-                                  {inProj ? '✓ Saved' : '+ Add to Project'}
-                                </button>
-                              ) : (
-                                <button className={`btn-card-ctx ${inCtx ? 'on' : ''}`}
-                                  onClick={() => setCtxStudies(prev =>
-                                    inCtx ? prev.filter(s => s.study_id !== study.study_id) : [...prev, study])}>
-                                  {inCtx ? '✓ Pinned' : '+ Pin'}
-                                </button>
-                              )}
-                              <AggregateCardButton study={study} agg={agg} />
-                              {SHOW_MERGES && (
-                                <button className="btn-card-merge"
-                                  onClick={() => {
-                                    setPendingMergeStudy(study);
-                                    openMergePanel(true);
-                                  }}>
-                                  + Merge
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="study-card-title">{study.study_title || 'Untitled study'}</div>
-                          <div className="study-card-abstract">{study.study_abstract || 'No abstract available.'}</div>
-                          {dataTypeList.length > 0 && (
-                            <div className="study-card-types">
-                              {dataTypeList.map(t => <span key={t} className="dtype-chip">{t}</span>)}
-                            </div>
-                          )}
-                          {metaParts.length > 0 && (
-                            <div className="study-card-meta">{metaParts.join(' · ')}</div>
-                          )}
-                          {(study.pi_name || study.pi_affiliation) && (
-                            <div className="study-card-pi">
-                              {[study.pi_name, study.pi_affiliation].filter(Boolean).join(' · ')}
-                            </div>
-                          )}
-                        </div>
+                        <StudyCard key={study.study_id} study={study} onClick={() => openStudyModal(study)}
+                          actions={<>
+                            {openProjId ? (
+                              <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
+                                {inProj ? '✓ Saved' : '+ Add to Project'}
+                              </button>
+                            ) : (
+                              <button className={`btn-card-ctx ${inCtx ? 'on' : ''}`}
+                                onClick={() => setCtxStudies(prev =>
+                                  inCtx ? prev.filter(s => s.study_id !== study.study_id) : [...prev, study])}>
+                                {inCtx ? '✓ Pinned' : '+ Pin'}
+                              </button>
+                            )}
+                            <AggregateCardButton study={study} agg={agg} />
+                            {SHOW_MERGES && (
+                              <button className="btn-card-merge"
+                                onClick={() => {
+                                  setPendingMergeStudy(study);
+                                  openMergePanel(true);
+                                }}>
+                                + Merge
+                              </button>
+                            )}
+                          </>} />
                       );
                     })}
                   </div>
