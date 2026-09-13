@@ -2574,6 +2574,45 @@ and emit `file_type = preprocessed_fasta`.
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-09-12*
+## TKT-084: Aggregate CSV — O(samples × files) run_prefix Matching, No "Resolvable" Count
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`helpers/fastq_manifest.build_manifest_rows` links samples to files by scanning the
+artifact's file list for each sample's `run_prefix` (longest prefix first, each file
+claimed once). That is O(samples × files) substring tests per artifact: a 41,600-sample prep
+(study 10317) with ~83k FASTQ files is on the order of 10⁹ comparisons, so
+`GET /api/aggregations/<id>/export.csv` on a fully selected AGP-sized study takes minutes
+and holds a gthread worker for the duration. The sample-level UI makes such studies far
+easier to add than the old study-level tab did. Two related gaps:
+
+- `_STUDIES_FILES_SQL` loads every file row of up to 50 studies into memory before
+  grouping (FASTA artifact 3220 alone is 5,090 rows).
+- The tab shows "K selected samples" but cannot say how many will actually resolve to a
+  file: preps with null/empty `run_prefix`, or more samples than distinct prefixes (prep
+  1445: 6,346 samples, 5,090 distinct prefixes → ~1,250 can never resolve), silently
+  produce fewer CSV rows than the badge suggests.
+
+### Plan
+
+- Bucket files by their leading prefix characters (or pre-sort files and binary-search
+  candidates) so each sample scans a handful of files, not all of them; keep the
+  longest-first / claim-once semantics.
+- Add `GET /api/aggregations/<id>/export-preview` returning `{selected, resolvable}` per
+  study, computed with the same matcher, and show it next to the download button.
+- Stream the CSV response or run the export off the request thread for large aggregations.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-13*
 
 ---

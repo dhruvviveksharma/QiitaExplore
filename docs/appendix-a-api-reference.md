@@ -159,6 +159,20 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | GET | `/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download` | `download_artifact_file` | session | Download one file from an artifact |
 | GET | `/api/merge-jobs/<job_id>/download` | `download_merge_result` | session | Download a finished merge tarball |
 
+### Aggregations — `backend/routes/aggregation_routes.py` (9)
+
+| Method | Path | Flask endpoint | Auth | Purpose |
+|---|---|---|---|---|
+| GET | `/api/aggregations` | `api_list_aggregations` | session | The caller's aggregations, studies and selected-sample counts embedded |
+| POST | `/api/aggregations` | `api_create_aggregation` | session | Create an aggregation (`{name}`) |
+| PATCH | `/api/aggregations/<aggregation_id>` | `api_rename_aggregation` | session | Rename |
+| DELETE | `/api/aggregations/<aggregation_id>` | `api_delete_aggregation` | session | Delete (cascades to studies and samples) |
+| POST | `/api/aggregations/<aggregation_id>/studies` | `api_add_study_to_aggregation` | session | Add a whole study — every sample checked |
+| DELETE | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_remove_study_from_aggregation` | session | Remove a study and its checked samples |
+| GET | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_aggregation_study_samples` | session | One page of the study's samples with `selected` flags |
+| PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_set_aggregation_samples` | session | Check / uncheck samples (`add` / `remove` or `select`) |
+| GET | `/api/aggregations/<aggregation_id>/export.csv` | `download_aggregation_csv` | session | CSV of the checked samples' per-sample sequence files |
+
 ---
 
 ## Auth
@@ -702,6 +716,54 @@ Every failure mode raises `ValueError` and is returned as **403** — including 
 Sends the merge result tarball as `merge_<job_id>.tar.gz` with mimetype `application/gzip`. **404** if the job is unknown or owned by another user; **400** `{"error": "Job is <status>, not done"}` if incomplete; **404** `{"error": "Result file not found"}` if the recorded `result_path` is absent from disk. (`backend/routes/artifact_routes.py :: download_merge_result`)
 
 ---
+
+## Aggregations
+
+A Sample Aggregation is a user-owned, named set of **samples** grouped by study (`backend/store/aggregation_crud.py`; tables `aggregations`, `aggregation_studies`, `aggregation_samples` — see appendix B). Adding a study checks every one of its samples; the tab then unchecks or re-checks individual samples. Every mutation returns the full aggregation, and the frontend patches its state from that body rather than re-fetching:
+
+```json
+{ "aggregation_id": "…", "user_id": "…", "name": "…", "created_at": "…", "updated_at": "…",
+  "studies": [{ "study_id": 232, "study_title": "…", "study_abstract": "…", "data_types": "16S",
+                "num_samples": 115, "num_preps": 1, "fastq_artifact_count": 1,
+                "pi_name": "…", "pi_affiliation": "…", "year": 2015, "is_gold": 1,
+                "selected_samples": 113, "added_at": "…" }] }
+```
+
+`num_samples` is the number of sample rows stored when the study was added (the `qiita_sample_column_names` sentinel excluded); `fastq_artifact_count` counts the study's `per_sample_FASTQ` + `FASTA` artifacts at add time; `selected_samples` is live.
+
+### api_list_aggregations / api_create_aggregation / api_rename_aggregation / api_delete_aggregation
+
+`GET /api/aggregations` → `{"aggregations": [...]}`. `POST /api/aggregations` `{"name"}` (blank → "Untitled") → **201**. `PATCH /api/aggregations/<id>` `{"name"}` → 400 blank, 404 unknown/unowned. `DELETE /api/aggregations/<id>` → `{"deleted": id}`; the study and sample rows cascade.
+
+### api_add_study_to_aggregation
+
+`POST /api/aggregations/<aggregation_id>/studies` — body `{"study": {study_id, study_title, study_abstract, data_types, num_samples, num_preps, pi_name, pi_affiliation, year, is_gold}}`: the Browse card's header, snapshotted so the tab renders the same card. Only `study_id` is validated. **403** if the study is not public, **404** unknown/unowned aggregation, **400** over the 50-study cap. Fetches every sample id of the study from `qiita.sample_<study_id>` (`helpers/study_samples.list_study_sample_ids`) and stores them checked. Re-adding a study already present is a no-op — it does **not** re-check samples the user unchecked.
+
+### api_remove_study_from_aggregation
+
+`DELETE /api/aggregations/<aggregation_id>/studies/<int:study_id>` → the aggregation; the study's `aggregation_samples` rows go with it (FK cascade).
+
+### api_aggregation_study_samples
+
+`GET /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples?offset=0&limit=200&q=` — `limit` 1–500 (a page is one SQLite `IN (…)` bind list, kept under the 999-variable ceiling), `q` = case-insensitive substring over the sample id or any metadata value (`sample_values::text ILIKE`). Response:
+
+```json
+{ "study_id": 232, "total": 115, "offset": 0, "limit": 200,
+  "columns": ["sample_type", "host_body_site", "env_material", "empo_3"], "selected_count": 113,
+  "rows": [{ "sample_id": "232.…", "selected": true, "fields": { "sample_type": "…", "…": "…" } }] }
+```
+
+`columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
+
+### api_set_aggregation_samples
+
+`PATCH /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` — body either `{"add": [...], "remove": [...]}` (≤ 50,000 ids each) or `{"select": "all" | "none" | "matching", "q": "..."}` (`matching` requires `q` and checks every sample the filter hits). Returns the full aggregation; **400** on any other body. Ids are stored as given — a bogus id is counted but never resolves to a file in the CSV.
+
+### download_aggregation_csv
+
+`GET /api/aggregations/<aggregation_id>/export.csv` — `text/csv`, `Content-Disposition: attachment; filename=aggregation_<id>_samples.csv`. Header `study_id,sample_id,file_path_in_qmounts,data_type,file_type`; one row per per-sample sequence file of every checked sample — `per_sample_FASTQ` reads as `raw_forward_seqs` / `raw_reverse_seqs` (a paired sample is two rows) and Qiita's per-sample `FASTA` uploads as `raw_fasta`. A sample in two preps appears once per data type. Files are matched to samples by `run_prefix` over the prep's **full** sample list and only then filtered to the checked set (`helpers/fastq_manifest.build_csv_rows` — longest-prefix-first claiming needs every sample present). Samples with no resolvable file are omitted. **400** `No samples selected`; **404** when the studies have no per-sample sequence artifact or no checked sample resolves. Plain link from the tab: the session cookie rides along on top-level navigation and GET carries no CSRF.
+
+`backend/routes/aggregation_routes.py`
 
 ## Notes and observations
 

@@ -69,6 +69,7 @@ flowchart LR
 
     A["auth.js<br/>useAuth · ConnectQiita"]
     C["components.js<br/>shared components<br/>SLASH_COMMANDS · model lists"]
+    SC["study_card.js<br/>StudyCard"]
     H["hooks/<br/>useModelSelection.js"]
     S["app_state.js<br/><b>useAppState()</b>"]
     R["app_render.js<br/><b>renderApp(s)</b>"]
@@ -80,10 +81,16 @@ flowchart LR
         MD --> MW["merge_workspace.js"]
     end
 
+    subgraph G["aggregation feature (order matters within)"]
+        direction TB
+        FM["fastq_manifest.js"] --> AD["aggregation_detail.js"]
+        AD --> AG["aggregations.js"]
+    end
+
     SM["study_modal.js"]
     AP["app.js<br/>App · createRoot"]
 
-    U --> P --> A --> C --> H --> S --> R --> M --> SM --> AP
+    U --> P --> A --> C --> SC --> H --> S --> R --> M --> G --> SM --> AP
 ```
 
 
@@ -106,12 +113,17 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
 | `frontend/js/browse_filters.js`          | 173   | Browse facet filters — `useBrowseFilters`, `FacetMultiSelect` (multi-select `useDropdown`), `YearRangeSlider`, `BrowseFilterBar` |
 | `frontend/browse_filters.css`            | 75    | Styles for the above (kept out of `style.css`, which is over the line cap)                                          |
+| `frontend/aggregations.css`              | 93    | Sample Aggregation tab styles (sibling of `style.css`, same reason)                                                 |
+| `frontend/js/study_card.js`              | 41    | `StudyCard` — the study card shared by the Browse grid and the Sample Aggregation tab                               |
 | `frontend/js/app_state.js`               | 633   | `useAppState()` — the whole application state and every action                                                       |
 | `frontend/js/app_render.js`              | 601   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
 | `frontend/js/merge_artifacts.js`         | 354   | Artifact graph filtering, BIOM cards, pipeline breadcrumb, global BIOM selector                                      |
 | `frontend/js/merge_tree.js`              | 291   | Provenance forest — org-chart and indented-list renderers                                                            |
 | `frontend/js/merge_detail.js`            | 404   | Study summary card, sample peek, merge preview/validation, job status and history                                    |
 | `frontend/js/merge_workspace.js`         | 438   | `MergeWorkspacePanel`, `MergeStudySlot`, `MergesTab`                                                                 |
+| `frontend/js/fastq_manifest.js`          | 39    | `FastqManifestSection` — per-artifact QIIME2 manifest download in the study modal                                    |
+| `frontend/js/aggregation_detail.js`      | 221   | `AggregationDetail` (card grid), `AggregationSampleTable` (paged checkboxes + filter), `SampleMetadataPane`          |
+| `frontend/js/aggregations.js`            | 192   | `useAggregations`, `AggregateCardButton` (Browse "+ Aggregate"), `AggregationsTab` shell                            |
 | `frontend/js/study_modal.js`             | 305   | `StudyModal` plus the add-to-project / add-to-merge bars                                                             |
 | `frontend/js/app.js`                     | 38    | `App` (auth gate), `AuthenticatedApp`, `ReactDOM.createRoot`                                                         |
 

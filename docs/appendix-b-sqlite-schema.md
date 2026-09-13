@@ -99,6 +99,7 @@ erDiagram
     users ||..o{ global_chats : "user_id (no FK)"
     users ||..o{ merge_workspaces : "user_id (no FK)"
     users ||..o{ merge_jobs : "user_id (no FK)"
+    users ||..o{ aggregations : "user_id (no FK)"
 
     projects ||--o{ project_studies : "FK CASCADE"
     projects ||--o{ project_chats : "FK CASCADE"
@@ -109,6 +110,9 @@ erDiagram
 
     merge_workspaces ||--o{ merge_workspace_studies : "FK CASCADE"
     merge_workspaces ||--o{ merge_jobs : "FK SET NULL"
+
+    aggregations ||--o{ aggregation_studies : "FK CASCADE"
+    aggregation_studies ||--o{ aggregation_samples : "composite FK CASCADE"
 
     project_chats }o..o{ chat_pinned_studies : "chat_scope='project' (no FK)"
     global_chats }o..o{ chat_pinned_studies : "chat_scope='global' (no FK)"
@@ -451,6 +455,73 @@ Sample IDs extracted from a BIOM artifact file. Caches an expensive file parse, 
 
 ---
 
+### table-aggregations
+
+A user's named Sample Aggregation — a set of samples grouped by study, exported as one CSV of per-sample sequence files (`GET /api/aggregations/<id>/export.csv`).
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `aggregation_id` | TEXT | no (PK) | — | `str(uuid4())[:12]`. |
+| `user_id` | TEXT | no | — | Owner. Every read and write is scoped by it. |
+| `name` | TEXT | no | — | Display name; inline-renamed in the tab. |
+| `created_at` | TEXT | yes | — | UTC ISO-8601. |
+| `updated_at` | TEXT | yes | — | Bumped by every mutation (`_touch`), including sample toggles. |
+
+**Keys/constraints:** PK on `aggregation_id`; index `idx_aggregations_user (user_id, updated_at DESC)` serves the list view.
+
+**Writes owned by:** `backend/store/aggregation_crud.py`.
+
+**Lifecycle:** cascades to `aggregation_studies`, which cascades to `aggregation_samples`.
+
+---
+
+### table-aggregation_studies
+
+One row per study in an aggregation — a header snapshot taken from the Browse card at add time, so the tab renders the same card without a Qiita round trip.
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `aggregation_id` | TEXT | no (PK, FK) | — | → `aggregations`. |
+| `study_id` | INTEGER | no (PK) | — | Qiita study ID. |
+| `study_title` | TEXT | yes | — | Snapshot. |
+| `data_types` | TEXT | yes | — | Comma-joined, as the search rows carry it. |
+| `num_samples` | INTEGER | yes | — | Number of sample rows stored when the study was added (sentinel excluded) — the badge's denominator. |
+| `num_preps` | INTEGER | yes | — | Snapshot. |
+| `fastq_artifact_count` | INTEGER | yes | — | `per_sample_FASTQ` + `FASTA` artifacts at add time (`helpers/fastq_manifest.count_fastq_artifacts`). Column name predates the FASTA branch. |
+| `study_abstract` | TEXT | yes | — | Snapshot (ALTER 13). |
+| `pi_name` | TEXT | yes | — | Snapshot (ALTER 14). |
+| `pi_affiliation` | TEXT | yes | — | Snapshot (ALTER 15). |
+| `year` | INTEGER | yes | — | Year the study was added to Qiita, `first_contact` (ALTER 16). |
+| `is_gold` | INTEGER | yes | — | 0/1 (ALTER 17). |
+| `added_at` | TEXT | yes | — | Insert time; the tab orders by it. |
+
+**Keys/constraints:** composite PK `(aggregation_id, study_id)` — `INSERT OR IGNORE` makes re-adding a study idempotent; FK → `aggregations` `ON DELETE CASCADE`.
+
+**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` / `remove_study_from_aggregation`. The route enforces the 50-study cap.
+
+**Lifecycle:** cascades to `aggregation_samples`.
+
+---
+
+### table-aggregation_samples
+
+Per-sample membership: a row means "this sample is checked". Adding a study inserts every sample id of the study; the tab's checkboxes add and delete rows.
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `aggregation_id` | TEXT | no (PK, FK) | — | → `aggregation_studies`. |
+| `study_id` | INTEGER | no (PK, FK) | — | → `aggregation_studies`. |
+| `sample_id` | TEXT | no (PK) | — | Qiita sample ID, stored as given. |
+| `added_at` | TEXT | yes | — | Insert time. |
+
+**Keys/constraints:** composite PK `(aggregation_id, study_id, sample_id)`; **composite FK** `(aggregation_id, study_id)` → `aggregation_studies(aggregation_id, study_id)` `ON DELETE CASCADE` — so deleting an aggregation cascades in a chain through its studies to its samples (verified with `PRAGMA foreign_keys = ON`). No separate index: the PK autoindex's prefix serves the per-study count, the per-page `IN (…)` lookup and the per-study delete.
+
+**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` (bulk `executemany`, only when the study row was freshly inserted — re-adding a study must not re-check what the user unchecked) and `set_aggregation_samples` (add / remove / clear).
+
+**Lifecycle:** follows its study row. Scale: the largest public study has 41,600 samples; a whole-study insert is instant.
+
+---
+
 ### table-users
 
 Users authenticated against the Qiita control plane. One row per Qiita principal.
@@ -556,7 +627,7 @@ The rename rather than a drop is deliberate — the legacy rows are preserved no
 
 ### 2. `conn.executescript(...)` — tables and indexes
 
-One script creating all 16 tables and all 11 indexes with `IF NOT EXISTS`. Idempotent by construction. The ordering inside the script is loosely historical: the project/chat core first, then the six original indexes, then the merge tables (each followed by its own index), then `biom_sample_cache`, then the auth pair.
+One script creating all 19 tables and all 12 indexes with `IF NOT EXISTS`. Idempotent by construction. The ordering inside the script is loosely historical: the project/chat core first, then the six original indexes, then the merge tables (each followed by its own index), then `biom_sample_cache`, then the auth pair.
 
 ### 3. Additive `ALTER TABLE` statements
 
@@ -572,8 +643,9 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 9 | `study_detail_cache` | `total_samples INTEGER` | True total count paired with the capped `samples_json`, so the UI can show "200 of N". |
 | 10 | `merge_workspace_studies` | `chosen_artifact_ids TEXT` | Multi-artifact merge selection, superseding the scalar `chosen_artifact_id`. Old rows are handled at read time by `_hydrate_study` rather than backfilled. |
 | 11–12 | `project_chat_messages`, `global_chat_messages` | `ui_payload TEXT` | Structured rendering payloads — this is what persists agentic tool-call segments across a page reload. |
+| 13–17 | `aggregation_studies` | `study_abstract TEXT`, `pi_name TEXT`, `pi_affiliation TEXT`, `year INTEGER`, `is_gold INTEGER` | Study-header snapshot so the Sample Aggregation tab renders Browse-style cards without a Qiita round trip (2026-09-12). |
 
-Five of the twelve target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
+Five of the seventeen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
 
 ### 4. TinyDB import (one time only)
 
