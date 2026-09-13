@@ -43,37 +43,29 @@ def test_display_columns_without_sentinel_row(ss):
         assert ss.display_columns(5) == []
 
 
-def test_fetch_sample_page_sql_and_bind_order(ss):
+def test_fetch_samples_by_ids_sql_and_bind_order(ss):
     ss._columns_cache[232] = (1e18, ["sample_type", "empo_3"])
-    calls = []
-
-    def fake(sql, params=None):
-        calls.append((sql, params))
-        return [(7,)] if sql.lstrip().startswith("SELECT COUNT") else [("s1", "stool", "Animal")]
-
-    with patch.object(ss, "pooled_fetchall", side_effect=fake):
-        rows, total, columns = ss.fetch_sample_page(232, 200, 100, "stool")
-    assert (rows, total, columns) == ([("s1", "stool", "Animal")], 7, ["sample_type", "empo_3"])
-
-    count_sql, count_params = calls[0]
-    assert "sample_id <> %s AND (sample_id ILIKE %s OR sample_values::text ILIKE %s)" in count_sql
-    assert count_params == [SENT, "%stool%", "%stool%"]
-
-    page_sql, page_params = calls[1]
-    assert "SELECT sample_id, sample_values->>%s, sample_values->>%s FROM qiita.sample_232" in page_sql
-    assert page_sql.rstrip().endswith("ORDER BY sample_id LIMIT %s OFFSET %s")
-    # select-list column names -> WHERE params -> LIMIT -> OFFSET
-    assert page_params == ["sample_type", "empo_3", SENT, "%stool%", "%stool%", 100, 200]
+    with patch.object(ss, "pooled_fetchall", return_value=[("s1", "stool", "Animal")]) as m:
+        rows = ss.fetch_samples_by_ids(232, ["s1"])
+    assert rows == [("s1", "stool", "Animal")]
+    sql, params = m.call_args[0]
+    assert "SELECT sample_id, sample_values->>%s, sample_values->>%s FROM qiita.sample_232" in sql
+    assert sql.rstrip().endswith("WHERE sample_id = ANY(%s)")
+    # select-list column names -> the id list
+    assert params == ["sample_type", "empo_3", ["s1"]]
 
 
-def test_fetch_sample_page_without_filter_or_columns(ss):
-    ss._columns_cache[5] = (1e18, [])
-    with patch.object(ss, "pooled_fetchall", side_effect=[[(0,)], []]) as m:
-        assert ss.fetch_sample_page(5, 0, 50) == ([], 0, [])
-    sql, params = m.call_args_list[1][0]
-    assert "SELECT sample_id FROM qiita.sample_5 WHERE sample_id <> %s ORDER BY" in sql
-    assert "ILIKE" not in sql
-    assert params == [SENT, 50, 0]
+def test_fetch_samples_by_ids_reorders_to_input_order(ss):
+    ss._columns_cache[232] = (1e18, [])
+    with patch.object(ss, "pooled_fetchall", return_value=[("s2",), ("s1",)]):
+        rows = ss.fetch_samples_by_ids(232, ["s1", "s2"])
+    assert [r[0] for r in rows] == ["s1", "s2"]
+
+
+def test_fetch_samples_by_ids_empty_input_no_query(ss):
+    with patch.object(ss, "pooled_fetchall") as m:
+        assert ss.fetch_samples_by_ids(232, []) == []
+    assert not m.called
 
 
 def test_matching_sample_ids(ss):

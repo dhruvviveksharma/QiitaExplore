@@ -2,6 +2,7 @@
 /api/aggregations routes with Qiita Postgres stubbed. The pure CSV row builder
 is covered in test_fastq_manifest.py."""
 
+import csv
 import os
 import sys
 
@@ -147,14 +148,19 @@ def logged_in(client, monkeypatch):
 
 @pytest.fixture
 def stub_qiita(monkeypatch):
-    """Every Postgres-touching name the routes import, patched on the route module."""
+    """Every Postgres-touching name the routes import, patched on the route
+    module. s2 is the one sample with a file (fastq paired), so tests can
+    exercise files-first ordering / show filtering / "select: with_files"
+    without a real availability computation."""
     import routes.aggregation_routes as ar
+    _FIELDS = {"s1": ("s1", "stool"), "s2": ("s2", "skin")}
     monkeypatch.setattr(ar, "is_study_public", lambda sid: sid != 99999)
     monkeypatch.setattr(ar, "count_fastq_artifacts", lambda sid: 2)
     monkeypatch.setattr(ar, "list_study_sample_ids", lambda sid: ["s1", "s2"])
     monkeypatch.setattr(ar, "matching_sample_ids", lambda sid, q: ["s2"])
-    monkeypatch.setattr(ar, "fetch_sample_page",
-                        lambda sid, offset, limit, q=None: ([("s1", "stool"), ("s2", "skin")], 2, ["sample_type"]))
+    monkeypatch.setattr(ar, "display_columns", lambda sid: ["sample_type"])
+    monkeypatch.setattr(ar, "fetch_samples_by_ids", lambda sid, ids: [_FIELDS[i] for i in ids if i in _FIELDS])
+    monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [2, 0]})
     monkeypatch.setattr(ar, "fetch_aggregate_csv_rows", lambda selected: [
         (16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"),
         (16326, "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs"),
@@ -227,16 +233,35 @@ def test_route_samples_page(client, logged_in, stub_qiita):
     assert _add(client, logged_in, aid).status_code == 200
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
 
-    r = client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=0&limit=50&q=s")
+    r = client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=0&limit=50")
     assert r.status_code == 200, r.get_json()
     page = r.get_json()
     assert (page["study_id"], page["total"], page["offset"], page["limit"]) == (16326, 2, 0, 50)
     assert page["columns"] == ["sample_type"]
     assert page["selected_count"] == 1
-    assert page["rows"] == [
-        {"sample_id": "s1", "selected": True, "fields": {"sample_type": "stool"}},
-        {"sample_id": "s2", "selected": False, "fields": {"sample_type": "skin"}},
-    ]
+    assert page["with_files"] == 1
+    # files-first: s2 (has a file) sorts before s1, id order preserved within each group
+    assert [row["sample_id"] for row in page["rows"]] == ["s2", "s1"]
+    assert page["rows"][0] == {"sample_id": "s2", "selected": False, "fastq": "paired", "fasta": False,
+                                "fields": {"sample_type": "skin"}}
+    assert page["rows"][1] == {"sample_id": "s1", "selected": True, "fastq": None, "fasta": False,
+                                "fields": {"sample_type": "stool"}}
+
+    only_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=with_files").get_json()
+    assert [row["sample_id"] for row in only_files["rows"]] == ["s2"]
+    assert only_files["total"] == 1
+
+    without_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=without_files").get_json()
+    assert [row["sample_id"] for row in without_files["rows"]] == ["s1"]
+    assert without_files["total"] == 1
+
+    assert client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=bogus").status_code == 400
+
+    # q routes to matching_sample_ids (stub returns only s2, regardless of q)
+    q_page = client.get(f"/api/aggregations/{aid}/studies/16326/samples?q=x").get_json()
+    assert [row["sample_id"] for row in q_page["rows"]] == ["s2"]
+    assert q_page["total"] == 1
+
     # limit is clamped, offset floors at 0
     page = client.get(f"/api/aggregations/{aid}/studies/16326/samples?limit=9999&offset=-5").get_json()
     assert (page["limit"], page["offset"]) == (500, 0)
@@ -260,6 +285,9 @@ def test_route_set_samples_variants(client, logged_in, stub_qiita):
     assert count(client.patch(url, json={"select": "matching", "q": "skin"}, headers=logged_in)) == 2
     assert count(client.patch(url, json={"remove": ["s1", "s2"]}, headers=logged_in)) == 0
     assert count(client.patch(url, json={"select": "all"}, headers=logged_in)) == 2
+    # "with_files" replaces the whole selection with only the samples that
+    # resolve to a file — exactly what the CSV export can contain.
+    assert count(client.patch(url, json={"select": "with_files"}, headers=logged_in)) == 1
 
     for bad in [{}, {"add": "s1"}, {"add": [1]}, {"select": "matching"}, {"select": "some"}]:
         r = client.patch(url, json=bad, headers=logged_in)
@@ -280,6 +308,23 @@ def test_route_export_csv(client, logged_in, stub_qiita):
     assert body[0] == "study_id,sample_id,file_path_in_qmounts,data_type,file_type"
     assert body[1] == "16326,s1,/a/f_R1.fq.gz,16S,raw_forward_seqs"
     assert body[2] == "16326,s1,/a/f_R2.fq.gz,16S,raw_reverse_seqs"
+
+
+def test_route_export_csv_spreadsheet_safe(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    resp = client.get(f"/api/aggregations/{aid}/export.csv?spreadsheet=1")
+    assert resp.status_code == 200
+    assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples_spreadsheet.csv"
+    rows = list(csv.reader(resp.get_data(as_text=True).splitlines()))
+    assert rows[0] == ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
+    assert rows[1] == ["16326", '="s1"', "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"]
+
+    # default (no ?spreadsheet=) stays plain, with the plain filename
+    plain = client.get(f"/api/aggregations/{aid}/export.csv")
+    assert plain.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.csv"
+    assert list(csv.reader(plain.get_data(as_text=True).splitlines()))[1] == \
+        ["16326", "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"]
 
 
 def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita, monkeypatch):

@@ -338,6 +338,10 @@ def _create_schema(conn):
         ("aggregation_studies", "pi_affiliation", "TEXT"),
         ("aggregation_studies", "year", "INTEGER"),
         ("aggregation_studies", "is_gold", "INTEGER"),
+        # Per-sample FASTQ/FASTA availability map ({sample_id: [fastq, fasta]}),
+        # computed by helpers/fastq_manifest.get_sample_files and cached here
+        # so the sample table's files-first ordering survives a restart.
+        ("study_detail_cache", "sample_files_json", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")

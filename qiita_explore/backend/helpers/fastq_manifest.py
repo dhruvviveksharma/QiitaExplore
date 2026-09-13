@@ -12,10 +12,17 @@ drift: fetch_manifest (a single per_sample_FASTQ artifact → QIIME2 V2 manifest
 used by the study modal) and fetch_aggregate_csv_rows (every per-sample
 sequence artifact — per_sample_FASTQ fwd/rev and FASTA raw_fasta — across a
 Sample Aggregation's studies, restricted to the checked samples).
+
+_study_groups is the shared group-assembly step behind both
+fetch_aggregate_csv_rows (checked samples → CSV rows) and get_sample_files
+(every sample of one study → which have a file at all, for the sample
+table's FASTQ/FASTA columns and files-first ordering).
 """
 
 import csv
 import io
+import json
+import time
 
 from helpers.artifact_graph import _BASE
 from helpers.pg_pool import pooled_fetchall
@@ -38,8 +45,9 @@ JOIN qiita.data_directory dd        ON f.data_directory_id = dd.data_directory_i
 _WHERE_FASTQ = """WHERE at.artifact_type = 'per_sample_FASTQ'
   AND ft.filepath_type IN ('raw_forward_seqs', 'raw_reverse_seqs')
 """
-# The aggregate CSV also takes Qiita's per-sample FASTA uploads (artifact type
-# FASTA, one raw_fasta per sample). raw_qual is not sequence and is skipped.
+# The aggregate CSV / availability map also take Qiita's per-sample FASTA
+# uploads (artifact type FASTA, one raw_fasta per sample). raw_qual is not
+# sequence and is skipped.
 _WHERE_SEQ = """WHERE at.artifact_type IN ('per_sample_FASTQ', 'FASTA')
   AND ft.filepath_type IN ('raw_forward_seqs', 'raw_reverse_seqs', 'raw_fasta')
 """
@@ -65,6 +73,12 @@ WHERE sample_id <> 'qiita_sample_column_names'
 _PAIRED_HEADER = ["sample-id", "forward-absolute-filepath", "reverse-absolute-filepath"]
 _SINGLE_HEADER = ["sample-id", "absolute-filepath"]
 CSV_HEADER = ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
+
+# Availability map (get_sample_files) is cached two ways: a per-worker memo
+# (cheap re-checks within a request burst) backed by a 6h SQLite row
+# (study_detail_cache.sample_files_json, shared across workers/restarts).
+_SAMPLE_FILES_MEMO_TTL_SECONDS = 600
+_sample_files_memo = {}  # study_id -> (fetched_at_epoch, {sample_id: [fastq, fasta]}); tests clear it
 
 
 def _claim(pool, prefix):
@@ -128,6 +142,28 @@ def build_csv_rows(groups, base_dir):
     return sorted(out)
 
 
+def summarize_sample_files(groups):
+    """groups: [(study_id, data_type, artifact_type, samples, files, allow)] —
+    `allow` is ignored (availability considers every sample of the study, not
+    just checked ones). Paths are irrelevant here too, only whether a sample
+    resolves to a file, so build_manifest_rows is run with an empty base_dir.
+
+    Returns {sample_id: [fastq, fasta]}: fastq is 2 (paired), 1 (single), or 0;
+    fasta is 1 or 0 — the max/OR across every artifact of the study. Only
+    samples that resolve to at least one file appear."""
+    out = {}
+    for _study_id, _data_type, artifact_type, samples, files, _allow in groups:
+        rows, paired = build_manifest_rows(samples, files, "")
+        is_fasta = artifact_type == "FASTA"
+        for sample_id, _fwd, rev in rows:
+            cur = out.setdefault(sample_id, [0, 0])
+            if is_fasta:
+                cur[1] = 1
+            else:
+                cur[0] = max(cur[0], 2 if rev else 1)
+    return out
+
+
 def to_tsv(rows, paired):
     buf = io.StringIO()
     w = csv.writer(buf, delimiter="\t", lineterminator="\n")
@@ -137,11 +173,19 @@ def to_tsv(rows, paired):
     return buf.getvalue()
 
 
-def to_csv(rows):
+def to_csv(rows, spreadsheet_safe=False):
+    """spreadsheet_safe wraps sample_id as ="..." so Excel / Numbers / LibreOffice
+    keep ids like "10317.000001062" as text instead of parsing (and rounding)
+    them as a float — which otherwise displays indistinguishably from the
+    study_id column. The plain CSV (default) stays clean for pandas/scripts."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(CSV_HEADER)
-    w.writerows(rows)
+    if spreadsheet_safe:
+        for study_id, sample_id, path, data_type, file_type in rows:
+            w.writerow([study_id, f'="{sample_id}"', path, data_type, file_type])
+    else:
+        w.writerows(rows)
     return buf.getvalue()
 
 
@@ -170,17 +214,17 @@ def count_fastq_artifacts(study_id):
     return int(pooled_fetchall(_COUNT_SQL, [int(study_id)])[0][0])
 
 
-def fetch_aggregate_csv_rows(selected):
-    """selected: {study_id: {sample_id, ...}} — empty sets are ignored. Returns
-    build_csv_rows over every per-sample sequence artifact of those studies.
-    Raises ValueError when no such artifact exists or no checked sample
-    resolves to a file."""
-    if not _BASE:
-        raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
-    study_ids = sorted(int(s) for s, ids in selected.items() if ids)
-    frows = pooled_fetchall(_STUDIES_FILES_SQL, [study_ids]) if study_ids else []
+def _study_groups(study_ids, selected):
+    """Every per-sample sequence artifact (per_sample_FASTQ + FASTA) of
+    study_ids, bucketed into (study_id, data_type, artifact_type, samples,
+    files, allow) groups — one per artifact, `samples` the prep's FULL
+    (sample_id, run_prefix) list, `allow` = selected.get(study_id, set()).
+    [] when study_ids is empty or none of them has such an artifact."""
+    if not study_ids:
+        return []
+    frows = pooled_fetchall(_STUDIES_FILES_SQL, [study_ids])
     if not frows:
-        raise ValueError("No per-sample sequence artifacts in the selected studies")
+        return []
     # Bucket by (study_id, prep_id, artifact_id); iterate sorted for determinism.
     by_artifact = {}
     for r in frows:
@@ -194,7 +238,55 @@ def fetch_aggregate_csv_rows(selected):
         first = by_artifact[key][0]
         groups.append((study_id, first[7], first[8], samples_by_prep[pid],
                        _files(by_artifact[key]), selected.get(study_id, set())))
+    return groups
+
+
+def fetch_aggregate_csv_rows(selected):
+    """selected: {study_id: {sample_id, ...}} — empty sets are ignored. Returns
+    build_csv_rows over every per-sample sequence artifact of those studies.
+    Raises ValueError when no such artifact exists or no checked sample
+    resolves to a file."""
+    if not _BASE:
+        raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
+    study_ids = sorted(int(s) for s, ids in selected.items() if ids)
+    groups = _study_groups(study_ids, selected)
+    if not groups:
+        raise ValueError("No per-sample sequence artifacts in the selected studies")
     rows = build_csv_rows(groups, _BASE)
     if not rows:
         raise ValueError("None of the selected samples has a per-sample sequence file")
     return rows
+
+
+def compute_sample_files(study_id):
+    """{sample_id: [fastq, fasta]} for every sample of one study that resolves
+    to at least one file — a live Postgres computation, no cache. See
+    get_sample_files for the cached entry point actually used by routes."""
+    return summarize_sample_files(_study_groups([int(study_id)], {}))
+
+
+def get_sample_files(study_id):
+    """Cached compute_sample_files: a per-worker in-process memo (10 min) in
+    front of a 6h SQLite row (study_detail_cache.sample_files_json, shared
+    across workers and survives a restart). A study whose artifacts just
+    finished processing can show stale availability for up to 6h."""
+    sid = int(study_id)
+    now = time.time()
+    hit = _sample_files_memo.get(sid)
+    if hit and now - hit[0] < _SAMPLE_FILES_MEMO_TTL_SECONDS:
+        return hit[1]
+
+    from store.cache import get_study_detail_cache, upsert_study_detail_cache
+    cached = get_study_detail_cache(sid)
+    if cached and cached.get("sample_files_json"):
+        try:
+            data = json.loads(cached["sample_files_json"])
+            _sample_files_memo[sid] = (now, data)
+            return data
+        except (TypeError, ValueError):
+            pass
+
+    data = compute_sample_files(sid)
+    upsert_study_detail_cache(sid, None, None, sample_files_json=json.dumps(data))
+    _sample_files_memo[sid] = (now, data)
+    return data

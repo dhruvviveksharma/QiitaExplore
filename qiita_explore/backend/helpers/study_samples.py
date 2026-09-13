@@ -1,8 +1,13 @@
 """Per-study sample listing for the Sample Aggregation tab: every sample id,
-a paged + filterable slice with a few display columns, and the study's
-metadata column list — all straight from qiita.sample_{study_id} (the
-per-study JSONB table), so counts agree with fastq_manifest._SAMPLES_SQL and
-never include the 'qiita_sample_column_names' sentinel row.
+the study's metadata column list, and a lookup of one page of samples by id —
+all straight from qiita.sample_{study_id} (the per-study JSONB table), so
+counts agree with fastq_manifest._SAMPLES_SQL and never include the
+'qiita_sample_column_names' sentinel row.
+
+Paging happens in Python (routes/aggregation_routes.py), not SQL: the sample
+table sorts files-first using helpers.fastq_manifest.get_sample_files, which
+plain SQL LIMIT/OFFSET cannot express. fetch_samples_by_ids fetches exactly
+one page's metadata, by id, in whatever order the caller already decided.
 
 The table name is f-string interpolated from int(study_id) — the same
 trusted-int pattern as routes/artifact_routes.py; every value is bound.
@@ -77,26 +82,28 @@ def _where(q):
     return sql, params
 
 
-def fetch_sample_page(study_id, offset, limit, q=None):
-    """(rows, total, columns): rows = [(sample_id, value, ...)] in display-column
-    order, total = number of samples matching q."""
-    table = _table(study_id)
-    columns = display_columns(study_id)
-    where, wparams = _where(q)
-    total = int(pooled_fetchall(f"SELECT COUNT(*) FROM {table} WHERE {where}", wparams)[0][0])
-    select = ", ".join(["sample_id"] + ["sample_values->>%s"] * len(columns))
-    # Binds follow the rendered SQL: select-list column names, then the WHERE
-    # params, then LIMIT / OFFSET.
-    rows = pooled_fetchall(
-        f"SELECT {select} FROM {table} WHERE {where} ORDER BY sample_id LIMIT %s OFFSET %s",
-        [*columns, *wparams, int(limit), int(offset)],
-    )
-    return rows, total, columns
-
-
 def matching_sample_ids(study_id, q):
     where, params = _where(q)
     rows = pooled_fetchall(
         f"SELECT sample_id FROM {_table(study_id)} WHERE {where} ORDER BY sample_id", params,
     )
     return [r[0] for r in rows]
+
+
+def fetch_samples_by_ids(study_id, sample_ids):
+    """rows = [(sample_id, value, ...)] in display-column order, for exactly
+    the given sample_ids, re-ordered to match the input order — availability-
+    first paging computes order in Python, so SQL's own row order is
+    irrelevant. [] (no query at all) when sample_ids is empty."""
+    ids = list(sample_ids)
+    if not ids:
+        return []
+    columns = display_columns(study_id)
+    select = ", ".join(["sample_id"] + ["sample_values->>%s"] * len(columns))
+    rows = pooled_fetchall(
+        f"SELECT {select} FROM {_table(study_id)} WHERE sample_id = ANY(%s)",
+        [*columns, ids],
+    )
+    order = {sid: i for i, sid in enumerate(ids)}
+    rows.sort(key=lambda r: order.get(r[0], len(ids)))
+    return rows

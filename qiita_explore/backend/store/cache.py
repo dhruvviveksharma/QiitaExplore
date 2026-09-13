@@ -43,7 +43,8 @@ def get_study_detail_cache(study_id: int):
     with _conn() as conn:
         row = conn.execute(
             "SELECT preps_json, artifacts_json, samples_context, full_samples_json, artifact_graph_json, "
-            "prep_metadata_json, samples_json, total_samples, cached_at FROM study_detail_cache WHERE study_id = ?",
+            "prep_metadata_json, samples_json, total_samples, sample_files_json, cached_at "
+            "FROM study_detail_cache WHERE study_id = ?",
             (int(study_id),),
         ).fetchone()
     if row is None:
@@ -70,6 +71,7 @@ def upsert_study_detail_cache(
     samples_json: str = None,
     total_samples: int = None,
     full_samples_limit: int = None,
+    sample_files_json: str = None,
 ):
     """Cache study detail. Pass None for any field to preserve the existing value (COALESCE)."""
     with _conn() as conn:
@@ -78,8 +80,8 @@ def upsert_study_detail_cache(
             INSERT INTO study_detail_cache(
                 study_id, preps_json, artifacts_json, samples_context, full_samples_json,
                 artifact_graph_json, prep_metadata_json, samples_json, total_samples,
-                full_samples_limit, cached_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                full_samples_limit, sample_files_json, cached_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(study_id) DO UPDATE SET
                 preps_json          = COALESCE(excluded.preps_json,          study_detail_cache.preps_json),
                 artifacts_json      = COALESCE(excluded.artifacts_json,      study_detail_cache.artifacts_json),
@@ -90,11 +92,12 @@ def upsert_study_detail_cache(
                 samples_json        = COALESCE(excluded.samples_json,       study_detail_cache.samples_json),
                 total_samples       = COALESCE(excluded.total_samples,      study_detail_cache.total_samples),
                 full_samples_limit  = COALESCE(excluded.full_samples_limit, study_detail_cache.full_samples_limit),
+                sample_files_json   = COALESCE(excluded.sample_files_json,  study_detail_cache.sample_files_json),
                 cached_at           = excluded.cached_at
             """,
             (int(study_id), preps_json, artifacts_json, samples_context, full_samples_json,
              artifact_graph_json, prep_metadata_json, samples_json, total_samples,
-             full_samples_limit, _now()),
+             full_samples_limit, sample_files_json, _now()),
         )
         conn.commit()
     return True
