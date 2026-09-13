@@ -17,7 +17,8 @@ def _app(tmp_path_factory):
     isolated SQLite file, after purging any earlier instance."""
     os.environ["QIITA_EXPERIMENT_DB_PATH"] = str(tmp_path_factory.mktemp("search_route") / "test.db")
     for name in list(sys.modules):
-        if name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.") or "sql_store" in name:
+        if (name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.")
+                or name.startswith("helpers.") or "sql_store" in name):
             del sys.modules[name]
     stub_qiita_db_and_core()
     import run
