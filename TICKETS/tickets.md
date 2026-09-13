@@ -2515,7 +2515,11 @@ Select `dd.subdirectory` in both queries and branch in Python the way
 ## TKT-083: Aggregated FASTQ Manifest — Duplicate Sample-IDs and Mixed Read Layouts
 
 **Severity:** Low
-**Status:** Open
+**Status:** Superseded (2026-09-12)
+
+Superseded by the sample-level CSV export (`GET /api/aggregations/<id>/export.csv`):
+rows are per file and per data type (a sample in two preps is two legitimate rows)
+and there is no QIIME2 header to get wrong, so neither problem below exists any more.
 
 ### Description
 
@@ -2541,6 +2545,32 @@ If users hit either case: add an optional per-study prep/artifact picker to the 
 - `qiita_explore/backend/helpers/fastq_manifest.py`
 - `qiita_explore/backend/routes/aggregation_routes.py`
 - `qiita_explore/frontend/js/aggregations.js`
+
+---
+
+## TKT-085: Per-Sample `FASTA_preprocessed` Artifacts Are Not Exported
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The aggregation CSV covers `per_sample_FASTQ` (raw_forward_seqs / raw_reverse_seqs) and
+`FASTA` (raw_fasta) artifacts, matched to samples by `run_prefix`. Qiita also has 32
+`FASTA_preprocessed` artifacts across 4 studies (SPAdes / cloudSPAdes assemblies, one
+`preprocessed_fasta` per sample). None is public today, and their filenames are
+`sample_id` stems in most artifacts but `run_prefix` in some, so the existing matcher
+would miss them.
+
+### Plan
+
+When one goes public: add a sample_id-stem matcher alongside `build_manifest_rows`'
+run_prefix matcher, widen `_WHERE_SEQ` to `FASTA_preprocessed` / `preprocessed_fasta`,
+and emit `file_type = preprocessed_fasta`.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
 
 ---
 

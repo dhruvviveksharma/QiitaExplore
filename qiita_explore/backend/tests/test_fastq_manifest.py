@@ -73,6 +73,74 @@ def test_rows_sorted_by_sample_id(fm):
     assert [r[0] for r in rows] == ["a", "z"]
 
 
+def test_raw_fasta_is_the_forward_file(fm):
+    files = [("raw_fasta", "FASTA", True, 3220, "SRR040501.fna")]
+    rows, paired = fm.build_manifest_rows([("1928.SRR040501", "SRR040501")], files, BASE)
+    assert paired is False
+    assert rows == [("1928.SRR040501", f"{BASE}/FASTA/3220/SRR040501.fna", None)]
+
+
+# ── build_csv_rows / to_csv ──────────────────────────────────────────────────
+
+def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True):
+    files = []
+    for _, prefix in samples:
+        files.append(("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1.fastq.gz"))
+        if paired:
+            files.append(("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2.fastq.gz"))
+    return (study_id, data_type, "per_sample_FASTQ", samples, files, set(allow))
+
+
+def test_csv_paired_sample_is_two_rows_with_file_types(fm):
+    rows = fm.build_csv_rows([_fastq_group(16326, "16S", 10, [("s1", "P1")], ["s1"])], BASE)
+    assert rows == [
+        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz", "16S", "raw_forward_seqs"),
+        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "16S", "raw_reverse_seqs"),
+    ]
+
+
+def test_csv_fasta_group(fm):
+    files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
+    rows = fm.build_csv_rows([(1928, "16S", "FASTA", [("s1", "SRR1")], files, {"s1"})], BASE)
+    assert rows == [(1928, "s1", f"{BASE}/FASTA/3220/SRR1.fna", "16S", "raw_fasta")]
+
+
+def test_csv_allowlist_filters_after_matching(fm):
+    # 's8B4' is selected, 's8B4ABX' is not. If unselected samples were dropped
+    # before matching, '8B4' would claim '8B4ABX_R1.fastq.gz' (longest first
+    # needs the whole prep present).
+    samples = [("s8B4", "8B4"), ("s8B4ABX", "8B4ABX")]
+    rows = fm.build_csv_rows([_fastq_group(1, "16S", 7, samples, ["s8B4"], paired=False)], BASE)
+    assert [r[1] for r in rows] == ["s8B4"]
+    assert rows[0][2].endswith("/8B4_R1.fastq.gz")
+
+
+def test_csv_sample_in_two_preps_yields_both_data_types(fm):
+    g1 = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)
+    g2 = _fastq_group(5, "Metagenomic", 20, [("s1", "P1")], ["s1"], paired=False)
+    rows = fm.build_csv_rows([g1, g2], BASE)
+    assert [(r[3], r[4]) for r in rows] == [("16S", "raw_forward_seqs"), ("Metagenomic", "raw_forward_seqs")]
+    assert len({r[2] for r in rows}) == 2
+
+
+def test_csv_dedupes_identical_rows_and_sorts(fm):
+    g = _fastq_group(5, "16S", 10, [("s2", "P2"), ("s1", "P1")], ["s1", "s2"], paired=False)
+    rows = fm.build_csv_rows([g, g], BASE)
+    assert [r[1] for r in rows] == ["s1", "s2"]
+
+
+def test_csv_unselected_and_unmatched_omitted(fm):
+    g = _fastq_group(5, "16S", 10, [("s1", "P1"), ("s2", None)], ["s1", "s2", "ghost"], paired=False)
+    assert [r[1] for r in fm.build_csv_rows([g], BASE)] == ["s1"]
+    assert fm.build_csv_rows([], BASE) == []
+
+
+def test_to_csv(fm):
+    out = fm.to_csv([(5, "s1", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs")])
+    assert out == ("study_id,sample_id,file_path_in_qmounts,data_type,file_type\n"
+                   "5,s1,/p/a_R1.fq.gz,16S,raw_forward_seqs\n")
+
+
 # ── to_tsv ───────────────────────────────────────────────────────────────────
 
 def test_to_tsv_paired(fm):

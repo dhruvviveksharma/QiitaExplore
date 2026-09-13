@@ -1,6 +1,6 @@
 """Sample Aggregation routes: a user's named set of samples, grouped by study,
-plus one QIIME2 V2 manifest covering every per_sample_FASTQ artifact across
-those studies.
+plus one CSV of the checked samples' per-sample sequence files
+(study_id, sample_id, file_path_in_qmounts, data_type, file_type).
 
 Auth (401) and CSRF (403) are enforced by helpers/auth_middleware.py for every
 route here, so g.user_id is always set. Every mutation returns the full
@@ -21,8 +21,9 @@ from store import (
     remove_study_from_aggregation,
     set_aggregation_samples,
     selected_in,
+    selected_by_study,
 )
-from helpers.fastq_manifest import count_fastq_artifacts, fetch_aggregate_manifest, to_tsv
+from helpers.fastq_manifest import count_fastq_artifacts, fetch_aggregate_csv_rows, to_csv
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import fetch_sample_page, list_study_sample_ids, matching_sample_ids
 
@@ -172,21 +173,24 @@ def api_set_aggregation_samples(aggregation_id, study_id):
     return jsonify(agg)
 
 
-@app.route("/api/aggregations/<aggregation_id>/manifest", methods=["GET"])
-def download_aggregation_manifest(aggregation_id):
-    """QIIME2 V2 manifest (TSV) across every per_sample_FASTQ artifact of the aggregation's studies."""
+@app.route("/api/aggregations/<aggregation_id>/export.csv", methods=["GET"])
+def download_aggregation_csv(aggregation_id):
+    """CSV of every checked sample's per-sample sequence files — one row per
+    file (a paired sample gives two), columns study_id, sample_id,
+    file_path_in_qmounts, data_type, file_type. Samples with no resolvable
+    file are omitted."""
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
-    study_ids = [s["study_id"] for s in agg["studies"]]
-    if not study_ids:
-        return jsonify({"error": "Aggregation has no studies"}), 400
+    selected = {sid: ids for sid, ids in selected_by_study(aggregation_id).items() if ids}
+    if not selected:
+        return jsonify({"error": "No samples selected"}), 400
     try:
-        rows, paired = fetch_aggregate_manifest(study_ids)
+        rows = fetch_aggregate_csv_rows(selected)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
     return Response(
-        to_tsv(rows, paired),
-        mimetype="text/tab-separated-values",
-        headers={"Content-Disposition": f"attachment; filename=manifest_aggregation_{aggregation_id}.tsv"},
+        to_csv(rows),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=aggregation_{aggregation_id}_samples.csv"},
     )

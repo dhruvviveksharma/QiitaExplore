@@ -1,6 +1,6 @@
-"""Sample Aggregation: pure aggregate-row merging (helpers/fastq_manifest),
-SQLite CRUD (store/aggregation_crud), and the /api/aggregations routes with
-Qiita Postgres stubbed."""
+"""Sample Aggregation: SQLite CRUD (store/aggregation_crud) and the
+/api/aggregations routes with Qiita Postgres stubbed. The pure CSV row builder
+is covered in test_fastq_manifest.py."""
 
 import os
 import sys
@@ -8,62 +8,6 @@ import sys
 import pytest
 
 from .conftest import stub_qiita_db_and_core
-
-BASE = "/qmounts/qiita_data"
-
-
-# ── pure: build_aggregate_rows ───────────────────────────────────────────────
-
-@pytest.fixture
-def fm():
-    stub_qiita_db_and_core()
-    import helpers.fastq_manifest as fm
-    return fm
-
-
-def _paired_group(sample_id, prefix, artifact_id):
-    files = [
-        ("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1_001.fastq.gz"),
-        ("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2_001.fastq.gz"),
-    ]
-    return [(sample_id, prefix)], files
-
-
-def _single_group(sample_id, prefix, artifact_id):
-    files = [("raw_forward_seqs", "raw_data", False, artifact_id, f"{artifact_id}_{prefix}.fastq.gz")]
-    return [(sample_id, prefix)], files
-
-
-def test_aggregate_concat_and_sort(fm):
-    rows, paired = fm.build_aggregate_rows(
-        [_single_group("s2", "SRR2", 20), _single_group("s1", "SRR1", 10)], BASE)
-    assert paired is False
-    assert rows == [
-        ("s1", f"{BASE}/raw_data/10_SRR1.fastq.gz", None),
-        ("s2", f"{BASE}/raw_data/20_SRR2.fastq.gz", None),
-    ]
-
-
-def test_aggregate_paired_if_any_group_paired(fm):
-    rows, paired = fm.build_aggregate_rows(
-        [_paired_group("s1", "P1", 10), _single_group("s2", "SRR2", 20)], BASE)
-    assert paired is True
-    assert rows[0] == ("s1", f"{BASE}/per_sample_FASTQ/10/P1_R1_001.fastq.gz",
-                       f"{BASE}/per_sample_FASTQ/10/P1_R2_001.fastq.gz")
-    assert rows[1] == ("s2", f"{BASE}/raw_data/20_SRR2.fastq.gz", None)
-    lines = fm.to_tsv(rows, paired).split("\n")
-    assert lines[0] == "sample-id\tforward-absolute-filepath\treverse-absolute-filepath"
-    assert lines[2] == f"s2\t{BASE}/raw_data/20_SRR2.fastq.gz\t"
-
-
-def test_aggregate_duplicate_sample_id_first_group_wins(fm):
-    rows, _ = fm.build_aggregate_rows(
-        [_single_group("s1", "SRR1", 10), _single_group("s1", "SRR1", 99)], BASE)
-    assert rows == [("s1", f"{BASE}/raw_data/10_SRR1.fastq.gz", None)]
-
-
-def test_aggregate_empty_groups(fm):
-    assert fm.build_aggregate_rows([], BASE) == ([], False)
 
 
 # ── store ────────────────────────────────────────────────────────────────────
@@ -211,8 +155,10 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "matching_sample_ids", lambda sid, q: ["s2"])
     monkeypatch.setattr(ar, "fetch_sample_page",
                         lambda sid, offset, limit, q=None: ([("s1", "stool"), ("s2", "skin")], 2, ["sample_type"]))
-    monkeypatch.setattr(ar, "fetch_aggregate_manifest",
-                        lambda ids: ([("s1", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz")], True))
+    monkeypatch.setattr(ar, "fetch_aggregate_csv_rows", lambda selected: [
+        (16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"),
+        (16326, "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs"),
+    ])
     return ar
 
 
@@ -323,30 +269,49 @@ def test_route_set_samples_variants(client, logged_in, stub_qiita):
     assert client.patch(url, json={"select": "all"}).status_code == 403   # no CSRF header
 
 
-def test_route_manifest_tsv(client, logged_in, stub_qiita):
+def test_route_export_csv(client, logged_in, stub_qiita):
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    resp = client.get(f"/api/aggregations/{aid}/manifest")
+    resp = client.get(f"/api/aggregations/{aid}/export.csv")
     assert resp.status_code == 200
-    assert resp.mimetype == "text/tab-separated-values"
-    assert resp.headers["Content-Disposition"] == f"attachment; filename=manifest_aggregation_{aid}.tsv"
+    assert resp.mimetype == "text/csv"
+    assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.csv"
     body = resp.get_data(as_text=True).split("\n")
-    assert body[0] == "sample-id\tforward-absolute-filepath\treverse-absolute-filepath"
-    assert body[1] == "s1\t/a/f_R1.fq.gz\t/a/f_R2.fq.gz"
+    assert body[0] == "study_id,sample_id,file_path_in_qmounts,data_type,file_type"
+    assert body[1] == "16326,s1,/a/f_R1.fq.gz,16S,raw_forward_seqs"
+    assert body[2] == "16326,s1,/a/f_R2.fq.gz,16S,raw_reverse_seqs"
 
 
-def test_route_manifest_errors(client, logged_in, stub_qiita, monkeypatch):
+def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita, monkeypatch):
     aid = _create(client, logged_in)["aggregation_id"]
-    assert client.get(f"/api/aggregations/{aid}/manifest").status_code == 400  # no studies
-    assert client.get("/api/aggregations/nope/manifest").status_code == 404
-
-    def _raise(ids):
-        raise ValueError("No per_sample_FASTQ artifacts in these studies")
-    monkeypatch.setattr(stub_qiita, "fetch_aggregate_manifest", _raise)
     assert _add(client, logged_in, aid).status_code == 200
-    resp = client.get(f"/api/aggregations/{aid}/manifest")
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
+    seen = {}
+
+    def _capture(selected):
+        seen.update(selected)
+        return [(16326, "s1", "/a/f.fq.gz", "16S", "raw_forward_seqs")]
+    monkeypatch.setattr(stub_qiita, "fetch_aggregate_csv_rows", _capture)
+    assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 200
+    assert seen == {16326: {"s1"}}
+
+
+def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 400   # no studies
+    assert client.get("/api/aggregations/nope/export.csv").status_code == 404
+    assert _add(client, logged_in, aid).status_code == 200
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"select": "none"}, headers=logged_in)
+    r = client.get(f"/api/aggregations/{aid}/export.csv")
+    assert r.status_code == 400 and r.get_json()["error"] == "No samples selected"
+
+    def _raise(selected):
+        raise ValueError("None of the selected samples has a per-sample sequence file")
+    monkeypatch.setattr(stub_qiita, "fetch_aggregate_csv_rows", _raise)
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"select": "all"}, headers=logged_in)
+    resp = client.get(f"/api/aggregations/{aid}/export.csv")
     assert resp.status_code == 404
-    assert resp.get_json()["error"] == "No per_sample_FASTQ artifacts in these studies"
+    assert resp.get_json()["error"] == "None of the selected samples has a per-sample sequence file"
 
 
 def test_route_401_without_session(_app):
