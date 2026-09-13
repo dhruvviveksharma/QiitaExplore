@@ -9,8 +9,8 @@ from tests.conftest import stub_qiita_db_and_core
 
 stub_qiita_db_and_core()
 
-from services import browse_filters as bf
-from services.browse_filters import (
+from services import browse_filters as bf  # noqa: E402
+from services.browse_filters import (  # noqa: E402
     parse_browse_filters, build_browse_filter_where, study_passes_browse_filters,
     get_search_facets,
 )
