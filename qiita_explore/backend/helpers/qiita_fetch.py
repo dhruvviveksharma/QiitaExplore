@@ -62,7 +62,11 @@ _STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             WHERE spt2.study_id = s.study_id) AS data_types,
            (SELECT COUNT(DISTINCT spt3.prep_template_id)
             FROM qiita.study_prep_template spt3
-            WHERE spt3.study_id = s.study_id) AS num_preps"""
+            WHERE spt3.study_id = s.study_id) AS num_preps,
+           EXTRACT(YEAR FROM s.first_contact)::int AS year"""
+# `year` is not a count, but it lives in this shared block so every header
+# shape (browse, search, pins, deep-search hydration) carries it. It is the
+# year the study was created in Qiita — Qiita has no publication date.
 
 # Public-visibility gate shared by _build_study_header_query,
 # services.study_service.search_studies_with_sql, and
@@ -108,6 +112,7 @@ def _row_to_study_header(row):
         "num_samples":     row[9],
         "data_types":      row[10],
         "num_preps":       row[11],
+        "year":            row[12],
     }
 
 

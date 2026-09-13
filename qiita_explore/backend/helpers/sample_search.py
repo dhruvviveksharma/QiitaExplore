@@ -14,6 +14,7 @@ from qiita_core.qiita_settings import qiita_config
 from qiita_db.sql_connection import TRN
 from services.study_service import build_data_type_filter
 from services.relevance import build_pi_required_filter
+from services.browse_filters import build_browse_filter_where
 from helpers.qiita_fetch import _fetch_study_headers, _PUBLIC_ARTIFACT_EXISTS
 from config import SAMPLE_SEARCH_PROBE_TIMEOUT_MS
 
@@ -22,10 +23,13 @@ logger = logging.getLogger(__name__)
 _MAX_KEYWORDS_PER_PROBE = 10
 
 
-def _get_candidate_ids(data_types, exclude_ids, max_candidates, resolved_pis=None):
-    """Return up to max_candidates public study IDs to probe, minus exclude_ids."""
+def _get_candidate_ids(data_types, exclude_ids, max_candidates, resolved_pis=None,
+                       year_min=None, year_max=None):
+    """Return up to max_candidates public study IDs to probe, minus exclude_ids.
+    Params bind in rendered order: data-type EXISTS → PI EXISTS → year → LIMIT."""
     dt_sql, dt_params = build_data_type_filter(data_types)
     pi_sql, pi_params = build_pi_required_filter(resolved_pis or [])
+    y_sql, y_params = build_browse_filter_where(None, year_min, year_max)
     joins = ""
     if pi_sql:
         joins = (
@@ -37,8 +41,10 @@ def _get_candidate_ids(data_types, exclude_ids, max_candidates, resolved_pis=Non
         where_parts.append(dt_sql)
     if pi_sql:
         where_parts.append(pi_sql)
+    if y_sql:
+        where_parts.append(y_sql)
     extra_where = (" AND " + " AND ".join(where_parts)) if where_parts else ""
-    query_params = list(dt_params) + list(pi_params) + [max_candidates * 2]
+    query_params = list(dt_params) + list(pi_params) + list(y_params) + [max_candidates * 2]
     try:
         with TRN:
             TRN.add(f"""
@@ -303,7 +309,8 @@ def search_studies_by_field_filters(field_filters=None, keywords=None,
 
 def search_studies_by_sample_meta(topic_keywords, data_types=None,
                                    exclude_ids=None, max_candidates=500,
-                                   pool_size=16, resolved_pis=None):
+                                   pool_size=16, resolved_pis=None,
+                                   year_min=None, year_max=None):
     """Search for studies whose sample metadata matches topic keywords.
 
     Uses a per-call ThreadedConnectionPool so parallel probes run on independent
@@ -316,6 +323,7 @@ def search_studies_by_sample_meta(topic_keywords, data_types=None,
 
     candidate_ids = _get_candidate_ids(
         data_types, exclude_ids, max_candidates, resolved_pis=resolved_pis,
+        year_min=year_min, year_max=year_max,
     )
     if not candidate_ids:
         return []

@@ -288,3 +288,15 @@ class TestSearchStudiesToolPassesTagsThrough:
             agent_tools_mod._tool_search_by_sample({"keywords": "mouse"})
         keywords = mock_search.call_args.kwargs["keywords"]
         assert keywords == ["mouse"]
+
+
+class TestYearColumn:
+    def test_year_selected_and_is_gold_reads_the_next_column(self):
+        # _STUDY_COUNT_COLUMNS gained `year` at row[12]; is_gold moved to row[13].
+        row = (550, "T", "A", "al", True, "PI", "e", "aff", None, 10, "16S", 1, 2015, True)
+        with patch("services.study_service.pooled_fetchall", return_value=[row]) as mock_fetch:
+            out = search_studies_with_sql(custom_sql_where="s.study_id = ANY(%s)", params=[[550]])
+        sql = mock_fetch.call_args[0][0]
+        assert "EXTRACT(YEAR FROM s.first_contact)::int AS year" in sql
+        assert out[0]["year"] == 2015
+        assert out[0]["is_gold"] is True

@@ -341,7 +341,8 @@ def search_studies_with_sql(custom_sql_where="", params=None, limit=50,
             return [], sql.strip() + f"\n\n-- params ({len(full_params)}): {full_params!r}"
         return []
 
-    studies = [{**_row_to_study_header(row), "is_gold": bool(row[12])} for row in results]
+    # row[12] is `year` (see _STUDY_COUNT_COLUMNS); is_gold is the next column.
+    studies = [{**_row_to_study_header(row), "is_gold": bool(row[13])} for row in results]
 
     if return_sql:
         return studies, sql.strip() + f"\n\n-- params ({len(full_params)}): {full_params!r}"

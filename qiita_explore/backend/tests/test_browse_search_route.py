@@ -76,3 +76,66 @@ class TestExactIdQueries:
     def test_empty_query_is_rejected(self, _app):
         status, body, _ = _call(_app, {"query": ""})
         assert status == 400
+
+
+class TestBrowseFilters:
+    def test_filter_only_query_binds_in_topic_slot_and_skips_deep_search(self, _app):
+        body = {"query": "", "filters": {
+            "pis": ["Rob Knight"], "data_types": ["16S"], "year_min": 2012, "year_max": 2020,
+        }}
+        status, resp, m = _call(_app, body, sql_rows=[_header(1, pi_name="Rob Knight", year=2015)])
+        assert status == 200
+        kw = m["sql"].call_args.kwargs
+        assert kw["custom_sql_where"] == (
+            "(1=1) AND sp_pi.name = ANY(%s)"
+            " AND EXTRACT(YEAR FROM s.first_contact) >= %s"
+            " AND EXTRACT(YEAR FROM s.first_contact) <= %s"
+        )
+        assert kw["params"] == [["Rob Knight"], 2012, 2020]
+        assert kw["data_types"] == ["16S"]
+        assert kw["limit"] == 120
+        assert kw["relevance_keywords"] is None
+        assert not m["meta"].called            # no terms to probe with
+        assert resp["filters"] == {"pis": ["Rob Knight"], "data_types": ["16S"],
+                                   "year_min": 2012, "year_max": 2020}
+        assert resp["results"][0]["year"] == 2015
+
+    def test_deep_search_rows_are_post_filtered_and_candidates_narrowed(self, _app):
+        body = {"query": "gut", "filters": {"year_min": 2012}}
+        status, resp, m = _call(
+            _app, body, sql_rows=[_header(1, year=2015)],
+            meta_rows=[_header(2, year=2009), _header(3, year=2018)],
+        )
+        assert status == 200
+        assert [s["study_id"] for s in resp["results"]] == [1, 3]
+        mk = m["meta"].call_args.kwargs
+        assert mk["year_min"] == 2012 and mk["year_max"] is None
+        assert mk["data_types"] is None
+
+    def test_facet_pis_narrow_deep_candidates_and_gate_exactly(self, _app):
+        body = {"query": "gut", "filters": {"pis": ["Rob Knight"]}}
+        _, resp, m = _call(
+            _app, body, sql_rows=[_header(1, pi_name="Rob Knight")],
+            meta_rows=[_header(2, pi_name="Someone Else")],
+        )
+        assert [s["study_id"] for s in resp["results"]] == [1]
+        assert m["meta"].call_args.kwargs["resolved_pis"] == [{"name": "Rob Knight"}]
+
+    def test_bad_year_is_400(self, _app):
+        status, _, _ = _call(_app, {"query": "", "filters": {"year_min": "twenty"}})
+        assert status == 400
+
+    def test_query_without_filters_echoes_null_filters(self, _app):
+        _, resp, m = _call(_app, {"query": "gut"}, sql_rows=[_header(1)])
+        assert resp["filters"] is None
+        assert m["sql"].call_args.kwargs["data_types"] is None
+
+
+class TestFacetsEndpoint:
+    def test_returns_facets(self, _app):
+        import routes.study_routes as sr
+        facets = {"pis": [], "years": {"min": 2011, "max": 2026}, "data_types": []}
+        with patch.object(sr, "get_search_facets", return_value=facets):
+            with _app.test_request_context("/api/search/facets"):
+                rv = sr.api_search_facets()
+        assert rv.get_json() == facets
