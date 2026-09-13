@@ -74,7 +74,10 @@ def agg_crud():
     return m
 
 
-STUDY = {"study_id": 16326, "study_title": "Test", "data_types": "16S", "num_samples": 10, "num_preps": 1}
+STUDY = {"study_id": 16326, "study_title": "Test", "data_types": "16S", "num_samples": 2, "num_preps": 1,
+         "study_abstract": "About soil", "pi_name": "Rob Knight", "pi_affiliation": "UCSD",
+         "year": 2015, "is_gold": True}
+SAMPLES = ["s1", "s2"]
 
 
 def test_store_create_list_get(agg_crud):
@@ -88,15 +91,49 @@ def test_store_create_list_get(agg_crud):
 
 def test_store_add_readd_remove_study(agg_crud):
     aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg = agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2)
+    agg = agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
     assert len(agg["studies"]) == 1
     s = agg["studies"][0]
     assert (s["study_id"], s["study_title"], s["data_types"], s["num_samples"], s["num_preps"],
-            s["fastq_artifact_count"]) == (16326, "Test", "16S", 10, 1, 2)
-    assert len(agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2)["studies"]) == 1
-    assert agg_crud.add_study_to_aggregation(aid, "u2", STUDY, 2) is None
+            s["fastq_artifact_count"]) == (16326, "Test", "16S", 2, 1, 2)
+    # header snapshot for the tab's cards
+    assert (s["study_abstract"], s["pi_name"], s["pi_affiliation"], s["year"], s["is_gold"]) == \
+        ("About soil", "Rob Knight", "UCSD", 2015, 1)
+    assert s["selected_samples"] == 2
+    assert len(agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)["studies"]) == 1
+    assert agg_crud.add_study_to_aggregation(aid, "u2", STUDY, 2, SAMPLES) is None
     assert agg_crud.remove_study_from_aggregation(aid, "u2", 16326) is None
     assert agg_crud.remove_study_from_aggregation(aid, "u1", 16326)["studies"] == []
+
+
+def test_store_set_samples_add_remove_clear(agg_crud):
+    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
+
+    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, remove=["s2"])
+    assert agg["studies"][0]["selected_samples"] == 1
+    assert agg_crud.selected_in(aid, 16326, ["s1", "s2", "zz"]) == {"s1"}
+
+    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, add=["s2", "s3"])
+    assert agg["studies"][0]["selected_samples"] == 3
+    assert agg_crud.selected_by_study(aid) == {16326: {"s1", "s2", "s3"}}
+
+    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, clear=True, add=["s9"])
+    assert agg["studies"][0]["selected_samples"] == 1
+    assert agg_crud.selected_in(aid, 16326, ["s9"]) == {"s9"}
+    assert agg_crud.selected_in(aid, 16326, []) == set()
+
+    assert agg_crud.set_aggregation_samples(aid, "u1", 16326, clear=True)["studies"][0]["selected_samples"] == 0
+    assert agg_crud.set_aggregation_samples(aid, "u2", 16326, add=["s1"]) is None
+
+
+def test_store_readd_keeps_deselection(agg_crud):
+    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
+    agg_crud.set_aggregation_samples(aid, "u1", 16326, remove=["s2"])
+    # Re-adding a study already present must not re-check what the user unchecked.
+    agg = agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
+    assert agg["studies"][0]["selected_samples"] == 1
 
 
 def test_store_rename(agg_crud):
@@ -108,11 +145,21 @@ def test_store_rename(agg_crud):
 
 def test_store_delete_cascades(agg_crud, db_conn):
     aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 1)
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 1, SAMPLES)
+    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 2
     assert agg_crud.delete_aggregation(aid, "u2") is False
     assert agg_crud.delete_aggregation(aid, "u1") is True
     assert agg_crud.list_aggregations("u1") == []
     assert db_conn.execute("SELECT COUNT(*) FROM aggregation_studies").fetchone()[0] == 0
+    # chain cascade: aggregation -> studies -> samples
+    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 0
+
+
+def test_store_remove_study_cascades_samples(agg_crud, db_conn):
+    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 1, SAMPLES)
+    agg_crud.remove_study_from_aggregation(aid, "u1", 16326)
+    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 0
 
 
 # ── routes ───────────────────────────────────────────────────────────────────
@@ -156,9 +203,14 @@ def logged_in(client, monkeypatch):
 
 @pytest.fixture
 def stub_qiita(monkeypatch):
+    """Every Postgres-touching name the routes import, patched on the route module."""
     import routes.aggregation_routes as ar
     monkeypatch.setattr(ar, "is_study_public", lambda sid: sid != 99999)
     monkeypatch.setattr(ar, "count_fastq_artifacts", lambda sid: 2)
+    monkeypatch.setattr(ar, "list_study_sample_ids", lambda sid: ["s1", "s2"])
+    monkeypatch.setattr(ar, "matching_sample_ids", lambda sid, q: ["s2"])
+    monkeypatch.setattr(ar, "fetch_sample_page",
+                        lambda sid, offset, limit, q=None: ([("s1", "stool"), ("s2", "skin")], 2, ["sample_type"]))
     monkeypatch.setattr(ar, "fetch_aggregate_manifest",
                         lambda ids: ([("s1", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz")], True))
     return ar
@@ -193,6 +245,9 @@ def test_route_crud_roundtrip(client, logged_in, stub_qiita):
     studies = r.get_json()["studies"]
     assert [s["study_id"] for s in studies] == [16326]
     assert studies[0]["fastq_artifact_count"] == 2
+    # whole study added = every sample checked; badge denominator = rows stored
+    assert (studies[0]["selected_samples"], studies[0]["num_samples"]) == (2, 2)
+    assert studies[0]["pi_name"] == "Rob Knight"
 
     r = client.delete(f"/api/aggregations/{aid}/studies/16326", headers=logged_in)
     assert r.status_code == 200 and r.get_json()["studies"] == []
@@ -219,6 +274,53 @@ def test_route_add_study_errors(client, logged_in, stub_qiita, monkeypatch):
     assert _add(client, logged_in, aid, study_id=1).status_code == 200
     r = _add(client, logged_in, aid, study_id=2)
     assert r.status_code == 400 and "maximum" in r.get_json()["error"]
+
+
+def test_route_samples_page(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
+
+    r = client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=0&limit=50&q=s")
+    assert r.status_code == 200, r.get_json()
+    page = r.get_json()
+    assert (page["study_id"], page["total"], page["offset"], page["limit"]) == (16326, 2, 0, 50)
+    assert page["columns"] == ["sample_type"]
+    assert page["selected_count"] == 1
+    assert page["rows"] == [
+        {"sample_id": "s1", "selected": True, "fields": {"sample_type": "stool"}},
+        {"sample_id": "s2", "selected": False, "fields": {"sample_type": "skin"}},
+    ]
+    # limit is clamped, offset floors at 0
+    page = client.get(f"/api/aggregations/{aid}/studies/16326/samples?limit=9999&offset=-5").get_json()
+    assert (page["limit"], page["offset"]) == (500, 0)
+
+    assert client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=x").status_code == 400
+    assert client.get(f"/api/aggregations/{aid}/studies/777/samples").status_code == 404
+    assert client.get("/api/aggregations/nope/studies/16326/samples").status_code == 404
+
+
+def test_route_set_samples_variants(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    url = f"/api/aggregations/{aid}/studies/16326/samples"
+
+    def count(resp):
+        assert resp.status_code == 200, resp.get_json()
+        return resp.get_json()["studies"][0]["selected_samples"]
+
+    assert count(client.patch(url, json={"select": "none"}, headers=logged_in)) == 0
+    assert count(client.patch(url, json={"add": ["s1"]}, headers=logged_in)) == 1
+    assert count(client.patch(url, json={"select": "matching", "q": "skin"}, headers=logged_in)) == 2
+    assert count(client.patch(url, json={"remove": ["s1", "s2"]}, headers=logged_in)) == 0
+    assert count(client.patch(url, json={"select": "all"}, headers=logged_in)) == 2
+
+    for bad in [{}, {"add": "s1"}, {"add": [1]}, {"select": "matching"}, {"select": "some"}]:
+        r = client.patch(url, json=bad, headers=logged_in)
+        assert r.status_code == 400, bad
+    assert client.patch(f"/api/aggregations/{aid}/studies/777/samples",
+                        json={"select": "all"}, headers=logged_in).status_code == 404
+    assert client.patch(url, json={"select": "all"}).status_code == 403   # no CSRF header
 
 
 def test_route_manifest_tsv(client, logged_in, stub_qiita):

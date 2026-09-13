@@ -73,6 +73,9 @@ from .aggregation_crud import (  # noqa: F401
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,
+    set_aggregation_samples,
+    selected_in,
+    selected_by_study,
 )
 
 from .cache import (  # noqa: F401

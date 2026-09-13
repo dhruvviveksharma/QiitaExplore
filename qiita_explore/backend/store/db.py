@@ -247,6 +247,19 @@ def _create_schema(conn):
             FOREIGN KEY (aggregation_id) REFERENCES aggregations(aggregation_id) ON DELETE CASCADE
         );
 
+        -- Per-sample membership. The composite FK cascades in a chain
+        -- (aggregation -> studies -> samples); the PK autoindex serves every
+        -- lookup (per-study count, page IN (...), per-study delete).
+        CREATE TABLE IF NOT EXISTS aggregation_samples (
+            aggregation_id TEXT    NOT NULL,
+            study_id       INTEGER NOT NULL,
+            sample_id      TEXT    NOT NULL,
+            added_at       TEXT,
+            PRIMARY KEY (aggregation_id, study_id, sample_id),
+            FOREIGN KEY (aggregation_id, study_id)
+                REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS biom_sample_cache (
             artifact_id     INTEGER PRIMARY KEY,
             num_samples     INTEGER,
@@ -318,6 +331,13 @@ def _create_schema(conn):
         ("project_chats", "compacted_through_id", "INTEGER"),
         ("global_chats", "compaction_summary", "TEXT"),
         ("global_chats", "compacted_through_id", "INTEGER"),
+        # Study-header snapshot so the Sample Aggregation tab can render
+        # Browse-style cards without a Qiita round-trip.
+        ("aggregation_studies", "study_abstract", "TEXT"),
+        ("aggregation_studies", "pi_name", "TEXT"),
+        ("aggregation_studies", "pi_affiliation", "TEXT"),
+        ("aggregation_studies", "year", "INTEGER"),
+        ("aggregation_studies", "is_gold", "INTEGER"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")
