@@ -11,10 +11,6 @@
        using 127.0.0.1 (not localhost) so it matches this page's host --
        see docs/08-frontend.md ("API base resolution") for why. Example:
        <meta name="api-base" content="http://127.0.0.1:5001/api"> -->
-  <!-- #TODO revert before merging to master: Live Server (5503) + tunneled
-       dev backend (5002, per detect_env.sh for non-master branches) are
-       different origins, so the relative default can't reach it. -->
-  <meta name="api-base" content="http://127.0.0.1:5002/api">
   <title>QiitaExplore</title>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
