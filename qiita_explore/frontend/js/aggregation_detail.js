@@ -1,11 +1,12 @@
 // Sample Aggregation tab — the detail side: the aggregation's studies as
 // Browse-style cards (3 per row, 2 while the metadata pane is open), the
 // expanded study's sample table (checkbox = in the aggregation, sample id =
-// open its metadata, Data type + FASTQ/FASTA columns, a files-first Show
-// filter), and the metadata pane itself. The header's Data type / Processing
-// pickers are the aggregation's saved file_filter: every table and both
-// exports follow it. Loads before aggregations.js, whose AggregationsTab
-// renders these.
+// open its metadata, Data type / Processing pickers + Data type/FASTQ/FASTA
+// columns, a files-first Show filter), and the metadata pane itself. The
+// Data type / Processing pickers live in the sample table's toolbar but set
+// the aggregation's saved file_filter, so every study's table and both
+// header exports follow the same choice. Loads before aggregations.js,
+// whose AggregationsTab renders these.
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiJson, API (utils.js),
 //   StudyCard (study_card.js), FacetMultiSelect (browse_filters.js)
 
@@ -77,10 +78,6 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
         </div>
         <div className="agg-download-col">
           <div className="agg-download-row">
-            <FacetMultiSelect label="Data type" options={facets?.data_types} selected={filt.data_types}
-              onChange={names => setFilter('data_types', names)} disabled={!facets} />
-            <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
-              onChange={names => setFilter('processing', names)} disabled={!facets} />
             {download(`${base}/export.xlsx`, '↓ Excel (.xlsx)', 'For Excel / Numbers: sample ids stay text')}
             {download(`${base}/export.csv`, '↓ CSV (for scripts)', 'For pandas / scripts')}
           </div>
@@ -109,7 +106,8 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
               </div>
               {expanded && (
                 <AggregationSampleTable key={`samples-${expanded.study_id}`} a={a} agg={agg} study={expanded}
-                  filt={filt} picked={picked} onPickSample={onPickSample} />
+                  filt={filt} facets={facets} onFilterChange={setFilter}
+                  picked={picked} onPickSample={onPickSample} />
               )}
             </React.Fragment>
           );
@@ -121,8 +119,10 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
 // One study's samples, paged from Qiita with the aggregation's checked state
 // and file availability (under the saved file_filter) merged in
 // server-side, sorted files-first. Load-more shape from merge_detail.js
-// StudySampleTable.
-function AggregationSampleTable({ a, agg, study, filt, picked, onPickSample }) {
+// StudySampleTable. `facets`/`onFilterChange` render and edit the
+// aggregation-wide file_filter from here, since this is where its effect on
+// the sample list is visible.
+function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, picked, onPickSample }) {
   const [rows,      setRows]      = useState([]);
   const [total,     setTotal]     = useState(study.num_samples ?? 0);
   const [withFiles, setWithFiles] = useState(0);
@@ -188,6 +188,10 @@ function AggregationSampleTable({ a, agg, study, filt, picked, onPickSample }) {
         <span className="agg-samples-title">Samples of <strong>{study.study_title || `study ${sid}`}</strong></span>
         <input className="samples-search" placeholder="Filter by sample id or any metadata value…"
           value={q} onChange={e => setQ(e.target.value)} />
+        <FacetMultiSelect label="Data type" options={facets?.data_types} selected={filt.data_types}
+          onChange={names => onFilterChange('data_types', names)} disabled={!facets} />
+        <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
+          onChange={names => onFilterChange('processing', names)} disabled={!facets} />
         <div className="agg-seg">
           <button className={show === 'all' ? 'on' : ''} onClick={() => setShow('all')}>All</button>
           <button className={show === 'with_files' ? 'on' : ''} onClick={() => setShow('with_files')}>
