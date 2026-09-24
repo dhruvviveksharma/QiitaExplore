@@ -734,7 +734,13 @@ A Sample Aggregation is a user-owned, named set of **samples** grouped by study 
 
 `num_samples` is the number of sample rows stored when the study was added (the `qiita_sample_column_names` sentinel excluded); `fastq_artifact_count` counts the study's `per_sample_FASTQ` + `FASTA` artifacts at add time; `selected_samples` is live.
 
-`file_filter` is the aggregation's saved choice of **data types** (e.g. `Metagenomic`, `16S`) and **processing steps** — the Qiita command that produced each per-sample artifact, e.g. `Atropos v1.1.24`, `Adapter and host filtering v2023.12`, or `Raw upload` for uploads (`qiita.software_command.name` via `artifact.command_id`). An empty list means any. It exists because one metagenomic prep often holds the same reads two or three times (raw, adapter-trimmed, host-filtered): measured on AGP (10317), 96 of 191 metagenomic preps have 2–3 `per_sample_FASTQ` artifacts, so an unfiltered export carries ~8 files per sample. The filter applies everywhere a file is counted: the sample table (`fastq`/`fasta`, files-first order, `show`, `with_files`), `select: "with_files"`, `file-facets`, and both exports. Matching is per artifact (`helpers/fastq_manifest.group_matches`), and `run_prefix` claiming is per artifact too, so filtering never changes which file a kept sample resolves to.
+`file_filter` is the aggregation's saved choice of **data types** (e.g. `Metagenomic`, `16S`) and **processing steps** — the Qiita command that produced each per-sample artifact, e.g. `Atropos v1.1.24`, `Adapter and host filtering v2023.12`, or `Raw upload` for uploads (`qiita.software_command.name` via `artifact.command_id`). An empty list means any. Processing exists because one metagenomic prep often holds the same reads two or three times (raw, adapter-trimmed, host-filtered): measured on AGP (10317), 96 of 191 metagenomic preps have 2–3 `per_sample_FASTQ` artifacts, so an unfiltered export carries ~8 files per sample. Data type covers a broader case too: a study can have samples with **no per-sample sequence file at all** — e.g. a 16S study whose only artifacts are `Demultiplexed`/`BIOM` (measured: studies 101, 1070, 1889) — and those samples still belong to a data type via **prep membership** (`qiita.prep_template_sample`, `helpers/study_samples.prep_data_types`), same as the Browse card's chips.
+
+The filter therefore has two effects, and only data type affects the first:
+1. **Scope** — which samples are in the sample table at all. A sample stays listed if no data type is chosen, or its prep membership **or** file data types intersect the chosen set (`helpers/sample_files.in_scope`). Processing never narrows scope.
+2. **File counting** — `fastq`/`fasta`, files-first order, `show`, `with_files`, `select: "with_files"`, `file-facets`'s counts, and both exports all use the **full** filter (data type **and** processing). Matching is per artifact (`helpers/fastq_manifest.group_matches`), and `run_prefix` claiming is per artifact too, so filtering never changes which file a kept sample resolves to.
+
+A sample in scope only by prep membership (no matching file) shows `fastq: null`, `fasta: false` — "—" in the UI — rather than being hidden.
 
 ### api_list_aggregations / api_create_aggregation / api_update_aggregation / api_delete_aggregation
 
@@ -745,12 +751,17 @@ A Sample Aggregation is a user-owned, named set of **samples** grouped by study 
 `GET /api/aggregations/<aggregation_id>/file-facets` — options for the tab's Data type / Processing pickers across the aggregation's studies, plus what the export would contain:
 
 ```json
-{ "data_types": [{ "name": "Full Length Operon", "count": 73 }, { "name": "Metagenomic", "count": 7306 }],
+{ "data_types": [{ "name": "16S", "count": 118 }, { "name": "Full Length Operon", "count": 73 },
+                  { "name": "Metagenomic", "count": 7306 }],
   "processing": [{ "name": "Adapter and host filtering v2023.12", "count": 3771 }, { "name": "Raw upload", "count": 7379 }],
   "exportable": 7306, "selected": 41600 }
 ```
 
-Counts are distinct samples with at least one file (`helpers/sample_files.facet_counts`), facet-style: data-type counts honour the saved processing filter and vice versa, so picking one data type doesn't hide the others. A selected name with no files left is still listed, at count 0, so it can be unticked. `exportable` is the number of **checked** samples with a file under the saved filter — `0` means both exports would 404, and the tab disables them. Computes each study's availability map (`get_sample_files`, cached 6 h) — the first call on a cold 50-study aggregation can take tens of seconds.
+`facet_counts(file_maps, prep_maps, file_filter)` (`helpers/sample_files.py`) computes both lists, facet-style so picking one option doesn't hide the others:
+- **Data type** counts are distinct samples **in scope** for that type (prep membership ∪ file, same as `in_scope` above) — `16S` above comes entirely from prep membership, since studies 101/1070 have no per-sample file. These counts **ignore the processing filter**, since scope doesn't depend on it.
+- **Processing** counts are distinct samples with a matching **file**, narrowed by the data-type filter (unaffected by data types that have no file, since processing describes files).
+
+A selected name with nothing left is still listed, at count 0, so it can be unticked. `exportable` is the number of **checked** samples with a file under the full saved filter — `0` means both exports would 404, and the tab disables them; it can be lower than a data type's scope count when that type has no file (e.g. picking `16S` alone against studies 101/1070 gives `exportable: 0`). Computes each study's availability map (`get_sample_files`, cached 6 h) and prep-membership map (`prep_data_types`, memoized 1 h) — the first call on a cold 50-study aggregation can take tens of seconds.
 
 ### api_add_study_to_aggregation
 
@@ -768,11 +779,13 @@ Counts are distinct samples with at least one file (`helpers/sample_files.facet_
 { "study_id": 232, "total": 115, "offset": 0, "limit": 200, "with_files": 88,
   "columns": ["sample_type", "host_body_site", "env_material", "empo_3"], "selected_count": 113,
   "rows": [{ "sample_id": "232.…", "selected": true, "fastq": "paired", "fasta": false,
-             "data_types": ["16S"], "processing": ["Raw upload"],
+             "data_types": ["16S"], "file_data_types": ["16S"], "processing": ["Raw upload"],
              "fields": { "sample_type": "…", "…": "…" } }] }
 ```
 
-Paging happens in **Python**, not SQL: `helpers.study_samples.list_study_sample_ids` / `matching_sample_ids` (id-sorted) are cross-referenced against `helpers.sample_files.get_sample_files` narrowed by the aggregation's `file_filter` (`effective()` → `{sample_id: (fastq, fasta)}`; the map itself is per data type × processing step, see appendix B `study_sample_files_cache`), `show` filters that combined list, and it is then stably re-sorted files-first (samples with a file first, original id order preserved within each group) before the `offset`/`limit` slice — a plain SQL `LIMIT`/`OFFSET` over `qiita.sample_<id>` cannot express availability-first ordering. `with_files` is the count of samples with a file **within the `q`-filtered set, before `show` narrows it** — it is the fixed "N" for the tab's "With files (N)" toggle regardless of which `show` value is currently selected. Per row, `fastq` is `"paired"` | `"single"` | `null` and `fasta` is a bool, both under the filter; `data_types` / `processing` list **every** data type and step the sample has a file in, unfiltered, so the tab can show (dimmed) what the filter excludes. `columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
+Two narrowing passes, both driven by the aggregation's saved `file_filter`. First **scope**: `ids` is filtered to `helpers.sample_files.in_scope(prep_types, entries, file_filter)` — a sample stays if no data type is chosen, or its prep membership (`helpers.study_samples.prep_data_types`) or file data types intersect it; processing plays no part here. Then **file availability**: `helpers.sample_files.get_sample_files` narrowed by the **full** filter via `effective()` → `{sample_id: (fastq, fasta)}` (the map itself is per data type × processing step, see appendix B `study_sample_files_cache`); `show` filters the in-scope list by this, and it is then stably re-sorted files-first (samples with a file first, original id order preserved within each group) before the `offset`/`limit` slice — a plain SQL `LIMIT`/`OFFSET` over `qiita.sample_<id>` cannot express availability-first ordering.
+
+Paging happens in **Python**, not SQL, for the same reason. `with_files` is the count of in-scope samples with a file **within the `q`-filtered set, before `show` narrows it** — it is the fixed "N" for the tab's "With files (N)" toggle regardless of which `show` value is currently selected. Per row, `fastq`/`fasta` are under the full filter; `data_types` is prep membership **∪** file data types, unfiltered, so the tab can show every type the sample belongs to (dimmed when the current filter excludes it); `file_data_types` is the subset that has an actual per-sample file, for solid-vs-outline chip styling — a type in `data_types` but not `file_data_types` means "this sample is in a prep of that type, but Qiita has no per-sample sequence file for it" (e.g. a 16S study with only `Demultiplexed`/`BIOM` artifacts); `processing` lists the steps of the sample's files, unfiltered. `columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
 
 ### api_set_aggregation_samples
 

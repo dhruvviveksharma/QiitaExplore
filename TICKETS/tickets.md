@@ -2892,6 +2892,46 @@ straight into the aggregation export.
 
 ---
 
+## TKT-092: Export Per-Prep Demultiplexed Files for Studies With No Per-Sample File
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Decided with the user (2026-09-24, alongside the Data type scope-filtering work): the
+aggregation export stays per-sample-file only for now, but a study can have samples that
+are in scope for a data type (via `helpers/study_samples.prep_data_types`) yet resolve to
+**no** file in either export. Measured on barnacle: studies 101, 1070 (16S) and 1889
+(18S) have no `per_sample_FASTQ`/`FASTA` artifact at all — only `Demultiplexed` (one
+`seqs.fna`/`seqs.fastq` per prep, all of that prep's samples concatenated together) and
+`BIOM`. Checking such a study's samples currently just produces an empty export
+(`exportable: 0`); the outline data-type chip (added in the same pass) tells the user why,
+but there is no way to actually get their reads out through this tab.
+
+### Plan
+
+- Add a `Demultiplexed` branch to `helpers/fastq_manifest._study_groups` /
+  `build_csv_rows` (or a separate path): for a checked sample with no per-sample file
+  under the filter, emit one row pointing at its prep's `Demultiplexed` file, with a
+  `file_type` like `demultiplexed` that makes clear every sample in that prep shares the
+  same path.
+- The CSV/xlsx `file_path_in_qmounts` column would then have **duplicate paths across
+  many `sample_id` rows** for the same prep — document this loudly, since a naive
+  pipeline that treats the export as "one file per sample" will silently process the
+  same multiplexed file N times instead of splitting it.
+- Decide whether this needs its own opt-in toggle (some users may not want multiplexed
+  paths mixed into an otherwise one-row-per-sample export) or is implied by picking a
+  prep-only data type in the filter.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
 *Generated: 2026-09-03 | Updated: 2026-09-24*
 
 ---
