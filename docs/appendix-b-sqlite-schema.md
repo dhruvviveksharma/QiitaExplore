@@ -1,6 +1,6 @@
 # Appendix B — Local SQLite Schema
 
-Complete reference for QiitaExplore's local SQLite store: the 16 tables, 11 indexes, their owning modules, and the migration behavior that runs on every import.
+Complete reference for QiitaExplore's local SQLite store: the 20 tables, 12 indexes (counted from `store/db.py`, 2026-09-24), their owning modules, and the migration behavior that runs on every import.
 
 ---
 
@@ -120,6 +120,7 @@ erDiagram
     project_studies }o..o| study_detail_cache : "study_id (no FK)"
     merge_workspace_studies }o..o| study_detail_cache : "study_id (no FK)"
     merge_workspace_studies }o..o{ biom_sample_cache : "artifact_id (no FK)"
+    aggregation_studies }o..o| study_sample_files_cache : "study_id (no FK)"
 
     meta {
         TEXT key PK
@@ -131,7 +132,7 @@ erDiagram
 
 **Why `chat_pinned_studies` has no foreign key.** Its `chat_id` is polymorphic: the same column points at `project_chats.chat_id` when `chat_scope = 'project'` and at `global_chats.chat_id` when `chat_scope = 'global'`. SQLite has no conditional or polymorphic foreign keys, so declaring one is not possible without splitting the table in two. The cost is real: deleting a chat cascades its messages but leaves its pin rows behind as orphans (see the table section below).
 
-`study_detail_cache.study_id` and `biom_sample_cache.artifact_id` reference entities that live in the **Qiita PostgreSQL database**, not in this file. No FK is possible by construction.
+`study_detail_cache.study_id`, `study_sample_files_cache.study_id` and `biom_sample_cache.artifact_id` reference entities that live in the **Qiita PostgreSQL database**, not in this file. No FK is possible by construction.
 
 ---
 
@@ -330,7 +331,7 @@ Cached expensive per-study reads from the Qiita PostgreSQL database — prep tem
 | `prep_metadata_json` | TEXT | yes | — | *(migration)* Map of `str(prep_template_id)` → per-prep metadata summary. |
 | `samples_json` | TEXT | yes | — | *(migration)* Sample list capped at 200 rows, for the study-detail modal. |
 | `total_samples` | INTEGER | yes | — | *(migration)* True total sample count, uncapped, paired with `samples_json`. |
-| `sample_files_json` | TEXT | yes | — | *(migration)* `{sample_id: [fastq, fasta]}` — which of the study's samples resolve to a per-sample sequence file, and whether the FASTQ is paired (2), single (1), or absent (0); FASTA is 0/1. Only samples with at least one file appear. Computed by `helpers/fastq_manifest.compute_sample_files` and cached here by `get_sample_files`, which the Sample Aggregation tab's samples-page route reads on every request for files-first ordering. |
+| `sample_files_json` | TEXT | yes | — | *(migration)* **Unused since 2026-09-24.** Held the per-sample FASTQ/FASTA availability map from 2026-09-13; its partial writes poisoned this table's preps/artifacts reads (TKT-086), so the map moved to [`study_sample_files_cache`](#table-study_sample_files_cache). Nothing reads or writes the column; the ALTER stays so old and new databases migrate alike. |
 
 **Keys/constraints:** PK on `study_id`. No FK — `study_id` points into PostgreSQL.
 
@@ -456,9 +457,27 @@ Sample IDs extracted from a BIOM artifact file. Caches an expensive file parse, 
 
 ---
 
+### table-study_sample_files_cache
+
+Per-sample sequence-file availability of one study, for the Sample Aggregation tab (added 2026-09-24).
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `study_id` | INTEGER | no (PK) | — | Qiita study ID. |
+| `sample_files_json` | TEXT | yes | — | `helpers/sample_files.encode` of `{sample_id: [(data_type, processing, fastq, fasta), ...]}` — one entry per data type × processing step the sample has a file in; `fastq` 2 (paired) / 1 (single) / 0, `fasta` 1 / 0. Labels are interned: `{"v": 2, "dt": [...], "proc": [...], "s": {sample_id: [[dt_index, proc_index, fastq, fasta], ...]}}`, about 0.3 MB for AGP. Only samples with at least one file appear. |
+| `cached_at` | TEXT | yes | — | Last write; drives the 6 h TTL. |
+
+**Keys/constraints:** PK on `study_id`. No FK — `study_id` points into PostgreSQL.
+
+**Writes owned by:** `backend/store/cache.py :: upsert_study_sample_files_cache`, called only by `backend/helpers/sample_files.py :: get_sample_files`. Unconditional upsert of both columns.
+
+**Lifecycle:** **6 h TTL**, checked on read in `get_study_sample_files_cache` with the same `_fresh()` helper as `study_detail_cache`. A row whose JSON is not format `"v": 2` (including the old `{sample_id: [fastq, fasta]}` shape) decodes to `None` and is recomputed. Why its own table rather than a `study_detail_cache` column: that table's single row-wide `cached_at` gave the map no real TTL, and its partial insert created rows the study modal read as a zero-prep cache hit (TKT-086). Here no other writer can renew or poison it. A per-worker 10-minute memo sits in front of it.
+
+---
+
 ### table-aggregations
 
-A user's named Sample Aggregation — a set of samples grouped by study, exported as one CSV of per-sample sequence files (`GET /api/aggregations/<id>/export.csv`).
+A user's named Sample Aggregation — a set of samples grouped by study, exported as one list of per-sample sequence files (`GET /api/aggregations/<id>/export.csv` or `export.xlsx`).
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
@@ -467,6 +486,7 @@ A user's named Sample Aggregation — a set of samples grouped by study, exporte
 | `name` | TEXT | no | — | Display name; inline-renamed in the tab. |
 | `created_at` | TEXT | yes | — | UTC ISO-8601. |
 | `updated_at` | TEXT | yes | — | Bumped by every mutation (`_touch`), including sample toggles. |
+| `file_filter_json` | TEXT | yes | — | *(migration)* `{"data_types": [...], "processing": [...]}` — the tab's Data type / Processing pickers; empty or NULL = any. Drives every sample table and both exports. Exposed as `file_filter` by `_hydrate` in `backend/store/aggregation_crud.py`; written by `set_aggregation_file_filter`. |
 
 **Keys/constraints:** PK on `aggregation_id`; index `idx_aggregations_user (user_id, updated_at DESC)` serves the list view.
 
@@ -628,7 +648,7 @@ The rename rather than a drop is deliberate — the legacy rows are preserved no
 
 ### 2. `conn.executescript(...)` — tables and indexes
 
-One script creating all 19 tables and all 12 indexes with `IF NOT EXISTS`. Idempotent by construction. The ordering inside the script is loosely historical: the project/chat core first, then the six original indexes, then the merge tables (each followed by its own index), then `biom_sample_cache`, then the auth pair.
+One script creating all 20 tables and all 12 indexes with `IF NOT EXISTS`. Idempotent by construction. The ordering inside the script is loosely historical: the project/chat core first, then the six original indexes, then the merge tables (each followed by its own index), then `biom_sample_cache`, then the auth pair.
 
 ### 3. Additive `ALTER TABLE` statements
 
@@ -645,9 +665,10 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 10 | `merge_workspace_studies` | `chosen_artifact_ids TEXT` | Multi-artifact merge selection, superseding the scalar `chosen_artifact_id`. Old rows are handled at read time by `_hydrate_study` rather than backfilled. |
 | 11–12 | `project_chat_messages`, `global_chat_messages` | `ui_payload TEXT` | Structured rendering payloads — this is what persists agentic tool-call segments across a page reload. |
 | 13–17 | `aggregation_studies` | `study_abstract TEXT`, `pi_name TEXT`, `pi_affiliation TEXT`, `year INTEGER`, `is_gold INTEGER` | Study-header snapshot so the Sample Aggregation tab renders Browse-style cards without a Qiita round trip (2026-09-12). |
-| 18 | `study_detail_cache` | `sample_files_json TEXT` | Per-sample FASTQ/FASTA availability map, so the Sample Aggregation tab's sample table can sort files-first and offer a with-files/without-files filter without recomputing on every page (2026-09-13). |
+| 18 | `study_detail_cache` | `sample_files_json TEXT` | Per-sample FASTQ/FASTA availability map (2026-09-13). **Unused since 2026-09-24**, when the map moved to its own `study_sample_files_cache` table (TKT-086). |
+| 19 | `aggregations` | `file_filter_json TEXT` | The aggregation's saved Data type / Processing filter (2026-09-24). |
 
-Six of the eighteen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
+Six of the nineteen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
 
 ### 4. TinyDB import (one time only)
 
@@ -701,7 +722,7 @@ First, `None` and "explicitly clear this column" become indistinguishable — th
 
 Second, `cached_at` is the one field assigned unconditionally: `cached_at = excluded.cached_at`. The TTL is therefore per-row, not per-column. Writing one fresh column resets the 6-hour clock for every other column in that row, including columns that were already hours old — so a row can be reported as a cache hit while some of its payload is older than the TTL nominally allows.
 
-Third, and sharpest in practice: a row existing is not the same as a row holding what a given reader needs, but `backend/routes/study_routes.py` and `backend/routes/project_routes.py` both branch on `if cached:` rather than on the specific column they read. `helpers/fastq_manifest.py :: get_sample_files` (added 2026-09-13, see `sample_files_json` above) can be the *first* writer for a study that has never had its modal opened — it inserts a row with `preps_json`/`artifacts_json` still `NULL`. Those two readers then treat that row as a full hit, `json.loads(None or "[]")` to `[]`, and — for `study_routes.py` — persist that `"[]"` back via COALESCE, making the empty result durable for the rest of the TTL window. Any reader added against this table must check its own column (`cached.get("preps_json") is not None`), not row truthiness. See TKT-086.
+Third, and sharpest in practice: a row existing is not the same as a row holding what a given reader needs. From 2026-09-13 to 2026-09-24, the aggregation tab's availability map was written here with `preps_json`/`artifacts_json` as `None`, often as the *first* writer for a study whose modal had never been opened. `backend/routes/study_routes.py` and `backend/routes/project_routes.py` branched on `if cached:`, so they read that row as a full hit, `json.loads(None or "[]")` gave `[]`, and `study_routes.py` then persisted the `"[]"` back via COALESCE. Fixed in TKT-086: the map has its own table ([`study_sample_files_cache`](#table-study_sample_files_cache)), and both readers now key on the column, treating `NULL` **and** `"[]"` as a miss (a public study always has a prep), which also heals rows poisoned before the fix. Any reader added against this table must check its own column, not row truthiness; `merge_helpers.py`, `artifact_routes.py` and `llm_helpers.py` already do.
 
 ---
 

@@ -2641,7 +2641,7 @@ disabling the buttons. See TKT-089 and TKT-090.
 ## TKT-086: Sample-Availability Cache Poisons `study_detail_cache` for Other Readers
 
 **Severity:** High
-**Status:** Open
+**Status:** Resolved (2026-09-24)
 
 ### Description
 
@@ -2676,6 +2676,23 @@ sample_files_json, cached_at)`, same shape as `biom_sample_cache`) instead of a 
 `study_detail_cache`, so it has an independent TTL and cannot be mistaken for a
 preps/artifacts hit. At minimum, `study_routes.py` and `project_routes.py` must key on
 the specific column (`cached.get("preps_json") is not None`) rather than row truthiness.
+
+### Resolution (2026-09-24)
+
+Both parts of the plan, in commit `b256b69c`:
+
+- The map lives in its own `study_sample_files_cache(study_id, sample_files_json,
+  cached_at)` table with its own 6 h TTL (`store/cache.py :: _fresh`, shared with
+  `study_detail_cache`), read and written only by `helpers/sample_files.get_sample_files`.
+  It no longer creates or touches `study_detail_cache` rows; that table's
+  `sample_files_json` column is unused.
+- `study_routes.api_study_detail` and `project_routes._enrich_study_in_project` key on the
+  `preps_json` column and treat `NULL` **and** `"[]"` as a miss. The second part heals
+  rows already poisoned before the fix, since the modal had persisted `"[]"` into them; a
+  public study always has a prep, so a real empty list costs at most one refetch.
+- Pinned by `tests/test_aggregations.py :: test_study_detail_refetches_when_cached_row_has_no_preps`
+  (both cases fail with the reader fix reverted) and
+  `tests/test_sample_files.py :: test_computes_then_persists_to_own_table`.
 
 ### Files
 
@@ -2788,7 +2805,7 @@ the metadata columns.
 ## TKT-090: Sample-Table Toolbar Mixes Filtered/Unfiltered Scopes; No "Exportable Selected" Count
 
 **Severity:** Low
-**Status:** Open
+**Status:** Partially resolved (2026-09-24)
 
 ### Description
 
@@ -2817,6 +2834,16 @@ than filed separately:
   Qiita returns no metadata row for is never exercised; nothing pins `with_files` staying
   constant across `show` values.
 
+### Progress (2026-09-24)
+
+The "exportable selected" half is done: `GET /api/aggregations/<id>/file-facets` returns
+`exportable`, the number of checked samples with a file under the aggregation's saved
+Data type / Processing filter. The tab's subtitle shows it, and both download links are
+disabled with an explanation when it is `0`, so an empty selection no longer opens a 404
+page. Still open: the toolbar's count line mixing the unfiltered `selected of
+num_samples` with the `q`-filtered `with_files`, a per-card exportable count, and the
+bundled cleanups below (the `compute_sample_files` wrapper is gone).
+
 ### Plan
 
 Compute `with_files` (or a `selected_with_files` count) server-side per study, alongside
@@ -2834,6 +2861,37 @@ when next touching this file.
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-09-13*
+## TKT-091: `run_prefix` Substring Matching May Over-Match on AGP
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Measured on barnacle (2026-09-24) while building the Data type / Processing filter:
+through `helpers/fastq_manifest.build_manifest_rows`, some AGP (10317) samples resolve to
+files in **50–73 different metagenomic preps** (e.g. 7 samples in 57 preps, 7 in 73),
+while most resolve to 1–13. Re-sequencing across a few lanes is expected; dozens of preps
+for one sample is not. The matcher links a sample to a file when the sample's
+`run_prefix` is a **substring** of the filename (longest prefix first, each file claimed
+once, per artifact). A short or generic `run_prefix` can therefore claim an unrelated
+sample's file in any prep where the true owner is absent, and those wrong paths would go
+straight into the aggregation export.
+
+### Plan
+
+- For the handful of samples with >20 preps, list the matched filenames and their preps'
+  `run_prefix` values and check by hand whether they are really the same sample.
+- If they over-match, tighten the rule to a prefix match on the filename's basename
+  followed by a separator (`_`, `.`), mirroring how Qiita builds per-sample filenames, and
+  re-measure the with-files counts.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py` (`build_manifest_rows`, `_claim`)
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-09-24*
 
 ---
