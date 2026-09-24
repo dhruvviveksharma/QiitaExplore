@@ -365,3 +365,29 @@ def test_route_401_without_session(_app):
 
 def test_route_post_requires_csrf(client, logged_in):
     assert client.post("/api/aggregations", json={"name": "x"}).status_code == 403
+
+
+# ── TKT-086: a study_detail_cache row without preps is a miss ────────────────
+
+@pytest.mark.parametrize("sid, preps_json", [(70001, None), (70002, "[]")])
+def test_study_detail_refetches_when_cached_row_has_no_preps(client, logged_in, monkeypatch, sid, preps_json):
+    """Other writers create study_detail_cache rows without preps, and the old
+    availability map persisted "[]" into some; the modal must refetch rather
+    than serve zero preps as a hit."""
+    import routes.study_routes as sr
+
+    # Write through the route module's own binding: fresh_db re-imports
+    # store per test, but this module-scoped app still holds the original.
+    sr.upsert_study_detail_cache(sid, preps_json, preps_json, samples_context="ctx")
+    fetched = []
+    monkeypatch.setattr(sr, "is_study_public", lambda sid: True)
+    monkeypatch.setattr(sr, "_fetch_study_detail_from_qiita",
+                        lambda sid: (fetched.append(sid) or ([{"prep_template_id": 7, "data_type": "16S"}], [])))
+    monkeypatch.setattr(sr, "fetch_artifact_graph", lambda sid: [])
+    monkeypatch.setattr(sr, "_fetch_prep_metadata_summary", lambda pid: {})
+    monkeypatch.setattr(sr, "_fetch_study_samples", lambda sid, limit=200: ([], 0))
+    monkeypatch.setattr(sr, "_fetch_sample_context_text", lambda sid: "")
+    r = client.get(f"/api/studies/{sid}/detail")
+    assert r.status_code == 200, r.get_json()
+    assert fetched == [sid]
+    assert [p["prep_template_id"] for p in r.get_json()["preps"]] == [7]

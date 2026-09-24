@@ -35,8 +35,9 @@ def _enrich_study_in_project(project_id: str, study_id: int):
     preps = []
     try:
         cached = get_study_detail_cache(study_id)
-        if cached:
-            preps = json.loads(cached.get("preps_json") or "[]")
+        # Column, not row: see api_study_detail (TKT-086).
+        if cached and cached.get("preps_json") not in (None, "[]"):
+            preps = json.loads(cached["preps_json"])
         else:
             preps, artifacts = _fetch_study_detail_from_qiita(study_id)
             upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))

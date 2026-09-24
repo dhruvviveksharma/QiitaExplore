@@ -23,7 +23,8 @@ from store import (
     selected_in,
     selected_by_study,
 )
-from helpers.fastq_manifest import count_fastq_artifacts, fetch_aggregate_csv_rows, get_sample_files, to_csv
+from helpers.fastq_manifest import count_fastq_artifacts, fetch_aggregate_csv_rows, to_csv
+from helpers.sample_files import get_sample_files
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import (
     display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids,

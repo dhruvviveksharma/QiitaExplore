@@ -49,8 +49,11 @@ def api_study_detail(study_id):
     if not is_study_public(study_id):
         return jsonify({'error': 'Study not found or not public'}), 404
     cached = get_study_detail_cache(study_id)
-    if cached:
-        preps          = json.loads(cached.get("preps_json") or "[]")
+    # Key on the column, not the row: other writers create rows without preps,
+    # and an earlier bug persisted "[]" into some (TKT-086) — a public study
+    # always has a prep, so an empty list is a miss too.
+    if cached and cached.get("preps_json") not in (None, "[]"):
+        preps          = json.loads(cached["preps_json"])
         artifacts      = json.loads(cached.get("artifacts_json") or "[]")
         artifact_graph = json.loads(cached["artifact_graph_json"]) if cached.get("artifact_graph_json") else None
         cache_hit = True

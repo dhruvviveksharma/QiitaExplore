@@ -14,15 +14,13 @@ sequence artifact — per_sample_FASTQ fwd/rev and FASTA raw_fasta — across a
 Sample Aggregation's studies, restricted to the checked samples).
 
 _study_groups is the shared group-assembly step behind both
-fetch_aggregate_csv_rows (checked samples → CSV rows) and get_sample_files
-(every sample of one study → which have a file at all, for the sample
-table's FASTQ/FASTA columns and files-first ordering).
+fetch_aggregate_csv_rows (checked samples → CSV rows) and
+helpers/sample_files.get_sample_files (every sample of one study → which have
+a file at all, for the sample table's availability columns).
 """
 
 import csv
 import io
-import json
-import time
 
 from helpers.artifact_graph import _BASE
 from helpers.pg_pool import pooled_fetchall
@@ -73,12 +71,6 @@ WHERE sample_id <> 'qiita_sample_column_names'
 _PAIRED_HEADER = ["sample-id", "forward-absolute-filepath", "reverse-absolute-filepath"]
 _SINGLE_HEADER = ["sample-id", "absolute-filepath"]
 CSV_HEADER = ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
-
-# Availability map (get_sample_files) is cached two ways: a per-worker memo
-# (cheap re-checks within a request burst) backed by a 6h SQLite row
-# (study_detail_cache.sample_files_json, shared across workers/restarts).
-_SAMPLE_FILES_MEMO_TTL_SECONDS = 600
-_sample_files_memo = {}  # study_id -> (fetched_at_epoch, {sample_id: [fastq, fasta]}); tests clear it
 
 
 def _claim(pool, prefix):
@@ -140,28 +132,6 @@ def build_csv_rows(groups, base_dir):
             if rev:
                 out.add((study_id, sample_id, rev, data_type, "raw_reverse_seqs"))
     return sorted(out)
-
-
-def summarize_sample_files(groups):
-    """groups: [(study_id, data_type, artifact_type, samples, files, allow)] —
-    `allow` is ignored (availability considers every sample of the study, not
-    just checked ones). Paths are irrelevant here too, only whether a sample
-    resolves to a file, so build_manifest_rows is run with an empty base_dir.
-
-    Returns {sample_id: [fastq, fasta]}: fastq is 2 (paired), 1 (single), or 0;
-    fasta is 1 or 0 — the max/OR across every artifact of the study. Only
-    samples that resolve to at least one file appear."""
-    out = {}
-    for _study_id, _data_type, artifact_type, samples, files, _allow in groups:
-        rows, paired = build_manifest_rows(samples, files, "")
-        is_fasta = artifact_type == "FASTA"
-        for sample_id, _fwd, rev in rows:
-            cur = out.setdefault(sample_id, [0, 0])
-            if is_fasta:
-                cur[1] = 1
-            else:
-                cur[0] = max(cur[0], 2 if rev else 1)
-    return out
 
 
 def to_tsv(rows, paired):
@@ -256,37 +226,3 @@ def fetch_aggregate_csv_rows(selected):
     if not rows:
         raise ValueError("None of the selected samples has a per-sample sequence file")
     return rows
-
-
-def compute_sample_files(study_id):
-    """{sample_id: [fastq, fasta]} for every sample of one study that resolves
-    to at least one file — a live Postgres computation, no cache. See
-    get_sample_files for the cached entry point actually used by routes."""
-    return summarize_sample_files(_study_groups([int(study_id)], {}))
-
-
-def get_sample_files(study_id):
-    """Cached compute_sample_files: a per-worker in-process memo (10 min) in
-    front of a 6h SQLite row (study_detail_cache.sample_files_json, shared
-    across workers and survives a restart). A study whose artifacts just
-    finished processing can show stale availability for up to 6h."""
-    sid = int(study_id)
-    now = time.time()
-    hit = _sample_files_memo.get(sid)
-    if hit and now - hit[0] < _SAMPLE_FILES_MEMO_TTL_SECONDS:
-        return hit[1]
-
-    from store.cache import get_study_detail_cache, upsert_study_detail_cache
-    cached = get_study_detail_cache(sid)
-    if cached and cached.get("sample_files_json"):
-        try:
-            data = json.loads(cached["sample_files_json"])
-            _sample_files_memo[sid] = (now, data)
-            return data
-        except (TypeError, ValueError):
-            pass
-
-    data = compute_sample_files(sid)
-    upsert_study_detail_cache(sid, None, None, sample_files_json=json.dumps(data))
-    _sample_files_memo[sid] = (now, data)
-    return data

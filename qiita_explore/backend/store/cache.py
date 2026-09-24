@@ -38,25 +38,29 @@ def update_project_study_data(
     return True
 
 
+def _fresh(cached_at) -> bool:
+    """True unless cached_at is older than the 6h TTL. An unparseable stamp
+    counts as fresh (historical behaviour of the study-detail check)."""
+    if not cached_at:
+        return True
+    try:
+        age = datetime.utcnow() - datetime.fromisoformat(cached_at.rstrip("Z"))
+    except Exception:
+        return True
+    return age.total_seconds() <= _STUDY_DETAIL_CACHE_TTL_HOURS * 3600
+
+
 def get_study_detail_cache(study_id: int):
     """Return cached study detail if it exists and is less than TTL hours old, else None."""
     with _conn() as conn:
         row = conn.execute(
             "SELECT preps_json, artifacts_json, samples_context, full_samples_json, artifact_graph_json, "
-            "prep_metadata_json, samples_json, total_samples, sample_files_json, cached_at "
+            "prep_metadata_json, samples_json, total_samples, cached_at "
             "FROM study_detail_cache WHERE study_id = ?",
             (int(study_id),),
         ).fetchone()
-    if row is None:
+    if row is None or not _fresh(row["cached_at"]):
         return None
-    cached_at = row["cached_at"]
-    if cached_at:
-        try:
-            age = datetime.utcnow() - datetime.fromisoformat(cached_at.rstrip("Z"))
-            if age.total_seconds() > _STUDY_DETAIL_CACHE_TTL_HOURS * 3600:
-                return None
-        except Exception:
-            pass
     return _as_dict(row)
 
 
@@ -71,7 +75,6 @@ def upsert_study_detail_cache(
     samples_json: str = None,
     total_samples: int = None,
     full_samples_limit: int = None,
-    sample_files_json: str = None,
 ):
     """Cache study detail. Pass None for any field to preserve the existing value (COALESCE)."""
     with _conn() as conn:
@@ -80,8 +83,8 @@ def upsert_study_detail_cache(
             INSERT INTO study_detail_cache(
                 study_id, preps_json, artifacts_json, samples_context, full_samples_json,
                 artifact_graph_json, prep_metadata_json, samples_json, total_samples,
-                full_samples_limit, sample_files_json, cached_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                full_samples_limit, cached_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(study_id) DO UPDATE SET
                 preps_json          = COALESCE(excluded.preps_json,          study_detail_cache.preps_json),
                 artifacts_json      = COALESCE(excluded.artifacts_json,      study_detail_cache.artifacts_json),
@@ -92,12 +95,41 @@ def upsert_study_detail_cache(
                 samples_json        = COALESCE(excluded.samples_json,       study_detail_cache.samples_json),
                 total_samples       = COALESCE(excluded.total_samples,      study_detail_cache.total_samples),
                 full_samples_limit  = COALESCE(excluded.full_samples_limit, study_detail_cache.full_samples_limit),
-                sample_files_json   = COALESCE(excluded.sample_files_json,  study_detail_cache.sample_files_json),
                 cached_at           = excluded.cached_at
             """,
             (int(study_id), preps_json, artifacts_json, samples_context, full_samples_json,
              artifact_graph_json, prep_metadata_json, samples_json, total_samples,
-             full_samples_limit, sample_files_json, _now()),
+             full_samples_limit, _now()),
+        )
+        conn.commit()
+    return True
+
+
+def get_study_sample_files_cache(study_id: int):
+    """The per-sample file-availability map of one study
+    (helpers/sample_files.py), or None when absent or older than the TTL. Its
+    own table and its own cached_at: no other writer can renew or poison it."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT sample_files_json, cached_at FROM study_sample_files_cache WHERE study_id = ?",
+            (int(study_id),),
+        ).fetchone()
+    if row is None or not _fresh(row["cached_at"]):
+        return None
+    return row["sample_files_json"]
+
+
+def upsert_study_sample_files_cache(study_id: int, sample_files_json: str):
+    with _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO study_sample_files_cache(study_id, sample_files_json, cached_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(study_id) DO UPDATE SET
+                sample_files_json = excluded.sample_files_json,
+                cached_at         = excluded.cached_at
+            """,
+            (int(study_id), sample_files_json, _now()),
         )
         conn.commit()
     return True

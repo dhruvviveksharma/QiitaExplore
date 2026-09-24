@@ -267,6 +267,15 @@ def _create_schema(conn):
             cached_at       TEXT
         );
 
+        -- Per-sample sequence-file availability of one study (helpers/sample_files.py).
+        -- Own table + own cached_at: it used to be study_detail_cache.sample_files_json,
+        -- whose partial writes poisoned the preps/artifacts reads (TKT-086).
+        CREATE TABLE IF NOT EXISTS study_sample_files_cache (
+            study_id          INTEGER PRIMARY KEY,
+            sample_files_json TEXT,
+            cached_at         TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             user_id          TEXT PRIMARY KEY,
             principal_idx    INTEGER NOT NULL,
@@ -338,9 +347,8 @@ def _create_schema(conn):
         ("aggregation_studies", "pi_affiliation", "TEXT"),
         ("aggregation_studies", "year", "INTEGER"),
         ("aggregation_studies", "is_gold", "INTEGER"),
-        # Per-sample FASTQ/FASTA availability map ({sample_id: [fastq, fasta]}),
-        # computed by helpers/fastq_manifest.get_sample_files and cached here
-        # so the sample table's files-first ordering survives a restart.
+        # Unused since 2026-09-24: the availability map moved to its own
+        # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),
     ]:
         try:

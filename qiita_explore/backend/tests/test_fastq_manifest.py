@@ -5,7 +5,6 @@ run without Postgres. The route test reuses the test_stream_routes app
 pattern and fakes the two helper boundaries.
 """
 import csv
-import json
 import os
 import sys
 from unittest.mock import patch
@@ -20,7 +19,6 @@ BASE = "/qmounts/qiita_data"
 @pytest.fixture
 def fm():
     import helpers.fastq_manifest as mod
-    mod._sample_files_memo.clear()
     return mod
 
 
@@ -159,37 +157,6 @@ def test_to_csv_spreadsheet_safe_wraps_only_sample_id(fm):
         ["5", "10317.000001", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs"]
 
 
-# ── summarize_sample_files ────────────────────────────────────────────────────
-
-def test_summarize_paired_fastq(fm):
-    g = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=True)
-    assert fm.summarize_sample_files([g]) == {"s1": [2, 0]}
-
-
-def test_summarize_single_fastq(fm):
-    g = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)
-    assert fm.summarize_sample_files([g]) == {"s1": [1, 0]}
-
-
-def test_summarize_fasta_only(fm):
-    files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
-    g = (1928, "16S", "FASTA", [("s1", "SRR1")], files, set())
-    assert fm.summarize_sample_files([g]) == {"s1": [0, 1]}
-
-
-def test_summarize_sample_in_both_fastq_and_fasta(fm):
-    fastq_g = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=True)
-    fasta_files = [("raw_fasta", "FASTA", True, 20, "P1.fna")]
-    fasta_g = (5, "16S", "FASTA", [("s1", "P1")], fasta_files, set())
-    assert fm.summarize_sample_files([fastq_g, fasta_g]) == {"s1": [2, 1]}
-
-
-def test_summarize_unmatched_and_null_prefix_absent(fm):
-    g = _fastq_group(5, "16S", 10, [("s1", "P1"), ("s2", None)], ["s1", "s2"], paired=False)
-    assert fm.summarize_sample_files([g]) == {"s1": [1, 0]}
-    assert fm.summarize_sample_files([]) == {}
-
-
 # ── _study_groups ──────────────────────────────────────────────────────────────
 
 def _file_row(study_id=5, artifact_id=10, prep_id=100, filepath_type="raw_forward_seqs",
@@ -222,44 +189,6 @@ def test_study_groups_empty_when_no_study_ids_or_no_artifacts(fm):
     assert fm._study_groups([], {}) == []
     with patch.object(fm, "pooled_fetchall", return_value=[]):
         assert fm._study_groups([5], {}) == []
-
-
-# ── get_sample_files caching ──────────────────────────────────────────────────
-
-def test_get_sample_files_computes_then_persists_to_sqlite(fm):
-    calls = {"n": 0}
-
-    def fake(sql, params=None):
-        calls["n"] += 1
-        return [_file_row()] if "study_artifact" in sql else [("s1", "P1")]
-
-    with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        data = fm.get_sample_files(232)
-    assert data == {"s1": [1, 0]}
-    assert calls["n"] == 2  # one files query, one prep-samples query
-
-    from store.cache import get_study_detail_cache
-    cached = get_study_detail_cache(232)
-    assert cached is not None
-    assert json.loads(cached["sample_files_json"]) == {"s1": [1, 0]}
-
-
-def test_get_sample_files_served_from_process_memo(fm):
-    with patch.object(fm, "pooled_fetchall", side_effect=[[_file_row()], [("s1", "P1")]]):
-        fm.get_sample_files(232)
-    # a second call within the TTL must not touch Postgres at all
-    with patch.object(fm, "pooled_fetchall") as m:
-        assert fm.get_sample_files(232) == {"s1": [1, 0]}
-    assert not m.called
-
-
-def test_get_sample_files_served_from_sqlite_after_memo_cleared(fm):
-    with patch.object(fm, "pooled_fetchall", side_effect=[[_file_row()], [("s1", "P1")]]):
-        fm.get_sample_files(232)
-    fm._sample_files_memo.clear()
-    with patch.object(fm, "pooled_fetchall") as m:
-        assert fm.get_sample_files(232) == {"s1": [1, 0]}
-    assert not m.called  # served from the SQLite row, not recomputed
 
 
 # ── to_tsv ───────────────────────────────────────────────────────────────────

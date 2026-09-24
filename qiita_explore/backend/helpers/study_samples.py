@@ -5,7 +5,7 @@ counts agree with fastq_manifest._SAMPLES_SQL and never include the
 'qiita_sample_column_names' sentinel row.
 
 Paging happens in Python (routes/aggregation_routes.py), not SQL: the sample
-table sorts files-first using helpers.fastq_manifest.get_sample_files, which
+table sorts files-first using helpers.sample_files.get_sample_files, which
 plain SQL LIMIT/OFFSET cannot express. fetch_samples_by_ids fetches exactly
 one page's metadata, by id, in whatever order the caller already decided.
 
