@@ -83,18 +83,56 @@ def test_effective_honours_filter(sf):
 
 
 def test_facet_counts_distinct_samples_facet_style(sf):
-    dts, procs = sf.facet_counts([MAP], None)
+    dts, procs = sf.facet_counts([MAP], [], None)
     assert dts == [{"name": "Full Length Operon", "count": 1}, {"name": "Metagenomic", "count": 2}]
     assert procs == [{"name": TRIM, "count": 1}, {"name": RAW, "count": 3}]
-    # Picking a processing step narrows the data-type counts but not its own list.
-    dts, procs = sf.facet_counts([MAP], {"data_types": [], "processing": [TRIM]})
-    assert dts == [{"name": "Metagenomic", "count": 1}]
+    # A processing pick never narrows data-type counts (scope ignores it).
+    dts, procs = sf.facet_counts([MAP], [], {"data_types": [], "processing": [TRIM]})
+    assert dts == [{"name": "Full Length Operon", "count": 1}, {"name": "Metagenomic", "count": 2}]
     assert procs == [{"name": TRIM, "count": 1}, {"name": RAW, "count": 3}]
+    # A data-type pick narrows processing counts to files of that type (own selection excluded).
+    dts, procs = sf.facet_counts([MAP], [], {"data_types": ["Metagenomic"], "processing": []})
+    assert procs == [{"name": TRIM, "count": 1}, {"name": RAW, "count": 2}]
 
 
 def test_facet_counts_keeps_selected_names_at_zero(sf):
-    dts, _ = sf.facet_counts([MAP], {"data_types": ["ITS"], "processing": []})
+    dts, _ = sf.facet_counts([MAP], [], {"data_types": ["ITS"], "processing": []})
     assert {"name": "ITS", "count": 0} in dts
+
+
+PREP_MAP = {"s2": ["16S", "Full Length Operon"], "s4": ["16S"]}  # s4 has no file at all
+
+
+def test_facet_counts_includes_prep_only_types(sf):
+    # 16S has no file anywhere; its count comes entirely from prep membership.
+    dts, _ = sf.facet_counts([MAP], [PREP_MAP], None)
+    assert {"name": "16S", "count": 2} in dts
+    # s2's Full Length Operon is both a file and a prep type — counted once.
+    assert {"name": "Full Length Operon", "count": 1} in dts
+
+
+def test_facet_counts_prep_only_types_ignore_processing_filter(sf):
+    dts, _ = sf.facet_counts([MAP], [PREP_MAP], {"data_types": [], "processing": [RAW]})
+    assert {"name": "16S", "count": 2} in dts
+
+
+# ── in_scope ────────────────────────────────────────────────────────────────
+
+def test_in_scope_no_data_type_filter_is_always_true(sf):
+    assert sf.in_scope([], [], None)
+    assert sf.in_scope(["16S"], [], {"data_types": [], "processing": []})
+
+
+def test_in_scope_by_prep_membership_or_file(sf):
+    f = {"data_types": ["16S"], "processing": []}
+    assert sf.in_scope(["16S"], [], f)                       # prep-only, no file
+    assert sf.in_scope([], [("16S", RAW, 1, 0)], f)           # file-only, no prep row
+    assert not sf.in_scope(["18S"], [("Metagenomic", RAW, 1, 0)], f)
+
+
+def test_in_scope_ignores_processing_filter(sf):
+    f = {"data_types": ["16S"], "processing": ["some other step"]}
+    assert sf.in_scope(["16S"], [], f)
 
 
 # ── get_sample_files caching ──────────────────────────────────────────────────

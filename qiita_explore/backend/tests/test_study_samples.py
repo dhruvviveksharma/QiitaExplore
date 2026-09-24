@@ -16,6 +16,7 @@ def ss():
     stub_qiita_db_and_core()
     import helpers.study_samples as ss
     ss._columns_cache.clear()
+    ss._prep_dt_cache.clear()
     return ss
 
 
@@ -74,3 +75,24 @@ def test_matching_sample_ids(ss):
     sql, params = m.call_args[0]
     assert "ILIKE" in sql
     assert params == [SENT, "%skin%", "%skin%"]
+
+
+def test_prep_data_types_groups_and_binds(ss):
+    rows = [("s1", "16S"), ("s2", "16S"), ("s1", "18S")]  # s1 is in two preps' data types
+    with patch.object(ss, "pooled_fetchall", return_value=rows) as m:
+        assert ss.prep_data_types(232) == {"s1": ["16S", "18S"], "s2": ["16S"]}
+    sql, params = m.call_args[0]
+    assert "study_prep_template" in sql and "prep_template_sample" in sql
+    assert params == [232]
+
+
+def test_prep_data_types_caches(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=[("s1", "16S")]) as m:
+        assert ss.prep_data_types(232) == {"s1": ["16S"]}
+        assert ss.prep_data_types("232") == {"s1": ["16S"]}  # served from the memo
+    assert m.call_count == 1
+
+
+def test_prep_data_types_empty(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=[]):
+        assert ss.prep_data_types(5) == {}

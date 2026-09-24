@@ -105,19 +105,50 @@ def effective(files, file_filter):
     return out
 
 
-def facet_counts(maps, file_filter):
-    """Picker options over several studies' maps: distinct-sample counts per
-    data type under the processing filter, and per processing step under the
-    data-type filter (each facet ignores its own selection, so picking one
-    data type doesn't hide the others). Selected names with no files left are
-    kept at count 0, so they can still be unticked."""
+def in_scope(prep_types, entries, file_filter):
+    """Whether a sample belongs in the sample table under the saved
+    file_filter's data-type choice. True when no data type is chosen, or when
+    the sample's prep membership (helpers.study_samples.prep_data_types) or
+    any of its file entries' data types intersect the chosen set. Processing
+    never narrows scope — it describes files, not preps, so a sample with no
+    per-sample file (e.g. a 16S study with only Demultiplexed/BIOM artifacts)
+    can still be in scope and shown with FASTQ/FASTA "—"."""
+    want_dts = (file_filter or {}).get("data_types") or []
+    if not want_dts:
+        return True
+    types = set(prep_types or [])
+    types.update(dt for dt, _proc, _fq, _fa in (entries or []))
+    return bool(types & set(want_dts))
+
+
+def facet_counts(file_maps, prep_maps, file_filter):
+    """Picker options across several studies' data. file_maps / prep_maps are
+    each an iterable of one dict per study (get_sample_files /
+    helpers.study_samples.prep_data_types); sample ids are globally unique
+    (study-prefixed), so the two need not align position-for-position.
+
+    Data-type counts are distinct samples IN SCOPE for that type (in_scope,
+    ignoring processing — a picked processing step never hides a data type).
+    Processing counts are file-based, honoring the data-type filter (each
+    facet ignores its own selection, so picking one option doesn't hide the
+    others). Selected names with nothing left are kept at count 0, so they
+    can still be unticked."""
     f = file_filter or {}
-    want_dts, want_procs = f.get("data_types") or [], f.get("processing") or []
+    want_dts = f.get("data_types") or []
+    want_procs = f.get("processing") or []
+
+    files_by_sample = {}
+    for files in file_maps:
+        files_by_sample.update(files)
+    prep_by_sample = {}
+    for preps in prep_maps:
+        prep_by_sample.update(preps)
+
     dt_counts, proc_counts = Counter(), Counter()
-    for files in maps:
-        for entries in files.values():
-            dt_counts.update({dt for dt, proc, _fq, _fa in entries if not want_procs or proc in want_procs})
-            proc_counts.update({proc for dt, proc, _fq, _fa in entries if not want_dts or dt in want_dts})
+    for sid in set(files_by_sample) | set(prep_by_sample):
+        entries = files_by_sample.get(sid, [])
+        dt_counts.update(set(prep_by_sample.get(sid, ())) | {dt for dt, _proc, _fq, _fa in entries})
+        proc_counts.update({proc for dt, proc, _fq, _fa in entries if not want_dts or dt in want_dts})
 
     def options(counts, selected):
         names = sorted(set(counts) | set(selected))

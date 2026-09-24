@@ -31,9 +31,33 @@ _MAX_DISPLAY_COLUMNS = 4
 _COLUMNS_TTL_SECONDS = 3600
 _columns_cache = {}  # study_id -> (fetched_at_epoch, [column, ...]); tests clear it
 
+_PREP_DT_TTL_SECONDS = 3600
+_prep_dt_cache = {}  # study_id -> (fetched_at_epoch, {sample_id: [data_type, ...]}); tests clear it
+
+_PREP_DATA_TYPES_SQL = """
+SELECT pts.sample_id, dt.data_type
+FROM qiita.study_prep_template spt
+JOIN qiita.prep_template pt ON pt.prep_template_id = spt.prep_template_id
+JOIN qiita.data_type dt ON pt.data_type_id = dt.data_type_id
+JOIN qiita.prep_template_sample pts ON pts.prep_template_id = pt.prep_template_id
+WHERE spt.study_id = %s
+"""
+
 
 def _table(study_id):
     return f"qiita.sample_{int(study_id)}"
+
+
+def _memoized(cache, ttl_seconds, key, compute):
+    """Shared per-worker TTL-memo idiom: cache[key] = (fetched_at, value).
+    Tests clear the module-level dict directly by name."""
+    now = time.time()
+    hit = cache.get(key)
+    if hit and now - hit[0] < ttl_seconds:
+        return hit[1]
+    value = compute()
+    cache[key] = (now, value)
+    return value
 
 
 def list_study_sample_ids(study_id):
@@ -60,14 +84,30 @@ def display_columns(study_id):
     """First _MAX_DISPLAY_COLUMNS of _PREFERRED the study has; memoized per
     worker for an hour (the column set of a study effectively never changes)."""
     sid = int(study_id)
-    now = time.time()
-    hit = _columns_cache.get(sid)
-    if hit and now - hit[0] < _COLUMNS_TTL_SECONDS:
-        return hit[1]
-    have = set(study_columns(sid))
-    cols = [c for c in _PREFERRED if c in have][:_MAX_DISPLAY_COLUMNS]
-    _columns_cache[sid] = (now, cols)
-    return cols
+
+    def compute():
+        have = set(study_columns(sid))
+        return [c for c in _PREFERRED if c in have][:_MAX_DISPLAY_COLUMNS]
+
+    return _memoized(_columns_cache, _COLUMNS_TTL_SECONDS, sid, compute)
+
+
+def prep_data_types(study_id):
+    """{sample_id: [data_type, ...]} from every prep the study has — the same
+    membership (study_prep_template -> prep_template -> data_type ->
+    prep_template_sample) the study card's data-type chips come from. Unlike
+    helpers.sample_files, this knows about a sample regardless of whether it
+    resolves to a per-sample sequence file. Memoized per worker for an hour
+    (a study's prep set effectively never changes)."""
+    sid = int(study_id)
+
+    def compute():
+        out = {}
+        for sample_id, data_type in pooled_fetchall(_PREP_DATA_TYPES_SQL, [sid]):
+            out.setdefault(sample_id, set()).add(data_type)
+        return {k: sorted(v) for k, v in out.items()}
+
+    return _memoized(_prep_dt_cache, _PREP_DT_TTL_SECONDS, sid, compute)
 
 
 def _where(q):

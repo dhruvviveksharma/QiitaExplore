@@ -4,9 +4,15 @@ samples' per-sample sequence files (study_id, sample_id, file_path_in_qmounts,
 data_type, file_type, processing).
 
 The aggregation's saved file_filter (data types × processing steps; empty =
-any) applies everywhere a file is counted: the sample table's FASTQ/FASTA
-columns, files-first order, Show filter and "with files" count, the
-"select: with_files" bulk action, /file-facets, and the export.
+any) has two effects. Its data-type half also scopes the sample table itself:
+a sample stays listed if it has no chosen type, or belongs to it by prep
+membership (helpers.study_samples.prep_data_types) or by file (a data type
+without a per-sample file, e.g. a 16S study with only Demultiplexed/BIOM
+artifacts, is in scope but shows "—" for FASTQ/FASTA — see
+helpers.sample_files.in_scope). The full filter (both halves) applies
+everywhere a file is counted: FASTQ/FASTA, files-first order, Show filter and
+"with files" count, the "select: with_files" bulk action, /file-facets, and
+the export.
 
 Auth (401) and CSRF (403) are enforced by helpers/auth_middleware.py for every
 route here, so g.user_id is always set. Every mutation returns the full
@@ -33,10 +39,10 @@ from store import (
 from helpers.fastq_manifest import (
     XLSX_MIMETYPE, count_fastq_artifacts, fetch_aggregate_csv_rows, to_csv, to_xlsx,
 )
-from helpers.sample_files import effective, facet_counts, get_sample_files
+from helpers.sample_files import effective, facet_counts, get_sample_files, in_scope
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import (
-    display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids,
+    display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids, prep_data_types,
 )
 
 _MAX_IDS_PER_PATCH = 50_000
@@ -102,7 +108,9 @@ def api_update_aggregation(aggregation_id):
 @app.route("/api/aggregations/<aggregation_id>/file-facets", methods=["GET"])
 def api_aggregation_file_facets(aggregation_id):
     """Options for the Data type / Processing pickers across the aggregation's
-    studies (sample counts, facet-style), plus `exportable`: how many checked
+    studies (sample counts, facet-style; Data type options include prep-only
+    types with no per-sample file, e.g. a 16S study with only
+    Demultiplexed/BIOM artifacts), plus `exportable`: how many checked
     samples have a file under the saved filter — i.e. whether the export
     will contain anything."""
     agg = get_aggregation(aggregation_id, g.user_id)
@@ -110,7 +118,8 @@ def api_aggregation_file_facets(aggregation_id):
         return jsonify({"error": "Aggregation not found"}), 404
     file_filter = agg["file_filter"]
     maps = {int(s["study_id"]): get_sample_files(s["study_id"]) for s in agg["studies"]}
-    data_types, processing = facet_counts(maps.values(), file_filter)
+    preps = {int(s["study_id"]): prep_data_types(s["study_id"]) for s in agg["studies"]}
+    data_types, processing = facet_counts(maps.values(), preps.values(), file_filter)
     selected = selected_by_study(aggregation_id)
     exportable = 0
     for sid, ids in selected.items():
@@ -174,6 +183,10 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     ?q= substring filter on sample id or any metadata value ?show=
     all|with_files|without_files (default all).
 
+    The aggregation's saved file_filter first narrows which samples are in
+    scope at all (in_scope: prep membership or file data type), then Show /
+    with_files further narrow by file availability under the full filter.
+
     Paging happens in Python, not SQL: samples are sorted files-first (stable,
     so id order is preserved within each group), which a plain SQL
     LIMIT/OFFSET over qiita.sample_<id> cannot express."""
@@ -196,7 +209,14 @@ def api_aggregation_study_samples(aggregation_id, study_id):
 
     ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
     all_files = get_sample_files(study_id)
-    files = effective(all_files, agg["file_filter"])  # {sample_id: (fastq, fasta)} under the filter
+    prep_types = prep_data_types(study_id)
+    file_filter = agg["file_filter"]
+    # Data-type scope: a sample stays in the table if it has no chosen type
+    # filter, or its prep membership / file data types intersect it. This is
+    # broader than `files` below — a 16S study with no per-sample file (only
+    # Demultiplexed/BIOM) is still in scope, shown with FASTQ/FASTA "—".
+    ids = [i for i in ids if in_scope(prep_types.get(i, []), all_files.get(i, []), file_filter)]
+    files = effective(all_files, file_filter)  # {sample_id: (fastq, fasta)} under the full filter
     with_files = sum(1 for i in ids if i in files)
     if show == "with_files":
         ids = [i for i in ids if i in files]
@@ -216,11 +236,16 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         fields = dict(zip(columns, r[1:])) if r else {c: None for c in columns}
         fq, fa = files.get(sid, (0, 0))
         entries = all_files.get(sid, [])
+        file_dts = sorted({e[0] for e in entries})
         rows.append({
             "sample_id": sid, "selected": sid in sel,
             "fastq": _FASTQ_LABEL.get(fq), "fasta": bool(fa),
-            # Unfiltered, so the UI can show (dimmed) what the filter excludes.
-            "data_types": sorted({e[0] for e in entries}),
+            # data_types is prep membership ∪ file data types, unfiltered, so
+            # the UI can show every type the sample belongs to (dimmed when
+            # the filter excludes it); file_data_types is the subset with an
+            # actual per-sample file, styled solid vs. outline.
+            "data_types": sorted(set(prep_types.get(sid, [])) | set(file_dts)),
+            "file_data_types": file_dts,
             "processing": sorted({e[1] for e in entries}),
             "fields": fields,
         })

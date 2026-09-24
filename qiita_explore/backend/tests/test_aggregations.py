@@ -161,6 +161,7 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "display_columns", lambda sid: ["sample_type"])
     monkeypatch.setattr(ar, "fetch_samples_by_ids", lambda sid, ids: [_FIELDS[i] for i in ids if i in _FIELDS])
     monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 2, 0)]})
+    monkeypatch.setattr(ar, "prep_data_types", lambda sid: {})
     monkeypatch.setattr(ar, "fetch_aggregate_csv_rows", lambda selected, file_filter=None: [
         (16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload"),
         (16326, "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs", "Raw upload"),
@@ -243,10 +244,11 @@ def test_route_samples_page(client, logged_in, stub_qiita):
     # files-first: s2 (has a file) sorts before s1, id order preserved within each group
     assert [row["sample_id"] for row in page["rows"]] == ["s2", "s1"]
     assert page["rows"][0] == {"sample_id": "s2", "selected": False, "fastq": "paired", "fasta": False,
-                                "data_types": ["16S"], "processing": ["Raw upload"],
+                                "data_types": ["16S"], "file_data_types": ["16S"], "processing": ["Raw upload"],
                                 "fields": {"sample_type": "skin"}}
     assert page["rows"][1] == {"sample_id": "s1", "selected": True, "fastq": None, "fasta": False,
-                                "data_types": [], "processing": [], "fields": {"sample_type": "stool"}}
+                                "data_types": [], "file_data_types": [], "processing": [],
+                                "fields": {"sample_type": "stool"}}
 
     only_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=with_files").get_json()
     assert [row["sample_id"] for row in only_files["rows"]] == ["s2"]
@@ -395,17 +397,51 @@ def test_route_samples_and_select_follow_file_filter(client, logged_in, stub_qii
     assert page["with_files"] == 2
     client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
     page = client.get(base).get_json()
-    assert page["with_files"] == 1
-    assert [r["sample_id"] for r in page["rows"]] == ["s2", "s1"]  # files-first under the filter
-    s2, s1 = page["rows"]
+    # s1's only data type (Metagenomic, from its file) doesn't match the 16S
+    # filter, and it has no prep membership (stubbed empty), so it drops out
+    # of scope entirely rather than being kept and shown with a dimmed file.
+    assert (page["total"], page["with_files"]) == (1, 1)
+    assert [r["sample_id"] for r in page["rows"]] == ["s2"]
+    s2 = page["rows"][0]
     assert (s2["fastq"], s2["fasta"]) == (None, True)
-    # s1's metagenomic file is filtered out, but still reported so the UI can dim it
-    assert (s1["fastq"], s1["fasta"], s1["data_types"], s1["processing"]) == \
-        (None, False, ["Metagenomic"], ["Atropos v1.1.24"])
-    assert [r["sample_id"] for r in client.get(base + "?show=without_files").get_json()["rows"]] == ["s1"]
+    assert client.get(base + "?show=without_files").get_json()["rows"] == []
 
     r = client.patch(base, json={"select": "with_files"}, headers=logged_in)
     assert r.get_json()["studies"][0]["selected_samples"] == 1
+
+
+def test_route_samples_scoped_by_prep_data_type(client, logged_in, stub_qiita, monkeypatch):
+    """Studies like 1070 / 1889 (16S / 18S) have no per-sample sequence file
+    at all — only prep membership says what data type a sample belongs to.
+    Those samples must still be in scope, shown with an empty file_data_types
+    ("—" in the UI), and narrowed by the Data type filter same as a file
+    would be."""
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {})
+    monkeypatch.setattr(stub_qiita, "prep_data_types", lambda sid: {"s1": ["16S"], "s2": ["18S"]})
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    base = f"/api/aggregations/{aid}/studies/16326/samples"
+
+    page = client.get(base).get_json()
+    assert (page["total"], page["with_files"]) == (2, 0)
+    row = next(r for r in page["rows"] if r["sample_id"] == "s1")
+    assert (row["fastq"], row["fasta"], row["data_types"], row["file_data_types"]) == \
+        (None, False, ["16S"], [])
+
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
+    page = client.get(base).get_json()
+    assert [r["sample_id"] for r in page["rows"]] == ["s1"]
+    assert (page["total"], page["with_files"]) == (1, 0)
+
+
+def test_route_file_facets_includes_prep_only_type(client, logged_in, stub_qiita, monkeypatch):
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {})
+    monkeypatch.setattr(stub_qiita, "prep_data_types", lambda sid: {"s1": ["16S"], "s2": ["18S"]})
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    assert d["data_types"] == [{"name": "16S", "count": 1}, {"name": "18S", "count": 1}]
+    assert d["exportable"] == 0
 
 
 def test_route_file_facets(client, logged_in, stub_qiita, monkeypatch):
