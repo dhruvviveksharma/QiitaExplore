@@ -70,6 +70,7 @@ from .aggregation_crud import (  # noqa: F401
     create_aggregation,
     get_aggregation,
     rename_aggregation,
+    set_aggregation_file_filter,
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,

@@ -160,10 +160,10 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "matching_sample_ids", lambda sid, q: ["s2"])
     monkeypatch.setattr(ar, "display_columns", lambda sid: ["sample_type"])
     monkeypatch.setattr(ar, "fetch_samples_by_ids", lambda sid, ids: [_FIELDS[i] for i in ids if i in _FIELDS])
-    monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [2, 0]})
-    monkeypatch.setattr(ar, "fetch_aggregate_csv_rows", lambda selected: [
-        (16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"),
-        (16326, "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs"),
+    monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 2, 0)]})
+    monkeypatch.setattr(ar, "fetch_aggregate_csv_rows", lambda selected, file_filter=None: [
+        (16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload"),
+        (16326, "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs", "Raw upload"),
     ])
     return ar
 
@@ -243,9 +243,10 @@ def test_route_samples_page(client, logged_in, stub_qiita):
     # files-first: s2 (has a file) sorts before s1, id order preserved within each group
     assert [row["sample_id"] for row in page["rows"]] == ["s2", "s1"]
     assert page["rows"][0] == {"sample_id": "s2", "selected": False, "fastq": "paired", "fasta": False,
+                                "data_types": ["16S"], "processing": ["Raw upload"],
                                 "fields": {"sample_type": "skin"}}
     assert page["rows"][1] == {"sample_id": "s1", "selected": True, "fastq": None, "fasta": False,
-                                "fields": {"sample_type": "stool"}}
+                                "data_types": [], "processing": [], "fields": {"sample_type": "stool"}}
 
     only_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=with_files").get_json()
     assert [row["sample_id"] for row in only_files["rows"]] == ["s2"]
@@ -304,27 +305,25 @@ def test_route_export_csv(client, logged_in, stub_qiita):
     assert resp.status_code == 200
     assert resp.mimetype == "text/csv"
     assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.csv"
-    body = resp.get_data(as_text=True).split("\n")
-    assert body[0] == "study_id,sample_id,file_path_in_qmounts,data_type,file_type"
-    assert body[1] == "16326,s1,/a/f_R1.fq.gz,16S,raw_forward_seqs"
-    assert body[2] == "16326,s1,/a/f_R2.fq.gz,16S,raw_reverse_seqs"
+    rows = list(csv.reader(resp.get_data(as_text=True).splitlines()))
+    assert rows[0] == ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type", "processing"]
+    assert rows[1] == ["16326", "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload"]
+    assert rows[2] == ["16326", "s1", "/a/f_R2.fq.gz", "16S", "raw_reverse_seqs", "Raw upload"]
 
 
-def test_route_export_csv_spreadsheet_safe(client, logged_in, stub_qiita):
+def test_route_export_xlsx(client, logged_in, stub_qiita):
+    import io
+    import openpyxl
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    resp = client.get(f"/api/aggregations/{aid}/export.csv?spreadsheet=1")
-    assert resp.status_code == 200
-    assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples_spreadsheet.csv"
-    rows = list(csv.reader(resp.get_data(as_text=True).splitlines()))
-    assert rows[0] == ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
-    assert rows[1] == ["16326", '="s1"', "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"]
-
-    # default (no ?spreadsheet=) stays plain, with the plain filename
-    plain = client.get(f"/api/aggregations/{aid}/export.csv")
-    assert plain.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.csv"
-    assert list(csv.reader(plain.get_data(as_text=True).splitlines()))[1] == \
-        ["16326", "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs"]
+    resp = client.get(f"/api/aggregations/{aid}/export.xlsx")
+    assert resp.status_code == 200, resp.get_data(as_text=True)[:200]
+    assert resp.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.xlsx"
+    ws = openpyxl.load_workbook(io.BytesIO(resp.get_data())).active
+    assert [c.value for c in ws[2]] == [16326, "s1", "/a/f_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload"]
+    assert ws.cell(row=2, column=2).data_type == "s"
+    assert client.get("/api/aggregations/nope/export.xlsx").status_code == 404
 
 
 def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita, monkeypatch):
@@ -333,12 +332,15 @@ def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita,
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
     seen = {}
 
-    def _capture(selected):
+    def _capture(selected, file_filter=None):
         seen.update(selected)
-        return [(16326, "s1", "/a/f.fq.gz", "16S", "raw_forward_seqs")]
+        seen["filter"] = file_filter
+        return [(16326, "s1", "/a/f.fq.gz", "16S", "raw_forward_seqs", "Raw upload")]
     monkeypatch.setattr(stub_qiita, "fetch_aggregate_csv_rows", _capture)
+    filt = {"data_types": ["16S"], "processing": ["Raw upload"]}
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": filt}, headers=logged_in)
     assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 200
-    assert seen == {16326: {"s1"}}
+    assert seen == {16326: {"s1"}, "filter": filt}
 
 
 def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
@@ -350,13 +352,78 @@ def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
     r = client.get(f"/api/aggregations/{aid}/export.csv")
     assert r.status_code == 400 and r.get_json()["error"] == "No samples selected"
 
-    def _raise(selected):
+    def _raise(selected, file_filter=None):
         raise ValueError("None of the selected samples has a per-sample sequence file")
     monkeypatch.setattr(stub_qiita, "fetch_aggregate_csv_rows", _raise)
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"select": "all"}, headers=logged_in)
     resp = client.get(f"/api/aggregations/{aid}/export.csv")
     assert resp.status_code == 404
     assert resp.get_json()["error"] == "None of the selected samples has a per-sample sequence file"
+
+
+# ── the saved file filter ────────────────────────────────────────────────────
+
+_FILTER_MAP = {"s1": [("Metagenomic", "Atropos v1.1.24", 2, 0)], "s2": [("16S", "Raw upload", 0, 1)]}
+
+
+def test_route_file_filter_patch_validates_and_persists(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert client.get("/api/aggregations").get_json()["aggregations"][0]["file_filter"] == \
+        {"data_types": [], "processing": []}
+    url = f"/api/aggregations/{aid}"
+    r = client.patch(url, json={"file_filter": {"data_types": ["16S", "16S"]}}, headers=logged_in)
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["file_filter"] == {"data_types": ["16S"], "processing": []}
+    listed = [a for a in client.get("/api/aggregations").get_json()["aggregations"] if a["aggregation_id"] == aid]
+    assert listed[0]["file_filter"] == {"data_types": ["16S"], "processing": []}
+    r = client.patch(url, json={"name": "Both", "file_filter": {}}, headers=logged_in)
+    assert (r.get_json()["name"], r.get_json()["file_filter"]) == ("Both", {"data_types": [], "processing": []})
+    for bad in [{}, {"file_filter": []}, {"file_filter": {"other": []}}, {"file_filter": {"data_types": "16S"}},
+                {"file_filter": {"data_types": [""]}}, {"file_filter": {"processing": ["x" * 201]}},
+                {"file_filter": {"data_types": [str(i) for i in range(51)]}}]:
+        assert client.patch(url, json=bad, headers=logged_in).status_code == 400, bad
+    assert client.patch("/api/aggregations/nope", json={"file_filter": {}}, headers=logged_in).status_code == 404
+
+
+def test_route_samples_and_select_follow_file_filter(client, logged_in, stub_qiita, monkeypatch):
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: _FILTER_MAP)
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    base = f"/api/aggregations/{aid}/studies/16326/samples"
+
+    page = client.get(base).get_json()               # no filter: both have files
+    assert page["with_files"] == 2
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
+    page = client.get(base).get_json()
+    assert page["with_files"] == 1
+    assert [r["sample_id"] for r in page["rows"]] == ["s2", "s1"]  # files-first under the filter
+    s2, s1 = page["rows"]
+    assert (s2["fastq"], s2["fasta"]) == (None, True)
+    # s1's metagenomic file is filtered out, but still reported so the UI can dim it
+    assert (s1["fastq"], s1["fasta"], s1["data_types"], s1["processing"]) == \
+        (None, False, ["Metagenomic"], ["Atropos v1.1.24"])
+    assert [r["sample_id"] for r in client.get(base + "?show=without_files").get_json()["rows"]] == ["s1"]
+
+    r = client.patch(base, json={"select": "with_files"}, headers=logged_in)
+    assert r.get_json()["studies"][0]["selected_samples"] == 1
+
+
+def test_route_file_facets(client, logged_in, stub_qiita, monkeypatch):
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: _FILTER_MAP)
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    assert d["data_types"] == [{"name": "16S", "count": 1}, {"name": "Metagenomic", "count": 1}]
+    assert d["processing"] == [{"name": "Atropos v1.1.24", "count": 1}, {"name": "Raw upload", "count": 1}]
+    assert (d["exportable"], d["selected"]) == (2, 2)
+
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["Metagenomic"]}},
+                 headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s1"]}, headers=logged_in)
+    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    assert d["processing"] == [{"name": "Atropos v1.1.24", "count": 1}]  # narrowed by the data-type pick
+    assert (d["exportable"], d["selected"]) == (0, 1)  # s2 is checked but has no metagenomic file
+    assert client.get("/api/aggregations/nope/file-facets").status_code == 404
 
 
 def test_route_401_without_session(_app):

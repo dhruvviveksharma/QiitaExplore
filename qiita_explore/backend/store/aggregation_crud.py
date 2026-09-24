@@ -12,6 +12,7 @@ Own module for the same reason as merge_crud.py: store/crud.py sits at the
 patch its state from the response body instead of re-fetching.
 """
 
+import json
 import uuid
 from typing import Optional
 
@@ -52,16 +53,29 @@ def _touch(conn, aggregation_id: str, now: str) -> None:
     )
 
 
+def _file_filter(raw) -> dict:
+    """file_filter_json → {"data_types": [...], "processing": [...]}; a
+    missing or unreadable value means no filter."""
+    try:
+        f = json.loads(raw) if raw else {}
+    except ValueError:
+        f = {}
+    return {"data_types": list(f.get("data_types") or []), "processing": list(f.get("processing") or [])}
+
+
+def _hydrate(conn, row) -> dict:
+    agg = _as_dict(row)
+    agg["file_filter"] = _file_filter(agg.pop("file_filter_json", None))
+    agg["studies"] = _studies(conn, agg["aggregation_id"])
+    return agg
+
+
 def _get(conn, aggregation_id: str, user_id: str) -> Optional[dict]:
     row = conn.execute(
         "SELECT * FROM aggregations WHERE aggregation_id=? AND user_id=?",
         (aggregation_id, user_id),
     ).fetchone()
-    if row is None:
-        return None
-    agg = _as_dict(row)
-    agg["studies"] = _studies(conn, aggregation_id)
-    return agg
+    return None if row is None else _hydrate(conn, row)
 
 
 def create_aggregation(user_id: str, name: str) -> dict:
@@ -74,7 +88,8 @@ def create_aggregation(user_id: str, name: str) -> dict:
         )
         conn.commit()
     return {"aggregation_id": aggregation_id, "user_id": user_id, "name": name,
-            "created_at": now, "updated_at": now, "studies": []}
+            "created_at": now, "updated_at": now,
+            "file_filter": _file_filter(None), "studies": []}
 
 
 def list_aggregations(user_id: str) -> list:
@@ -84,12 +99,7 @@ def list_aggregations(user_id: str) -> list:
             "SELECT * FROM aggregations WHERE user_id=? ORDER BY updated_at DESC",
             (user_id,),
         ).fetchall()
-        out = []
-        for r in rows:
-            agg = _as_dict(r)
-            agg["studies"] = _studies(conn, agg["aggregation_id"])
-            out.append(agg)
-    return out
+        return [_hydrate(conn, r) for r in rows]
 
 
 def get_aggregation(aggregation_id: str, user_id: str) -> Optional[dict]:
@@ -102,6 +112,20 @@ def rename_aggregation(aggregation_id: str, user_id: str, name: str) -> Optional
         cur = conn.execute(
             "UPDATE aggregations SET name=?, updated_at=? WHERE aggregation_id=? AND user_id=?",
             (name, _now(), aggregation_id, user_id),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return _get(conn, aggregation_id, user_id)
+
+
+def set_aggregation_file_filter(aggregation_id: str, user_id: str, file_filter: dict) -> Optional[dict]:
+    """Save the data-type / processing filter; None when not owned. The caller
+    validates the shape (routes/aggregation_routes.py)."""
+    with _conn() as conn:
+        cur = conn.execute(
+            "UPDATE aggregations SET file_filter_json=?, updated_at=? WHERE aggregation_id=? AND user_id=?",
+            (json.dumps(file_filter), _now(), aggregation_id, user_id),
         )
         conn.commit()
         if cur.rowcount == 0:

@@ -27,7 +27,8 @@ from helpers.pg_pool import pooled_fetchall
 
 _FILES_FROM = """
 SELECT sa.study_id, a.artifact_id, pa.prep_template_id, ft.filepath_type,
-       dd.mountpoint, dd.subdirectory, f.filepath, dt.data_type, at.artifact_type
+       dd.mountpoint, dd.subdirectory, f.filepath, dt.data_type, at.artifact_type,
+       sc.name
 FROM qiita.study_artifact sa
 JOIN qiita.artifact a               ON sa.artifact_id = a.artifact_id
 JOIN qiita.artifact_type at         ON a.artifact_type_id = at.artifact_type_id
@@ -38,6 +39,7 @@ JOIN qiita.artifact_filepath af     ON af.artifact_id = a.artifact_id
 JOIN qiita.filepath f               ON af.filepath_id = f.filepath_id
 JOIN qiita.filepath_type ft         ON f.filepath_type_id = ft.filepath_type_id
 JOIN qiita.data_directory dd        ON f.data_directory_id = dd.data_directory_id
+LEFT JOIN qiita.software_command sc ON a.command_id = sc.command_id
 """
 # The study-modal manifest is QIIME2-shaped and FASTQ-only.
 _WHERE_FASTQ = """WHERE at.artifact_type = 'per_sample_FASTQ'
@@ -70,7 +72,13 @@ WHERE sample_id <> 'qiita_sample_column_names'
 
 _PAIRED_HEADER = ["sample-id", "forward-absolute-filepath", "reverse-absolute-filepath"]
 _SINGLE_HEADER = ["sample-id", "absolute-filepath"]
-CSV_HEADER = ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
+CSV_HEADER = ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type", "processing"]
+# An artifact's processing step is the Qiita command that produced it
+# (e.g. "Atropos v1.1.24", "Adapter and host filtering v2023.12"); uploaded
+# artifacts have no command. One metagenomic prep often holds several of these
+# copies of the same reads, so the step is what tells them apart.
+RAW_UPLOAD = "Raw upload"
+XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _claim(pool, prefix):
@@ -109,28 +117,39 @@ def build_manifest_rows(samples, files, base_dir):
     return rows, paired
 
 
+def group_matches(file_filter, data_type, processing):
+    """file_filter: {"data_types": [...], "processing": [...]} or None; an
+    empty (or missing) list means any. A group is one whole artifact, and
+    run_prefix claiming is per artifact, so dropping non-matching groups never
+    changes which file a kept group's sample resolves to."""
+    f = file_filter or {}
+    dts, procs = f.get("data_types") or [], f.get("processing") or []
+    return (not dts or data_type in dts) and (not procs or processing in procs)
+
+
 def build_csv_rows(groups, base_dir):
-    """groups: [(study_id, data_type, artifact_type, samples, files, allow)],
-    one per artifact. `samples` is the prep's FULL (sample_id, run_prefix)
+    """groups: [(study_id, data_type, artifact_type, processing, samples, files,
+    allow)], one per artifact. `samples` is the prep's FULL (sample_id, run_prefix)
     list — longest-prefix-first claiming needs every sample present, or a
     selected '8B4' would take '8B4ABX_R1.fastq.gz' once unselected '8B4ABX'
     were filtered away. `allow` is the set of checked sample ids; only their
     rows are emitted.
 
     Returns sorted, de-duplicated (study_id, sample_id, path, data_type,
-    file_type) rows — one per file: a paired sample yields two rows and a
-    sample in two preps yields rows for each data type.
+    file_type, processing) rows — one per file: a paired sample yields two
+    rows, and a sample in two preps or two processing copies yields rows for
+    each.
     """
     out = set()
-    for study_id, data_type, artifact_type, samples, files, allow in groups:
+    for study_id, data_type, artifact_type, processing, samples, files, allow in groups:
         fwd_type = "raw_fasta" if artifact_type == "FASTA" else "raw_forward_seqs"
         rows, _ = build_manifest_rows(samples, files, base_dir)
         for sample_id, fwd, rev in rows:
             if sample_id not in allow:
                 continue
-            out.add((study_id, sample_id, fwd, data_type, fwd_type))
+            out.add((study_id, sample_id, fwd, data_type, fwd_type, processing))
             if rev:
-                out.add((study_id, sample_id, rev, data_type, "raw_reverse_seqs"))
+                out.add((study_id, sample_id, rev, data_type, "raw_reverse_seqs", processing))
     return sorted(out)
 
 
@@ -143,19 +162,46 @@ def to_tsv(rows, paired):
     return buf.getvalue()
 
 
-def to_csv(rows, spreadsheet_safe=False):
-    """spreadsheet_safe wraps sample_id as ="..." so Excel / Numbers / LibreOffice
-    keep ids like "10317.000001062" as text instead of parsing (and rounding)
-    them as a float — which otherwise displays indistinguishably from the
-    study_id column. The plain CSV (default) stays clean for pandas/scripts."""
+def to_csv(rows):
+    """The export for scripts / pandas. Opened in Excel or Numbers, an id like
+    10317.000001062 parses as a number and shows as 10317 — use to_xlsx for
+    spreadsheets."""
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(CSV_HEADER)
-    if spreadsheet_safe:
-        for study_id, sample_id, path, data_type, file_type in rows:
-            w.writerow([study_id, f'="{sample_id}"', path, data_type, file_type])
-    else:
-        w.writerows(rows)
+    w.writerows(rows)
+    return buf.getvalue()
+
+
+def to_xlsx(rows):
+    """The same rows as an Excel workbook. Every column but study_id is a text
+    cell with number format '@', so Excel / Numbers keep 10317.000001062 as
+    typed instead of parsing it as a number (which is what made the CSV's
+    sample_id look like the study_id)."""
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Font
+
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("samples")
+    ws.freeze_panes = "A2"
+    for col, width in zip("ABCDEF", (10, 22, 90, 18, 18, 36)):
+        ws.column_dimensions[col].width = width
+    bold = Font(bold=True)
+
+    def cell(value, text=True, font=None):
+        c = WriteOnlyCell(ws, value=value)
+        if text:
+            c.number_format = "@"
+        if font:
+            c.font = font
+        return c
+
+    ws.append([cell(h, font=bold) for h in CSV_HEADER])
+    for study_id, *rest in rows:
+        ws.append([cell(int(study_id), text=False)] + [cell(str(v)) for v in rest])
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -186,8 +232,8 @@ def count_fastq_artifacts(study_id):
 
 def _study_groups(study_ids, selected):
     """Every per-sample sequence artifact (per_sample_FASTQ + FASTA) of
-    study_ids, bucketed into (study_id, data_type, artifact_type, samples,
-    files, allow) groups — one per artifact, `samples` the prep's FULL
+    study_ids, bucketed into (study_id, data_type, artifact_type, processing,
+    samples, files, allow) groups — one per artifact, `samples` the prep's FULL
     (sample_id, run_prefix) list, `allow` = selected.get(study_id, set()).
     [] when study_ids is empty or none of them has such an artifact."""
     if not study_ids:
@@ -206,22 +252,24 @@ def _study_groups(study_ids, selected):
         if pid not in samples_by_prep:
             samples_by_prep[pid] = pooled_fetchall(_SAMPLES_SQL.format(pid=int(pid)))
         first = by_artifact[key][0]
-        groups.append((study_id, first[7], first[8], samples_by_prep[pid],
+        groups.append((study_id, first[7], first[8], first[9] or RAW_UPLOAD, samples_by_prep[pid],
                        _files(by_artifact[key]), selected.get(study_id, set())))
     return groups
 
 
-def fetch_aggregate_csv_rows(selected):
-    """selected: {study_id: {sample_id, ...}} — empty sets are ignored. Returns
-    build_csv_rows over every per-sample sequence artifact of those studies.
-    Raises ValueError when no such artifact exists or no checked sample
-    resolves to a file."""
+def fetch_aggregate_csv_rows(selected, file_filter=None):
+    """selected: {study_id: {sample_id, ...}} — empty sets are ignored.
+    file_filter: the aggregation's saved {"data_types", "processing"} (see
+    group_matches). Returns build_csv_rows over every matching per-sample
+    sequence artifact of those studies. Raises ValueError when no such
+    artifact exists or no checked sample resolves to a file."""
     if not _BASE:
         raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
     study_ids = sorted(int(s) for s, ids in selected.items() if ids)
-    groups = _study_groups(study_ids, selected)
+    groups = [g for g in _study_groups(study_ids, selected) if group_matches(file_filter, g[1], g[3])]
     if not groups:
-        raise ValueError("No per-sample sequence artifacts in the selected studies")
+        raise ValueError("No per-sample sequence artifacts of the chosen data type / processing "
+                         "in the selected studies")
     rows = build_csv_rows(groups, _BASE)
     if not rows:
         raise ValueError("None of the selected samples has a per-sample sequence file")

@@ -347,6 +347,10 @@ def _create_schema(conn):
         ("aggregation_studies", "pi_affiliation", "TEXT"),
         ("aggregation_studies", "year", "INTEGER"),
         ("aggregation_studies", "is_gold", "INTEGER"),
+        # The aggregation's saved data-type / processing filter
+        # ({"data_types": [...], "processing": [...]}; empty = any). It drives
+        # both the sample tables and the export (routes/aggregation_routes.py).
+        ("aggregations", "file_filter_json", "TEXT"),
         # Unused since 2026-09-24: the availability map moved to its own
         # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),

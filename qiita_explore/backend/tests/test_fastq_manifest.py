@@ -4,7 +4,6 @@ The matcher/serializer are pure Python and take base_dir explicitly, so they
 run without Postgres. The route test reuses the test_stream_routes app
 pattern and fakes the two helper boundaries.
 """
-import csv
 import os
 import sys
 from unittest.mock import patch
@@ -84,27 +83,27 @@ def test_raw_fasta_is_the_forward_file(fm):
 
 # ── build_csv_rows / to_csv ──────────────────────────────────────────────────
 
-def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True):
+def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True, processing="Raw upload"):
     files = []
     for _, prefix in samples:
         files.append(("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1.fastq.gz"))
         if paired:
             files.append(("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2.fastq.gz"))
-    return (study_id, data_type, "per_sample_FASTQ", samples, files, set(allow))
+    return (study_id, data_type, "per_sample_FASTQ", processing, samples, files, set(allow))
 
 
 def test_csv_paired_sample_is_two_rows_with_file_types(fm):
     rows = fm.build_csv_rows([_fastq_group(16326, "16S", 10, [("s1", "P1")], ["s1"])], BASE)
     assert rows == [
-        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz", "16S", "raw_forward_seqs"),
-        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "16S", "raw_reverse_seqs"),
+        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz", "16S", "raw_forward_seqs", "Raw upload"),
+        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "16S", "raw_reverse_seqs", "Raw upload"),
     ]
 
 
 def test_csv_fasta_group(fm):
     files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
-    rows = fm.build_csv_rows([(1928, "16S", "FASTA", [("s1", "SRR1")], files, {"s1"})], BASE)
-    assert rows == [(1928, "s1", f"{BASE}/FASTA/3220/SRR1.fna", "16S", "raw_fasta")]
+    rows = fm.build_csv_rows([(1928, "16S", "FASTA", "Raw upload", [("s1", "SRR1")], files, {"s1"})], BASE)
+    assert rows == [(1928, "s1", f"{BASE}/FASTA/3220/SRR1.fna", "16S", "raw_fasta", "Raw upload")]
 
 
 def test_csv_allowlist_filters_after_matching(fm):
@@ -137,33 +136,54 @@ def test_csv_unselected_and_unmatched_omitted(fm):
     assert fm.build_csv_rows([], BASE) == []
 
 
+def test_csv_processing_copies_are_separate_rows(fm):
+    # One metagenomic prep often holds raw, adapter-trimmed and host-filtered
+    # per_sample_FASTQ artifacts of the same reads; `processing` tells them apart.
+    raw = _fastq_group(5, "Metagenomic", 10, [("s1", "P1")], ["s1"], paired=False)
+    filt = _fastq_group(5, "Metagenomic", 11, [("s1", "P1")], ["s1"], paired=False,
+                        processing="Adapter and host filtering v2023.12")
+    rows = fm.build_csv_rows([raw, filt], BASE)
+    assert [r[5] for r in rows] == ["Raw upload", "Adapter and host filtering v2023.12"]
+
+
+def test_group_matches(fm):
+    assert fm.group_matches(None, "16S", "Raw upload")
+    assert fm.group_matches({"data_types": [], "processing": []}, "16S", "Raw upload")
+    f = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"]}
+    assert fm.group_matches(f, "Metagenomic", "Atropos v1.1.24")
+    assert not fm.group_matches(f, "16S", "Atropos v1.1.24")
+    assert not fm.group_matches(f, "Metagenomic", "Raw upload")
+    assert fm.group_matches({"data_types": ["16S"]}, "16S", "anything")
+
+
 def test_to_csv(fm):
-    out = fm.to_csv([(5, "s1", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs")])
-    assert out == ("study_id,sample_id,file_path_in_qmounts,data_type,file_type\n"
-                   "5,s1,/p/a_R1.fq.gz,16S,raw_forward_seqs\n")
+    out = fm.to_csv([(5, "s1", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload")])
+    assert out == ("study_id,sample_id,file_path_in_qmounts,data_type,file_type,processing\n"
+                   "5,s1,/p/a_R1.fq.gz,16S,raw_forward_seqs,Raw upload\n")
 
 
-def test_to_csv_spreadsheet_safe_wraps_only_sample_id(fm):
-    # A sample id like "10317.000001062" parses as a float in Excel/Numbers
-    # and displays rounded — indistinguishable from the study_id column.
-    # ="..." forces it to stay text; study_id and the other columns are
-    # untouched.
-    out = fm.to_csv([(5, "10317.000001", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs")], spreadsheet_safe=True)
-    rows = list(csv.reader(out.splitlines()))
-    assert rows[0] == ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type"]
-    assert rows[1] == ["5", '="10317.000001"', "/p/a_R1.fq.gz", "16S", "raw_forward_seqs"]
-    plain = fm.to_csv([(5, "10317.000001", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs")])
-    assert list(csv.reader(plain.splitlines()))[1] == \
-        ["5", "10317.000001", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs"]
+def test_to_xlsx_keeps_sample_id_as_text(fm):
+    # In a CSV, Excel / Numbers parse "10317.000001062" as a number and show
+    # 10317 — indistinguishable from study_id. The xlsx types it as text.
+    import io
+    import openpyxl
+    out = fm.to_xlsx([(10317, "10317.000001062", "/p/a_R1.fq.gz", "Metagenomic",
+                       "raw_forward_seqs", "Raw upload")])
+    ws = openpyxl.load_workbook(io.BytesIO(out)).active
+    assert [c.value for c in ws[1]] == fm.CSV_HEADER
+    study, sample, *_ = ws[2]
+    assert (study.value, study.data_type) == (10317, "n")
+    assert (sample.value, sample.data_type, sample.number_format) == ("10317.000001062", "s", "@")
+    assert ws.freeze_panes == "A2"
 
 
 # ── _study_groups ──────────────────────────────────────────────────────────────
 
 def _file_row(study_id=5, artifact_id=10, prep_id=100, filepath_type="raw_forward_seqs",
               mountpoint="per_sample_FASTQ", subdirectory=True, filepath="P1_R1.fastq.gz",
-              data_type="16S", artifact_type="per_sample_FASTQ"):
+              data_type="16S", artifact_type="per_sample_FASTQ", command=None):
     return (study_id, artifact_id, prep_id, filepath_type, mountpoint, subdirectory, filepath,
-            data_type, artifact_type)
+            data_type, artifact_type, command)
 
 
 def test_study_groups_shape(fm):
@@ -176,13 +196,33 @@ def test_study_groups_shape(fm):
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
         groups = fm._study_groups([5], {5: {"s1"}})
     assert len(groups) == 1
-    study_id, data_type, artifact_type, samples, files, allow = groups[0]
-    assert (study_id, data_type, artifact_type, allow) == (5, "16S", "per_sample_FASTQ", {"s1"})
+    study_id, data_type, artifact_type, processing, samples, files, allow = groups[0]
+    assert (study_id, data_type, artifact_type, processing, allow) == \
+        (5, "16S", "per_sample_FASTQ", "Raw upload", {"s1"})  # no command -> an upload
     assert samples == [("s1", "P1")]
     assert files == [("raw_forward_seqs", "per_sample_FASTQ", True, 10, "P1_R1.fastq.gz")]
     # the files query (over study_artifact) runs before the per-prep sample query
     assert "study_artifact" in calls[0][0]
     assert calls[0][1] == [[5]]
+
+
+def test_study_groups_processing_is_the_command_name(fm):
+    rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
+    with patch.object(fm, "pooled_fetchall",
+                      side_effect=lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]):
+        groups = fm._study_groups([5], {})
+    assert [g[3] for g in groups] == ["Raw upload", "Atropos v1.1.24"]
+
+
+def test_fetch_aggregate_csv_rows_applies_file_filter(fm, monkeypatch):
+    monkeypatch.setattr(fm, "_BASE", BASE)
+    rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
+    fake = lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]  # noqa: E731
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        out = fm.fetch_aggregate_csv_rows({5: {"s1"}}, {"data_types": [], "processing": ["Atropos v1.1.24"]})
+    assert [(r[2].split("/")[-2], r[5]) for r in out] == [("11", "Atropos v1.1.24")]
+    with patch.object(fm, "pooled_fetchall", side_effect=fake), pytest.raises(ValueError):
+        fm.fetch_aggregate_csv_rows({5: {"s1"}}, {"data_types": ["ITS"], "processing": []})
 
 
 def test_study_groups_empty_when_no_study_ids_or_no_artifacts(fm):

@@ -15,6 +15,9 @@ psycopg2-binary
 redis
 biom-format
 
+# Sample Aggregation export for spreadsheets (helpers/fastq_manifest.to_xlsx)
+openpyxl>=3.1,<4.0
+
 # Qiita PAT authentication (sync HTTP client + PAT-at-rest encryption)
 httpx>=0.25,<1.0
 cryptography>=41.0
