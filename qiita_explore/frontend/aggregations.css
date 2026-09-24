@@ -86,8 +86,13 @@
 .agg-seg button.on { background: var(--accent-soft); color: var(--accent-h); font-weight: 600; }
 .agg-file-yes { color: var(--accent-h); font-weight: 600; }
 .agg-file-no { color: var(--text-3); }
-.agg-dt-cell { display: inline-flex; gap: 4px; flex-wrap: wrap; cursor: help; }
+.agg-dt-cell { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.agg-dt-cell .dtype-chip { cursor: help; }
 .agg-dt-dim { opacity: .4; }
+/* Prep membership with no per-sample sequence file (e.g. a 16S study whose
+   only artifacts are Demultiplexed/BIOM): outline instead of solid, so it
+   reads as "in this prep" rather than "exportable". */
+.agg-dt-nofile { background: transparent; box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* ── metadata pane (third column, only while a sample is picked) ───────── */
 .agg-meta-col { width: 340px; flex-shrink: 0; overflow-y: auto; border-left: 1px solid var(--border-soft); padding: 12px; }

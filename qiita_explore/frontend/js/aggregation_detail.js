@@ -230,10 +230,20 @@ function AggregationSampleTable({ a, agg, study, filt, picked, onPickSample }) {
                 </td>
                 <td>
                   {(r.data_types || []).length ? (
-                    <span className="agg-dt-cell" title={`Processing:\n${(r.processing || []).join('\n')}`}>
-                      {r.data_types.map(dt => (
-                        <span key={dt} className={`dtype-chip${dtKept(dt) ? '' : ' agg-dt-dim'}`}>{dt}</span>
-                      ))}
+                    <span className="agg-dt-cell">
+                      {r.data_types.map(dt => {
+                        const hasFile = (r.file_data_types || []).includes(dt);
+                        const title = hasFile
+                          ? `Processing:\n${(r.processing || []).join('\n')}`
+                          : `In a ${dt} prep, but no per-sample sequence file — Qiita keeps these ` +
+                            'reads in one multiplexed / Demultiplexed file per prep, not exportable here.';
+                        return (
+                          <span key={dt} title={title}
+                            className={`dtype-chip${hasFile ? '' : ' agg-dt-nofile'}${dtKept(dt) ? '' : ' agg-dt-dim'}`}>
+                            {dt}
+                          </span>
+                        );
+                      })}
                     </span>
                   ) : <span className="agg-file-no">—</span>}
                 </td>
