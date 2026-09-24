@@ -280,7 +280,7 @@ function StudyModalOutputs({ study, detail, loading }) {
 
 // ── Study modal ────────────────────────────────────────────────────────────────
 
-function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
+function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, actions }) {
   const [fullscreen,   setFullscreen]   = useState(false);
   // Tracks whether the CURRENT fullscreen=true came from auto-scroll-expand
   // rather than an explicit click — only an auto-expand auto-collapses.
@@ -342,6 +342,8 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen }) {
               )}
             </div>
             <div className="modal-header-right">
+              {/* Same row as the Browse card (js/study_actions.js), in both sizes. */}
+              {actions && <div className="modal-header-actions">{actions}</div>}
               <button className="modal-expand" title={fullscreen ? 'Restore' : 'Fullscreen'}
                 onClick={toggleFullscreen}>
                 <ExpandCompressIcon expanded={fullscreen} />

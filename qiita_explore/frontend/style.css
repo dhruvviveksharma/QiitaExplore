@@ -1387,6 +1387,8 @@ input, textarea { font-family: var(--sans); }
 }
 .modal-header-left  { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .modal-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* The Browse card's action row (js/study_actions.js), before expand/close. */
+.modal-header-actions { display: flex; align-items: center; gap: 6px; }
 
 .modal-close {
   width: 34px; height: 34px;

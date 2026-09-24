@@ -66,6 +66,22 @@ function renderApp(s, account) {
   const hasGlobalPins      = view.type === 'global-chat' && pinnedMeta.length > 0;
   const hasSourcesBar      = hasProjectSources || hasGlobalPins;
   const resultsDrawerOpen  = !!(searchResultsPanel && !searchResultsClosing);
+  // One action row for Browse cards and the study modal (js/study_actions.js).
+  // Pin means "pin to this chat" in a chat, "stage for the composer" in
+  // Browse, and is hidden where there is no composer (merges, aggregations).
+  const hasPin = sid => pinnedMeta.some(p => p.study_id === sid);
+  const studyActionsCtx = {
+    agg, openProjId, projStudyIds, addStudyToProject,
+    pin: view.chatId ? {
+      isOn: hasPin,
+      toggle: st => hasPin(st.study_id) ? unpinStudy(view.chatId, st.study_id) : pinStudy(view.chatId, st),
+    } : view.type === 'browse' ? {
+      isOn: sid => ctxStudyIds.includes(sid),
+      toggle: st => setCtxStudies(prev => prev.some(x => x.study_id === st.study_id)
+        ? prev.filter(x => x.study_id !== st.study_id) : [...prev, st]),
+    } : null,
+    onMerge: SHOW_MERGES ? st => { setPendingMergeStudy(st); openMergePanel(true); } : null,
+  };
 
   // Shared save for both sidebar chat lists' inline rename (see chat-row
   // rendering below) — mirrors MergesTab's saveRename pattern.
@@ -574,36 +590,10 @@ function renderApp(s, account) {
                   {addStudyErr && <div className="browse-error">{addStudyErr}</div>}
                   {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
-                    {displayStudies.map(study => {
-                      const inProj = projStudyIds.includes(study.study_id);
-                      const inCtx  = ctxStudyIds.includes(study.study_id);
-                      return (
-                        <StudyCard key={study.study_id} study={study} onClick={() => openStudyModal(study)}
-                          actions={<>
-                            {openProjId ? (
-                              <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
-                                {inProj ? '✓ Saved' : '+ Add to Project'}
-                              </button>
-                            ) : (
-                              <button className={`btn-card-ctx ${inCtx ? 'on' : ''}`}
-                                onClick={() => setCtxStudies(prev =>
-                                  inCtx ? prev.filter(s => s.study_id !== study.study_id) : [...prev, study])}>
-                                {inCtx ? '✓ Pinned' : '+ Pin'}
-                              </button>
-                            )}
-                            <AggregateCardButton study={study} agg={agg} />
-                            {SHOW_MERGES && (
-                              <button className="btn-card-merge"
-                                onClick={() => {
-                                  setPendingMergeStudy(study);
-                                  openMergePanel(true);
-                                }}>
-                                + Merge
-                              </button>
-                            )}
-                          </>} />
-                      );
-                    })}
+                    {displayStudies.map(study => (
+                      <StudyCard key={study.study_id} study={study} onClick={() => openStudyModal(study)}
+                        actions={<StudyActions study={study} ctx={studyActionsCtx} />} />
+                    ))}
                   </div>
                 </>
               )}
@@ -810,6 +800,7 @@ function renderApp(s, account) {
       {modalStudy && (
         <StudyModal study={modalStudy} detail={modalDetail}
           loading={modalDetailLoading} onClose={closeModal}
+          actions={<StudyActions study={modalStudy} ctx={studyActionsCtx} />}
           drawerOpen={!!(showMergePanel || resultsDrawerOpen)}
           shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}
