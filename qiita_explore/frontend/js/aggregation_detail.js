@@ -1,14 +1,17 @@
 // Sample Aggregation tab — the detail side: the aggregation's studies as
 // Browse-style cards (3 per row, 2 while the metadata pane is open), the
 // expanded study's sample table (checkbox = in the aggregation, sample id =
-// open its metadata, FASTQ/FASTA columns + a files-first Show filter), and
-// the metadata pane itself. Loads before aggregations.js, whose
-// AggregationsTab renders these.
+// open its metadata, Data type + FASTQ/FASTA columns, a files-first Show
+// filter), and the metadata pane itself. The header's Data type / Processing
+// pickers are the aggregation's saved file_filter: every table and both
+// exports follow it. Loads before aggregations.js, whose AggregationsTab
+// renders these.
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiJson, API (utils.js),
-//   StudyCard (study_card.js)
+//   StudyCard (study_card.js), FacetMultiSelect (browse_filters.js)
 
 const _plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const _AGG_PAGE = 200;
+const _NO_FILTER = { data_types: [], processing: [] };
 const _chunk = (arr, n) => {
   const out = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
@@ -17,16 +20,44 @@ const _chunk = (arr, n) => {
 
 function AggregationDetail({ a, agg, picked, onPickSample }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [facets, setFacets] = useState(null); // GET …/file-facets; kept while a refetch runs
+  const [err, setErr] = useState('');
   const studies = a.studies || [];
+  const filt = a.file_filter || _NO_FILTER;
+  const filterKey = JSON.stringify(filt);
   const totalSelected = studies.reduce((n, s) => n + (s.selected_samples || 0), 0);
   const artifactTotal = studies.reduce((n, s) => n + (s.fastq_artifact_count || 0), 0);
   // Rows are chunked explicitly (not grid-auto-flow: dense) so the expanded
   // study's sample table sits right under its own row, DOM order = visual order.
   const perRow = picked ? 2 : 3;
+
+  // Picker options + the exportable count depend on the filter and on what
+  // is checked, so both are in the key. The per-study maps are cached
+  // server-side; a refetch is cheap after the first.
+  const selKey = studies.map(s => `${s.study_id}:${s.selected_samples}`).join(',');
+  useEffect(() => {
+    let live = true;
+    apiJson(`/aggregations/${a.aggregation_id}/file-facets`)
+      .then(d => { if (live) setFacets(d); })
+      .catch(e => { if (live) setErr(e.message); });
+    return () => { live = false; };
+  }, [a.aggregation_id, filterKey, selKey]);
+
+  const setFilter = (key, names) => {
+    setErr('');
+    agg.setFileFilter(a.aggregation_id, { ...filt, [key]: names }).catch(e => setErr(e.message));
+  };
+  const exportable = facets?.exportable;
+  const canExport = totalSelected > 0 && exportable !== 0;
+  const disabledTitle = totalSelected === 0
+    ? 'Check at least one sample'
+    : 'No checked sample has a file for this Data type / Processing';
   // Plain links like the per-artifact manifest (fastq_manifest.js): the
   // session cookie rides along on top-level navigation.
-  const href = `${API}/aggregations/${a.aggregation_id}/export.csv`;
-  const disabledTitle = 'Check at least one sample';
+  const base = `${API}/aggregations/${a.aggregation_id}`;
+  const download = (href, label, title) => canExport
+    ? <a className="ao-file-btn" target="_blank" rel="noreferrer" href={href} title={title}>{label}</a>
+    : <span className="ao-file-btn agg-disabled" title={disabledTitle}>{label}</span>;
 
   return (
     <div className="agg-detail">
@@ -36,25 +67,24 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
           <div className="agg-detail-sub">
             {_plural(studies.length, 'study', 'studies')}
             {' · '}{_plural(totalSelected, 'selected sample', 'selected samples')}
+            {exportable != null && (
+              <span title="Checked samples with a file matching the Data type / Processing filter — what the export contains">
+                {' · '}{exportable.toLocaleString()} with files
+              </span>
+            )}
             {' · '}{_plural(artifactTotal, 'sequence-file artifact', 'sequence-file artifacts')}
           </div>
         </div>
         <div className="agg-download-col">
           <div className="agg-download-row">
-            {totalSelected > 0 ? (
-              <a className="ao-file-btn" target="_blank" rel="noreferrer" href={href}>↓ Download sample CSV</a>
-            ) : (
-              <span className="ao-file-btn agg-disabled" title={disabledTitle}>↓ Download sample CSV</span>
-            )}
-            {totalSelected > 0 ? (
-              <a className="ao-file-btn" target="_blank" rel="noreferrer" href={`${href}?spreadsheet=1`}>↓ CSV for Excel / Numbers</a>
-            ) : (
-              <span className="ao-file-btn agg-disabled" title={disabledTitle}>↓ CSV for Excel / Numbers</span>
-            )}
+            <FacetMultiSelect label="Data type" options={facets?.data_types} selected={filt.data_types}
+              onChange={names => setFilter('data_types', names)} disabled={!facets} />
+            <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
+              onChange={names => setFilter('processing', names)} disabled={!facets} />
+            {download(`${base}/export.xlsx`, '↓ Excel (.xlsx)', 'For Excel / Numbers: sample ids stay text')}
+            {download(`${base}/export.csv`, '↓ CSV (for scripts)', 'For pandas / scripts')}
           </div>
-          <div className="agg-download-hint">
-            Sample ids like 10317.000001062 are text — the spreadsheet variant keeps them from being read as numbers.
-          </div>
+          {err && <div className="browse-error">{err}</div>}
         </div>
       </div>
       {studies.length === 0
@@ -79,7 +109,7 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
               </div>
               {expanded && (
                 <AggregationSampleTable key={`samples-${expanded.study_id}`} a={a} agg={agg} study={expanded}
-                  picked={picked} onPickSample={onPickSample} />
+                  filt={filt} picked={picked} onPickSample={onPickSample} />
               )}
             </React.Fragment>
           );
@@ -89,9 +119,10 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
 }
 
 // One study's samples, paged from Qiita with the aggregation's checked state
-// and FASTQ/FASTA availability merged in server-side, sorted files-first.
-// Load-more shape from merge_detail.js StudySampleTable.
-function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
+// and file availability (under the saved file_filter) merged in
+// server-side, sorted files-first. Load-more shape from merge_detail.js
+// StudySampleTable.
+function AggregationSampleTable({ a, agg, study, filt, picked, onPickSample }) {
   const [rows,      setRows]      = useState([]);
   const [total,     setTotal]     = useState(study.num_samples ?? 0);
   const [withFiles, setWithFiles] = useState(0);
@@ -123,13 +154,14 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
     }
   };
 
-  // First page on mount; a filter or Show change reloads page 0. The filter
-  // is debounced 300 ms (it's an ILIKE over the whole sample table — ~1 s on
-  // 40k rows); Show is a discrete click, no debounce needed there.
+  // First page on mount; a filter, Show or file_filter change reloads page 0.
+  // The text filter is debounced 300 ms (it's an ILIKE over the whole sample
+  // table — ~1 s on 40k rows); the others are discrete clicks.
+  const filterKey = JSON.stringify(filt);
   useEffect(() => {
     const t = setTimeout(() => load(0, q.trim(), show, false), q ? 300 : 0);
     return () => clearTimeout(t);
-  }, [q, show]);
+  }, [q, show, filterKey]);
 
   const toggle = async (r) => {
     const next = !r.selected;
@@ -147,6 +179,9 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
   const hasMore = rows.length < total;
   const isPicked = (r) => !!picked && picked.study_id === sid && picked.sample_id === r.sample_id;
   const fastqLabel = (r) => r.fastq === 'paired' ? 'R1+R2' : r.fastq === 'single' ? 'R1' : '—';
+  // A data type the header filter excludes stays visible, dimmed: the sample
+  // has such a file, it just isn't what the export will contain.
+  const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
   return (
     <div className="agg-samples-panel">
       <div className="agg-samples-toolbar">
@@ -182,7 +217,8 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
       <div className="agg-samples-wrap">
         <table className="prep-table">
           <thead>
-            <tr><th></th><th>Sample ID</th><th>FASTQ</th><th>FASTA</th>{columns.map(c => <th key={c}>{c}</th>)}</tr>
+            <tr><th></th><th>Sample ID</th><th>Data type</th><th>FASTQ</th><th>FASTA</th>
+              {columns.map(c => <th key={c}>{c}</th>)}</tr>
           </thead>
           <tbody>
             {rows.map(r => (
@@ -192,13 +228,22 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
                   <button className="agg-sample-id" title="Show metadata"
                     onClick={() => onPickSample({ study_id: sid, sample_id: r.sample_id })}>{r.sample_id}</button>
                 </td>
+                <td>
+                  {(r.data_types || []).length ? (
+                    <span className="agg-dt-cell" title={`Processing:\n${(r.processing || []).join('\n')}`}>
+                      {r.data_types.map(dt => (
+                        <span key={dt} className={`dtype-chip${dtKept(dt) ? '' : ' agg-dt-dim'}`}>{dt}</span>
+                      ))}
+                    </span>
+                  ) : <span className="agg-file-no">—</span>}
+                </td>
                 <td className={r.fastq ? 'agg-file-yes' : 'agg-file-no'}>{fastqLabel(r)}</td>
                 <td className={r.fasta ? 'agg-file-yes' : 'agg-file-no'}>{r.fasta ? '✓' : '—'}</td>
                 {columns.map(c => <td key={c}>{r.fields?.[c] ?? ''}</td>)}
               </tr>
             ))}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 4} className="agg-samples-empty">No samples match.</td></tr>
+              <tr><td colSpan={columns.length + 5} className="agg-samples-empty">No samples match.</td></tr>
             )}
           </tbody>
         </table>

@@ -37,11 +37,15 @@ function useAggregations() {
     replace(await apiJson(`/aggregations/${id}/studies`, { method: 'POST', body: JSON.stringify({ study }) }));
   const removeStudy = async (id, studyId) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}`, { method: 'DELETE' }));
-  // body: {add:[…], remove:[…]} or {select:'all'|'none'|'matching', q}
+  // body: {add:[…], remove:[…]} or {select:'all'|'none'|'with_files'|'matching', q}
   const setSamples = async (id, studyId, body) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}/samples`, { method: 'PATCH', body: JSON.stringify(body) }));
+  // file_filter: {data_types:[…], processing:[…]} (empty = any) — saved on the
+  // aggregation; drives every sample table and both exports.
+  const setFileFilter = async (id, file_filter) =>
+    replace(await apiJson(`/aggregations/${id}`, { method: 'PATCH', body: JSON.stringify({ file_filter }) }));
 
-  return { aggregations, create, rename, remove, addStudy, removeStudy, setSamples };
+  return { aggregations, create, rename, remove, addStudy, removeStudy, setSamples, setFileFilter };
 }
 
 // The header the server snapshots onto aggregation_studies so the tab can
