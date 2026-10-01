@@ -203,11 +203,13 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
     ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
     ...columns.map(c => [`m:${c}`, c])];
   const tableW = widthOf('sel') + heads.reduce((n, [k]) => n + widthOf(k), 0);
-  // One line per artifact the sample has files in; the Artifact / R1 / R2 / Barcodes cells
-  // each render the same lines in the same order, so they stay row-aligned.
-  const fileLines = (r, pick) => (r.files || []).length
-    ? r.files.map(f => <div key={f.artifact_id} className="agg-file-line" title={pick(f) || undefined}>{pick(f) || '—'}</div>)
-    : <span className="agg-file-no">—</span>;
+  // A sample in several artifacts gets one row per artifact (sample-level cells repeat, dimmed
+  // after the first); a sample with no file is one row. Checking any of a sample's rows
+  // toggles the sample, since selection is per sample, not per artifact.
+  const fileCell = (f, pick, cls) => {
+    const v = f && pick(f);
+    return <td className={cls} title={v || undefined}>{v || <span className="agg-file-no">—</span>}</td>;
+  };
   return (
     <div className="agg-samples-panel">
       <div className="agg-samples-toolbar">
@@ -283,8 +285,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                     {g?.data_type && ` · ${g.data_type}`}{g && ` · ${_plural(g.count, 'sample', 'samples')}`}
                   </td>
                 </tr>);
-              if (!group || !collapsed.has(gk)) out.push(
-              <tr key={`${r.sample_id}|${r.prep_id ?? ''}`} className={isPicked(r) ? 'agg-row-active' : ''}>
+              if (!group || !collapsed.has(gk)) (r.files || []).concat((r.files || []).length ? [] : [null]).forEach((f, li) => out.push(
+              <tr key={`${r.sample_id}|${r.prep_id ?? ''}|${f ? f.artifact_id : 'none'}`}
+                className={`${isPicked(r) ? 'agg-row-active' : ''}${li ? ' agg-row-cont' : ''}`.trim() || undefined}>
                 <td><input type="checkbox" checked={!!r.selected} onChange={() => toggle(r)} /></td>
                 <td>
                   <button className="agg-sample-id" title="Show metadata"
@@ -312,12 +315,12 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                 </td>
                 <td className={r.fastq ? 'agg-file-yes' : 'agg-file-no'}>{fastqLabel(r)}</td>
                 <td className={r.fasta ? 'agg-file-yes' : 'agg-file-no'}>{r.fasta ? '✓' : '—'}</td>
-                <td>{fileLines(r, f => String(f.artifact_id))}</td>
-                <td className="agg-path">{fileLines(r, f => f.r1)}</td>
-                <td className="agg-path">{fileLines(r, f => f.r2)}</td>
-                <td className="agg-path">{fileLines(r, f => f.barcodes)}</td>
+                {fileCell(f, x => String(x.artifact_id))}
+                {fileCell(f, x => x.r1, 'agg-path')}
+                {fileCell(f, x => x.r2, 'agg-path')}
+                {fileCell(f, x => x.barcodes, 'agg-path')}
                 {columns.map(c => <td key={c} title={r.fields?.[c] ?? undefined}>{r.fields?.[c] ?? ''}</td>)}
-              </tr>);
+              </tr>));
               return out;
             })}
             {!loading && rows.length === 0 && (

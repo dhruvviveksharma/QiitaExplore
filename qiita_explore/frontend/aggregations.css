@@ -74,7 +74,11 @@
 .agg-resizable th { position: sticky; }
 .agg-col-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; user-select: none; }
 .agg-col-resize:hover { background: var(--accent-soft); }
-.agg-file-line { overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+/* A sample in several artifacts is one row per artifact; after the first, the repeated
+   sample-level cells (everything left of Artifact ID and the metadata columns) fade. */
+.agg-row-cont td:nth-child(-n+6), .agg-row-cont td:nth-child(n+11) { color: var(--text-3); }
+.agg-row-cont td:nth-child(-n+6) .agg-sample-id { color: var(--text-3); }
+.agg-row-cont td:nth-child(-n+6) .dtype-chip { opacity: .5; }
 .agg-path { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; }
 .agg-samples-wrap input[type=checkbox] { accent-color: var(--accent); margin: 0; display: block; }
 .agg-sample-id { color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
