@@ -121,3 +121,13 @@
 .cr-menu-item.agg-in:hover { background: none; color: var(--text-3); }
 /* Absolutely positioned so an error never reflows the card's action row. */
 .agg-card-err { position: absolute; right: 0; top: calc(100% + 4px); white-space: nowrap; z-index: 5; font-size: 11px; }
+
+/* ── Group by prep: header rows (aggregation table) and group heads (study card) ── */
+.agg-group-row td { background: var(--surface-2, var(--accent-soft)); color: var(--text-2); font-size: 11.5px;
+  cursor: pointer; position: sticky; top: 24px; }
+.agg-group-row:hover td { background: var(--accent-soft); }
+.prep-group-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; margin-top: 4px;
+  font-size: 12px; color: var(--text-2); background: var(--surface); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s); cursor: pointer; text-align: left; }
+.prep-group-head:hover { background: var(--accent-soft); }
+.prep-group-body { padding: 4px 0 8px 12px; }

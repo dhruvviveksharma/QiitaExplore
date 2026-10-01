@@ -1,9 +1,10 @@
 // Sample Aggregation tab — the detail side: the aggregation's studies as
 // Browse-style cards (3 per row, 2 while the metadata pane is open), the
 // expanded study's sample table (checkbox = in the aggregation, sample id =
-// open its metadata, Data type / Processing / Artifact pickers + Data
+// open its metadata, Data type / Processing / Artifact pickers + Prep ID/Data
 // type/FASTQ/FASTA/Artifact ID/R1/R2/Barcodes columns with drag-to-resize
-// widths, a files-first Show filter), and the metadata pane itself. The
+// widths, a files-first Show filter, a Group by prep toggle that clusters rows
+// under collapsible prep headers), and the metadata pane itself. The
 // Data type / Processing / Artifact pickers live in the sample table's toolbar
 // but set the aggregation's saved file_filter, so every study's table and all
 // header exports follow the same choice. Loads before aggregations.js,
@@ -16,7 +17,7 @@ const _plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const _AGG_PAGE = 200;
 const _NO_FILTER = { data_types: [], processing: [], artifacts: [] };
 // Starting column widths (px); metadata columns fall back to the hook's 140.
-const _COL_W = { sel: 32, sample: 170, dtype: 120, fastq: 70, fasta: 60, artifact: 90, r1: 280, r2: 280, barcodes: 280 };
+const _COL_W = { sel: 32, sample: 170, prep: 90, dtype: 120, fastq: 70, fasta: 60, artifact: 90, r1: 280, r2: 280, barcodes: 280 };
 const _chunk = (arr, n) => {
   const out = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
@@ -134,6 +135,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const [columns,   setColumns]   = useState([]);
   const [q,         setQ]         = useState('');
   const [show,      setShow]      = useState('all'); // 'all' | 'with_files' | 'without_files'
+  const [group,     setGroup]     = useState(false); // cluster rows under prep headers
+  const [groups,    setGroups]    = useState([]);    // [{prep_id, data_type, count}] when grouped
+  const [collapsed, setCollapsed] = useState(() => new Set()); // prep keys (prep_id ?? 'none')
   const [loading,   setLoading]   = useState(false);
   const [err,       setErr]       = useState('');
   const seq = useRef(0);
@@ -146,12 +150,13 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
     try {
       const d = await apiJson(
         `/aggregations/${aid}/studies/${sid}/samples?offset=${offset}&limit=${_AGG_PAGE}` +
-        `&q=${encodeURIComponent(query)}&show=${showVal}`);
+        `&q=${encodeURIComponent(query)}&show=${showVal}${group ? '&group=prep' : ''}`);
       if (mine !== seq.current) return;
       setRows(prev => append ? [...prev, ...(d.rows || [])] : (d.rows || []));
       setTotal(d.total ?? 0);
       setWithFiles(d.with_files ?? 0);
       setColumns(d.columns || []);
+      setGroups(d.groups || []);
     } catch (e) {
       if (mine === seq.current) setErr(e.message);
     } finally {
@@ -159,14 +164,14 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
     }
   };
 
-  // First page on mount; a filter, Show or file_filter change reloads page 0.
+  // First page on mount; a filter, Show, Group or file_filter change reloads page 0.
   // The text filter is debounced 300 ms (it's an ILIKE over the whole sample
   // table — ~1 s on 40k rows); the others are discrete clicks.
   const filterKey = JSON.stringify(filt);
   useEffect(() => {
     const t = setTimeout(() => load(0, q.trim(), show, false), q ? 300 : 0);
     return () => clearTimeout(t);
-  }, [q, show, filterKey]);
+  }, [q, show, filterKey, group]);
 
   const toggle = async (r) => {
     const next = !r.selected;
@@ -189,7 +194,7 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
   const { widthOf, startResize } = useColumnResize(_COL_W);
   // [key, header label] for every column after the checkbox; metadata columns are keyed "m:<name>".
-  const heads = [['sample', 'Sample ID'], ['dtype', 'Data type'], ['fastq', 'FASTQ'], ['fasta', 'FASTA'],
+  const heads = [['sample', 'Sample ID'], ['prep', 'Prep ID'], ['dtype', 'Data type'], ['fastq', 'FASTQ'], ['fasta', 'FASTA'],
     ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
     ...columns.map(c => [`m:${c}`, c])];
   const tableW = widthOf('sel') + heads.reduce((n, [k]) => n + widthOf(k), 0);
@@ -218,6 +223,10 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
           <button className={show === 'without_files' ? 'on' : ''} onClick={() => setShow('without_files')}>
             Without files
           </button>
+        </div>
+        <div className="agg-seg">
+          <button className={group ? 'on' : ''} title="Cluster samples under their prep template"
+            onClick={() => setGroup(v => !v)}>Group by prep</button>
         </div>
         <span className="agg-samples-count">
           {selected.toLocaleString()} of {(study.num_samples ?? total).toLocaleString()} selected
@@ -252,13 +261,29 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
               ))}</tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.sample_id} className={isPicked(r) ? 'agg-row-active' : ''}>
+            {rows.flatMap((r, i) => {
+              const gk = r.prep_id ?? 'none';
+              const header = group && (i === 0 || rows[i - 1].prep_id !== r.prep_id);
+              const g = header && groups.find(x => x.prep_id === r.prep_id);
+              const out = [];
+              if (header) out.push(
+                <tr key={`g-${gk}`} className="agg-group-row" onClick={() => setCollapsed(c => {
+                  const n = new Set(c); n.has(gk) ? n.delete(gk) : n.add(gk); return n;
+                })}>
+                  <td colSpan={columns.length + 10}>
+                    {collapsed.has(gk) ? '▸' : '▾'}{' '}
+                    <strong>{r.prep_id == null ? 'No prep' : `Prep ${r.prep_id}`}</strong>
+                    {g?.data_type && ` · ${g.data_type}`}{g && ` · ${_plural(g.count, 'sample', 'samples')}`}
+                  </td>
+                </tr>);
+              if (!group || !collapsed.has(gk)) out.push(
+              <tr key={`${r.sample_id}|${r.prep_id ?? ''}`} className={isPicked(r) ? 'agg-row-active' : ''}>
                 <td><input type="checkbox" checked={!!r.selected} onChange={() => toggle(r)} /></td>
                 <td>
                   <button className="agg-sample-id" title="Show metadata"
                     onClick={() => onPickSample({ study_id: sid, sample_id: r.sample_id })}>{r.sample_id}</button>
                 </td>
+                <td title={(r.prep_ids || []).join(', ') || undefined}>{(r.prep_ids || []).join(', ') || '—'}</td>
                 <td>
                   {(r.data_types || []).length ? (
                     <span className="agg-dt-cell">
@@ -285,10 +310,11 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                 <td className="agg-path">{fileLines(r, f => f.r2)}</td>
                 <td className="agg-path">{fileLines(r, f => f.barcodes)}</td>
                 {columns.map(c => <td key={c} title={r.fields?.[c] ?? undefined}>{r.fields?.[c] ?? ''}</td>)}
-              </tr>
-            ))}
+              </tr>);
+              return out;
+            })}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 9} className="agg-samples-empty">No samples match.</td></tr>
+              <tr><td colSpan={columns.length + 10} className="agg-samples-empty">No samples match.</td></tr>
             )}
           </tbody>
         </table>

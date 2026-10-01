@@ -78,7 +78,7 @@ def test_matching_sample_ids(ss):
 
 
 def test_prep_data_types_groups_and_binds(ss):
-    rows = [("s1", "16S"), ("s2", "16S"), ("s1", "18S")]  # s1 is in two preps' data types
+    rows = [("s1", 5, "16S"), ("s2", 5, "16S"), ("s1", 6, "18S")]  # s1 is in two preps' data types
     with patch.object(ss, "pooled_fetchall", return_value=rows) as m:
         assert ss.prep_data_types(232) == {"s1": ["16S", "18S"], "s2": ["16S"]}
     sql, params = m.call_args[0]
@@ -87,7 +87,7 @@ def test_prep_data_types_groups_and_binds(ss):
 
 
 def test_prep_data_types_caches(ss):
-    with patch.object(ss, "pooled_fetchall", return_value=[("s1", "16S")]) as m:
+    with patch.object(ss, "pooled_fetchall", return_value=[("s1", 5, "16S")]) as m:
         assert ss.prep_data_types(232) == {"s1": ["16S"]}
         assert ss.prep_data_types("232") == {"s1": ["16S"]}  # served from the memo
     assert m.call_count == 1
@@ -96,3 +96,58 @@ def test_prep_data_types_caches(ss):
 def test_prep_data_types_empty(ss):
     with patch.object(ss, "pooled_fetchall", return_value=[]):
         assert ss.prep_data_types(5) == {}
+
+
+# ── prep_membership / prep_groups / fetch_prep_samples ───────────────────────
+
+ROWS = [("s2", 6, "WGS"), ("s1", 6, "WGS"), ("s1", 5, "16S"), ("s3", 5, "16S")]
+
+
+def test_prep_membership_sorted_by_prep_and_shares_the_memo(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=ROWS) as m:
+        assert ss.prep_membership(232) == {"s1": [(5, "16S"), (6, "WGS")], "s2": [(6, "WGS")], "s3": [(5, "16S")]}
+        assert ss.prep_data_types(232) == {"s1": ["16S", "WGS"], "s2": ["WGS"], "s3": ["16S"]}
+    assert m.call_count == 1
+
+
+def test_prep_groups_counts_and_no_prep_remainder(ss):
+    def fake(sql, params=None):
+        return [(r,) for r in ("s1", "s2", "s3", "s4")] if "ORDER BY sample_id" in sql else ROWS
+    with patch.object(ss, "pooled_fetchall", side_effect=fake):
+        assert ss.prep_groups(232) == [
+            {"prep_id": 5, "data_type": "16S", "num_samples": 2},
+            {"prep_id": 6, "data_type": "WGS", "num_samples": 2},
+            {"prep_id": None, "data_type": None, "num_samples": 1},   # s4 is in no prep
+        ]
+
+
+def test_prep_groups_no_remainder_entry_when_every_sample_has_a_prep(ss):
+    def fake(sql, params=None):
+        return [("s1",)] if "ORDER BY sample_id" in sql else [("s1", 5, "16S")]
+    with patch.object(ss, "pooled_fetchall", side_effect=fake):
+        assert [g["prep_id"] for g in ss.prep_groups(232)] == [5]
+
+
+def test_fetch_prep_samples_limits_and_lists_all_preps(ss):
+    meta = [("s1", "a1", "2020-01-01", "soil")]
+    calls = []
+
+    def fake(sql, params=None):
+        calls.append((sql, params))
+        return meta if "anonymized_name" in sql else ROWS
+    with patch.object(ss, "pooled_fetchall", side_effect=fake):
+        samples, total = ss.fetch_prep_samples(232, 6, 1)
+    assert total == 2                                        # s1, s2 are in prep 6
+    assert samples == [{"sample_id": "s1", "anonymized_name": "a1", "collection_timestamp": "2020-01-01",
+                        "env_package": "soil", "prep_ids": [5, 6]}]
+    assert calls[-1][1] == [["s1"]]                          # only the first `limit` ids are fetched
+
+
+def test_fetch_prep_samples_no_prep(ss):
+    def fake(sql, params=None):
+        if "anonymized_name" in sql:
+            return [("s4", None, None, None)]
+        return [("s1",), ("s4",)] if "ORDER BY sample_id" in sql else [("s1", 5, "16S")]
+    with patch.object(ss, "pooled_fetchall", side_effect=fake):
+        samples, total = ss.fetch_prep_samples(232, None, 500)
+    assert (total, [x["sample_id"] for x in samples], samples[0]["prep_ids"]) == (1, ["s4"], [])

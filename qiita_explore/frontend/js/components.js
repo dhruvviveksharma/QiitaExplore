@@ -37,7 +37,7 @@ const FIELD_GROUPS = [
 ];
 
 // ─── SamplesBrowser: shared two-pane / stacked sample viewer ──────────────────
-function SamplesBrowser({ samples, layout, fetchFields }) {
+function SamplesBrowser({ samples, layout, fetchFields, bare }) {
   const [activeId,     setActiveId]     = useState(null);
   const [activeFields, setActiveFields] = useState(null);
   const [loading,      setLoading]      = useState(false);
@@ -62,7 +62,7 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
   const haystacks = useMemo(() => {
     return (samples || []).map(s => {
       const f     = s.fields || {};
-      const parts = [s.sample_id, s.anonymized_name, s.env_package, s.collection_timestamp, ...Object.values(f)];
+      const parts = [s.sample_id, s.anonymized_name, s.env_package, s.collection_timestamp, ...(s.prep_ids || []), ...Object.values(f)];
       return parts.map(v => v == null ? '' : String(v).toLowerCase()).join(' ');
     });
   }, [samples]);
@@ -147,7 +147,8 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
 
   const isStacked = layout === 'stacked';
 
-  const toolbarEl = (
+  const showPrep = samples.some(s => s.prep_ids);   // Prep ID column only when the list carries it
+  const toolbarEl = bare ? null : (
     <>
       <div className="samples-toolbar">
         <input className="samples-search" placeholder="Filter samples…" value={filterText}
@@ -175,10 +176,10 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
   const tableEl = (
     <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflowX:'hidden'}}>
       <table className="prep-table">
-        <thead><tr><th>Sample ID</th><th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
+        <thead><tr><th>Sample ID</th>{showPrep && <th>Prep ID</th>}<th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
         <tbody>
           {filteredSamples.length === 0 ? (
-            <tr><td colSpan={4} style={{color:'var(--text-3)', fontSize:'11.5px', padding:'10px 8px'}}>No matches.</td></tr>
+            <tr><td colSpan={showPrep ? 5 : 4} style={{color:'var(--text-3)', fontSize:'11.5px', padding:'10px 8px'}}>No matches.</td></tr>
           ) : filteredSamples.map(s => {
             const f = s.fields || {};
             const collectionDate = s.collection_timestamp || f.collection_timestamp || f.collection_date || '';
@@ -186,6 +187,7 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
               <tr key={s.sample_id} onClick={() => onRowClick(s)}
                 style={{cursor:'pointer', background: activeId === s.sample_id ? 'var(--accent-bg,#f0f4ff)' : ''}}>
                 <td>{s.sample_id}</td>
+                {showPrep && <td>{(s.prep_ids || []).join(', ') || '—'}</td>}
                 <td>{s.anonymized_name || f.anonymized_name || '—'}</td>
                 <td>{s.env_package || f.env_package || '—'}</td>
                 <td>{collectionDate ? String(collectionDate).slice(0, 10) : '—'}</td>

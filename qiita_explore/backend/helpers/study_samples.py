@@ -35,7 +35,7 @@ _PREP_DT_TTL_SECONDS = 3600
 _prep_dt_cache = {}  # study_id -> (fetched_at_epoch, {sample_id: [data_type, ...]}); tests clear it
 
 _PREP_DATA_TYPES_SQL = """
-SELECT pts.sample_id, dt.data_type
+SELECT pts.sample_id, pts.prep_template_id, dt.data_type
 FROM qiita.study_prep_template spt
 JOIN qiita.prep_template pt ON pt.prep_template_id = spt.prep_template_id
 JOIN qiita.data_type dt ON pt.data_type_id = dt.data_type_id
@@ -92,22 +92,63 @@ def display_columns(study_id):
     return _memoized(_columns_cache, _COLUMNS_TTL_SECONDS, sid, compute)
 
 
-def prep_data_types(study_id):
-    """{sample_id: [data_type, ...]} from every prep the study has — the same
-    membership (study_prep_template -> prep_template -> data_type ->
-    prep_template_sample) the study card's data-type chips come from. Unlike
-    helpers.sample_files, this knows about a sample regardless of whether it
-    resolves to a per-sample sequence file. Memoized per worker for an hour
-    (a study's prep set effectively never changes)."""
+def prep_membership(study_id):
+    """{sample_id: [(prep_id, data_type), ...]} sorted by prep id, from every
+    prep the study has (study_prep_template -> prep_template -> data_type ->
+    prep_template_sample) — the same membership the study card's data-type
+    chips come from. Unlike helpers.sample_files, this knows about a sample
+    regardless of whether it resolves to a per-sample sequence file. Memoized
+    per worker for an hour (a study's prep set effectively never changes)."""
     sid = int(study_id)
 
     def compute():
         out = {}
-        for sample_id, data_type in pooled_fetchall(_PREP_DATA_TYPES_SQL, [sid]):
-            out.setdefault(sample_id, set()).add(data_type)
+        for sample_id, prep_id, data_type in pooled_fetchall(_PREP_DATA_TYPES_SQL, [sid]):
+            out.setdefault(sample_id, set()).add((prep_id, data_type))
         return {k: sorted(v) for k, v in out.items()}
 
     return _memoized(_prep_dt_cache, _PREP_DT_TTL_SECONDS, sid, compute)
+
+
+def prep_data_types(study_id):
+    """{sample_id: [data_type, ...]} — prep_membership without the prep ids."""
+    return {sid: sorted({dt for _pid, dt in preps}) for sid, preps in prep_membership(study_id).items()}
+
+
+def prep_groups(study_id):
+    """[{"prep_id", "data_type", "num_samples"}] ascending by prep id, then a
+    {"prep_id": None, "data_type": None, "num_samples": n} entry for the
+    study's samples that are in no prep (omitted when there are none)."""
+    membership = prep_membership(study_id)
+    counts, types = {}, {}
+    for preps in membership.values():
+        for pid, dt in preps:
+            counts[pid] = counts.get(pid, 0) + 1
+            types[pid] = dt
+    groups = [{"prep_id": pid, "data_type": types[pid], "num_samples": counts[pid]} for pid in sorted(counts)]
+    orphans = sum(1 for sid in list_study_sample_ids(study_id) if sid not in membership)
+    if orphans:
+        groups.append({"prep_id": None, "data_type": None, "num_samples": orphans})
+    return groups
+
+
+def fetch_prep_samples(study_id, prep_id, limit):
+    """(samples, total) for one prep: [{sample_id, anonymized_name,
+    collection_timestamp, env_package, prep_ids}] by sample id, the first
+    `limit` of `total`. prep_id None = the study's samples in no prep."""
+    membership = prep_membership(study_id)
+    if prep_id is None:
+        ids = [sid for sid in list_study_sample_ids(study_id) if sid not in membership]
+    else:
+        ids = sorted(sid for sid, preps in membership.items() if any(p == prep_id for p, _dt in preps))
+    page = ids[:limit]
+    rows = pooled_fetchall(
+        f"SELECT sample_id, sample_values->>'anonymized_name', sample_values->>'collection_timestamp', "
+        f"sample_values->>'env_package' FROM {_table(study_id)} WHERE sample_id = ANY(%s) ORDER BY sample_id",
+        [page],
+    ) if page else []
+    return [{"sample_id": r[0], "anonymized_name": r[1], "collection_timestamp": r[2], "env_package": r[3],
+             "prep_ids": [p for p, _dt in membership.get(r[0], [])]} for r in rows], len(ids)
 
 
 def _where(q):

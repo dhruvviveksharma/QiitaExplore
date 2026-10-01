@@ -43,6 +43,7 @@ from helpers.sample_files import effective, facet_counts, get_sample_files, in_s
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import (
     display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids, prep_data_types,
+    prep_membership,
 )
 
 _MAX_IDS_PER_PATCH = 50_000
@@ -180,9 +181,17 @@ def _study_in(agg, study_id):
 def api_aggregation_study_samples(aggregation_id, study_id):
     """One page of the study's samples (Qiita) flagged with `selected` (SQLite)
     and `fastq`/`fasta` availability plus each sample's file paths (`files`,
-    one {artifact_id, data_type, processing, r1, r2, barcodes} per artifact). ?offset= ?limit= (1-500, default 200)
+    one {artifact_id, data_type, processing, r1, r2, barcodes} per artifact) and
+    its `prep_ids`. ?offset= ?limit= (1-500, default 200)
     ?q= substring filter on sample id or any metadata value ?show=
-    all|with_files|without_files (default all).
+    all|with_files|without_files (default all) ?group=prep.
+
+    group=prep clusters by prep: a sample is listed once under every one of its
+    preps whose data type passes the Data type filter (or under prep_id None,
+    "No prep"), preps ascending, files-first/id order inside each. Each row
+    then also carries its `prep_id`, `total` counts those (sample, prep) rows,
+    and `groups` gives {prep_id, data_type, count} for every prep in the result
+    (the header labels).
 
     The aggregation's saved file_filter first narrows which samples are in
     scope at all (in_scope: prep membership or file data type), then Show /
@@ -206,6 +215,9 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     show = request.args.get("show", "all")
     if show not in _SHOW_VALUES:
         return jsonify({"error": f"show must be one of {', '.join(_SHOW_VALUES)}"}), 400
+    group = request.args.get("group") or None
+    if group not in (None, "prep"):
+        return jsonify({"error": "group must be prep"}), 400
     q = (request.args.get("q") or "").strip() or None
 
     ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
@@ -223,17 +235,33 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         ids = [i for i in ids if i in files]
     elif show == "without_files":
         ids = [i for i in ids if i not in files]
-    total = len(ids)
     # Stable sort: samples with a file first, id order preserved within each group.
     ids.sort(key=lambda i: i not in files)
-
-    page = ids[offset:offset + limit]
+    membership = prep_membership(study_id)
+    groups = None
+    if group == "prep":
+        want_dts = file_filter.get("data_types") or []
+        pairs = []
+        for i in ids:
+            preps = [p for p, dt in membership.get(i, []) if not want_dts or dt in want_dts]
+            pairs += [(i, p) for p in (preps or [None])]
+        pairs.sort(key=lambda t: (t[1] is None, t[1] or 0))  # stable: files-first / id order kept inside a prep
+        prep_dt = {p: dt for preps in membership.values() for p, dt in preps}
+        counts = {}
+        for _i, p in pairs:
+            counts[p] = counts.get(p, 0) + 1
+        groups = [{"prep_id": p, "data_type": prep_dt.get(p), "count": n} for p, n in counts.items()]
+    else:
+        pairs = [(i, None) for i in ids]
+    total = len(pairs)
+    page_pairs = pairs[offset:offset + limit]
+    page = list(dict.fromkeys(i for i, _p in page_pairs))  # one sample can span several rows
     by_id = {r[0]: r for r in fetch_samples_by_ids(study_id, page)}
     columns = display_columns(study_id)
     sel = selected_in(aggregation_id, study_id, page)
     paths = page_files(study_id, page, all_files, file_filter)
     rows = []
-    for sid in page:
+    for sid, prep_id in page_pairs:
         r = by_id.get(sid)
         fields = dict(zip(columns, r[1:])) if r else {c: None for c in columns}
         fq, fa = files.get(sid, (0, 0))
@@ -250,13 +278,19 @@ def api_aggregation_study_samples(aggregation_id, study_id):
             "file_data_types": file_dts,
             "processing": sorted({e[1] for e in entries}),
             "files": paths[sid],
+            "prep_ids": [p for p, _dt in membership.get(sid, [])],
             "fields": fields,
         })
-    return jsonify({
+        if group == "prep":
+            rows[-1]["prep_id"] = prep_id
+    resp = {
         "study_id": study_id, "total": total, "offset": offset, "limit": limit,
         "columns": columns, "selected_count": study.get("selected_samples", 0),
         "with_files": with_files, "rows": rows,
-    })
+    }
+    if groups is not None:
+        resp["groups"] = groups
+    return jsonify(resp)
 
 
 def _id_list(value):

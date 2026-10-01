@@ -166,6 +166,7 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "fetch_samples_by_ids", lambda sid, ids: [_FIELDS[i] for i in ids if i in _FIELDS])
     monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 12, 2, 0)]})
     monkeypatch.setattr(ar, "prep_data_types", lambda sid: {})
+    monkeypatch.setattr(ar, "prep_membership", lambda sid: {})
     monkeypatch.setattr(ar, "page_files", lambda sid, ids, all_files, file_filter:
                         {i: _S2_FILES if i == "s2" else [] for i in ids})
     monkeypatch.setattr(ar, "fetch_export_rows", lambda selected, file_filter=None: [
@@ -250,10 +251,10 @@ def test_route_samples_page(client, logged_in, stub_qiita):
     assert [row["sample_id"] for row in page["rows"]] == ["s2", "s1"]
     assert page["rows"][0] == {"sample_id": "s2", "selected": False, "fastq": "paired", "fasta": False,
                                 "data_types": ["16S"], "file_data_types": ["16S"], "processing": ["Raw upload"],
-                                "files": _S2_FILES, "fields": {"sample_type": "skin"}}
+                                "files": _S2_FILES, "prep_ids": [], "fields": {"sample_type": "skin"}}
     assert page["rows"][1] == {"sample_id": "s1", "selected": True, "fastq": None, "fasta": False,
                                 "data_types": [], "file_data_types": [], "processing": [],
-                                "files": [], "fields": {"sample_type": "stool"}}
+                                "files": [], "prep_ids": [], "fields": {"sample_type": "stool"}}
 
     only_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=with_files").get_json()
     assert [row["sample_id"] for row in only_files["rows"]] == ["s2"]
@@ -432,6 +433,49 @@ def test_route_samples_follow_artifact_filter(client, logged_in, stub_qiita, mon
     assert r.get_json()["studies"][0]["selected_samples"] == 1
 
 
+def _prep_stubs(monkeypatch, ar, membership):
+    monkeypatch.setattr(ar, "prep_membership", lambda sid: membership)
+    monkeypatch.setattr(ar, "prep_data_types", lambda sid: {k: sorted({dt for _p, dt in v})
+                                                            for k, v in membership.items()})
+
+
+def test_route_samples_carry_prep_ids_and_group_by_prep(client, logged_in, stub_qiita, monkeypatch):
+    # s1 is in both preps; s2 (the only sample with a file) only in prep 6.
+    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")], "s2": [(6, "WGS")]})
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    base = f"/api/aggregations/{aid}/studies/16326/samples"
+
+    flat = client.get(base).get_json()
+    assert [(r["sample_id"], r["prep_ids"]) for r in flat["rows"]] == [("s2", [6]), ("s1", [5, 6])]
+    assert "groups" not in flat and "prep_id" not in flat["rows"][0]
+
+    page = client.get(base + "?group=prep").get_json()
+    # prep 5: s1; prep 6: s2 (has a file, so first) then s1 — s1 sits under both preps.
+    assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(5, "s1"), (6, "s2"), (6, "s1")]
+    assert page["total"] == 3
+    assert page["groups"] == [{"prep_id": 5, "data_type": "16S", "count": 1},
+                              {"prep_id": 6, "data_type": "WGS", "count": 2}]
+    # paging works over (sample, prep) rows
+    second = client.get(base + "?group=prep&offset=2&limit=1").get_json()
+    assert [(r["prep_id"], r["sample_id"]) for r in second["rows"]] == [(6, "s1")]
+    assert client.get(base + "?group=sample").status_code == 400
+
+
+def test_route_group_by_prep_honours_data_type_filter_and_puts_no_prep_last(client, logged_in, stub_qiita, monkeypatch):
+    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")]})   # s2 is in no prep
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    base = f"/api/aggregations/{aid}/studies/16326/samples?group=prep"
+    page = client.get(base).get_json()
+    assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(5, "s1"), (6, "s1"), (None, "s2")]
+    assert page["groups"][-1] == {"prep_id": None, "data_type": None, "count": 1}
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["WGS"]}}, headers=logged_in)
+    page = client.get(base).get_json()
+    # s1 only under its WGS prep; s2 (16S file, no prep) is out of scope under a WGS filter.
+    assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(6, "s1")]
+
+
 def test_route_samples_scoped_by_prep_data_type(client, logged_in, stub_qiita, monkeypatch):
     """Studies like 1070 / 1889 (16S / 18S) have no per-sample sequence file
     at all — only prep membership says what data type a sample belongs to.
@@ -513,6 +557,7 @@ def test_study_detail_refetches_when_cached_row_has_no_preps(client, logged_in, 
     monkeypatch.setattr(sr, "_fetch_prep_metadata_summary", lambda pid: {})
     monkeypatch.setattr(sr, "_fetch_study_samples", lambda sid, limit=200: ([], 0))
     monkeypatch.setattr(sr, "_fetch_sample_context_text", lambda sid: "")
+    monkeypatch.setattr(sr, "prep_membership", lambda sid: {})
     r = client.get(f"/api/studies/{sid}/detail")
     assert r.status_code == 200, r.get_json()
     assert fetched == [sid]

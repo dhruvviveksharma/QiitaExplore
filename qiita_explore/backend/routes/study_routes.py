@@ -22,6 +22,7 @@ from helpers.sample_search import search_studies_by_sample_meta
 from store import get_study_detail_cache, upsert_study_detail_cache
 from store.crud import get_setting, set_setting
 from helpers.artifact_graph import fetch_artifact_graph
+from helpers.study_samples import fetch_prep_samples, prep_groups, prep_membership
 from helpers.qiita_fetch import (
     first_studies,
     is_study_public,
@@ -127,6 +128,11 @@ def api_study_detail(study_id):
                 samples_context=samples_ctx,
             )
 
+    # Not part of samples_json: prep ids are read fresh, so the cache needs no migration.
+    membership = prep_membership(study_id)
+    for sample in samples:
+        sample["prep_ids"] = [pid for pid, _dt in membership.get(sample["sample_id"], [])]
+
     return jsonify({
         "study_id":       study_id,
         "preps":          preps,
@@ -136,6 +142,30 @@ def api_study_detail(study_id):
         "total_samples":  total_samples,
         "cached":         cache_hit,
     })
+
+
+@app.route('/api/studies/<int:study_id>/sample-preps', methods=['GET'])
+def api_study_sample_preps(study_id):
+    """Group headers for "Group by prep": [{prep_id, data_type, num_samples}] for
+    every prep of the study, plus a prep_id=None entry for samples in no prep."""
+    if not is_study_public(study_id):
+        return jsonify({'error': 'Study not found or not public'}), 404
+    return jsonify({"groups": prep_groups(study_id)})
+
+
+@app.route('/api/studies/<int:study_id>/preps/<prep_id>/samples', methods=['GET'])
+def api_study_prep_samples(study_id, prep_id):
+    """One prep's samples (prep_id "none" = samples in no prep), fetched when the
+    group is expanded. ?limit= (1-500, default 500); `total` is the full count."""
+    if not is_study_public(study_id):
+        return jsonify({'error': 'Study not found or not public'}), 404
+    try:
+        pid = None if prep_id == "none" else int(prep_id)
+        limit = min(500, max(1, int(request.args.get("limit", 500))))
+    except ValueError:
+        return jsonify({'error': 'Invalid prep id or limit'}), 400
+    samples, total = fetch_prep_samples(study_id, pid, limit)
+    return jsonify({"prep_id": pid, "samples": samples, "total": total, "limit": limit})
 
 
 @app.route('/api/studies/<int:study_id>/samples/<path:sample_id>', methods=['GET'])

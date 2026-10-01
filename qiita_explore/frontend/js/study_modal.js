@@ -1,6 +1,6 @@
 // Study detail modal — extracted from app_render.js (TKT-011)
 // Globals in scope: React, useState, useEffect, useRef (utils.js),
-//   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js),
+//   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js), PrepGroupedSamples (prep_samples.js),
 //   ArtifactOutputsView, prepReachableSet (merge_artifacts.js),
 //   ProvenanceForest (merge_tree.js), FastqManifestSection (fastq_manifest.js)
 
@@ -282,6 +282,7 @@ function StudyModalOutputs({ study, detail, loading }) {
 
 function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, actions }) {
   const [fullscreen,   setFullscreen]   = useState(false);
+  const [groupByPrep,  setGroupByPrep]  = useState(false);   // Samples: cluster under prep headers
   // Tracks whether the CURRENT fullscreen=true came from auto-scroll-expand
   // rather than an explicit click — only an auto-expand auto-collapses.
   const [autoExpanded, setAutoExpanded] = useState(false);
@@ -399,16 +400,21 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, act
                   ? `${detail.total_samples} total${detail.total_samples > 200 ? ', showing first 200' : ''}`
                   : undefined}
                 defaultOpen>
-                <SamplesBrowser
-                  samples={detail.samples || []}
-                  layout="two-pane"
-                  fetchFields={async (sampleId) => {
+                <div className="agg-seg" style={{ marginBottom: 8, width: 'fit-content' }}>
+                  <button className={groupByPrep ? 'on' : ''} title="Cluster samples under their prep template"
+                    onClick={() => setGroupByPrep(v => !v)}>Group by prep</button>
+                </div>
+                {(() => {
+                  const fetchFields = async (sampleId) => {
                     const res = await apiFetch(`/studies/${study.study_id}/samples/${encodeURIComponent(sampleId)}`);
                     if (!res.ok) return null;
                     const d = await res.json();
                     return d.fields || null;
-                  }}
-                />
+                  };
+                  return groupByPrep
+                    ? <PrepGroupedSamples key={study.study_id} studyId={study.study_id} fetchFields={fetchFields} />
+                    : <SamplesBrowser samples={detail.samples || []} layout="two-pane" fetchFields={fetchFields} />;
+                })()}
               </CollapsibleSection>
             )}
 
