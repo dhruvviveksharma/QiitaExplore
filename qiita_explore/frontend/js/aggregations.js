@@ -40,12 +40,12 @@ function useAggregations() {
   // body: {add:[…], remove:[…]} or {select:'all'|'none'|'with_files'|'matching', q}
   const setSamples = async (id, studyId, body) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}/samples`, { method: 'PATCH', body: JSON.stringify(body) }));
-  // file_filter: {data_types:[…], processing:[…]} (empty = any) — saved on the
-  // aggregation; drives every sample table and both exports.
-  const setFileFilter = async (id, file_filter) =>
-    replace(await apiJson(`/aggregations/${id}`, { method: 'PATCH', body: JSON.stringify({ file_filter }) }));
+  // file_filter: {data_types:[…], processing:[…], artifacts:[…]} (empty = any) — saved on
+  // one study; drives that study's sample table and its rows in the export.
+  const setStudyFileFilter = async (id, studyId, file_filter) =>
+    replace(await apiJson(`/aggregations/${id}/studies/${studyId}`, { method: 'PATCH', body: JSON.stringify({ file_filter }) }));
 
-  return { aggregations, create, rename, remove, addStudy, removeStudy, setSamples, setFileFilter };
+  return { aggregations, create, rename, remove, addStudy, removeStudy, setSamples, setStudyFileFilter };
 }
 
 // The header the server snapshots onto aggregation_studies so the tab can

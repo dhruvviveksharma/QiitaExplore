@@ -5,9 +5,9 @@
 // type/FASTQ/FASTA/Artifact ID/R1/R2/Barcodes columns with drag-to-resize
 // widths, a files-first Show filter, a Group by prep toggle that clusters rows
 // under collapsible prep headers, click-to-sort Prep ID / Artifact ID headers), and the metadata pane itself. The
-// Data type / Processing / Artifact pickers live in the sample table's toolbar
-// but set the aggregation's saved file_filter, so every study's table and all
-// header exports follow the same choice. Loads before aggregations.js,
+// Data type / Processing / Artifact pickers in a study's toolbar list that
+// study's options and save that study's own file_filter: they narrow only its
+// table and its rows in the header exports. Loads before aggregations.js,
 // whose AggregationsTab renders these.
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiJson, API (utils.js),
 //   StudyCard (study_card.js), FacetMultiSelect (browse_filters.js),
@@ -28,38 +28,33 @@ const _chunk = (arr, n) => {
 
 function AggregationDetail({ a, agg, picked, onPickSample }) {
   const [expandedId, setExpandedId] = useState(null);
-  const [facets, setFacets] = useState(null); // GET …/file-facets; kept while a refetch runs
+  const [counts, setCounts] = useState(null); // GET …/file-facets {exportable, selected}; kept while a refetch runs
   const [err, setErr] = useState('');
   const studies = a.studies || [];
-  const filt = a.file_filter || _NO_FILTER;
-  const filterKey = JSON.stringify(filt);
   const totalSelected = studies.reduce((n, s) => n + (s.selected_samples || 0), 0);
   const artifactTotal = studies.reduce((n, s) => n + (s.fastq_artifact_count || 0), 0);
   // Rows are chunked explicitly (not grid-auto-flow: dense) so the expanded
   // study's sample table sits right under its own row, DOM order = visual order.
   const perRow = picked ? 2 : 3;
 
-  // Picker options + the exportable count depend on the filter and on what
-  // is checked, so both are in the key. The per-study maps are cached
+  // The exportable count depends on each study's filter and on what is
+  // checked, so both are in the key. The per-study maps are cached
   // server-side; a refetch is cheap after the first.
-  const selKey = studies.map(s => `${s.study_id}:${s.selected_samples}`).join(',');
+  const studyKey = studies.map(s =>
+    `${s.study_id}:${s.selected_samples}:${JSON.stringify(s.file_filter || _NO_FILTER)}`).join('|');
   useEffect(() => {
     let live = true;
     apiJson(`/aggregations/${a.aggregation_id}/file-facets`)
-      .then(d => { if (live) setFacets(d); })
+      .then(d => { if (live) setCounts(d); })
       .catch(e => { if (live) setErr(e.message); });
     return () => { live = false; };
-  }, [a.aggregation_id, filterKey, selKey]);
+  }, [a.aggregation_id, studyKey]);
 
-  const setFilter = (key, names) => {
-    setErr('');
-    agg.setFileFilter(a.aggregation_id, { ...filt, [key]: names }).catch(e => setErr(e.message));
-  };
-  const exportable = facets?.exportable;
+  const exportable = counts?.exportable;
   const canExport = totalSelected > 0 && exportable !== 0;
   const disabledTitle = totalSelected === 0
     ? 'Check at least one sample'
-    : 'No checked sample has a file for this Data type / Processing';
+    : "No checked sample has a file under its study's Data type / Processing / Artifact filter";
   // Plain links like the per-artifact manifest (fastq_manifest.js): the
   // session cookie rides along on top-level navigation.
   const base = `${API}/aggregations/${a.aggregation_id}`;
@@ -114,7 +109,6 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
               </div>
               {expanded && (
                 <AggregationSampleTable key={`samples-${expanded.study_id}`} a={a} agg={agg} study={expanded}
-                  filt={filt} facets={facets} onFilterChange={setFilter}
                   picked={picked} onPickSample={onPickSample} />
               )}
             </React.Fragment>
@@ -127,10 +121,10 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
 // One study's samples, paged from Qiita with the aggregation's checked state
 // and file availability (under the saved file_filter) merged in
 // server-side, sorted files-first. Load-more shape from merge_detail.js
-// StudySampleTable. `facets`/`onFilterChange` render and edit the
-// aggregation-wide file_filter from here, since this is where its effect on
-// the sample list is visible.
-function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, picked, onPickSample }) {
+// StudySampleTable. The toolbar's Data type / Processing / Artifact pickers
+// show this study's options (GET …/file-facets?study_id=) and edit this
+// study's own file_filter (study.file_filter, PATCH …/studies/<sid>).
+function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
   const [rows,      setRows]      = useState([]);
   const [total,     setTotal]     = useState(study.num_samples ?? 0);
   const [withFiles, setWithFiles] = useState(0);
@@ -143,9 +137,11 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const [collapsed, setCollapsed] = useState(() => new Set()); // prep keys (prep_id ?? 'none')
   const [loading,   setLoading]   = useState(false);
   const [err,       setErr]       = useState('');
+  const [facets,    setFacets]    = useState(null); // this study's picker options
   const seq = useRef(0);
   const aid = a.aggregation_id, sid = study.study_id;
   const selected = study.selected_samples ?? 0;
+  const filt = study.file_filter || _NO_FILTER;
 
   const load = async (offset, query, showVal, append) => {
     const mine = ++seq.current;   // a slower earlier page must not overwrite a newer one
@@ -177,6 +173,20 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
     return () => clearTimeout(t);
   }, [q, show, filterKey, group, sort]);
 
+  // Picker options (counts) follow this study's filter and checked samples.
+  useEffect(() => {
+    let live = true;
+    apiJson(`/aggregations/${aid}/file-facets?study_id=${sid}`)
+      .then(d => { if (live) setFacets(d); })
+      .catch(e => { if (live) setErr(e.message); });
+    return () => { live = false; };
+  }, [aid, sid, filterKey, selected]);
+
+  const onFilterChange = (key, names) => {
+    setErr('');
+    agg.setStudyFileFilter(aid, sid, { ...filt, [key]: names }).catch(e => setErr(e.message));
+  };
+
   const toggle = async (r) => {
     const next = !r.selected;
     const flip = (v) => setRows(prev => prev.map(x => x.sample_id === r.sample_id ? { ...x, selected: v } : x));
@@ -193,9 +203,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const hasMore = rows.length < total;
   const isPicked = (r) => !!picked && picked.study_id === sid && picked.sample_id === r.sample_id;
   const fastqLabel = (r) => r.fastq === 'paired' ? 'R1+R2' : r.fastq === 'single' ? 'R1' : '—';
-  // A data type the header filter excludes stays visible, dimmed: the sample
+  // A data type this study's filter excludes stays visible, dimmed: the sample
   // has such a file, it just isn't what the export will contain.
-  const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
+  const dtKept = (dt) => !(filt.data_types || []).length || filt.data_types.includes(dt);
   const { widthOf, startResize, isResizing } = useColumnResize(_COL_W);
   // [key, header label] for every column after the checkbox; metadata columns are keyed "m:<name>".
   // Prep ID / Artifact ID headers sort server-side: click cycles asc → desc → off.
@@ -217,9 +227,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
         <span className="agg-samples-title">Samples of <strong>{study.study_title || `study ${sid}`}</strong></span>
         <input className="samples-search" placeholder="Filter by sample id or any metadata value…"
           value={q} onChange={e => setQ(e.target.value)} />
-        <FacetMultiSelect label="Data type" options={facets?.data_types} selected={filt.data_types}
+        <FacetMultiSelect label="Data type" options={facets?.data_types} selected={filt.data_types || []}
           onChange={names => onFilterChange('data_types', names)} disabled={!facets} />
-        <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
+        <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing || []}
           onChange={names => onFilterChange('processing', names)} disabled={!facets} />
         <FacetMultiSelect label="Artifact" options={facets?.artifacts} selected={filt.artifacts || []} searchable selectedFirst
           onChange={names => onFilterChange('artifacts', names)} disabled={!facets} />

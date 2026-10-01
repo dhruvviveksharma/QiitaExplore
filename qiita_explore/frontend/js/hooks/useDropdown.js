@@ -63,14 +63,18 @@ function useDropdown(computePos, { hoverClose = true } = {}) {
     };
   }, [open]);
 
-  // Default: left-aligned, directly below the trigger (matches a <select>).
-  // Pass computePos(rect) to override — e.g. ChatRowMenu right-aligns its
-  // "..." menu to a fixed width instead.
+  // Default: left-aligned, directly below the trigger (matches a <select>),
+  // shifted left when that would run past the window's right edge (a trigger
+  // at the end of a toolbar). Pass computePos(rect) to override — e.g.
+  // ChatRowMenu right-aligns its "..." menu to a fixed width instead.
   const toggle = e => {
     e && e.stopPropagation();
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos(computePos ? computePos(r) : { top: r.bottom + 4, left: r.left });
+      setPos(computePos ? computePos(r) : {
+        top: r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 200 - 8)),   // 200 = .cr-menu width
+      });
     }
     clearTimers();
     setClosing(false);

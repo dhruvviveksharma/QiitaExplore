@@ -38,6 +38,18 @@ function useBrowseFilters() {
   return { filters, setFilters, clear, facets };
 }
 
+// Panel placement: below the trigger, or above it when the trigger sits near
+// the window's bottom and there is more room above; shifted left so the 280px
+// .bf-menu never runs past the right edge (the last picker in a toolbar).
+const _BF_MENU_W = 280, _BF_MENU_H = 340;
+const _facetMenuPos = r => {
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - _BF_MENU_W - 8));
+  const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
+  return below >= 200 || below >= above
+    ? { top: r.bottom + 4, left, maxHeight: Math.min(_BF_MENU_H, below) }
+    : { bottom: window.innerHeight - r.top + 4, left, maxHeight: Math.min(_BF_MENU_H, above) };
+};
+
 // The app's first multi-select dropdown: stays open after each toggle (the
 // two earlier useDropdown consumers close on select) and opts out of the
 // hover-away close so typing in the search box with the mouse elsewhere
@@ -45,7 +57,7 @@ function useBrowseFilters() {
 // selectedFirst: options ticked when the menu was opened are listed first (a snapshot, so ticking
 // an item doesn't make it jump from under the cursor; it moves up the next time the menu opens).
 function FacetMultiSelect({ label, options, selected, onChange, searchable, disabled, selectedFirst }) {
-  const dd = useDropdown(undefined, { hoverClose: false });
+  const dd = useDropdown(_facetMenuPos, { hoverClose: false });
   const [q, setQ] = useState('');
   const [pinned, setPinned] = useState([]);
   const ql = q.trim().toLowerCase();
@@ -68,7 +80,8 @@ function FacetMultiSelect({ label, options, selected, onChange, searchable, disa
         <ChevronIcon dir={dd.open ? 'up' : 'down'} size={11} />
       </button>
       {dd.open && dd.pos && (
-        <div className={`${dd.menuClass} bf-menu`} style={{ top: dd.pos.top, left: dd.pos.left }}
+        <div className={`${dd.menuClass} bf-menu`}
+          style={{ top: dd.pos.top, bottom: dd.pos.bottom, left: dd.pos.left, maxHeight: dd.pos.maxHeight }}
           onClick={e => e.stopPropagation()}>
           {searchable && (
             <input className="bf-search" placeholder={`Search ${label.toLowerCase()}…`} value={q}
