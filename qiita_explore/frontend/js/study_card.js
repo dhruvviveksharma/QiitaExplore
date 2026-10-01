@@ -17,7 +17,7 @@ function StudyCard({ study, onClick, actions, className }) {
         <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
           <span className="study-id-badge">ID {study.study_id}</span>
           {study.year != null && <span className="study-year-badge" title="Year added to Qiita">{study.year}</span>}
-          {study.is_gold && <span className="gold-badge">GOLD</span>}
+          {!!study.is_gold && <span className="gold-badge">GOLD</span>}
         </div>
         {actions && <div className="study-card-actions" onClick={e => e.stopPropagation()}>{actions}</div>}
       </div>
