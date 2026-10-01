@@ -1,18 +1,22 @@
 // Sample Aggregation tab — the detail side: the aggregation's studies as
 // Browse-style cards (3 per row, 2 while the metadata pane is open), the
 // expanded study's sample table (checkbox = in the aggregation, sample id =
-// open its metadata, Data type / Processing pickers + Data type/FASTQ/FASTA
-// columns, a files-first Show filter), and the metadata pane itself. The
-// Data type / Processing pickers live in the sample table's toolbar but set
-// the aggregation's saved file_filter, so every study's table and both
+// open its metadata, Data type / Processing / Artifact pickers + Data
+// type/FASTQ/FASTA/Artifact ID/R1/R2/Barcodes columns with drag-to-resize
+// widths, a files-first Show filter), and the metadata pane itself. The
+// Data type / Processing / Artifact pickers live in the sample table's toolbar
+// but set the aggregation's saved file_filter, so every study's table and all
 // header exports follow the same choice. Loads before aggregations.js,
 // whose AggregationsTab renders these.
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiJson, API (utils.js),
-//   StudyCard (study_card.js), FacetMultiSelect (browse_filters.js)
+//   StudyCard (study_card.js), FacetMultiSelect (browse_filters.js),
+//   useColumnResize (hooks/useColumnResize.js)
 
 const _plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const _AGG_PAGE = 200;
-const _NO_FILTER = { data_types: [], processing: [] };
+const _NO_FILTER = { data_types: [], processing: [], artifacts: [] };
+// Starting column widths (px); metadata columns fall back to the hook's 140.
+const _COL_W = { sel: 32, sample: 170, dtype: 120, fastq: 70, fasta: 60, artifact: 90, r1: 280, r2: 280, barcodes: 280 };
 const _chunk = (arr, n) => {
   const out = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
@@ -80,6 +84,7 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
           <div className="agg-download-row">
             {download(`${base}/export.xlsx`, '↓ Excel (.xlsx)', 'For Excel / Numbers: sample ids stay text')}
             {download(`${base}/export.csv`, '↓ CSV (for scripts)', 'For pandas / scripts')}
+            {download(`${base}/export.tsv`, '↓ TSV', 'Tab-separated, same columns as the CSV')}
           </div>
           {err && <div className="browse-error">{err}</div>}
         </div>
@@ -182,6 +187,17 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   // A data type the header filter excludes stays visible, dimmed: the sample
   // has such a file, it just isn't what the export will contain.
   const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
+  const { widthOf, startResize } = useColumnResize(_COL_W);
+  // [key, header label] for every column after the checkbox; metadata columns are keyed "m:<name>".
+  const heads = [['sample', 'Sample ID'], ['dtype', 'Data type'], ['fastq', 'FASTQ'], ['fasta', 'FASTA'],
+    ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
+    ...columns.map(c => [`m:${c}`, c])];
+  const tableW = widthOf('sel') + heads.reduce((n, [k]) => n + widthOf(k), 0);
+  // One line per artifact the sample has files in; the Artifact / R1 / R2 / Barcodes cells
+  // each render the same lines in the same order, so they stay row-aligned.
+  const fileLines = (r, pick) => (r.files || []).length
+    ? r.files.map(f => <div key={f.artifact_id} className="agg-file-line" title={pick(f) || undefined}>{pick(f) || '—'}</div>)
+    : <span className="agg-file-no">—</span>;
   return (
     <div className="agg-samples-panel">
       <div className="agg-samples-toolbar">
@@ -192,6 +208,8 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
           onChange={names => onFilterChange('data_types', names)} disabled={!facets} />
         <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
           onChange={names => onFilterChange('processing', names)} disabled={!facets} />
+        <FacetMultiSelect label="Artifact" options={facets?.artifacts} selected={filt.artifacts || []} searchable
+          onChange={names => onFilterChange('artifacts', names)} disabled={!facets} />
         <div className="agg-seg">
           <button className={show === 'all' ? 'on' : ''} onClick={() => setShow('all')}>All</button>
           <button className={show === 'with_files' ? 'on' : ''} onClick={() => setShow('with_files')}>
@@ -219,10 +237,19 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
       </div>
       {err && <div className="browse-error">{err}</div>}
       <div className="agg-samples-wrap">
-        <table className="prep-table">
+        <table className="prep-table agg-resizable" style={{ width: tableW }}>
+          <colgroup>
+            <col style={{ width: widthOf('sel') }} />
+            {heads.map(([k]) => <col key={k} style={{ width: widthOf(k) }} />)}
+          </colgroup>
           <thead>
-            <tr><th></th><th>Sample ID</th><th>Data type</th><th>FASTQ</th><th>FASTA</th>
-              {columns.map(c => <th key={c}>{c}</th>)}</tr>
+            <tr><th></th>
+              {heads.map(([k, label]) => (
+                <th key={k} title={label}>
+                  {label}
+                  <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} />
+                </th>
+              ))}</tr>
           </thead>
           <tbody>
             {rows.map(r => (
@@ -239,8 +266,8 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                         const hasFile = (r.file_data_types || []).includes(dt);
                         const title = hasFile
                           ? `Processing:\n${(r.processing || []).join('\n')}`
-                          : `In a ${dt} prep, but no per-sample sequence file — Qiita keeps these ` +
-                            'reads in one multiplexed / Demultiplexed file per prep, not exportable here.';
+                          : `In a ${dt} prep, but no sequence file — Qiita keeps these ` +
+                            'reads in one Demultiplexed file per prep, not exportable here.';
                         return (
                           <span key={dt} title={title}
                             className={`dtype-chip${hasFile ? '' : ' agg-dt-nofile'}${dtKept(dt) ? '' : ' agg-dt-dim'}`}>
@@ -253,11 +280,15 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                 </td>
                 <td className={r.fastq ? 'agg-file-yes' : 'agg-file-no'}>{fastqLabel(r)}</td>
                 <td className={r.fasta ? 'agg-file-yes' : 'agg-file-no'}>{r.fasta ? '✓' : '—'}</td>
-                {columns.map(c => <td key={c}>{r.fields?.[c] ?? ''}</td>)}
+                <td>{fileLines(r, f => String(f.artifact_id))}</td>
+                <td className="agg-path">{fileLines(r, f => f.r1)}</td>
+                <td className="agg-path">{fileLines(r, f => f.r2)}</td>
+                <td className="agg-path">{fileLines(r, f => f.barcodes)}</td>
+                {columns.map(c => <td key={c} title={r.fields?.[c] ?? undefined}>{r.fields?.[c] ?? ''}</td>)}
               </tr>
             ))}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 5} className="agg-samples-empty">No samples match.</td></tr>
+              <tr><td colSpan={columns.length + 9} className="agg-samples-empty">No samples match.</td></tr>
             )}
           </tbody>
         </table>

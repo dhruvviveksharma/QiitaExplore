@@ -67,6 +67,15 @@
 .agg-samples-wrap .prep-table { margin-top: 0; }
 .agg-samples-wrap .prep-table th { position: sticky; top: 0; background: var(--surface); z-index: 1; padding-left: 8px; }
 .agg-samples-wrap .prep-table td { padding-left: 8px; }
+/* Resizable columns: fixed layout + a <colgroup> from useColumnResize; a cell that
+   overflows its column is clipped with an ellipsis (title attr has the full text). */
+.agg-samples-wrap .prep-table.agg-resizable { table-layout: fixed; max-width: none; }
+.agg-resizable th, .agg-resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agg-resizable th { position: sticky; }
+.agg-col-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; user-select: none; }
+.agg-col-resize:hover { background: var(--accent-soft); }
+.agg-file-line { overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+.agg-path { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; }
 .agg-samples-wrap input[type=checkbox] { accent-color: var(--accent); margin: 0; display: block; }
 .agg-sample-id { color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
 .agg-sample-id:hover { text-decoration: underline; }

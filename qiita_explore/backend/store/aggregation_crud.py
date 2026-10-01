@@ -54,13 +54,14 @@ def _touch(conn, aggregation_id: str, now: str) -> None:
 
 
 def _file_filter(raw) -> dict:
-    """file_filter_json → {"data_types": [...], "processing": [...]}; a
+    """file_filter_json → {"data_types": [...], "processing": [...], "artifacts": [...]}; a
     missing or unreadable value means no filter."""
     try:
         f = json.loads(raw) if raw else {}
     except ValueError:
         f = {}
-    return {"data_types": list(f.get("data_types") or []), "processing": list(f.get("processing") or [])}
+    return {"data_types": list(f.get("data_types") or []), "processing": list(f.get("processing") or []),
+            "artifacts": list(f.get("artifacts") or [])}
 
 
 def _hydrate(conn, row) -> dict:

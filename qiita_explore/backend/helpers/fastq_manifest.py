@@ -9,14 +9,15 @@ renamed "{obj_id}_{basename}", which is why startswith() would miss them).
 
 Two entry points share one JOIN block and one row builder so path logic can't
 drift: fetch_manifest (a single per_sample_FASTQ artifact → QIIME2 V2 manifest,
-used by the study modal) and fetch_aggregate_csv_rows (every per-sample
-sequence artifact — per_sample_FASTQ fwd/rev and FASTA raw_fasta — across a
-Sample Aggregation's studies, restricted to the checked samples).
+used by the study modal) and fetch_export_rows (every per-sample sequence
+artifact — per_sample_FASTQ fwd/rev and FASTA raw_fasta — across a Sample
+Aggregation's studies, restricted to the checked samples; one row per sample ×
+artifact with R1 / R2 / barcodes columns, shared by the CSV, TSV and xlsx).
 
-_study_groups is the shared group-assembly step behind both
-fetch_aggregate_csv_rows (checked samples → CSV rows) and
-helpers/sample_files.get_sample_files (every sample of one study → which have
-a file at all, for the sample table's availability columns).
+_study_groups is the shared group-assembly step behind both fetch_export_rows
+(checked samples → export rows) and helpers/sample_files (every sample of one
+study → which have a file at all, and a page's file paths, for the sample
+table).
 """
 
 import csv
@@ -47,19 +48,22 @@ _WHERE_FASTQ = """WHERE at.artifact_type = 'per_sample_FASTQ'
 """
 # The aggregate CSV / availability map also take Qiita's per-sample FASTA
 # uploads (artifact type FASTA, one raw_fasta per sample). raw_qual is not
-# sequence and is skipped.
-_WHERE_SEQ = """WHERE at.artifact_type IN ('per_sample_FASTQ', 'FASTA')
-  AND ft.filepath_type IN ('raw_forward_seqs', 'raw_reverse_seqs', 'raw_fasta')
+# sequence and is skipped. A raw multiplexed run (artifact type FASTQ) holds
+# many samples per file, so it also brings its raw_barcodes file.
+_WHERE_SEQ = """WHERE at.artifact_type IN ('per_sample_FASTQ', 'FASTA', 'FASTQ')
+  AND (ft.filepath_type IN ('raw_forward_seqs', 'raw_reverse_seqs', 'raw_fasta')
+       OR (at.artifact_type = 'FASTQ' AND ft.filepath_type = 'raw_barcodes'))
 """
 _ARTIFACT_FILES_SQL = _FILES_FROM + _WHERE_FASTQ + "  AND sa.study_id = %s AND a.artifact_id = %s\n"
 _STUDIES_FILES_SQL = _FILES_FROM + _WHERE_SEQ + "  AND sa.study_id = ANY(%s)\n"
+_ARTIFACTS_CLAUSE = "  AND a.artifact_id = ANY(%s)\n"
 
 _COUNT_SQL = """
 SELECT COUNT(*)
 FROM qiita.study_artifact sa
 JOIN qiita.artifact a       ON sa.artifact_id = a.artifact_id
 JOIN qiita.artifact_type at ON a.artifact_type_id = at.artifact_type_id
-WHERE sa.study_id = %s AND at.artifact_type IN ('per_sample_FASTQ', 'FASTA')
+WHERE sa.study_id = %s AND at.artifact_type IN ('per_sample_FASTQ', 'FASTA', 'FASTQ')
 """
 
 # pid comes from the query above (an int), never from request input — same
@@ -72,7 +76,7 @@ WHERE sample_id <> 'qiita_sample_column_names'
 
 _PAIRED_HEADER = ["sample-id", "forward-absolute-filepath", "reverse-absolute-filepath"]
 _SINGLE_HEADER = ["sample-id", "absolute-filepath"]
-CSV_HEADER = ["study_id", "sample_id", "file_path_in_qmounts", "data_type", "file_type", "processing"]
+EXPORT_HEADER = ["study_id", "sample_id", "artifact_id", "data_type", "processing", "R1", "R2", "barcodes"]
 # An artifact's processing step is the Qiita command that produced it
 # (e.g. "Atropos v1.1.24", "Adapter and host filtering v2023.12"); uploaded
 # artifacts have no command. One metagenomic prep often holds several of these
@@ -90,8 +94,13 @@ def _claim(pool, prefix):
     return None
 
 
+def _path(base_dir, mountpoint, subdirectory, artifact_id, filename):
+    rel = f"{mountpoint}/{artifact_id}/{filename}" if subdirectory else f"{mountpoint}/{filename}"
+    return f"{base_dir}/{rel}"
+
+
 def build_manifest_rows(samples, files, base_dir):
-    """samples: [(sample_id, run_prefix)]; files: [(filepath_type, mountpoint, subdirectory, artifact_id, filename)].
+    """samples: [(sample_id, run_prefix, ...)]; files: [(filepath_type, mountpoint, subdirectory, artifact_id, filename)].
 
     Returns (rows, paired) with rows = [(sample_id, fwd_path, rev_path_or_None)]
     sorted by sample_id. Anything that isn't a reverse read (raw_forward_seqs,
@@ -100,13 +109,13 @@ def build_manifest_rows(samples, files, base_dir):
     """
     fwd, rev = [], []
     for ftype, mountpoint, subdirectory, artifact_id, filename in files:
-        rel = f"{mountpoint}/{artifact_id}/{filename}" if subdirectory else f"{mountpoint}/{filename}"
-        (rev if ftype == "raw_reverse_seqs" else fwd).append((filename, f"{base_dir}/{rel}"))
+        (rev if ftype == "raw_reverse_seqs" else fwd).append(
+            (filename, _path(base_dir, mountpoint, subdirectory, artifact_id, filename)))
     paired = bool(rev)
 
     rows = []
     # Longest prefix first so '1002' claims its files before '100' can.
-    for sample_id, prefix in sorted(samples, key=lambda s: len(s[1] or ""), reverse=True):
+    for sample_id, prefix, *_ in sorted(samples, key=lambda s: len(s[1] or ""), reverse=True):
         if not prefix:
             continue
         f = _claim(fwd, prefix)
@@ -117,39 +126,70 @@ def build_manifest_rows(samples, files, base_dir):
     return rows, paired
 
 
-def group_matches(file_filter, data_type, processing):
-    """file_filter: {"data_types": [...], "processing": [...]} or None; an
-    empty (or missing) list means any. A group is one whole artifact, and
+def build_multiplexed_rows(samples, files, base_dir):
+    """A raw multiplexed FASTQ artifact: one file set holds many samples, so
+    nothing is claimed. Files of each type are sorted by name and zipped into
+    lanes (fwd[i], rev[i], barcodes[i]); one lane serves every sample, several
+    lanes go to the samples whose run_prefix is in that lane's forward name
+    (the reverse name may not contain it: ..._R1_001 vs ..._R3_001).
+
+    Returns [(sample_id, fwd, rev_or_None, barcodes_or_None)] sorted by
+    sample_id; a sample with no lane is omitted."""
+    by_type = {"raw_forward_seqs": [], "raw_reverse_seqs": [], "raw_barcodes": []}
+    for ftype, mountpoint, subdirectory, artifact_id, filename in files:
+        if ftype in by_type:
+            by_type[ftype].append((filename, _path(base_dir, mountpoint, subdirectory, artifact_id, filename)))
+    fwd, rev, bc = (sorted(by_type[t]) for t in ("raw_forward_seqs", "raw_reverse_seqs", "raw_barcodes"))
+    lanes = [(f[0], f[1], rev[i][1] if i < len(rev) else None, bc[i][1] if i < len(bc) else None)
+             for i, f in enumerate(fwd)]
+    rows = []
+    for sample_id, prefix, *_ in samples:
+        lane = lanes[0] if len(lanes) == 1 else next((l for l in lanes if prefix and prefix in l[0]), None)
+        if lane:
+            rows.append((sample_id, lane[1], lane[2], lane[3]))
+    rows.sort()
+    return rows
+
+
+def _resolve(artifact_type, samples, files, base_dir):
+    """The one dispatch for every consumer: [(sample_id, fwd, rev, barcodes)]
+    whether the artifact is per-sample (barcodes None) or a pooled FASTQ run."""
+    if artifact_type == "FASTQ":
+        return build_multiplexed_rows(samples, files, base_dir)
+    rows, _ = build_manifest_rows(samples, files, base_dir)
+    return [(sid, fwd, rev, None) for sid, fwd, rev in rows]
+
+
+def group_matches(file_filter, data_type, processing, artifact_id=None):
+    """file_filter: {"data_types": [...], "processing": [...], "artifacts":
+    ["140751", ...]} or None; an empty (or missing) list means any. A group is one whole artifact, and
     run_prefix claiming is per artifact, so dropping non-matching groups never
     changes which file a kept group's sample resolves to."""
     f = file_filter or {}
-    dts, procs = f.get("data_types") or [], f.get("processing") or []
-    return (not dts or data_type in dts) and (not procs or processing in procs)
+    dts, procs, arts = f.get("data_types") or [], f.get("processing") or [], f.get("artifacts") or []
+    return ((not dts or data_type in dts) and (not procs or processing in procs)
+            and (not arts or str(artifact_id) in arts))
 
 
-def build_csv_rows(groups, base_dir):
-    """groups: [(study_id, data_type, artifact_type, processing, samples, files,
-    allow)], one per artifact. `samples` is the prep's FULL (sample_id, run_prefix)
-    list — longest-prefix-first claiming needs every sample present, or a
-    selected '8B4' would take '8B4ABX_R1.fastq.gz' once unselected '8B4ABX'
-    were filtered away. `allow` is the set of checked sample ids; only their
-    rows are emitted.
+def build_export_rows(groups, base_dir):
+    """groups: [(study_id, data_type, artifact_type, processing, artifact_id,
+    samples, files, allow)], one per artifact. `samples` is the prep's FULL
+    (sample_id, run_prefix) list — longest-prefix-first claiming needs every
+    sample present, or a selected '8B4' would take '8B4ABX_R1.fastq.gz' once
+    unselected '8B4ABX' were filtered away. `allow` is the set of checked
+    sample ids; only their rows are emitted.
 
-    Returns sorted, de-duplicated (study_id, sample_id, path, data_type,
-    file_type, processing) rows — one per file: a paired sample yields two
-    rows, and a sample in two preps or two processing copies yields rows for
-    each.
+    Returns sorted, de-duplicated (study_id, sample_id, artifact_id, data_type,
+    processing, R1, R2, barcodes) rows, blanks as '' — one per sample × artifact.
+    R1 is the forward read (or a FASTA artifact's raw_fasta). A sample in two
+    preps or two processing copies yields a row for each; pooled runs repeat
+    the same paths for every sample of the prep.
     """
     out = set()
-    for study_id, data_type, artifact_type, processing, samples, files, allow in groups:
-        fwd_type = "raw_fasta" if artifact_type == "FASTA" else "raw_forward_seqs"
-        rows, _ = build_manifest_rows(samples, files, base_dir)
-        for sample_id, fwd, rev in rows:
-            if sample_id not in allow:
-                continue
-            out.add((study_id, sample_id, fwd, data_type, fwd_type, processing))
-            if rev:
-                out.add((study_id, sample_id, rev, data_type, "raw_reverse_seqs", processing))
+    for study_id, data_type, artifact_type, processing, artifact_id, samples, files, allow in groups:
+        for sample_id, fwd, rev, bc in _resolve(artifact_type, samples, files, base_dir):
+            if sample_id in allow:
+                out.add((study_id, sample_id, artifact_id, data_type, processing, fwd, rev or "", bc or ""))
     return sorted(out)
 
 
@@ -162,13 +202,13 @@ def to_tsv(rows, paired):
     return buf.getvalue()
 
 
-def to_csv(rows):
-    """The export for scripts / pandas. Opened in Excel or Numbers, an id like
-    10317.000001062 parses as a number and shows as 10317 — use to_xlsx for
-    spreadsheets."""
+def to_csv(rows, delimiter=","):
+    """The export for scripts / pandas (delimiter="\t" gives the TSV). Opened in
+    Excel or Numbers, an id like 10317.000001062 parses as a number and shows as
+    10317 — use to_xlsx for spreadsheets."""
     buf = io.StringIO()
-    w = csv.writer(buf, lineterminator="\n")
-    w.writerow(CSV_HEADER)
+    w = csv.writer(buf, delimiter=delimiter, lineterminator="\n")
+    w.writerow(EXPORT_HEADER)
     w.writerows(rows)
     return buf.getvalue()
 
@@ -185,7 +225,7 @@ def to_xlsx(rows):
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("samples")
     ws.freeze_panes = "A2"
-    for col, width in zip("ABCDEF", (10, 22, 90, 18, 18, 36)):
+    for col, width in zip("ABCDEFGH", (10, 22, 12, 18, 36, 90, 90, 90)):
         ws.column_dimensions[col].width = width
     bold = Font(bold=True)
 
@@ -197,7 +237,7 @@ def to_xlsx(rows):
             c.font = font
         return c
 
-    ws.append([cell(h, font=bold) for h in CSV_HEADER])
+    ws.append([cell(h, font=bold) for h in EXPORT_HEADER])
     for study_id, *rest in rows:
         ws.append([cell(int(study_id), text=False)] + [cell(str(v)) for v in rest])
     buf = io.BytesIO()
@@ -230,15 +270,19 @@ def count_fastq_artifacts(study_id):
     return int(pooled_fetchall(_COUNT_SQL, [int(study_id)])[0][0])
 
 
-def _study_groups(study_ids, selected):
-    """Every per-sample sequence artifact (per_sample_FASTQ + FASTA) of
-    study_ids, bucketed into (study_id, data_type, artifact_type, processing,
-    samples, files, allow) groups — one per artifact, `samples` the prep's FULL
-    (sample_id, run_prefix) list, `allow` = selected.get(study_id, set()).
+def _study_groups(study_ids, selected, artifact_ids=None):
+    """Every sequence artifact (per_sample_FASTQ, FASTA, pooled FASTQ) of
+    study_ids — or only artifact_ids, when given — bucketed into (study_id,
+    data_type, artifact_type, processing, artifact_id, samples, files, allow)
+    groups — one per artifact, `samples` the prep's FULL (sample_id,
+    run_prefix) list, `allow` = selected.get(study_id, set()).
     [] when study_ids is empty or none of them has such an artifact."""
     if not study_ids:
         return []
-    frows = pooled_fetchall(_STUDIES_FILES_SQL, [study_ids])
+    if artifact_ids is None:
+        frows = pooled_fetchall(_STUDIES_FILES_SQL, [study_ids])
+    else:
+        frows = pooled_fetchall(_STUDIES_FILES_SQL + _ARTIFACTS_CLAUSE, [study_ids, list(artifact_ids)])
     if not frows:
         return []
     # Bucket by (study_id, prep_id, artifact_id); iterate sorted for determinism.
@@ -248,29 +292,33 @@ def _study_groups(study_ids, selected):
     samples_by_prep = {}  # a prep can own several artifacts; fetch its samples once
     groups = []
     for key in sorted(by_artifact):
-        study_id, pid, _artifact_id = key
+        study_id, pid, artifact_id = key
         if pid not in samples_by_prep:
             samples_by_prep[pid] = pooled_fetchall(_SAMPLES_SQL.format(pid=int(pid)))
         first = by_artifact[key][0]
-        groups.append((study_id, first[7], first[8], first[9] or RAW_UPLOAD, samples_by_prep[pid],
+        groups.append((study_id, first[7], first[8], first[9] or RAW_UPLOAD, artifact_id, samples_by_prep[pid],
                        _files(by_artifact[key]), selected.get(study_id, set())))
     return groups
 
 
-def fetch_aggregate_csv_rows(selected, file_filter=None):
-    """selected: {study_id: {sample_id, ...}} — empty sets are ignored.
-    file_filter: the aggregation's saved {"data_types", "processing"} (see
-    group_matches). Returns build_csv_rows over every matching per-sample
-    sequence artifact of those studies. Raises ValueError when no such
-    artifact exists or no checked sample resolves to a file."""
+def _export_groups(selected, file_filter):
     if not _BASE:
         raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
     study_ids = sorted(int(s) for s, ids in selected.items() if ids)
-    groups = [g for g in _study_groups(study_ids, selected) if group_matches(file_filter, g[1], g[3])]
+    groups = [g for g in _study_groups(study_ids, selected) if group_matches(file_filter, g[1], g[3], g[4])]
     if not groups:
-        raise ValueError("No per-sample sequence artifacts of the chosen data type / processing "
+        raise ValueError("No sequence artifacts of the chosen data type / processing "
                          "in the selected studies")
-    rows = build_csv_rows(groups, _BASE)
+    return groups
+
+
+def fetch_export_rows(selected, file_filter=None):
+    """selected: {study_id: {sample_id, ...}} — empty sets are ignored.
+    file_filter: the aggregation's saved {"data_types", "processing",
+    "artifacts"} (see group_matches). Returns build_export_rows over every
+    matching sequence artifact of those studies. Raises ValueError when no such
+    artifact exists or no checked sample resolves to a file."""
+    rows = build_export_rows(_export_groups(selected, file_filter), _BASE)
     if not rows:
-        raise ValueError("None of the selected samples has a per-sample sequence file")
+        raise ValueError("None of the selected samples has a sequence file")
     return rows

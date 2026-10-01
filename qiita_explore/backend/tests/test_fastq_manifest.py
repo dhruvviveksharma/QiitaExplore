@@ -81,7 +81,7 @@ def test_raw_fasta_is_the_forward_file(fm):
     assert rows == [("1928.SRR040501", f"{BASE}/FASTA/3220/SRR040501.fna", None)]
 
 
-# ── build_csv_rows / to_csv ──────────────────────────────────────────────────
+# ── build_export_rows / to_csv ───────────────────────────────────────────────
 
 def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True, processing="Raw upload"):
     files = []
@@ -89,61 +89,64 @@ def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True, 
         files.append(("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1.fastq.gz"))
         if paired:
             files.append(("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2.fastq.gz"))
-    return (study_id, data_type, "per_sample_FASTQ", processing, samples, files, set(allow))
+    return (study_id, data_type, "per_sample_FASTQ", processing, artifact_id, samples, files, set(allow))
 
 
-def test_csv_paired_sample_is_two_rows_with_file_types(fm):
-    rows = fm.build_csv_rows([_fastq_group(16326, "16S", 10, [("s1", "P1")], ["s1"])], BASE)
-    assert rows == [
-        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz", "16S", "raw_forward_seqs", "Raw upload"),
-        (16326, "s1", f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "16S", "raw_reverse_seqs", "Raw upload"),
-    ]
+def test_export_paired_sample_is_one_row_with_r1_r2(fm):
+    rows = fm.build_export_rows([_fastq_group(16326, "16S", 10, [("s1", "P1")], ["s1"])], BASE)
+    assert rows == [(16326, "s1", 10, "16S", "Raw upload", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz",
+                     f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "")]
 
 
-def test_csv_fasta_group(fm):
+def test_export_single_end_has_blank_r2_and_barcodes(fm):
+    (row,) = fm.build_export_rows([_fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)], BASE)
+    assert row[5].endswith("/P1_R1.fastq.gz") and row[6:] == ("", "")
+
+
+def test_export_fasta_group_puts_raw_fasta_in_r1(fm):
     files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
-    rows = fm.build_csv_rows([(1928, "16S", "FASTA", "Raw upload", [("s1", "SRR1")], files, {"s1"})], BASE)
-    assert rows == [(1928, "s1", f"{BASE}/FASTA/3220/SRR1.fna", "16S", "raw_fasta", "Raw upload")]
+    rows = fm.build_export_rows([(1928, "16S", "FASTA", "Raw upload", 3220, [("s1", "SRR1")], files, {"s1"})], BASE)
+    assert rows == [(1928, "s1", 3220, "16S", "Raw upload", f"{BASE}/FASTA/3220/SRR1.fna", "", "")]
 
 
-def test_csv_allowlist_filters_after_matching(fm):
+def test_export_allowlist_filters_after_matching(fm):
     # 's8B4' is selected, 's8B4ABX' is not. If unselected samples were dropped
     # before matching, '8B4' would claim '8B4ABX_R1.fastq.gz' (longest first
     # needs the whole prep present).
     samples = [("s8B4", "8B4"), ("s8B4ABX", "8B4ABX")]
-    rows = fm.build_csv_rows([_fastq_group(1, "16S", 7, samples, ["s8B4"], paired=False)], BASE)
+    rows = fm.build_export_rows([_fastq_group(1, "16S", 7, samples, ["s8B4"], paired=False)], BASE)
     assert [r[1] for r in rows] == ["s8B4"]
-    assert rows[0][2].endswith("/8B4_R1.fastq.gz")
+    assert rows[0][5].endswith("/8B4_R1.fastq.gz")
 
 
-def test_csv_sample_in_two_preps_yields_both_data_types(fm):
+def test_export_sample_in_two_preps_yields_both_data_types(fm):
     g1 = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)
     g2 = _fastq_group(5, "Metagenomic", 20, [("s1", "P1")], ["s1"], paired=False)
-    rows = fm.build_csv_rows([g1, g2], BASE)
-    assert [(r[3], r[4]) for r in rows] == [("16S", "raw_forward_seqs"), ("Metagenomic", "raw_forward_seqs")]
-    assert len({r[2] for r in rows}) == 2
+    rows = fm.build_export_rows([g1, g2], BASE)
+    assert [(r[2], r[3]) for r in rows] == [(10, "16S"), (20, "Metagenomic")]
+    assert len({r[5] for r in rows}) == 2
 
 
-def test_csv_dedupes_identical_rows_and_sorts(fm):
+def test_export_dedupes_identical_rows_and_sorts(fm):
     g = _fastq_group(5, "16S", 10, [("s2", "P2"), ("s1", "P1")], ["s1", "s2"], paired=False)
-    rows = fm.build_csv_rows([g, g], BASE)
+    rows = fm.build_export_rows([g, g], BASE)
     assert [r[1] for r in rows] == ["s1", "s2"]
 
 
-def test_csv_unselected_and_unmatched_omitted(fm):
+def test_export_unselected_and_unmatched_omitted(fm):
     g = _fastq_group(5, "16S", 10, [("s1", "P1"), ("s2", None)], ["s1", "s2", "ghost"], paired=False)
-    assert [r[1] for r in fm.build_csv_rows([g], BASE)] == ["s1"]
-    assert fm.build_csv_rows([], BASE) == []
+    assert [r[1] for r in fm.build_export_rows([g], BASE)] == ["s1"]
+    assert fm.build_export_rows([], BASE) == []
 
 
-def test_csv_processing_copies_are_separate_rows(fm):
+def test_export_processing_copies_are_separate_rows(fm):
     # One metagenomic prep often holds raw, adapter-trimmed and host-filtered
     # per_sample_FASTQ artifacts of the same reads; `processing` tells them apart.
     raw = _fastq_group(5, "Metagenomic", 10, [("s1", "P1")], ["s1"], paired=False)
     filt = _fastq_group(5, "Metagenomic", 11, [("s1", "P1")], ["s1"], paired=False,
                         processing="Adapter and host filtering v2023.12")
-    rows = fm.build_csv_rows([raw, filt], BASE)
-    assert [r[5] for r in rows] == ["Raw upload", "Adapter and host filtering v2023.12"]
+    rows = fm.build_export_rows([raw, filt], BASE)
+    assert [r[4] for r in rows] == ["Raw upload", "Adapter and host filtering v2023.12"]
 
 
 def test_group_matches(fm):
@@ -154,12 +157,17 @@ def test_group_matches(fm):
     assert not fm.group_matches(f, "16S", "Atropos v1.1.24")
     assert not fm.group_matches(f, "Metagenomic", "Raw upload")
     assert fm.group_matches({"data_types": ["16S"]}, "16S", "anything")
+    a = {"artifacts": ["140751"]}
+    assert fm.group_matches(a, "16S", "Raw upload", 140751)        # int id matches the string pick
+    assert not fm.group_matches(a, "16S", "Raw upload", 140713)
+    assert fm.group_matches({"artifacts": []}, "16S", "Raw upload", 1)
 
 
-def test_to_csv(fm):
-    out = fm.to_csv([(5, "s1", "/p/a_R1.fq.gz", "16S", "raw_forward_seqs", "Raw upload")])
-    assert out == ("study_id,sample_id,file_path_in_qmounts,data_type,file_type,processing\n"
-                   "5,s1,/p/a_R1.fq.gz,16S,raw_forward_seqs,Raw upload\n")
+def test_to_csv_and_tsv(fm):
+    rows = [(5, "s1", 10, "16S", "Raw upload", "/p/a_R1.fq.gz", "/p/a_R2.fq.gz", "")]
+    assert fm.to_csv(rows) == ("study_id,sample_id,artifact_id,data_type,processing,R1,R2,barcodes\n"
+                               "5,s1,10,16S,Raw upload,/p/a_R1.fq.gz,/p/a_R2.fq.gz,\n")
+    assert fm.to_csv(rows, "\t").splitlines()[1] == "5\ts1\t10\t16S\tRaw upload\t/p/a_R1.fq.gz\t/p/a_R2.fq.gz\t"
 
 
 def test_to_xlsx_keeps_sample_id_as_text(fm):
@@ -167,13 +175,14 @@ def test_to_xlsx_keeps_sample_id_as_text(fm):
     # 10317 — indistinguishable from study_id. The xlsx types it as text.
     import io
     import openpyxl
-    out = fm.to_xlsx([(10317, "10317.000001062", "/p/a_R1.fq.gz", "Metagenomic",
-                       "raw_forward_seqs", "Raw upload")])
+    out = fm.to_xlsx([(10317, "10317.000001062", 140751, "Metagenomic", "Raw upload",
+                       "/p/a_R1.fq.gz", "/p/a_R2.fq.gz", "")])
     ws = openpyxl.load_workbook(io.BytesIO(out)).active
-    assert [c.value for c in ws[1]] == fm.CSV_HEADER
-    study, sample, *_ = ws[2]
+    assert [c.value for c in ws[1]] == fm.EXPORT_HEADER
+    study, sample, artifact, *_ = ws[2]
     assert (study.value, study.data_type) == (10317, "n")
     assert (sample.value, sample.data_type, sample.number_format) == ("10317.000001062", "s", "@")
+    assert (artifact.value, artifact.data_type) == ("140751", "s")
     assert ws.freeze_panes == "A2"
 
 
@@ -196,9 +205,9 @@ def test_study_groups_shape(fm):
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
         groups = fm._study_groups([5], {5: {"s1"}})
     assert len(groups) == 1
-    study_id, data_type, artifact_type, processing, samples, files, allow = groups[0]
-    assert (study_id, data_type, artifact_type, processing, allow) == \
-        (5, "16S", "per_sample_FASTQ", "Raw upload", {"s1"})  # no command -> an upload
+    study_id, data_type, artifact_type, processing, artifact_id, samples, files, allow = groups[0]
+    assert (study_id, data_type, artifact_type, processing, artifact_id, allow) == \
+        (5, "16S", "per_sample_FASTQ", "Raw upload", 10, {"s1"})  # no command -> an upload
     assert samples == [("s1", "P1")]
     assert files == [("raw_forward_seqs", "per_sample_FASTQ", True, 10, "P1_R1.fastq.gz")]
     # the files query (over study_artifact) runs before the per-prep sample query
@@ -214,15 +223,30 @@ def test_study_groups_processing_is_the_command_name(fm):
     assert [g[3] for g in groups] == ["Raw upload", "Atropos v1.1.24"]
 
 
-def test_fetch_aggregate_csv_rows_applies_file_filter(fm, monkeypatch):
+def test_study_groups_artifact_ids_narrow_the_query(fm):
+    calls = []
+
+    def fake(sql, params=None):
+        calls.append((sql, params))
+        return [_file_row(artifact_id=11)] if "study_artifact" in sql else [("s1", "P1")]
+
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        groups = fm._study_groups([5], {}, [11])
+    assert [g[4] for g in groups] == [11]
+    assert "a.artifact_id = ANY(%s)" in calls[0][0] and calls[0][1] == [[5], [11]]
+
+
+def test_fetch_export_rows_applies_file_filter(fm, monkeypatch):
     monkeypatch.setattr(fm, "_BASE", BASE)
     rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
     fake = lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]  # noqa: E731
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        out = fm.fetch_aggregate_csv_rows({5: {"s1"}}, {"data_types": [], "processing": ["Atropos v1.1.24"]})
-    assert [(r[2].split("/")[-2], r[5]) for r in out] == [("11", "Atropos v1.1.24")]
+        out = fm.fetch_export_rows({5: {"s1"}}, {"data_types": [], "processing": ["Atropos v1.1.24"]})
+        assert [(r[2], r[4]) for r in out] == [(11, "Atropos v1.1.24")]
+        out = fm.fetch_export_rows({5: {"s1"}}, {"data_types": [], "processing": [], "artifacts": ["10"]})
+        assert [(r[2], r[4]) for r in out] == [(10, "Raw upload")]
     with patch.object(fm, "pooled_fetchall", side_effect=fake), pytest.raises(ValueError):
-        fm.fetch_aggregate_csv_rows({5: {"s1"}}, {"data_types": ["ITS"], "processing": []})
+        fm.fetch_export_rows({5: {"s1"}}, {"data_types": ["ITS"], "processing": []})
 
 
 def test_study_groups_empty_when_no_study_ids_or_no_artifacts(fm):
@@ -324,3 +348,44 @@ def test_route_404_when_not_fastq_artifact(client, logged_in, monkeypatch):
 
 def test_route_401_without_session(_app, fake_manifest):
     assert _app.test_client().get("/api/artifacts/233553/fastq-manifest?study_id=16326").status_code == 401
+
+
+# ── pooled (multiplexed) FASTQ artifacts ─────────────────────────────────────
+
+_P = "Metcalf18S_L007_R1_001"
+_POOLED = [
+    ("raw_barcodes", "raw_data", False, 2318, f"834_{_P}_barcodes.fastq.gz"),
+    ("raw_forward_seqs", "raw_data", False, 2318, f"834_{_P}_sequences.fastq.gz"),
+    ("raw_reverse_seqs", "raw_data", False, 2318, "834_Metcalf18S_L007_R3_001.fastq.gz"),
+]
+
+
+def test_multiplexed_single_lane_serves_every_sample_even_if_r3_lacks_prefix(fm):
+    rows = fm.build_multiplexed_rows([("s2", _P), ("s1", _P)], _POOLED, BASE)
+    fwd = f"{BASE}/raw_data/834_{_P}_sequences.fastq.gz"
+    rev = f"{BASE}/raw_data/834_Metcalf18S_L007_R3_001.fastq.gz"
+    bc = f"{BASE}/raw_data/834_{_P}_barcodes.fastq.gz"
+    assert rows == [("s1", fwd, rev, bc), ("s2", fwd, rev, bc)]
+
+
+def test_multiplexed_two_lanes_route_by_run_prefix(fm):
+    files = [
+        ("raw_forward_seqs", "raw_data", False, 1, "A_L007_sequences.fastq.gz"),
+        ("raw_forward_seqs", "raw_data", False, 1, "s_4_1_sequences.fastq.gz"),
+        ("raw_barcodes", "raw_data", False, 1, "A_L007_sequences_barcodes.fastq.gz"),
+        ("raw_barcodes", "raw_data", False, 1, "s_4_1_sequences_barcodes.fastq.gz"),
+    ]
+    rows = fm.build_multiplexed_rows([("a", "A_L007"), ("b", "s_4_1_sequences"), ("c", "nope")],
+                                     files, BASE)
+    assert [(r[0], r[1].rsplit("/", 1)[1], r[2], r[3].rsplit("/", 1)[1]) for r in rows] == [
+        ("a", "A_L007_sequences.fastq.gz", None, "A_L007_sequences_barcodes.fastq.gz"),
+        ("b", "s_4_1_sequences.fastq.gz", None, "s_4_1_sequences_barcodes.fastq.gz"),
+    ]
+
+
+def test_export_rows_for_pooled_group(fm):
+    g = (1889, "18S", "FASTQ", "Raw upload", 2318, [("s1", _P), ("s2", _P)], _POOLED, {"s1"})
+    (row,) = fm.build_export_rows([g], BASE)
+    assert row[:5] == (1889, "s1", 2318, "18S", "Raw upload")
+    assert row[5].endswith("_sequences.fastq.gz") and row[6].endswith("R3_001.fastq.gz")
+    assert row[7].endswith("_barcodes.fastq.gz")

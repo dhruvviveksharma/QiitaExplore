@@ -1,10 +1,10 @@
 """Sample Aggregation routes: a user's named set of samples, grouped by study,
-plus one export (CSV for scripts, xlsx for spreadsheets) of the checked
-samples' per-sample sequence files (study_id, sample_id, file_path_in_qmounts,
-data_type, file_type, processing).
+plus one export (CSV for scripts, xlsx for spreadsheets, TSV) of the checked
+samples' per-sample sequence files — one row per sample × artifact: study_id,
+sample_id, artifact_id, data_type, processing, R1, R2, barcodes.
 
-The aggregation's saved file_filter (data types × processing steps; empty =
-any) has two effects. Its data-type half also scopes the sample table itself:
+The aggregation's saved file_filter (data types × processing steps × artifact
+ids; empty = any) has two effects. Its data-type half also scopes the sample table itself:
 a sample stays listed if it has no chosen type, or belongs to it by prep
 membership (helpers.study_samples.prep_data_types) or by file (a data type
 without a per-sample file, e.g. a 16S study with only Demultiplexed/BIOM
@@ -37,9 +37,9 @@ from store import (
     selected_by_study,
 )
 from helpers.fastq_manifest import (
-    XLSX_MIMETYPE, count_fastq_artifacts, fetch_aggregate_csv_rows, to_csv, to_xlsx,
+    XLSX_MIMETYPE, count_fastq_artifacts, fetch_export_rows, to_csv, to_xlsx,
 )
-from helpers.sample_files import effective, facet_counts, get_sample_files, in_scope
+from helpers.sample_files import effective, facet_counts, get_sample_files, in_scope, page_files
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import (
     display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids, prep_data_types,
@@ -51,13 +51,13 @@ _SAMPLES_BODY_HELP = ('body must be {"add": [...], "remove": [...]} or '
 _SHOW_VALUES = ("all", "with_files", "without_files")
 # {fastq availability int -> API string}; 0 (none) -> None, handled separately.
 _FASTQ_LABEL = {2: "paired", 1: "single"}
-_FILTER_KEYS = ("data_types", "processing")
+_FILTER_KEYS = ("data_types", "processing", "artifacts")
 _FILTER_MAX_ITEMS, _FILTER_MAX_LEN = 50, 200
 
 
 def _parse_file_filter(value):
-    """Validate a client file_filter → {"data_types": [...], "processing": [...]}."""
-    help_ = 'file_filter must be {"data_types": [str, ...], "processing": [str, ...]}'
+    """Validate a client file_filter → {"data_types": [...], "processing": [...], "artifacts": [...]}."""
+    help_ = 'file_filter must be {"data_types": [str, ...], "processing": [str, ...], "artifacts": [str, ...]}'
     if not isinstance(value, dict) or set(value) - set(_FILTER_KEYS):
         raise ValueError(help_)
     out = {}
@@ -84,7 +84,7 @@ def api_create_aggregation():
 @app.route("/api/aggregations/<aggregation_id>", methods=["PATCH"])
 def api_update_aggregation(aggregation_id):
     """Body: {"name": ...} and/or {"file_filter": {"data_types": [...],
-    "processing": [...]}}. Returns the full aggregation."""
+    "processing": [...], "artifacts": [...]}}. Returns the full aggregation."""
     body = request.get_json() or {}
     if "name" not in body and "file_filter" not in body:
         return jsonify({"error": "name or file_filter required"}), 400
@@ -107,7 +107,7 @@ def api_update_aggregation(aggregation_id):
 
 @app.route("/api/aggregations/<aggregation_id>/file-facets", methods=["GET"])
 def api_aggregation_file_facets(aggregation_id):
-    """Options for the Data type / Processing pickers across the aggregation's
+    """Options for the Data type / Processing / Artifact pickers across the aggregation's
     studies (sample counts, facet-style; Data type options include prep-only
     types with no per-sample file, e.g. a 16S study with only
     Demultiplexed/BIOM artifacts), plus `exportable`: how many checked
@@ -119,14 +119,14 @@ def api_aggregation_file_facets(aggregation_id):
     file_filter = agg["file_filter"]
     maps = {int(s["study_id"]): get_sample_files(s["study_id"]) for s in agg["studies"]}
     preps = {int(s["study_id"]): prep_data_types(s["study_id"]) for s in agg["studies"]}
-    data_types, processing = facet_counts(maps.values(), preps.values(), file_filter)
+    data_types, processing, artifacts = facet_counts(maps.values(), preps.values(), file_filter)
     selected = selected_by_study(aggregation_id)
     exportable = 0
     for sid, ids in selected.items():
         eff = effective(maps.get(int(sid), {}), file_filter)
         exportable += sum(1 for i in ids if i in eff)
     return jsonify({
-        "data_types": data_types, "processing": processing, "exportable": exportable,
+        "data_types": data_types, "processing": processing, "artifacts": artifacts, "exportable": exportable,
         "selected": sum(len(ids) for ids in selected.values()),
     })
 
@@ -179,7 +179,8 @@ def _study_in(agg, study_id):
 @app.route("/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples", methods=["GET"])
 def api_aggregation_study_samples(aggregation_id, study_id):
     """One page of the study's samples (Qiita) flagged with `selected` (SQLite)
-    and `fastq`/`fasta` availability. ?offset= ?limit= (1-500, default 200)
+    and `fastq`/`fasta` availability plus each sample's file paths (`files`,
+    one {artifact_id, data_type, processing, r1, r2, barcodes} per artifact). ?offset= ?limit= (1-500, default 200)
     ?q= substring filter on sample id or any metadata value ?show=
     all|with_files|without_files (default all).
 
@@ -230,6 +231,7 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     by_id = {r[0]: r for r in fetch_samples_by_ids(study_id, page)}
     columns = display_columns(study_id)
     sel = selected_in(aggregation_id, study_id, page)
+    paths = page_files(study_id, page, all_files, file_filter)
     rows = []
     for sid in page:
         r = by_id.get(sid)
@@ -247,6 +249,7 @@ def api_aggregation_study_samples(aggregation_id, study_id):
             "data_types": sorted(set(prep_types.get(sid, [])) | set(file_dts)),
             "file_data_types": file_dts,
             "processing": sorted({e[1] for e in entries}),
+            "files": paths[sid],
             "fields": fields,
         })
     return jsonify({
@@ -270,7 +273,7 @@ def api_set_aggregation_samples(aggregation_id, study_id):
     """Edit which of the study's samples are checked. Either explicit lists
     {"add": [...], "remove": [...]} or a bulk {"select": "all" | "none" |
     "with_files" | "matching", "q": ...}. "all"/"none"/"with_files" replace the
-    whole selection ("with_files" = every sample with a per-sample sequence
+    whole selection ("with_files" = every sample with a sequence
     file — exactly what the CSV export can contain); "matching" (requires q)
     adds every sample the filter hits to the current selection.
     Ids are stored as given; one that isn't a real sample never resolves to a
@@ -318,7 +321,8 @@ def _export_rows(aggregation_id):
     if not selected:
         return None, (jsonify({"error": "No samples selected"}), 400)
     try:
-        return fetch_aggregate_csv_rows(selected, agg["file_filter"]), None
+        # Resolved at call time so tests can patch the module-level names.
+        return fetch_export_rows(selected, agg["file_filter"]), None
     except ValueError as e:
         return None, (jsonify({"error": str(e)}), 404)
 
@@ -330,15 +334,26 @@ def _attachment(aggregation_id, ext):
 @app.route("/api/aggregations/<aggregation_id>/export.csv", methods=["GET"])
 def download_aggregation_csv(aggregation_id):
     """CSV of every checked sample's per-sample sequence files under the saved
-    file_filter — one row per file (a paired sample gives two), columns
-    study_id, sample_id, file_path_in_qmounts, data_type, file_type,
-    processing. Samples with no resolvable file are omitted. For scripts: a
-    spreadsheet parses ids like 10317.000001062 as numbers, so the tab offers
-    export.xlsx for those."""
+    file_filter — one row per sample × artifact, columns study_id, sample_id,
+    artifact_id, data_type, processing, R1, R2, barcodes (blank when absent).
+    Samples with no resolvable file are omitted. For scripts: a spreadsheet
+    parses ids like 10317.000001062 as numbers, so the tab offers export.xlsx
+    for those."""
     rows, err = _export_rows(aggregation_id)
     if err:
         return err
     return Response(to_csv(rows), mimetype="text/csv", headers=_attachment(aggregation_id, "csv"))
+
+
+@app.route("/api/aggregations/<aggregation_id>/export.tsv", methods=["GET"])
+def download_aggregation_tsv(aggregation_id):
+    """export.csv's rows, tab-separated. Pooled (multiplexed) runs repeat the
+    same paths for every sample of the prep."""
+    rows, err = _export_rows(aggregation_id)
+    if err:
+        return err
+    return Response(to_csv(rows, "\t"), mimetype="text/tab-separated-values",
+                    headers=_attachment(aggregation_id, "tsv"))
 
 
 @app.route("/api/aggregations/<aggregation_id>/export.xlsx", methods=["GET"])
