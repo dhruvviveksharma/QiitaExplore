@@ -262,7 +262,7 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
                 <th key={k} title={sortable[k] ? `${label} — click to sort` : label}
                   className={sortable[k] ? 'agg-sortable' : undefined}
                   onClick={sortable[k] ? () => cycleSort(sortable[k]) : undefined}>
-                  {label}{sort?.key === sortable[k] && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
+                  {label}{sortable[k] && sort?.key === sortable[k] && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
                   <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} onClick={e => e.stopPropagation()} />
                 </th>
               ))}</tr>
