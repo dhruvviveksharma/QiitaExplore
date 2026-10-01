@@ -7,7 +7,7 @@ login and stub fixtures are that module's."""
 # module-scoped app), so every test parameter "redefines" an imported name.
 import pytest  # noqa: F401
 
-from .test_aggregations import _add, _app, _create, client, logged_in, stub_qiita  # noqa: F401
+from .test_aggregations import _add, _app, _create, _row, client, logged_in, stub_qiita  # noqa: F401
 
 
 # ── the saved file filter ────────────────────────────────────────────────────
@@ -61,11 +61,11 @@ def test_route_study_filters_are_independent(client, logged_in, stub_qiita, monk
     assert _study(r.get_json(), 777)["file_filter"] == _EMPTY
 
     a = client.get(f"/api/aggregations/{aid}/studies/16326/samples").get_json()
-    assert ([x["sample_id"] for x in a["rows"]], a["with_files"]) == (["s1"], 1)
+    assert ([(x["sample_id"], x["artifact_id"]) for x in a["rows"]], a["with_files"]) == ([("s1", 11)], 1)
     b = client.get(f"/api/aggregations/{aid}/studies/777/samples").get_json()
-    assert ([x["sample_id"] for x in b["rows"]], b["with_files"]) == (["s1", "s2"], 2)
+    assert ([(x["sample_id"], x["artifact_id"]) for x in b["rows"]], b["with_files"]) == ([("s1", 21), ("s2", 22)], 2)
     r = client.patch(f"/api/aggregations/{aid}/studies/777/samples", json={"select": "with_files"}, headers=logged_in)
-    assert _study(r.get_json(), 777)["selected_samples"] == 2
+    assert _study(r.get_json(), 777)["selected_rows"] == 2
 
     # options per study; the header count adds each study under its own filter
     names = lambda d, k: [o["name"] for o in d[k]]  # noqa: E731
@@ -106,7 +106,7 @@ def test_route_samples_and_select_follow_file_filter(client, logged_in, stub_qii
     assert client.get(base + "?show=without_files").get_json()["rows"] == []
 
     r = client.patch(base, json={"select": "with_files"}, headers=logged_in)
-    assert r.get_json()["studies"][0]["selected_samples"] == 1
+    assert r.get_json()["studies"][0]["selected_rows"] == 1
 
 
 def test_route_samples_follow_artifact_filter(client, logged_in, stub_qiita, monkeypatch):
@@ -117,10 +117,10 @@ def test_route_samples_follow_artifact_filter(client, logged_in, stub_qiita, mon
     client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["11"]}}, headers=logged_in)
     page = client.get(base).get_json()
     # Only s1 has a file in artifact 11; s2 (artifact 12) is out of scope, not just file-less.
-    assert [r["sample_id"] for r in page["rows"]] == ["s1"]
+    assert [(r["sample_id"], r["artifact_id"]) for r in page["rows"]] == [("s1", 11)]
     assert (page["total"], page["with_files"]) == (1, 1)
     r = client.patch(base, json={"select": "with_files"}, headers=logged_in)
-    assert r.get_json()["studies"][0]["selected_samples"] == 1
+    assert r.get_json()["studies"][0]["selected_rows"] == 1
 
 
 def _prep_stubs(monkeypatch, ar, membership):
@@ -129,55 +129,60 @@ def _prep_stubs(monkeypatch, ar, membership):
                                                             for k, v in membership.items()})
 
 
-def test_route_samples_carry_prep_ids_and_group_by_prep(client, logged_in, stub_qiita, monkeypatch):
-    # s1 is in both preps; s2 (the only sample with a file) only in prep 6.
-    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")], "s2": [(6, "WGS")]})
+def _keys(page):
+    return [(r["sample_id"], r["artifact_id"]) for r in page["rows"]]
+
+
+def test_route_rows_carry_their_artifacts_prep_and_group_by_prep(client, logged_in, stub_qiita, monkeypatch):
+    # s2 is in artifact 12 (prep 5) and 13 (prep 6); s1 has no file but is a member of both preps.
+    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")], "s2": [(5, "16S"), (6, "WGS")]})
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
     base = f"/api/aggregations/{aid}/studies/16326/samples"
 
     flat = client.get(base).get_json()
-    assert [(r["sample_id"], r["prep_ids"]) for r in flat["rows"]] == [("s2", [6]), ("s1", [5, 6])]
-    assert "groups" not in flat and "prep_id" not in flat["rows"][0]
+    # each file row shows only ITS artifact's prep, not the sample's whole membership; the
+    # file-less placeholder shows every prep the sample is in
+    assert [(r["sample_id"], r["artifact_id"], r["prep_id"], r["prep_ids"]) for r in flat["rows"]] == [
+        ("s2", 12, 5, [5]), ("s2", 13, 6, [6]), ("s1", None, None, [5, 6])]
+    assert "groups" not in flat
 
     page = client.get(base + "?group=prep").get_json()
-    # prep 5: s1; prep 6: s2 (has a file, so first) then s1 — s1 sits under both preps.
-    assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(5, "s1"), (6, "s2"), (6, "s1")]
-    assert page["total"] == 3
-    assert page["groups"] == [{"prep_id": 5, "data_type": "16S", "count": 1},
+    # prep 5: s2's artifact-12 row, then s1's placeholder; prep 6 likewise — the placeholder sits under each member prep
+    assert [(r["prep_id"], r["sample_id"], r["artifact_id"]) for r in page["rows"]] == [
+        (5, "s2", 12), (5, "s1", None), (6, "s2", 13), (6, "s1", None)]
+    assert page["total"] == 4
+    assert page["groups"] == [{"prep_id": 5, "data_type": "16S", "count": 2},
                               {"prep_id": 6, "data_type": "WGS", "count": 2}]
-    # paging works over (sample, prep) rows
+    # paging works over rows
     second = client.get(base + "?group=prep&offset=2&limit=1").get_json()
-    assert [(r["prep_id"], r["sample_id"]) for r in second["rows"]] == [(6, "s1")]
+    assert [(r["prep_id"], r["artifact_id"]) for r in second["rows"]] == [(6, 13)]
     assert client.get(base + "?group=sample").status_code == 400
 
 
 def test_route_group_by_prep_honours_data_type_filter_and_puts_no_prep_last(client, logged_in, stub_qiita, monkeypatch):
-    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")]})   # s2 is in no prep
+    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S"), (6, "WGS")]})   # s1 has no file
+    monkeypatch.setattr(stub_qiita, "artifact_preps", lambda sid: {12: 5})   # artifact 13 has no known prep
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
     base = f"/api/aggregations/{aid}/studies/16326/samples?group=prep"
     page = client.get(base).get_json()
-    assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(5, "s1"), (6, "s1"), (None, "s2")]
+    assert [(r["prep_id"], r["sample_id"], r["artifact_id"]) for r in page["rows"]] == [
+        (5, "s2", 12), (5, "s1", None), (6, "s1", None), (None, "s2", 13)]
     assert page["groups"][-1] == {"prep_id": None, "data_type": None, "count": 1}
     client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["WGS"]}}, headers=logged_in)
     page = client.get(base).get_json()
-    # s1 only under its WGS prep; s2 (16S file, no prep) is out of scope under a WGS filter.
+    # s1 only under its WGS prep; s2 (16S files, no prep membership) is out of scope under a WGS filter.
     assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(6, "s1")]
 
 
-def _ids(page):
-    return [r["sample_id"] for r in page["rows"]]
-
-
-def _sort_setup(client, logged_in, stub_qiita, monkeypatch):
-    # s1: preps 5+9, artifact 30 (file); s2: prep 7, artifacts 20+40; s3: no prep, no file.
+def _sort_setup(client, logged_in, stub_qiita, monkeypatch, preps=None):
+    # Rows: s1/30 (prep 5), s2/20 (prep 9), s2/40 (prep 7), s3 placeholder (no file, no prep).
     # No Data type filter, so every sample is in scope.
-    members = {"s1": [(5, "16S"), (9, "16S")], "s2": [(7, "16S")]}
-    _prep_stubs(monkeypatch, stub_qiita, members)
+    _prep_stubs(monkeypatch, stub_qiita, {})
+    monkeypatch.setattr(stub_qiita, "artifact_preps", lambda sid: preps or {30: 5, 20: 9, 40: 7})
     monkeypatch.setattr(stub_qiita, "list_study_sample_ids", lambda sid: ["s1", "s2", "s3"])
-    monkeypatch.setattr(stub_qiita, "fetch_samples_by_ids",
-                        lambda sid, ids: [(i, "x") for i in ids])
+    monkeypatch.setattr(stub_qiita, "fetch_samples_by_ids", lambda sid, ids: [(i, "x") for i in ids])
     monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {
         "s1": [("16S", "Raw upload", 30, 1, 0)],
         "s2": [("16S", "Raw upload", 20, 2, 0), ("16S", "Raw upload", 40, 1, 0)]})
@@ -188,43 +193,45 @@ def _sort_setup(client, logged_in, stub_qiita, monkeypatch):
 
 def test_route_sort_by_prep_and_artifact(client, logged_in, stub_qiita, monkeypatch):
     aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
-    assert _ids(client.get(base).get_json()) == ["s1", "s2", "s3"]                    # default: files-first / id
-    # prep: lowest id ascending (s1 -> 5, s2 -> 7), highest descending (s1 -> 9, s2 -> 7); no prep last both ways
-    assert _ids(client.get(base + "?sort=prep").get_json()) == ["s1", "s2", "s3"]
-    assert _ids(client.get(base + "?sort=prep&dir=desc").get_json()) == ["s1", "s2", "s3"]
-    # artifact: lowest asc (s2 -> 20, s1 -> 30), highest desc (s2 -> 40, s1 -> 30); no artifact last
-    assert _ids(client.get(base + "?sort=artifact&dir=asc").get_json()) == ["s2", "s1", "s3"]
-    assert _ids(client.get(base + "?sort=artifact&dir=desc").get_json()) == ["s2", "s1", "s3"]
-    # an Artifact filter only counts the artifacts that pass it: s2 restricted to 40, so s1 (30) is first
+    # default: files-first sample order, a sample's rows by artifact
+    assert _keys(client.get(base).get_json()) == [("s1", 30), ("s2", 20), ("s2", 40), ("s3", None)]
+    # prep: each ROW's own prep id (30 -> 5, 40 -> 7, 20 -> 9); the row with none last both ways
+    assert _keys(client.get(base + "?sort=prep").get_json()) == [("s1", 30), ("s2", 40), ("s2", 20), ("s3", None)]
+    assert _keys(client.get(base + "?sort=prep&dir=desc").get_json()) == [("s2", 20), ("s2", 40), ("s1", 30), ("s3", None)]
+    # artifact: each row's artifact id
+    assert _keys(client.get(base + "?sort=artifact&dir=asc").get_json()) == [("s2", 20), ("s1", 30), ("s2", 40), ("s3", None)]
+    assert _keys(client.get(base + "?sort=artifact&dir=desc").get_json()) == [("s2", 40), ("s1", 30), ("s2", 20), ("s3", None)]
+    # an Artifact filter keeps only its artifacts' rows, and (as before) drops samples with no file in them
     client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["30", "40"]}}, headers=logged_in)
-    assert _ids(client.get(base + "?sort=artifact").get_json()) == ["s1", "s2"]
+    assert _keys(client.get(base + "?sort=artifact").get_json()) == [("s1", 30), ("s2", 40)]
     for bad in ("?sort=bogus", "?sort=prep&dir=up"):
         assert client.get(base + bad).status_code == 400
-    assert _ids(client.get(base + "?dir=desc").get_json()) == ["s1", "s2"]            # dir without sort is ignored
+    assert _keys(client.get(base + "?dir=desc").get_json()) == [("s1", 30), ("s2", 40)]   # dir without sort is ignored
     assert client.get(base + "?dir=bogus").status_code == 200
 
 
 def test_route_sort_ties_keep_files_first_then_id(client, logged_in, stub_qiita, monkeypatch):
-    aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
-    # Sort by prep with every sample in the same prep: nothing to separate them, so the default order stays.
-    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S")], "s2": [(5, "16S")], "s3": [(5, "16S")]})
+    aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch, preps={30: 5, 20: 5, 40: 5})
     monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 20, 2, 0)]})
-    assert _ids(client.get(base + "?sort=prep").get_json()) == ["s2", "s1", "s3"]
+    # Sort by prep with every file row in prep 5 (the placeholders have none and sort last): the
+    # files-first / id order of the tied rows stays.
+    assert _keys(client.get(base + "?sort=prep").get_json()) == [("s2", 20), ("s1", None), ("s3", None)]
 
 
 def test_route_sort_grouped(client, logged_in, stub_qiita, monkeypatch):
     aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
-    pairs = lambda page: [(r["prep_id"], r["sample_id"]) for r in page["rows"]]       # noqa: E731
+    rows = lambda page: [(r["prep_id"], r["sample_id"], r["artifact_id"]) for r in page["rows"]]   # noqa: E731
     g = base + "?group=prep"
-    assert pairs(client.get(g).get_json()) == [(5, "s1"), (7, "s2"), (9, "s1"), (None, "s3")]
+    assert rows(client.get(g).get_json()) == [(5, "s1", 30), (7, "s2", 40), (9, "s2", 20), (None, "s3", None)]
     # sort=prep&dir=desc reverses the groups; "No prep" stays last
-    assert pairs(client.get(g + "&sort=prep&dir=desc").get_json()) == [(9, "s1"), (7, "s2"), (5, "s1"), (None, "s3")]
+    assert rows(client.get(g + "&sort=prep&dir=desc").get_json()) == [
+        (9, "s2", 20), (7, "s2", 40), (5, "s1", 30), (None, "s3", None)]
     # sort=artifact orders rows inside a group while the groups stay ascending
-    monkeypatch.setattr(stub_qiita, "prep_membership", lambda sid: {"s1": [(5, "16S")], "s2": [(5, "16S")]})
-    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {
-        "s1": [("16S", "Raw upload", 30, 1, 0)], "s2": [("16S", "Raw upload", 20, 2, 0)]})
-    assert pairs(client.get(g + "&sort=artifact&dir=asc").get_json()) == [(5, "s2"), (5, "s1"), (None, "s3")]
-    assert pairs(client.get(g + "&sort=artifact&dir=desc").get_json()) == [(5, "s1"), (5, "s2"), (None, "s3")]
+    monkeypatch.setattr(stub_qiita, "artifact_preps", lambda sid: {30: 5, 20: 5, 40: 5})
+    assert rows(client.get(g + "&sort=artifact&dir=asc").get_json()) == [
+        (5, "s2", 20), (5, "s1", 30), (5, "s2", 40), (None, "s3", None)]
+    assert rows(client.get(g + "&sort=artifact&dir=desc").get_json()) == [
+        (5, "s2", 40), (5, "s1", 30), (5, "s2", 20), (None, "s3", None)]
 
 
 def test_route_samples_scoped_by_prep_data_type(client, logged_in, stub_qiita, monkeypatch):
@@ -273,8 +280,8 @@ def test_route_file_facets(client, logged_in, stub_qiita, monkeypatch):
 
     client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["Metagenomic"]}},
                  headers=logged_in)
-    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s1"]}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": [_row("s1", 11)]}, headers=logged_in)
     d = client.get(f"/api/aggregations/{aid}/file-facets?study_id=16326").get_json()
     assert d["processing"] == [{"name": "Atropos v1.1.24", "count": 1}]  # narrowed by the data-type pick
-    assert (d["exportable"], d["selected"]) == (0, 1)  # s2 is checked but has no metagenomic file
+    assert (d["exportable"], d["selected"]) == (0, 1)  # (s2, 12) is checked but isn't a metagenomic row
     assert client.get("/api/aggregations/nope/file-facets").status_code == 404

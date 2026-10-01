@@ -112,7 +112,8 @@ erDiagram
     merge_workspaces ||--o{ merge_jobs : "FK SET NULL"
 
     aggregations ||--o{ aggregation_studies : "FK CASCADE"
-    aggregation_studies ||--o{ aggregation_samples : "composite FK CASCADE"
+    aggregation_studies ||--o{ aggregation_files : "composite FK CASCADE"
+    aggregation_studies ||--o{ aggregation_samples : "legacy, composite FK CASCADE"
 
     project_chats }o..o{ chat_pinned_studies : "chat_scope='project' (no FK)"
     global_chats }o..o{ chat_pinned_studies : "chat_scope='global' (no FK)"
@@ -492,7 +493,7 @@ A user's named Sample Aggregation — a set of samples grouped by study, exporte
 
 **Writes owned by:** `backend/store/aggregation_crud.py`.
 
-**Lifecycle:** cascades to `aggregation_studies`, which cascades to `aggregation_samples`.
+**Lifecycle:** cascades to `aggregation_studies`, which cascades to `aggregation_files` (and the legacy `aggregation_samples`).
 
 ---
 
@@ -506,7 +507,7 @@ One row per study in an aggregation — a header snapshot taken from the Browse 
 | `study_id` | INTEGER | no (PK) | — | Qiita study ID. |
 | `study_title` | TEXT | yes | — | Snapshot. |
 | `data_types` | TEXT | yes | — | Comma-joined, as the search rows carry it. |
-| `num_samples` | INTEGER | yes | — | Number of sample rows stored when the study was added (sentinel excluded) — the badge's denominator. |
+| `num_samples` | INTEGER | yes | — | Number of samples of the study when it was added (sentinel excluded). |
 | `num_preps` | INTEGER | yes | — | Snapshot. |
 | `fastq_artifact_count` | INTEGER | yes | — | `per_sample_FASTQ` + `FASTA` artifacts at add time (`helpers/fastq_manifest.count_fastq_artifacts`). Column name predates the FASTA branch. |
 | `study_abstract` | TEXT | yes | — | Snapshot (ALTER 13). |
@@ -515,32 +516,41 @@ One row per study in an aggregation — a header snapshot taken from the Browse 
 | `year` | INTEGER | yes | — | Year the study was added to Qiita, `first_contact` (ALTER 16). |
 | `is_gold` | INTEGER | yes | — | 0/1 (ALTER 17). |
 | `added_at` | TEXT | yes | — | Insert time; the tab orders by it. |
+| `rows_v` | INTEGER | yes | `0` | *(migration)* `1` = this study's selection lives in `aggregation_files`; `0` = still the legacy per-sample `aggregation_samples`, converted lazily by `migrate_study_rows` the first time a route needs it. New studies are created with `1`. |
+| `file_rows` | INTEGER | yes | — | *(migration)* How many `(sample, artifact)` rows the study had when added / migrated — the "K / N rows" badge's denominator; NULL until migrated. |
 | `file_filter_json` | TEXT | yes | — | *(migration, ALTER 20)* This study's `{"data_types": [...], "processing": [...], "artifacts": [...]}` — its sample-table toolbar pickers; empty or NULL = any. Narrows only this study's table and its rows in the export. Exposed as `studies[].file_filter` by `_studies`; written by `set_study_file_filter`. Kept when the study is re-added. |
 
 **Keys/constraints:** composite PK `(aggregation_id, study_id)` — `INSERT OR IGNORE` makes re-adding a study idempotent; FK → `aggregations` `ON DELETE CASCADE`.
 
 **Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` / `remove_study_from_aggregation` / `set_study_file_filter`. The route enforces the 50-study cap.
 
-**Lifecycle:** cascades to `aggregation_samples`.
+**Lifecycle:** cascades to `aggregation_files` (and the legacy `aggregation_samples`).
 
 ---
 
-### table-aggregation_samples
+### table-aggregation_files
 
-Per-sample membership: a row means "this sample is checked". Adding a study inserts every sample id of the study; the tab's checkboxes add and delete rows.
+Per-row selection: a row means "this (sample, artifact) file row is checked". The artifact fixes the prep (`qiita.preparation_artifact`, one prep per artifact), so a row also names its prep without storing it. Adding a study inserts every `(sample, artifact)` of its availability map; the tab's checkboxes add and delete rows.
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
 | `aggregation_id` | TEXT | no (PK, FK) | — | → `aggregation_studies`. |
 | `study_id` | INTEGER | no (PK, FK) | — | → `aggregation_studies`. |
 | `sample_id` | TEXT | no (PK) | — | Qiita sample ID, stored as given. |
+| `artifact_id` | INTEGER | no (PK) | — | Qiita artifact ID — the sample's file in this artifact. |
 | `added_at` | TEXT | yes | — | Insert time. |
 
-**Keys/constraints:** composite PK `(aggregation_id, study_id, sample_id)`; **composite FK** `(aggregation_id, study_id)` → `aggregation_studies(aggregation_id, study_id)` `ON DELETE CASCADE` — so deleting an aggregation cascades in a chain through its studies to its samples (verified with `PRAGMA foreign_keys = ON`). No separate index: the PK autoindex's prefix serves the per-study count, the per-page `IN (…)` lookup and the per-study delete.
+**Keys/constraints:** composite PK `(aggregation_id, study_id, sample_id, artifact_id)`; **composite FK** `(aggregation_id, study_id)` → `aggregation_studies(aggregation_id, study_id)` `ON DELETE CASCADE` (a chain: aggregation → studies → rows). No separate index: the PK autoindex's prefix serves the per-study count, the per-page `IN (…)` lookup on `sample_id` and the per-study delete.
 
-**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` (bulk `executemany`, only when the study row was freshly inserted — re-adding a study must not re-check what the user unchecked) and `set_aggregation_samples` (add / remove / clear).
+**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` (bulk `executemany`, only when the study row was freshly inserted — re-adding a study must not re-check what the user unchecked), `set_aggregation_rows` (add / remove / clear) and `migrate_study_rows`.
 
-**Lifecycle:** follows its study row. Scale: the largest public study has 41,600 samples; a whole-study insert is instant.
+**Lifecycle:** follows its study row. Scale: American Gut (10317) is ~109,800 rows; a whole-study insert takes well under a second.
+
+---
+
+### table-aggregation_samples (legacy)
+
+*Replaced by `aggregation_files` on 2026-09-30; kept so old databases migrate.* Per-sample membership: a row meant "this sample is checked". A study with `rows_v = 0` still counts its checked samples from here; `migrate_study_rows` turns them into `aggregation_files` rows (one per artifact the sample has) the first time a route needs the study, then deletes them. Same columns as before, minus `artifact_id`: `aggregation_id`, `study_id`, `sample_id`, `added_at`; PK `(aggregation_id, study_id, sample_id)`; composite FK → `aggregation_studies` `ON DELETE CASCADE`.
 
 ---
 

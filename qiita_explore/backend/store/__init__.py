@@ -74,8 +74,9 @@ from .aggregation_crud import (  # noqa: F401
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,
-    set_aggregation_samples,
-    selected_in,
+    set_aggregation_rows,
+    migrate_study_rows,
+    selected_rows_in,
     selected_by_study,
 )
 

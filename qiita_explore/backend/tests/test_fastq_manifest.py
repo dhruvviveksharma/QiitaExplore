@@ -89,7 +89,7 @@ def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True, 
         files.append(("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1.fastq.gz"))
         if paired:
             files.append(("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2.fastq.gz"))
-    return (study_id, data_type, "per_sample_FASTQ", processing, artifact_id, samples, files, set(allow))
+    return (study_id, data_type, "per_sample_FASTQ", processing, artifact_id, samples, files, {(s, artifact_id) for s in allow})
 
 
 def test_export_paired_sample_is_one_row_with_r1_r2(fm):
@@ -105,7 +105,7 @@ def test_export_single_end_has_blank_r2_and_barcodes(fm):
 
 def test_export_fasta_group_puts_raw_fasta_in_r1(fm):
     files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
-    rows = fm.build_export_rows([(1928, "16S", "FASTA", "Raw upload", 3220, [("s1", "SRR1")], files, {"s1"})], BASE)
+    rows = fm.build_export_rows([(1928, "16S", "FASTA", "Raw upload", 3220, [("s1", "SRR1")], files, {("s1", 3220)})], BASE)
     assert rows == [(1928, "s1", 3220, "16S", "Raw upload", f"{BASE}/FASTA/3220/SRR1.fna", "", "")]
 
 
@@ -125,6 +125,14 @@ def test_export_sample_in_two_preps_yields_both_data_types(fm):
     rows = fm.build_export_rows([g1, g2], BASE)
     assert [(r[2], r[3]) for r in rows] == [(10, "16S"), (20, "Metagenomic")]
     assert len({r[5] for r in rows}) == 2
+
+
+def test_export_only_the_checked_rows_of_a_sample(fm):
+    # Two artifacts hold the same sample; only artifact 11's row is checked, so
+    # artifact 10's row (its own prep's file) is left out of the export.
+    g10 = _fastq_group(5, "16S", 10, [("s1", "P1")], [], paired=False)        # nothing checked in 10
+    g11 = _fastq_group(5, "16S", 11, [("s1", "P1")], ["s1"], paired=False)    # (s1, 11) checked
+    assert [r[2] for r in fm.build_export_rows([g10, g11], BASE)] == [11]
 
 
 def test_export_dedupes_identical_rows_and_sorts(fm):
@@ -203,11 +211,11 @@ def test_study_groups_shape(fm):
         return [_file_row()] if "study_artifact" in sql else [("s1", "P1")]
 
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        groups = fm._study_groups([5], {5: {"s1"}})
+        groups = fm._study_groups([5], {5: {("s1", 10)}})
     assert len(groups) == 1
     study_id, data_type, artifact_type, processing, artifact_id, samples, files, allow = groups[0]
     assert (study_id, data_type, artifact_type, processing, artifact_id, allow) == \
-        (5, "16S", "per_sample_FASTQ", "Raw upload", 10, {"s1"})  # no command -> an upload
+        (5, "16S", "per_sample_FASTQ", "Raw upload", 10, {("s1", 10)})  # no command -> an upload
     assert samples == [("s1", "P1")]
     assert files == [("raw_forward_seqs", "per_sample_FASTQ", True, 10, "P1_R1.fastq.gz")]
     # the files query (over study_artifact) runs before the per-prep sample query
@@ -241,12 +249,12 @@ def test_fetch_export_rows_applies_file_filter(fm, monkeypatch):
     rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
     fake = lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]  # noqa: E731
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        out = fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": [], "processing": ["Atropos v1.1.24"]}})
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": [], "processing": ["Atropos v1.1.24"]}})
         assert [(r[2], r[4]) for r in out] == [(11, "Atropos v1.1.24")]
-        out = fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": [], "processing": [], "artifacts": ["10"]}})
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": [], "processing": [], "artifacts": ["10"]}})
         assert [(r[2], r[4]) for r in out] == [(10, "Raw upload")]
     with patch.object(fm, "pooled_fetchall", side_effect=fake), pytest.raises(ValueError):
-        fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": ["ITS"], "processing": []}})
+        fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": ["ITS"], "processing": []}})
 
 
 def test_fetch_export_rows_applies_each_studys_own_filter(fm, monkeypatch):
@@ -258,7 +266,7 @@ def test_fetch_export_rows_applies_each_studys_own_filter(fm, monkeypatch):
     samples = {"100": [("s1", "P1")], "101": [("s1", "P1")], "200": [("t1", "Q1")]}
     fake = lambda sql, params=None: rows if "study_artifact" in sql else samples[sql.split("prep_")[1].split()[0]]  # noqa: E731
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        out = fm.fetch_export_rows({5: {"s1"}, 6: {"t1"}}, {5: {"artifacts": ["11"]}, 6: {}})
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}, 6: {("t1", 20)}}, {5: {"artifacts": ["11"]}, 6: {}})
     assert sorted((r[0], r[1], r[2]) for r in out) == [(5, "s1", 11), (6, "t1", 20)]
 
 
@@ -397,7 +405,7 @@ def test_multiplexed_two_lanes_route_by_run_prefix(fm):
 
 
 def test_export_rows_for_pooled_group(fm):
-    g = (1889, "18S", "FASTQ", "Raw upload", 2318, [("s1", _P), ("s2", _P)], _POOLED, {"s1"})
+    g = (1889, "18S", "FASTQ", "Raw upload", 2318, [("s1", _P), ("s2", _P)], _POOLED, {("s1", 2318)})
     (row,) = fm.build_export_rows([g], BASE)
     assert row[:5] == (1889, "s1", 2318, "18S", "Raw upload")
     assert row[5].endswith("_sequences.fastq.gz") and row[6].endswith("R3_001.fastq.gz")

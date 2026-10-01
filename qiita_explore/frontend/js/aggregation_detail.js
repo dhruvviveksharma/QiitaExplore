@@ -31,7 +31,7 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
   const [counts, setCounts] = useState(null); // GET …/file-facets {exportable, selected}; kept while a refetch runs
   const [err, setErr] = useState('');
   const studies = a.studies || [];
-  const totalSelected = studies.reduce((n, s) => n + (s.selected_samples || 0), 0);
+  const totalSelected = studies.reduce((n, s) => n + (s.selected_rows || 0), 0);
   const artifactTotal = studies.reduce((n, s) => n + (s.fastq_artifact_count || 0), 0);
   // Rows are chunked explicitly (not grid-auto-flow: dense) so the expanded
   // study's sample table sits right under its own row, DOM order = visual order.
@@ -41,7 +41,7 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
   // checked, so both are in the key. The per-study maps are cached
   // server-side; a refetch is cheap after the first.
   const studyKey = studies.map(s =>
-    `${s.study_id}:${s.selected_samples}:${JSON.stringify(s.file_filter || _NO_FILTER)}`).join('|');
+    `${s.study_id}:${s.selected_rows}:${JSON.stringify(s.file_filter || _NO_FILTER)}`).join('|');
   useEffect(() => {
     let live = true;
     apiJson(`/aggregations/${a.aggregation_id}/file-facets`)
@@ -53,8 +53,8 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
   const exportable = counts?.exportable;
   const canExport = totalSelected > 0 && exportable !== 0;
   const disabledTitle = totalSelected === 0
-    ? 'Check at least one sample'
-    : "No checked sample has a file under its study's Data type / Processing / Artifact filter";
+    ? 'Check at least one row'
+    : "No checked row is under its study's Data type / Processing / Artifact filter";
   // Plain links like the per-artifact manifest (fastq_manifest.js): the
   // session cookie rides along on top-level navigation.
   const base = `${API}/aggregations/${a.aggregation_id}`;
@@ -69,10 +69,10 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
           <div className="agg-detail-title">{a.name}</div>
           <div className="agg-detail-sub">
             {_plural(studies.length, 'study', 'studies')}
-            {' · '}{_plural(totalSelected, 'selected sample', 'selected samples')}
+            {' · '}{_plural(totalSelected, 'selected row', 'selected rows')}
             {exportable != null && (
-              <span title="Checked samples with a file matching the Data type / Processing filter — what the export contains">
-                {' · '}{exportable.toLocaleString()} with files
+              <span title="Checked rows under each study's Data type / Processing / Artifact filter — what the export contains">
+                {' · '}{exportable.toLocaleString()} exportable
               </span>
             )}
             {' · '}{_plural(artifactTotal, 'sequence-file artifact', 'sequence-file artifacts')}
@@ -100,7 +100,7 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
                     onClick={() => setExpandedId(id => id === s.study_id ? null : s.study_id)}
                     actions={<>
                       <span className="agg-sel-count">
-                        {(s.selected_samples ?? 0).toLocaleString()} / {(s.num_samples ?? 0).toLocaleString()} samples
+                        {(s.selected_rows ?? 0).toLocaleString()}{s.file_rows != null ? ` / ${s.file_rows.toLocaleString()} rows` : ' selected'}
                       </span>
                       <button className="agg-remove" title="Remove study"
                         onClick={() => agg.removeStudy(a.aggregation_id, s.study_id)}>×</button>
@@ -118,9 +118,9 @@ function AggregationDetail({ a, agg, picked, onPickSample }) {
   );
 }
 
-// One study's samples, paged from Qiita with the aggregation's checked state
-// and file availability (under the saved file_filter) merged in
-// server-side, sorted files-first. Load-more shape from merge_detail.js
+// One study's rows — a row is a (sample, artifact) pair, which fixes its prep — paged
+// from Qiita with the aggregation's per-row checked state and file availability
+// (under the saved file_filter) merged in server-side, sorted files-first. Load-more shape from merge_detail.js
 // StudySampleTable. The toolbar's Data type / Processing / Artifact pickers
 // show this study's options (GET …/file-facets?study_id=) and edit this
 // study's own file_filter (study.file_filter, PATCH …/studies/<sid>).
@@ -140,7 +140,7 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
   const [facets,    setFacets]    = useState(null); // this study's picker options
   const seq = useRef(0);
   const aid = a.aggregation_id, sid = study.study_id;
-  const selected = study.selected_samples ?? 0;
+  const selected = study.selected_rows ?? 0;
   const filt = study.file_filter || _NO_FILTER;
 
   const load = async (offset, query, showVal, append) => {
@@ -189,14 +189,16 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
 
   const toggle = async (r) => {
     const next = !r.selected;
-    const flip = (v) => setRows(prev => prev.map(x => x.sample_id === r.sample_id ? { ...x, selected: v } : x));
+    const row = { sample_id: r.sample_id, artifact_id: r.artifact_id };
+    const flip = (v) => setRows(prev => prev.map(x =>
+      x.sample_id === r.sample_id && x.artifact_id === r.artifact_id ? { ...x, selected: v } : x));
     flip(next);
-    try { await agg.setSamples(aid, sid, next ? { add: [r.sample_id] } : { remove: [r.sample_id] }); }
+    try { await agg.setRows(aid, sid, next ? { add: [row] } : { remove: [row] }); }
     catch (e) { flip(!next); setErr(e.message); }
   };
   const bulk = async (body) => {
     setErr('');
-    try { await agg.setSamples(aid, sid, body); await load(0, q.trim(), show, false); }
+    try { await agg.setRows(aid, sid, body); await load(0, q.trim(), show, false); }
     catch (e) { setErr(e.message); }
   };
 
@@ -214,9 +216,8 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
     ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
     ...columns.map(c => [`m:${c}`, c])];
   const tableW = widthOf('sel') + heads.reduce((n, [k]) => n + widthOf(k), 0);
-  // A sample in several artifacts gets one row per artifact (sample-level cells repeat, dimmed
-  // after the first); a sample with no file is one row. Checking any of a sample's rows
-  // toggles the sample, since selection is per sample, not per artifact.
+  // A sample in several artifacts is one row per artifact (sample-level cells repeat, dimmed
+  // after the first), each with its own checkbox; a sample with no file is one placeholder row.
   const fileCell = (f, pick, cls) => {
     const v = f && pick(f);
     return <td className={cls} title={v || undefined}>{v || <span className="agg-file-no">—</span>}</td>;
@@ -247,12 +248,12 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
             onClick={() => setGroup(v => !v)}>Group by prep</button>
         </div>
         <span className="agg-samples-count">
-          {selected.toLocaleString()} of {(study.num_samples ?? total).toLocaleString()} selected
+          {selected.toLocaleString()} of {(study.file_rows ?? total).toLocaleString()} rows selected
           {' · '}{withFiles.toLocaleString()} with files
         </span>
         <button className="merge-btn-ghost" onClick={() => bulk({ select: 'all' })}>Select all</button>
         <button className="merge-btn-ghost" onClick={() => bulk({ select: 'none' })}>Select none</button>
-        <button className="merge-btn-ghost" title="Check exactly the samples the CSV can contain"
+        <button className="merge-btn-ghost" title="Check exactly the rows the export can contain"
           onClick={() => bulk({ select: 'with_files', q: q.trim() })}>
           Select all with files
         </button>
@@ -293,13 +294,16 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
                   <td colSpan={columns.length + 10}>
                     {collapsed.has(gk) ? '▸' : '▾'}{' '}
                     <strong>{r.prep_id == null ? 'No prep' : `Prep ${r.prep_id}`}</strong>
-                    {g?.data_type && ` · ${g.data_type}`}{g && ` · ${_plural(g.count, 'sample', 'samples')}`}
+                    {g?.data_type && ` · ${g.data_type}`}{g && ` · ${_plural(g.count, 'row', 'rows')}`}
                   </td>
                 </tr>);
-              if (!group || !collapsed.has(gk)) (r.files || []).concat((r.files || []).length ? [] : [null]).forEach((f, li) => out.push(
-              <tr key={`${r.sample_id}|${r.prep_id ?? ''}|${f ? f.artifact_id : 'none'}`}
-                className={`${isPicked(r) ? 'agg-row-active' : ''}${li ? ' agg-row-cont' : ''}`.trim() || undefined}>
-                <td><input type="checkbox" checked={!!r.selected} onChange={() => toggle(r)} /></td>
+              const cont = i > 0 && !header && rows[i - 1].sample_id === r.sample_id;   // 2nd+ artifact of a sample
+              if (!group || !collapsed.has(gk)) out.push(
+              <tr key={`${r.sample_id}|${r.artifact_id ?? 'none'}|${r.prep_id ?? ''}`}
+                className={`${isPicked(r) ? 'agg-row-active' : ''}${cont ? ' agg-row-cont' : ''}`.trim() || undefined}>
+                <td><input type="checkbox" checked={!!r.selected} disabled={r.artifact_id == null}
+                  title={r.artifact_id == null ? 'No sequence file under this filter — nothing to select' : undefined}
+                  onChange={() => toggle(r)} /></td>
                 <td>
                   <button className="agg-sample-id" title="Show metadata"
                     onClick={() => onPickSample({ study_id: sid, sample_id: r.sample_id })}>{r.sample_id}</button>
@@ -326,16 +330,16 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
                 </td>
                 <td className={r.fastq ? 'agg-file-yes' : 'agg-file-no'}>{fastqLabel(r)}</td>
                 <td className={r.fasta ? 'agg-file-yes' : 'agg-file-no'}>{r.fasta ? '✓' : '—'}</td>
-                {fileCell(f, x => String(x.artifact_id))}
-                {fileCell(f, x => x.r1, 'agg-path')}
-                {fileCell(f, x => x.r2, 'agg-path')}
-                {fileCell(f, x => x.barcodes, 'agg-path')}
+                <td>{r.artifact_id ?? <span className="agg-file-no">—</span>}</td>
+                {fileCell(r.file, x => x.r1, 'agg-path')}
+                {fileCell(r.file, x => x.r2, 'agg-path')}
+                {fileCell(r.file, x => x.barcodes, 'agg-path')}
                 {columns.map(c => <td key={c} title={r.fields?.[c] ?? undefined}>{r.fields?.[c] ?? ''}</td>)}
-              </tr>));
+              </tr>);
               return out;
             })}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 10} className="agg-samples-empty">No samples match.</td></tr>
+              <tr><td colSpan={columns.length + 10} className="agg-samples-empty">No rows match.</td></tr>
             )}
           </tbody>
         </table>
@@ -349,7 +353,7 @@ function AggregationSampleTable({ a, agg, study, picked, onPickSample }) {
         )}
         {!loading && !hasMore && rows.length > 0 && (
           <span className="agg-samples-msg">
-            {total.toLocaleString()} {(q.trim() || show !== 'all') ? 'matching ' : ''}samples
+            {total.toLocaleString()} {(q.trim() || show !== 'all') ? 'matching ' : ''}rows
           </span>
         )}
       </div>

@@ -1,6 +1,7 @@
-"""Sample Aggregation: SQLite CRUD (store/aggregation_crud) and the
-/api/aggregations routes with Qiita Postgres stubbed. The pure CSV row builder
-is covered in test_fastq_manifest.py."""
+"""Sample Aggregation: the /api/aggregations routes (CRUD, per-row samples page and
+selection, export) with Qiita Postgres stubbed; the SQLite CRUD is in
+test_aggregation_store.py and the filter / group / sort routes in
+test_aggregation_filters.py. The pure export row builder is in test_fastq_manifest.py."""
 
 import csv
 import os
@@ -11,141 +12,9 @@ import pytest
 from .conftest import stub_qiita_db_and_core
 
 
-# ── store ────────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def agg_crud():
-    import store.aggregation_crud as m
-    return m
-
-
 STUDY = {"study_id": 16326, "study_title": "Test", "data_types": "16S", "num_samples": 2, "num_preps": 1,
          "study_abstract": "About soil", "pi_name": "Rob Knight", "pi_affiliation": "UCSD",
          "year": 2015, "is_gold": True}
-SAMPLES = ["s1", "s2"]
-
-
-def test_store_create_list_get(agg_crud):
-    agg = agg_crud.create_aggregation("u1", "A")
-    listed = agg_crud.list_aggregations("u1")
-    assert [a["aggregation_id"] for a in listed] == [agg["aggregation_id"]]
-    assert listed[0]["studies"] == []
-    assert agg_crud.get_aggregation(agg["aggregation_id"], "u2") is None
-    assert agg_crud.list_aggregations("u2") == []
-
-
-def test_store_add_readd_remove_study(agg_crud):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg = agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-    assert len(agg["studies"]) == 1
-    s = agg["studies"][0]
-    assert (s["study_id"], s["study_title"], s["data_types"], s["num_samples"], s["num_preps"],
-            s["fastq_artifact_count"]) == (16326, "Test", "16S", 2, 1, 2)
-    # header snapshot for the tab's cards
-    assert (s["study_abstract"], s["pi_name"], s["pi_affiliation"], s["year"], s["is_gold"]) == \
-        ("About soil", "Rob Knight", "UCSD", 2015, 1)
-    assert s["selected_samples"] == 2
-    assert len(agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)["studies"]) == 1
-    assert agg_crud.add_study_to_aggregation(aid, "u2", STUDY, 2, SAMPLES) is None
-    assert agg_crud.remove_study_from_aggregation(aid, "u2", 16326) is None
-    assert agg_crud.remove_study_from_aggregation(aid, "u1", 16326)["studies"] == []
-
-
-def test_store_set_samples_add_remove_clear(agg_crud):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-
-    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, remove=["s2"])
-    assert agg["studies"][0]["selected_samples"] == 1
-    assert agg_crud.selected_in(aid, 16326, ["s1", "s2", "zz"]) == {"s1"}
-
-    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, add=["s2", "s3"])
-    assert agg["studies"][0]["selected_samples"] == 3
-    assert agg_crud.selected_by_study(aid) == {16326: {"s1", "s2", "s3"}}
-
-    agg = agg_crud.set_aggregation_samples(aid, "u1", 16326, clear=True, add=["s9"])
-    assert agg["studies"][0]["selected_samples"] == 1
-    assert agg_crud.selected_in(aid, 16326, ["s9"]) == {"s9"}
-    assert agg_crud.selected_in(aid, 16326, []) == set()
-
-    assert agg_crud.set_aggregation_samples(aid, "u1", 16326, clear=True)["studies"][0]["selected_samples"] == 0
-    assert agg_crud.set_aggregation_samples(aid, "u2", 16326, add=["s1"]) is None
-
-
-def test_store_readd_keeps_deselection(agg_crud):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-    agg_crud.set_aggregation_samples(aid, "u1", 16326, remove=["s2"])
-    # Re-adding a study already present must not re-check what the user unchecked.
-    agg = agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-    assert agg["studies"][0]["selected_samples"] == 1
-
-
-def test_store_rename(agg_crud):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    assert agg_crud.rename_aggregation(aid, "u1", "B")["name"] == "B"
-    assert agg_crud.rename_aggregation(aid, "u2", "C") is None
-    assert agg_crud.get_aggregation(aid, "u1")["name"] == "B"
-
-
-def test_store_delete_cascades(agg_crud, db_conn):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 1, SAMPLES)
-    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 2
-    assert agg_crud.delete_aggregation(aid, "u2") is False
-    assert agg_crud.delete_aggregation(aid, "u1") is True
-    assert agg_crud.list_aggregations("u1") == []
-    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_studies").fetchone()[0] == 0
-    # chain cascade: aggregation -> studies -> samples
-    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 0
-
-
-def test_store_remove_study_cascades_samples(agg_crud, db_conn):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 1, SAMPLES)
-    agg_crud.remove_study_from_aggregation(aid, "u1", 16326)
-    assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 0
-
-
-
-_NO_FILTER = {"data_types": [], "processing": [], "artifacts": []}
-
-
-def test_store_study_file_filter(agg_crud):
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-    assert agg_crud.get_aggregation(aid, "u1")["studies"][0]["file_filter"] == _NO_FILTER
-    f = {"data_types": ["16S"], "processing": [], "artifacts": ["11"]}
-    assert agg_crud.set_study_file_filter(aid, "u1", 16326, f)["studies"][0]["file_filter"] == f
-    assert agg_crud.set_study_file_filter(aid, "u2", 16326, f) is None      # not owned
-    assert agg_crud.set_study_file_filter(aid, "u1", 999, f) is None        # study not in it
-    # re-adding the study keeps its filter (INSERT OR IGNORE)
-    assert agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)["studies"][0]["file_filter"] == f
-
-
-def test_store_moves_aggregation_filter_to_studies_once(agg_crud, db_conn):
-    """Pre-2026-09-30 filters lived on the aggregation; the bootstrap copies
-    them to each study minus artifact picks (the cross-study bug), then clears
-    the aggregation's copy so later boots and later-added studies stay as is."""
-    import json
-    import store.db as db
-    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
-    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
-    agg_crud.add_study_to_aggregation(aid, "u1", {**STUDY, "study_id": 777}, 1, SAMPLES)
-    old = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"], "artifacts": ["119667"]}
-    db_conn.execute("UPDATE aggregations SET file_filter_json=? WHERE aggregation_id=?", (json.dumps(old), aid))
-    db_conn.commit()
-
-    db._move_aggregation_filters_to_studies(db_conn)
-    db_conn.commit()
-    moved = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"], "artifacts": []}
-    assert [st["file_filter"] for st in agg_crud.get_aggregation(aid, "u1")["studies"]] == [moved, moved]
-    assert db_conn.execute("SELECT file_filter_json FROM aggregations").fetchone()[0] is None
-
-    agg_crud.add_study_to_aggregation(aid, "u1", {**STUDY, "study_id": 888}, 1, SAMPLES)
-    db._move_aggregation_filters_to_studies(db_conn)                       # second boot: no-op
-    db_conn.commit()
-    assert [st["file_filter"] for st in agg_crud.get_aggregation(aid, "u1")["studies"]] == [moved, moved, _NO_FILTER]
 
 
 # ── routes ───────────────────────────────────────────────────────────────────
@@ -187,16 +56,21 @@ def logged_in(client, monkeypatch):
     return {"X-CSRF-Token": resp.get_json()["csrf_token"]}
 
 
+# s2 is in two artifacts (12 -> prep 5, 13 -> prep 6): two checkable rows, one sample.
 _S2_FILES = [{"artifact_id": 12, "data_type": "16S", "processing": "Raw upload",
-              "r1": "/a/f_R1.fq.gz", "r2": "/a/f_R2.fq.gz", "barcodes": ""}]
+              "r1": "/a/f12_R1.fq.gz", "r2": "/a/f12_R2.fq.gz", "barcodes": ""},
+             {"artifact_id": 13, "data_type": "16S", "processing": "Raw upload",
+              "r1": "/a/f13_R1.fq.gz", "r2": "", "barcodes": ""}]
+_S2_ENTRIES = [("16S", "Raw upload", 12, 2, 0), ("16S", "Raw upload", 13, 1, 0)]
 
 
 @pytest.fixture
 def stub_qiita(monkeypatch):
     """Every Postgres-touching name the routes import, patched on the route
-    module. s2 is the one sample with a file (fastq paired), so tests can
-    exercise files-first ordering / show filtering / "select: with_files"
-    without a real availability computation."""
+    module. s2 is the one sample with files (artifacts 12 paired, 13 single), s1
+    has none (a placeholder row), so tests can exercise files-first ordering /
+    show filtering / "select: with_files" / per-row selection without a real
+    availability computation."""
     import routes.aggregation_routes as ar
     _FIELDS = {"s1": ("s1", "stool"), "s2": ("s2", "skin")}
     monkeypatch.setattr(ar, "is_study_public", lambda sid: sid != 99999)
@@ -205,13 +79,14 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "matching_sample_ids", lambda sid, q: ["s2"])
     monkeypatch.setattr(ar, "display_columns", lambda sid: ["sample_type"])
     monkeypatch.setattr(ar, "fetch_samples_by_ids", lambda sid, ids: [_FIELDS[i] for i in ids if i in _FIELDS])
-    monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 12, 2, 0)]})
+    monkeypatch.setattr(ar, "get_sample_files", lambda sid: {"s2": list(_S2_ENTRIES)})
+    monkeypatch.setattr(ar, "artifact_preps", lambda sid: {12: 5, 13: 6})
     monkeypatch.setattr(ar, "prep_data_types", lambda sid: {})
     monkeypatch.setattr(ar, "prep_membership", lambda sid: {})
     monkeypatch.setattr(ar, "page_files", lambda sid, ids, all_files, file_filter:
                         {i: _S2_FILES if i == "s2" else [] for i in ids})
     monkeypatch.setattr(ar, "fetch_export_rows", lambda selected, file_filters=None: [
-        (16326, "s1", 12, "16S", "Raw upload", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz", ""),
+        (16326, "s1", 12, "16S", "Raw upload", "/a/f12_R1.fq.gz", "/a/f12_R2.fq.gz", ""),
     ])
     return ar
 
@@ -245,8 +120,8 @@ def test_route_crud_roundtrip(client, logged_in, stub_qiita):
     studies = r.get_json()["studies"]
     assert [s["study_id"] for s in studies] == [16326]
     assert studies[0]["fastq_artifact_count"] == 2
-    # whole study added = every sample checked; badge denominator = rows stored
-    assert (studies[0]["selected_samples"], studies[0]["num_samples"]) == (2, 2)
+    # whole study added = every (sample, artifact) row checked; badge denominator = file rows
+    assert (studies[0]["selected_rows"], studies[0]["file_rows"], studies[0]["num_samples"]) == (2, 2, 2)
     assert studies[0]["pi_name"] == "Rob Knight"
 
     r = client.delete(f"/api/aggregations/{aid}/studies/16326", headers=logged_in)
@@ -276,75 +151,118 @@ def test_route_add_study_errors(client, logged_in, stub_qiita, monkeypatch):
     assert r.status_code == 400 and "maximum" in r.get_json()["error"]
 
 
+def _row(sample_id, artifact_id):
+    return {"sample_id": sample_id, "artifact_id": artifact_id}
+
+
 def test_route_samples_page(client, logged_in, stub_qiita):
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
+    base = f"/api/aggregations/{aid}/studies/16326/samples"
+    # Row 13 unchecked on its own: the other row of the same sample stays checked.
+    client.patch(base, json={"remove": [_row("s2", 13)]}, headers=logged_in)
 
-    r = client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=0&limit=50")
+    r = client.get(base + "?offset=0&limit=50")
     assert r.status_code == 200, r.get_json()
     page = r.get_json()
-    assert (page["study_id"], page["total"], page["offset"], page["limit"]) == (16326, 2, 0, 50)
+    assert (page["study_id"], page["total"], page["offset"], page["limit"]) == (16326, 3, 0, 50)
     assert page["columns"] == ["sample_type"]
     assert page["selected_count"] == 1
-    assert page["with_files"] == 1
-    # files-first: s2 (has a file) sorts before s1, id order preserved within each group
-    assert [row["sample_id"] for row in page["rows"]] == ["s2", "s1"]
-    assert page["rows"][0] == {"sample_id": "s2", "selected": False, "fastq": "paired", "fasta": False,
-                                "data_types": ["16S"], "file_data_types": ["16S"], "processing": ["Raw upload"],
-                                "files": _S2_FILES, "prep_ids": [], "fields": {"sample_type": "skin"}}
-    assert page["rows"][1] == {"sample_id": "s1", "selected": True, "fastq": None, "fasta": False,
-                                "data_types": [], "file_data_types": [], "processing": [],
-                                "files": [], "prep_ids": [], "fields": {"sample_type": "stool"}}
+    assert page["with_files"] == 2                                   # file rows, not samples
+    # files-first: s2's two rows (by artifact) before s1's placeholder
+    assert [(row["sample_id"], row["artifact_id"]) for row in page["rows"]] == [("s2", 12), ("s2", 13), ("s1", None)]
+    assert page["rows"][0] == {"sample_id": "s2", "artifact_id": 12, "prep_id": 5, "selected": True,
+                                "fastq": "paired", "fasta": False, "data_types": ["16S"],
+                                "file_data_types": ["16S"], "processing": ["Raw upload"], "prep_ids": [5],
+                                "file": {"r1": "/a/f12_R1.fq.gz", "r2": "/a/f12_R2.fq.gz", "barcodes": ""},
+                                "fields": {"sample_type": "skin"}}
+    second = page["rows"][1]
+    assert (second["selected"], second["prep_id"], second["fastq"]) == (False, 6, "single")
+    assert page["rows"][2] == {"sample_id": "s1", "artifact_id": None, "prep_id": None, "selected": False,
+                                "fastq": None, "fasta": False, "data_types": [], "file_data_types": [],
+                                "processing": [], "prep_ids": [], "file": None,
+                                "fields": {"sample_type": "stool"}}
 
-    only_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=with_files").get_json()
-    assert [row["sample_id"] for row in only_files["rows"]] == ["s2"]
-    assert only_files["total"] == 1
+    only_files = client.get(base + "?show=with_files").get_json()
+    assert [(row["sample_id"], row["artifact_id"]) for row in only_files["rows"]] == [("s2", 12), ("s2", 13)]
+    assert only_files["total"] == 2
 
-    without_files = client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=without_files").get_json()
+    without_files = client.get(base + "?show=without_files").get_json()
     assert [row["sample_id"] for row in without_files["rows"]] == ["s1"]
     assert without_files["total"] == 1
 
-    assert client.get(f"/api/aggregations/{aid}/studies/16326/samples?show=bogus").status_code == 400
+    assert client.get(base + "?show=bogus").status_code == 400
 
     # q routes to matching_sample_ids (stub returns only s2, regardless of q)
-    q_page = client.get(f"/api/aggregations/{aid}/studies/16326/samples?q=x").get_json()
-    assert [row["sample_id"] for row in q_page["rows"]] == ["s2"]
-    assert q_page["total"] == 1
+    q_page = client.get(base + "?q=x").get_json()
+    assert [row["sample_id"] for row in q_page["rows"]] == ["s2", "s2"]
+    assert q_page["total"] == 2
+
+    # paging is over rows: the second page of one row is s2's second artifact
+    paged = client.get(base + "?offset=1&limit=1").get_json()
+    assert [(row["sample_id"], row["artifact_id"]) for row in paged["rows"]] == [("s2", 13)]
 
     # limit is clamped, offset floors at 0
-    page = client.get(f"/api/aggregations/{aid}/studies/16326/samples?limit=9999&offset=-5").get_json()
+    page = client.get(base + "?limit=9999&offset=-5").get_json()
     assert (page["limit"], page["offset"]) == (500, 0)
 
-    assert client.get(f"/api/aggregations/{aid}/studies/16326/samples?offset=x").status_code == 400
+    assert client.get(base + "?offset=x").status_code == 400
     assert client.get(f"/api/aggregations/{aid}/studies/777/samples").status_code == 404
     assert client.get("/api/aggregations/nope/studies/16326/samples").status_code == 404
 
 
-def test_route_set_samples_variants(client, logged_in, stub_qiita):
+def test_route_set_rows_variants(client, logged_in, stub_qiita):
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
     url = f"/api/aggregations/{aid}/studies/16326/samples"
 
     def count(resp):
         assert resp.status_code == 200, resp.get_json()
-        return resp.get_json()["studies"][0]["selected_samples"]
+        return resp.get_json()["studies"][0]["selected_rows"]
 
     assert count(client.patch(url, json={"select": "none"}, headers=logged_in)) == 0
-    assert count(client.patch(url, json={"add": ["s1"]}, headers=logged_in)) == 1
+    assert count(client.patch(url, json={"add": [_row("s2", 12)]}, headers=logged_in)) == 1
+    # one row of s2 on its own — never the whole sample
     assert count(client.patch(url, json={"select": "matching", "q": "skin"}, headers=logged_in)) == 2
-    assert count(client.patch(url, json={"remove": ["s1", "s2"]}, headers=logged_in)) == 0
-    assert count(client.patch(url, json={"select": "all"}, headers=logged_in)) == 2
-    # "with_files" replaces the whole selection with only the samples that
-    # resolve to a file — exactly what the CSV export can contain.
+    assert count(client.patch(url, json={"remove": [_row("s2", 12), _row("s2", 13)]}, headers=logged_in)) == 0
+    assert count(client.patch(url, json={"select": "all"}, headers=logged_in)) == 2   # s1 has no row to check
+    # "with_files" replaces the whole selection with the rows under the study's filter —
+    # exactly what the export can contain.
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["13"]}},
+                 headers=logged_in)
     assert count(client.patch(url, json={"select": "with_files"}, headers=logged_in)) == 1
+    assert count(client.patch(url, json={"select": "with_files", "q": "skin"}, headers=logged_in)) == 1
 
-    for bad in [{}, {"add": "s1"}, {"add": [1]}, {"select": "matching"}, {"select": "some"}]:
+    for bad in [{}, {"add": "s1"}, {"add": ["s1"]}, {"add": [{"sample_id": "s1"}]},
+                {"add": [{"sample_id": "s1", "artifact_id": "12"}]}, {"add": [{"sample_id": "s1", "artifact_id": True}]},
+                {"select": "matching"}, {"select": "some"}]:
         r = client.patch(url, json=bad, headers=logged_in)
         assert r.status_code == 400, bad
     assert client.patch(f"/api/aggregations/{aid}/studies/777/samples",
                         json={"select": "all"}, headers=logged_in).status_code == 404
     assert client.patch(url, json={"select": "all"}).status_code == 403   # no CSRF header
+
+
+def test_route_legacy_study_is_migrated_on_first_open(client, logged_in, stub_qiita):
+    """A study saved before per-row selection (rows_v 0, checked samples in aggregation_samples)
+    keeps its selection: the first page request turns s2's checked sample into its two rows."""
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    conn_of = stub_qiita.add_study_to_aggregation.__globals__["_conn"]    # the app's own SQLite
+    with conn_of() as conn:
+        conn.execute("DELETE FROM aggregation_files WHERE aggregation_id=?", (aid,))
+        conn.execute("UPDATE aggregation_studies SET rows_v=0, file_rows=NULL WHERE aggregation_id=?", (aid,))
+        conn.execute("INSERT INTO aggregation_samples(aggregation_id, study_id, sample_id) VALUES(?,?,?)",
+                     (aid, 16326, "s2"))
+        conn.commit()
+    listed = client.get("/api/aggregations").get_json()["aggregations"]
+    study = next(a for a in listed if a["aggregation_id"] == aid)["studies"][0]
+    assert (study["selected_rows"], study["file_rows"]) == (1, None)          # legacy: one checked sample
+    page = client.get(f"/api/aggregations/{aid}/studies/16326/samples").get_json()
+    assert (page["selected_count"], [r["selected"] for r in page["rows"]]) == (2, [True, True, False])
+    study = next(a for a in client.get("/api/aggregations").get_json()["aggregations"]
+                 if a["aggregation_id"] == aid)["studies"][0]
+    assert (study["selected_rows"], study["file_rows"], study["rows_v"]) == (2, 2, 1)
 
 
 def test_route_export_csv(client, logged_in, stub_qiita):
@@ -356,7 +274,7 @@ def test_route_export_csv(client, logged_in, stub_qiita):
     assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.csv"
     rows = list(csv.reader(resp.get_data(as_text=True).splitlines()))
     assert rows[0] == ["study_id", "sample_id", "artifact_id", "data_type", "processing", "R1", "R2", "barcodes"]
-    assert rows[1] == ["16326", "s1", "12", "16S", "Raw upload", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz", ""]
+    assert rows[1] == ["16326", "s1", "12", "16S", "Raw upload", "/a/f12_R1.fq.gz", "/a/f12_R2.fq.gz", ""]
     assert len(rows) == 2
 
 
@@ -370,15 +288,16 @@ def test_route_export_xlsx(client, logged_in, stub_qiita):
     assert resp.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert resp.headers["Content-Disposition"] == f"attachment; filename=aggregation_{aid}_samples.xlsx"
     ws = openpyxl.load_workbook(io.BytesIO(resp.get_data())).active
-    assert [c.value for c in ws[2]] == [16326, "s1", "12", "16S", "Raw upload", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz", None]
+    assert [c.value for c in ws[2]] == [16326, "s1", "12", "16S", "Raw upload", "/a/f12_R1.fq.gz", "/a/f12_R2.fq.gz", None]
     assert ws.cell(row=2, column=2).data_type == "s"
     assert client.get("/api/aggregations/nope/export.xlsx").status_code == 404
 
 
-def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita, monkeypatch):
+def test_route_export_passes_only_checked_rows(client, logged_in, stub_qiita, monkeypatch):
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": [_row("s2", 13)]},
+                 headers=logged_in)
     seen = {}
 
     def _capture(selected, file_filters=None):
@@ -389,7 +308,7 @@ def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita,
     filt = {"data_types": ["16S"], "processing": ["Raw upload"], "artifacts": ["12"]}
     client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": filt}, headers=logged_in)
     assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 200
-    assert seen == {16326: {"s1"}, "filters": {16326: filt}}
+    assert seen == {16326: {("s2", 12)}, "filters": {16326: filt}}
 
 
 def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
@@ -399,7 +318,7 @@ def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
     assert _add(client, logged_in, aid).status_code == 200
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"select": "none"}, headers=logged_in)
     r = client.get(f"/api/aggregations/{aid}/export.csv")
-    assert r.status_code == 400 and r.get_json()["error"] == "No samples selected"
+    assert r.status_code == 400 and r.get_json()["error"] == "No rows selected"
 
     def _raise(selected, file_filters=None):
         raise ValueError("None of the selected samples has a per-sample sequence file")

@@ -177,7 +177,7 @@ def build_export_rows(groups, base_dir):
     (sample_id, run_prefix) list — longest-prefix-first claiming needs every
     sample present, or a selected '8B4' would take '8B4ABX_R1.fastq.gz' once
     unselected '8B4ABX' were filtered away. `allow` is the set of checked
-    sample ids; only their rows are emitted.
+    (sample_id, artifact_id) rows; only those are emitted.
 
     Returns sorted, de-duplicated (study_id, sample_id, artifact_id, data_type,
     processing, R1, R2, barcodes) rows, blanks as '' — one per sample × artifact.
@@ -188,7 +188,7 @@ def build_export_rows(groups, base_dir):
     out = set()
     for study_id, data_type, artifact_type, processing, artifact_id, samples, files, allow in groups:
         for sample_id, fwd, rev, bc in _resolve(artifact_type, samples, files, base_dir):
-            if sample_id in allow:
+            if (sample_id, artifact_id) in allow:
                 out.add((study_id, sample_id, artifact_id, data_type, processing, fwd, rev or "", bc or ""))
     return sorted(out)
 

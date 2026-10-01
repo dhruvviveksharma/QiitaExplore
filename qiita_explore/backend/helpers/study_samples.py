@@ -34,6 +34,18 @@ _columns_cache = {}  # study_id -> (fetched_at_epoch, [column, ...]); tests clea
 _PREP_DT_TTL_SECONDS = 3600
 _prep_dt_cache = {}  # study_id -> (fetched_at_epoch, {sample_id: [data_type, ...]}); tests clear it
 
+_artifact_prep_cache = {}  # study_id -> (fetched_at_epoch, {artifact_id: prep_id}); tests clear it
+
+# Qiita keeps artifact -> prep in preparation_artifact; every artifact of a study
+# belongs to exactly one prep (checked on AGP: 5,969 of 5,969).
+_ARTIFACT_PREPS_SQL = """
+SELECT pa.artifact_id, pa.prep_template_id
+FROM qiita.study_artifact sa
+JOIN qiita.preparation_artifact pa ON pa.artifact_id = sa.artifact_id
+WHERE sa.study_id = %s
+ORDER BY pa.prep_template_id
+"""
+
 _PREP_DATA_TYPES_SQL = """
 SELECT pts.sample_id, pts.prep_template_id, dt.data_type
 FROM qiita.study_prep_template spt
@@ -108,6 +120,20 @@ def prep_membership(study_id):
         return {k: sorted(v) for k, v in out.items()}
 
     return _memoized(_prep_dt_cache, _PREP_DT_TTL_SECONDS, sid, compute)
+
+
+def artifact_preps(study_id):
+    """{artifact_id: prep_id} for every artifact of the study — what ties a file
+    row to its prep. Memoized per worker for an hour, like prep_membership."""
+    sid = int(study_id)
+
+    def compute():
+        out = {}
+        for artifact_id, prep_id in pooled_fetchall(_ARTIFACT_PREPS_SQL, [sid]):
+            out.setdefault(artifact_id, prep_id)   # ORDER BY prep id: the lowest wins, deterministically
+        return out
+
+    return _memoized(_artifact_prep_cache, _PREP_DT_TTL_SECONDS, sid, compute)
 
 
 def prep_data_types(study_id):

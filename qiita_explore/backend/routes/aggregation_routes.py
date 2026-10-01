@@ -1,7 +1,13 @@
-"""Sample Aggregation routes: a user's named set of samples, grouped by study,
+"""Sample Aggregation routes: a user's named set of file rows, grouped by study,
 plus one export (CSV for scripts, xlsx for spreadsheets, TSV) of the checked
-samples' per-sample sequence files — one row per sample × artifact: study_id,
-sample_id, artifact_id, data_type, processing, R1, R2, barcodes.
+rows — one per sample × artifact: study_id, sample_id, artifact_id, data_type,
+processing, R1, R2, barcodes.
+
+Selection is per row: a row is a (sample_id, artifact_id) pair, and the artifact
+fixes its prep (helpers.aggregation_rows). Each row has its own checkbox; a
+sample with no file under the study's filter is a placeholder row that can't be
+checked. A study from before per-row selection is migrated lazily the first time
+a route needs its selection (_ready).
 
 Each study in an aggregation has its own saved file_filter (data types ×
 processing steps × artifact ids; empty = any), edited from that study's
@@ -34,22 +40,24 @@ from store import (
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,
-    set_aggregation_samples,
-    selected_in,
+    set_aggregation_rows,
+    migrate_study_rows,
+    selected_rows_in,
     selected_by_study,
 )
 from helpers.fastq_manifest import (
     XLSX_MIMETYPE, count_fastq_artifacts, fetch_export_rows, group_matches, to_csv, to_xlsx,
 )
+from helpers.aggregation_rows import file_entries, order_rows
 from helpers.sample_files import effective, facet_counts, get_sample_files, in_scope, page_files
 from helpers.qiita_fetch import is_study_public
 from helpers.study_samples import (
-    display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids, prep_data_types,
-    prep_membership,
+    artifact_preps, display_columns, fetch_samples_by_ids, list_study_sample_ids, matching_sample_ids,
+    prep_data_types, prep_membership,
 )
 
 _MAX_IDS_PER_PATCH = 50_000
-_SAMPLES_BODY_HELP = ('body must be {"add": [...], "remove": [...]} or '
+_SAMPLES_BODY_HELP = ('body must be {"add": [{"sample_id", "artifact_id"}, ...], "remove": [...]} or '
                       '{"select": "all" | "none" | "with_files" | "matching", "q": "..."}')
 _SHOW_VALUES = ("all", "with_files", "without_files")
 # {fastq availability int -> API string}; 0 (none) -> None, handled separately.
@@ -59,42 +67,11 @@ _SORT_KEYS = ("prep", "artifact")
 _FILTER_MAX_ITEMS, _FILTER_MAX_LEN = 50, 200
 
 
-def _sort_key(values, desc):
-    """Sort key for a sample's prep / artifact ids: its lowest id ascending, its
-    highest descending (so the id shown at the top matches the arrow), and
-    samples with none last in both directions."""
-    if not values:
-        return (1, 0)
-    return (0, -max(values) if desc else min(values))
-
-
-def _order_pairs(ids, membership, all_files, file_filter, group, sort, desc):
-    """(pairs, groups): the (sample_id, prep_id) rows to page, and — when grouped —
-    the header info [{prep_id, data_type, count}] (else None). `ids` arrive
-    files-first / id ordered and every sort here is stable, so ties keep that
-    order. Ungrouped, each sample is one row (prep_id None). Grouped, a sample
-    is one row under every prep that passes the Data type filter (or under None,
-    "No prep"); sort=prep orders the groups, sort=artifact the rows inside each."""
-    if sort == "artifact" or (sort == "prep" and not group):
-        def values(i):
-            if sort == "prep":
-                return [p for p, _dt in membership.get(i, [])]
-            return [e[2] for e in all_files.get(i, []) if group_matches(file_filter, e[0], e[1], e[2])]
-        ids = sorted(ids, key=lambda i: _sort_key(values(i), desc))
-    if not group:
-        return [(i, None) for i in ids], None
-    want_dts = file_filter.get("data_types") or []
-    pairs = []
-    for i in ids:
-        preps = [p for p, dt in membership.get(i, []) if not want_dts or dt in want_dts]
-        pairs += [(i, p) for p in (preps or [None])]
-    group_desc = desc and sort == "prep"
-    pairs.sort(key=lambda t: _sort_key([] if t[1] is None else [t[1]], group_desc))
-    prep_dt = {p: dt for preps in membership.values() for p, dt in preps}
-    counts = {}
-    for _i, p in pairs:
-        counts[p] = counts.get(p, 0) + 1
-    return pairs, [{"prep_id": p, "data_type": prep_dt.get(p), "count": n} for p, n in counts.items()]
+def _rows_of(all_files, sample_ids, file_filter=None):
+    """[(sample_id, artifact_id)] for these samples' file entries — only those
+    passing file_filter when one is given."""
+    return [(sid, e[2]) for sid in sample_ids for e in all_files.get(sid, [])
+            if file_filter is None or group_matches(file_filter, e[0], e[1], e[2])]
 
 
 def _parse_file_filter(value):
@@ -160,8 +137,8 @@ def api_set_study_file_filter(aggregation_id, study_id):
 
 @app.route("/api/aggregations/<aggregation_id>/file-facets", methods=["GET"])
 def api_aggregation_file_facets(aggregation_id):
-    """`exportable` (checked samples with a file under their own study's
-    filter — whether the export will contain anything) and `selected`, for the
+    """`exportable` (checked rows under their own study's filter — whether the
+    export will contain anything) and `selected` (all checked rows), for the
     tab header. With ?study_id=, also that study's Data type / Processing /
     Artifact picker options (sample counts, facet-style, under its own filter;
     Data type options include prep-only types with no per-sample file, e.g. a
@@ -170,14 +147,16 @@ def api_aggregation_file_facets(aggregation_id):
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
+    for s in list(agg["studies"]):
+        agg = _ready(agg, s["study_id"])
     selected = selected_by_study(aggregation_id)
     exportable = 0
     for s in agg["studies"]:
-        ids = selected.get(int(s["study_id"]))
-        if ids:
-            eff = effective(get_sample_files(s["study_id"]), s["file_filter"])
-            exportable += sum(1 for i in ids if i in eff)
-    out = {"exportable": exportable, "selected": sum(len(ids) for ids in selected.values())}
+        rows = selected.get(int(s["study_id"]))
+        if rows:
+            files = get_sample_files(s["study_id"])
+            exportable += len(rows & set(_rows_of(files, files, s["file_filter"])))
+    out = {"exportable": exportable, "selected": sum(len(rows) for rows in selected.values())}
     if request.args.get("study_id") is not None:
         try:
             study = _study_in(agg, int(request.args["study_id"]))
@@ -200,7 +179,7 @@ def api_delete_aggregation(aggregation_id):
 
 @app.route("/api/aggregations/<aggregation_id>/studies", methods=["POST"])
 def api_add_study_to_aggregation(aggregation_id):
-    """Add a whole study: every one of its samples starts checked. The body's
+    """Add a whole study: every one of its (sample, artifact) rows starts checked. The body's
     `study` is the Browse card's header (title, abstract, PI, year, GOLD,
     counts), snapshotted for the tab's cards."""
     study = (request.get_json() or {}).get("study")
@@ -214,11 +193,10 @@ def api_add_study_to_aggregation(aggregation_id):
         return jsonify({"error": "Aggregation not found"}), 404
     if len(agg["studies"]) >= AGGREGATION_STUDIES_CAP:
         return jsonify({"error": f"Aggregation has reached the maximum of {AGGREGATION_STUDIES_CAP} studies"}), 400
-    sample_ids = list_study_sample_ids(study_id)
-    # The "K / N samples" badge's denominator is the number of rows stored.
-    study = {**study, "num_samples": len(sample_ids)}
+    files = get_sample_files(study_id)
+    study = {**study, "num_samples": len(list_study_sample_ids(study_id))}
     agg = add_study_to_aggregation(aggregation_id, g.user_id, study,
-                                   count_fastq_artifacts(study_id), sample_ids)
+                                   count_fastq_artifacts(study_id), _rows_of(files, files))
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
     return jsonify(agg)
@@ -236,44 +214,51 @@ def _study_in(agg, study_id):
     return next((s for s in agg["studies"] if int(s["study_id"]) == int(study_id)), None)
 
 
+def _ready(agg, study_id):
+    """The aggregation with this study's selection on per-row storage: a study
+    from before per-row selection is migrated (once) from its checked samples
+    first, which changes its counts, so the aggregation is re-read."""
+    study = _study_in(agg, study_id)
+    if study is not None and not study.get("rows_v"):
+        migrate_study_rows(agg["aggregation_id"], int(study_id), get_sample_files(study_id))
+        agg = get_aggregation(agg["aggregation_id"], g.user_id)
+    return agg
+
+
 @app.route("/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples", methods=["GET"])
 def api_aggregation_study_samples(aggregation_id, study_id):
-    """One page of the study's samples (Qiita) flagged with `selected` (SQLite)
-    and `fastq`/`fasta` availability plus each sample's file paths (`files`,
-    one {artifact_id, data_type, processing, r1, r2, barcodes} per artifact) and
-    its `prep_ids`. ?offset= ?limit= (1-500, default 200)
-    ?q= substring filter on sample id or any metadata value ?show=
-    all|with_files|without_files (default all) ?group=prep ?sort=prep|artifact
-    ?dir=asc|desc (default asc).
+    """One page of the study's table rows. A row is a (sample, artifact) pair — the
+    sample's file in one artifact, which fixes its prep — flagged with `selected`
+    (SQLite, per row) and carrying that artifact's `file` {r1, r2, barcodes},
+    `fastq`/`fasta`, `prep_id` and `prep_ids`; a sample with no file under the
+    study's filter is one placeholder row (artifact_id null, never selected).
+    ?offset= ?limit= (1-500 rows, default 200) ?q= substring filter on sample id
+    or any metadata value ?show= all|with_files|without_files (default all)
+    ?group=prep ?sort=prep|artifact ?dir=asc|desc (default asc).
 
-    sort orders by each sample's lowest prep id / artifact id (artifacts that
-    pass the file_filter), samples with none last either way; ties keep the
-    files-first / id order. Grouped, sort=prep orders the prep groups and
-    sort=artifact the rows inside each group.
+    sort orders the rows by that id, rows with none last either way; ties keep
+    the files-first / id order. group=prep clusters rows under their prep
+    (ascending; a placeholder goes under each prep of its that passes the Data
+    type filter, else "No prep"), and `groups` gives {prep_id, data_type, count}
+    per group for the headers; sort=prep orders the groups, sort=artifact the
+    rows inside each. `total` and `with_files` count rows.
 
-    group=prep clusters by prep: a sample is listed once under every one of its
-    preps whose data type passes the Data type filter (or under prep_id None,
-    "No prep"), preps ascending, files-first/id order inside each. Each row
-    then also carries its `prep_id`, `total` counts those (sample, prep) rows,
-    and `groups` gives {prep_id, data_type, count} for every prep in the result
-    (the header labels).
+    The study's saved file_filter first narrows which samples are in scope at
+    all (in_scope: prep membership or file data type), then Show / with_files
+    further narrow by file availability under the full filter.
 
-    The aggregation's saved file_filter first narrows which samples are in
-    scope at all (in_scope: prep membership or file data type), then Show /
-    with_files further narrow by file availability under the full filter.
-
-    Paging happens in Python, not SQL: samples are sorted files-first (stable,
-    so id order is preserved within each group), which a plain SQL
-    LIMIT/OFFSET over qiita.sample_<id> cannot express."""
+    Paging happens in Python, not SQL: rows are sorted files-first (stable, so
+    id order is preserved within each group), which a plain SQL LIMIT/OFFSET
+    over qiita.sample_<id> cannot express."""
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
-    study = _study_in(agg, study_id)
-    if study is None:
+    if _study_in(agg, study_id) is None:
         return jsonify({"error": "Study not in aggregation"}), 404
+    study = _study_in(_ready(agg, study_id), study_id)
     try:
         offset = max(0, int(request.args.get("offset", 0)))
-        # <= 500 keeps selected_in's IN (...) under SQLite's 999-bind ceiling.
+        # <= 500 rows keeps selected_rows_in's IN (...) under SQLite's 999-bind ceiling.
         limit = min(500, max(1, int(request.args.get("limit", 200))))
     except (TypeError, ValueError):
         return jsonify({"error": "Invalid offset or limit"}), 400
@@ -301,48 +286,42 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     # Demultiplexed/BIOM) is still in scope, shown with FASTQ/FASTA "—".
     ids = [i for i in ids if in_scope(prep_types.get(i, []), all_files.get(i, []), file_filter)]
     files = effective(all_files, file_filter)  # {sample_id: (fastq, fasta)} under the full filter
-    with_files = sum(1 for i in ids if i in files)
+    with_files = sum(len(file_entries(all_files, i, file_filter)) for i in ids)
     if show == "with_files":
         ids = [i for i in ids if i in files]
     elif show == "without_files":
         ids = [i for i in ids if i not in files]
     # Stable sort: samples with a file first, id order preserved within each group.
     ids.sort(key=lambda i: i not in files)
-    pairs, groups = _order_pairs(ids, membership, all_files, file_filter, group, sort, desc)
-    total = len(pairs)
-    page_pairs = pairs[offset:offset + limit]
-    page = list(dict.fromkeys(i for i, _p in page_pairs))  # one sample can span several rows
+    keys, groups = order_rows(ids, all_files, membership, artifact_preps(study_id), file_filter, group, sort, desc)
+    page_keys = keys[offset:offset + limit]
+    page = list(dict.fromkeys(k[0] for k in page_keys))  # one sample can span several rows
     by_id = {r[0]: r for r in fetch_samples_by_ids(study_id, page)}
     columns = display_columns(study_id)
-    sel = selected_in(aggregation_id, study_id, page)
-    paths = page_files(study_id, page, all_files, file_filter)
+    sel = selected_rows_in(aggregation_id, study_id, page)
+    file_of = {(sid, f["artifact_id"]): f for sid, fs in page_files(study_id, page, all_files, file_filter).items()
+               for f in fs}
+    entry_of = {(sid, e[2]): e for sid in page for e in all_files.get(sid, [])}
     rows = []
-    for sid, prep_id in page_pairs:
+    for sid, aid, prep_id in page_keys:
         r = by_id.get(sid)
         fields = dict(zip(columns, r[1:])) if r else {c: None for c in columns}
-        fq, fa = files.get(sid, (0, 0))
-        entries = all_files.get(sid, [])
-        file_dts = sorted({e[0] for e in entries})
-        row = {
-            "sample_id": sid, "selected": sid in sel,
-            "fastq": _FASTQ_LABEL.get(fq), "fasta": bool(fa),
-            # data_types is prep membership ∪ file data types, unfiltered, so
-            # the UI can show every type the sample belongs to (dimmed when
-            # the filter excludes it); file_data_types is the subset with an
-            # actual per-sample file, styled solid vs. outline.
-            "data_types": sorted(set(prep_types.get(sid, [])) | set(file_dts)),
-            "file_data_types": file_dts,
-            "processing": sorted({e[1] for e in entries}),
-            "files": paths[sid],
-            "prep_ids": [p for p, _dt in membership.get(sid, [])],
-            "fields": fields,
-        }
-        if group:
-            row["prep_id"] = prep_id
-        rows.append(row)
+        entry = entry_of.get((sid, aid))
+        if entry:
+            dt, proc, _aid, fq, fa = entry
+            f = file_of.get((sid, aid), {})
+            row = {"fastq": _FASTQ_LABEL.get(fq), "fasta": bool(fa), "data_types": [dt], "file_data_types": [dt],
+                   "processing": [proc], "prep_ids": [] if prep_id is None else [prep_id],
+                   "file": {k: f.get(k, "") for k in ("r1", "r2", "barcodes")}}
+        else:
+            row = {"fastq": None, "fasta": False, "data_types": prep_types.get(sid, []), "file_data_types": [],
+                   "processing": [], "file": None,
+                   "prep_ids": [p for p, _dt in membership.get(sid, [])] if prep_id is None else [prep_id]}
+        rows.append({"sample_id": sid, "artifact_id": aid, "prep_id": prep_id, "selected": (sid, aid) in sel,
+                     **row, "fields": fields})
     resp = {
-        "study_id": study_id, "total": total, "offset": offset, "limit": limit,
-        "columns": columns, "selected_count": study.get("selected_samples", 0),
+        "study_id": study_id, "total": len(keys), "offset": offset, "limit": limit,
+        "columns": columns, "selected_count": study.get("selected_rows", 0),
         "with_files": with_files, "rows": rows,
     }
     if groups is not None:
@@ -350,55 +329,58 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     return jsonify(resp)
 
 
-def _id_list(value):
+def _row_list(value):
+    """[{"sample_id", "artifact_id"}] from a client body -> [(sample_id, artifact_id)]."""
     if value is None:
         return []
     if (not isinstance(value, list) or len(value) > _MAX_IDS_PER_PATCH
-            or not all(isinstance(x, str) and x for x in value)):
+            or not all(isinstance(x, dict) and isinstance(x.get("sample_id"), str) and x["sample_id"]
+                       and isinstance(x.get("artifact_id"), int) and not isinstance(x["artifact_id"], bool)
+                       for x in value)):
         raise ValueError(_SAMPLES_BODY_HELP)
-    return value
+    return [(x["sample_id"], x["artifact_id"]) for x in value]
 
 
 @app.route("/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples", methods=["PATCH"])
-def api_set_aggregation_samples(aggregation_id, study_id):
-    """Edit which of the study's samples are checked. Either explicit lists
-    {"add": [...], "remove": [...]} or a bulk {"select": "all" | "none" |
-    "with_files" | "matching", "q": ...}. "all"/"none"/"with_files" replace the
-    whole selection ("with_files" = every sample with a sequence
-    file — exactly what the CSV export can contain); "matching" (requires q)
-    adds every sample the filter hits to the current selection.
-    Ids are stored as given; one that isn't a real sample never resolves to a
-    file in the CSV."""
+def api_set_aggregation_rows(aggregation_id, study_id):
+    """Edit which of the study's rows ((sample, artifact) pairs) are checked.
+    Either explicit lists {"add": [{sample_id, artifact_id}], "remove": [...]} or
+    a bulk {"select": "all" | "none" | "with_files" | "matching", "q": ...}.
+    "all" (every row of the study) / "none" / "with_files" (the rows under the
+    study's filter, narrowed by q — exactly what the export can contain)
+    replace the whole selection; "matching" (requires q) adds every row of the
+    samples the text filter hits. Pairs are stored as given; one that isn't a
+    real row never resolves to a file in the export."""
     body = request.get_json() or {}
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
-    study = _study_in(agg, study_id)
-    if study is None:
+    if _study_in(agg, study_id) is None:
         return jsonify({"error": "Study not in aggregation"}), 404
+    study = _study_in(_ready(agg, study_id), study_id)
     try:
         select = body.get("select")
         if select is not None:
             q = (body.get("q") or "").strip()
+            all_files = get_sample_files(study_id)
             if select == "all":
-                kwargs = {"add": list_study_sample_ids(study_id), "clear": True}
+                kwargs = {"add": _rows_of(all_files, all_files), "clear": True}
             elif select == "none":
                 kwargs = {"clear": True}
             elif select == "with_files":
                 ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
-                files = effective(get_sample_files(study_id), study["file_filter"])
-                kwargs = {"add": [i for i in ids if i in files], "clear": True}
+                kwargs = {"add": _rows_of(all_files, ids, study["file_filter"]), "clear": True}
             elif select == "matching" and q:
-                kwargs = {"add": matching_sample_ids(study_id, q)}
+                kwargs = {"add": _rows_of(all_files, matching_sample_ids(study_id, q))}
             else:
                 raise ValueError(_SAMPLES_BODY_HELP)
         else:
-            kwargs = {"add": _id_list(body.get("add")), "remove": _id_list(body.get("remove"))}
+            kwargs = {"add": _row_list(body.get("add")), "remove": _row_list(body.get("remove"))}
             if not kwargs["add"] and not kwargs["remove"]:
                 raise ValueError(_SAMPLES_BODY_HELP)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    agg = set_aggregation_samples(aggregation_id, g.user_id, study_id, **kwargs)
+    agg = set_aggregation_rows(aggregation_id, g.user_id, study_id, **kwargs)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
     return jsonify(agg)
@@ -409,9 +391,11 @@ def _export_rows(aggregation_id):
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return None, (jsonify({"error": "Aggregation not found"}), 404)
-    selected = {sid: ids for sid, ids in selected_by_study(aggregation_id).items() if ids}
+    for s in list(agg["studies"]):
+        agg = _ready(agg, s["study_id"])
+    selected = {sid: rows for sid, rows in selected_by_study(aggregation_id).items() if rows}
     if not selected:
-        return None, (jsonify({"error": "No samples selected"}), 400)
+        return None, (jsonify({"error": "No rows selected"}), 400)
     try:
         # Resolved at call time so tests can patch the module-level names.
         filters = {int(s["study_id"]): s["file_filter"] for s in agg["studies"]}

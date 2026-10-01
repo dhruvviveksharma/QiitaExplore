@@ -17,6 +17,7 @@ def ss():
     import helpers.study_samples as ss
     ss._columns_cache.clear()
     ss._prep_dt_cache.clear()
+    ss._artifact_prep_cache.clear()
     return ss
 
 
@@ -151,3 +152,20 @@ def test_fetch_prep_samples_no_prep(ss):
     with patch.object(ss, "pooled_fetchall", side_effect=fake):
         samples, total = ss.fetch_prep_samples(232, None, 500)
     assert (total, [x["sample_id"] for x in samples], samples[0]["prep_ids"]) == (1, ["s4"], [])
+
+
+# ── artifact_preps ───────────────────────────────────────────────────────────
+
+def test_artifact_preps_maps_artifact_to_prep_and_binds_study(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=[(2947, 1115), (2247, 1134)]) as m:
+        assert ss.artifact_preps(10317) == {2947: 1115, 2247: 1134}
+    sql, params = m.call_args[0]
+    assert "preparation_artifact" in sql and "study_artifact" in sql and params == [10317]
+
+
+def test_artifact_preps_lowest_prep_wins_and_is_memoized(ss):
+    # SQL orders by prep id, so a (never seen in practice) artifact in two preps resolves deterministically.
+    with patch.object(ss, "pooled_fetchall", return_value=[(7, 100), (7, 200)]) as m:
+        assert ss.artifact_preps(5) == {7: 100}
+        assert ss.artifact_preps("5") == {7: 100}                 # served from the memo
+    assert m.call_count == 1 and "ORDER BY pa.prep_template_id" in m.call_args[0][0]

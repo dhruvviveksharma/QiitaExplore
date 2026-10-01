@@ -248,15 +248,30 @@ def _create_schema(conn):
             FOREIGN KEY (aggregation_id) REFERENCES aggregations(aggregation_id) ON DELETE CASCADE
         );
 
-        -- Per-sample membership. The composite FK cascades in a chain
-        -- (aggregation -> studies -> samples); the PK autoindex serves every
-        -- lookup (per-study count, page IN (...), per-study delete).
+        -- Legacy per-sample membership (pre-2026-09-30). Only read by
+        -- store.aggregation_crud.migrate_study_rows, which turns a study's checked
+        -- samples into aggregation_files rows the first time it is opened.
         CREATE TABLE IF NOT EXISTS aggregation_samples (
             aggregation_id TEXT    NOT NULL,
             study_id       INTEGER NOT NULL,
             sample_id      TEXT    NOT NULL,
             added_at       TEXT,
             PRIMARY KEY (aggregation_id, study_id, sample_id),
+            FOREIGN KEY (aggregation_id, study_id)
+                REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
+        );
+
+        -- Per-row selection: one row per checked (sample, artifact) file row; the
+        -- artifact fixes its prep. The composite FK cascades in a chain
+        -- (aggregation -> studies -> rows); the PK autoindex serves every lookup
+        -- (per-study count, page IN (...), per-study delete).
+        CREATE TABLE IF NOT EXISTS aggregation_files (
+            aggregation_id TEXT    NOT NULL,
+            study_id       INTEGER NOT NULL,
+            sample_id      TEXT    NOT NULL,
+            artifact_id    INTEGER NOT NULL,
+            added_at       TEXT,
+            PRIMARY KEY (aggregation_id, study_id, sample_id, artifact_id),
             FOREIGN KEY (aggregation_id, study_id)
                 REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
         );
@@ -356,6 +371,11 @@ def _create_schema(conn):
         # "artifacts": [...]}; empty = any). Drives that study's sample table
         # and its rows in the export (routes/aggregation_routes.py).
         ("aggregation_studies", "file_filter_json", "TEXT"),
+        # rows_v = 1: this study's selection lives in aggregation_files (0 = still the
+        # legacy aggregation_samples, migrated lazily). file_rows: how many (sample,
+        # artifact) rows the study had when snapshotted — the "K / N rows" denominator.
+        ("aggregation_studies", "rows_v", "INTEGER DEFAULT 0"),
+        ("aggregation_studies", "file_rows", "INTEGER"),
         # Unused since 2026-09-24: the availability map moved to its own
         # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),
