@@ -42,12 +42,20 @@ function useBrowseFilters() {
 // two earlier useDropdown consumers close on select) and opts out of the
 // hover-away close so typing in the search box with the mouse elsewhere
 // doesn't dismiss it.
-function FacetMultiSelect({ label, options, selected, onChange, searchable, disabled }) {
+// selectedFirst: options ticked when the menu was opened are listed first (a snapshot, so ticking
+// an item doesn't make it jump from under the cursor; it moves up the next time the menu opens).
+function FacetMultiSelect({ label, options, selected, onChange, searchable, disabled, selectedFirst }) {
   const dd = useDropdown(undefined, { hoverClose: false });
   const [q, setQ] = useState('');
+  const [pinned, setPinned] = useState([]);
+  useEffect(() => { if (dd.open) setPinned(selected); }, [dd.open]);
   const ql = q.trim().toLowerCase();
   const all = options || [];
-  const shown = (ql ? all.filter(o => o.name.toLowerCase().includes(ql)) : all).slice(0, 200);
+  const matching = ql ? all.filter(o => o.name.toLowerCase().includes(ql)) : all;
+  const ordered = selectedFirst
+    ? [...matching.filter(o => pinned.includes(o.name)), ...matching.filter(o => !pinned.includes(o.name))]
+    : matching;
+  const shown = ordered.slice(0, 200);
   const toggle = name =>
     onChange(selected.includes(name) ? selected.filter(n => n !== name) : [...selected, name]);
   const n = selected.length;

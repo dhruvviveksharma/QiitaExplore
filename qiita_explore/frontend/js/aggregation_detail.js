@@ -4,7 +4,7 @@
 // open its metadata, Data type / Processing / Artifact pickers + Prep ID/Data
 // type/FASTQ/FASTA/Artifact ID/R1/R2/Barcodes columns with drag-to-resize
 // widths, a files-first Show filter, a Group by prep toggle that clusters rows
-// under collapsible prep headers), and the metadata pane itself. The
+// under collapsible prep headers, click-to-sort Prep ID / Artifact ID headers), and the metadata pane itself. The
 // Data type / Processing / Artifact pickers live in the sample table's toolbar
 // but set the aggregation's saved file_filter, so every study's table and all
 // header exports follow the same choice. Loads before aggregations.js,
@@ -136,6 +136,7 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const [q,         setQ]         = useState('');
   const [show,      setShow]      = useState('all'); // 'all' | 'with_files' | 'without_files'
   const [group,     setGroup]     = useState(false); // cluster rows under prep headers
+  const [sort,      setSort]      = useState(null);  // { key: 'prep' | 'artifact', dir: 'asc' | 'desc' } | null
   const [groups,    setGroups]    = useState([]);    // [{prep_id, data_type, count}] when grouped
   const [collapsed, setCollapsed] = useState(() => new Set()); // prep keys (prep_id ?? 'none')
   const [loading,   setLoading]   = useState(false);
@@ -150,7 +151,8 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
     try {
       const d = await apiJson(
         `/aggregations/${aid}/studies/${sid}/samples?offset=${offset}&limit=${_AGG_PAGE}` +
-        `&q=${encodeURIComponent(query)}&show=${showVal}${group ? '&group=prep' : ''}`);
+        `&q=${encodeURIComponent(query)}&show=${showVal}${group ? '&group=prep' : ''}` +
+        (sort ? `&sort=${sort.key}&dir=${sort.dir}` : ''));
       if (mine !== seq.current) return;
       setRows(prev => append ? [...prev, ...(d.rows || [])] : (d.rows || []));
       setTotal(d.total ?? 0);
@@ -171,7 +173,7 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   useEffect(() => {
     const t = setTimeout(() => load(0, q.trim(), show, false), q ? 300 : 0);
     return () => clearTimeout(t);
-  }, [q, show, filterKey, group]);
+  }, [q, show, filterKey, group, sort]);
 
   const toggle = async (r) => {
     const next = !r.selected;
@@ -194,6 +196,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
   const { widthOf, startResize } = useColumnResize(_COL_W);
   // [key, header label] for every column after the checkbox; metadata columns are keyed "m:<name>".
+  // Prep ID / Artifact ID headers sort server-side: click cycles asc → desc → off.
+  const sortable = { prep: 'prep', artifact: 'artifact' };
+  const cycleSort = (key) => setSort(s => !s || s.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null);
   const heads = [['sample', 'Sample ID'], ['prep', 'Prep ID'], ['dtype', 'Data type'], ['fastq', 'FASTQ'], ['fasta', 'FASTA'],
     ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
     ...columns.map(c => [`m:${c}`, c])];
@@ -213,7 +218,7 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
           onChange={names => onFilterChange('data_types', names)} disabled={!facets} />
         <FacetMultiSelect label="Processing" options={facets?.processing} selected={filt.processing}
           onChange={names => onFilterChange('processing', names)} disabled={!facets} />
-        <FacetMultiSelect label="Artifact" options={facets?.artifacts} selected={filt.artifacts || []} searchable
+        <FacetMultiSelect label="Artifact" options={facets?.artifacts} selected={filt.artifacts || []} searchable selectedFirst
           onChange={names => onFilterChange('artifacts', names)} disabled={!facets} />
         <div className="agg-seg">
           <button className={show === 'all' ? 'on' : ''} onClick={() => setShow('all')}>All</button>
@@ -254,9 +259,11 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
           <thead>
             <tr><th></th>
               {heads.map(([k, label]) => (
-                <th key={k} title={label}>
-                  {label}
-                  <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} />
+                <th key={k} title={sortable[k] ? `${label} — click to sort` : label}
+                  className={sortable[k] ? 'agg-sortable' : undefined}
+                  onClick={sortable[k] ? () => cycleSort(sortable[k]) : undefined}>
+                  {label}{sort?.key === sortable[k] && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
+                  <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} onClick={e => e.stopPropagation()} />
                 </th>
               ))}</tr>
           </thead>

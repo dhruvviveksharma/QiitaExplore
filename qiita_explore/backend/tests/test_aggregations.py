@@ -476,6 +476,64 @@ def test_route_group_by_prep_honours_data_type_filter_and_puts_no_prep_last(clie
     assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(6, "s1")]
 
 
+def _ids(page):
+    return [r["sample_id"] for r in page["rows"]]
+
+
+def _sort_setup(client, logged_in, stub_qiita, monkeypatch):
+    # s1: preps 5+9, artifact 30 (file); s2: prep 7, artifacts 20+40; s3: no prep, no file.
+    # No Data type filter, so every sample is in scope.
+    members = {"s1": [(5, "16S"), (9, "16S")], "s2": [(7, "16S")]}
+    _prep_stubs(monkeypatch, stub_qiita, members)
+    monkeypatch.setattr(stub_qiita, "list_study_sample_ids", lambda sid: ["s1", "s2", "s3"])
+    monkeypatch.setattr(stub_qiita, "fetch_samples_by_ids",
+                        lambda sid, ids: [(i, "x") for i in ids])
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {
+        "s1": [("16S", "Raw upload", 30, 1, 0)],
+        "s2": [("16S", "Raw upload", 20, 2, 0), ("16S", "Raw upload", 40, 1, 0)]})
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    return aid, f"/api/aggregations/{aid}/studies/16326/samples"
+
+
+def test_route_sort_by_prep_and_artifact(client, logged_in, stub_qiita, monkeypatch):
+    aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
+    assert _ids(client.get(base).get_json()) == ["s1", "s2", "s3"]                    # default: files-first / id
+    # prep: lowest prep id per sample (s1 -> 5, s2 -> 7); no prep last in both directions
+    assert _ids(client.get(base + "?sort=prep").get_json()) == ["s1", "s2", "s3"]
+    assert _ids(client.get(base + "?sort=prep&dir=desc").get_json()) == ["s2", "s1", "s3"]
+    # artifact: lowest artifact id (s2 -> 20, s1 -> 30); no artifact last
+    assert _ids(client.get(base + "?sort=artifact&dir=asc").get_json()) == ["s2", "s1", "s3"]
+    assert _ids(client.get(base + "?sort=artifact&dir=desc").get_json()) == ["s1", "s2", "s3"]
+    # an Artifact filter only counts the artifacts that pass it: s2 restricted to 40, so s1 (30) is first
+    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"artifacts": ["30", "40"]}}, headers=logged_in)
+    assert _ids(client.get(base + "?sort=artifact").get_json()) == ["s1", "s2"]
+    for bad in ("?sort=bogus", "?sort=prep&dir=up"):
+        assert client.get(base + bad).status_code == 400
+    assert _ids(client.get(base + "?dir=desc").get_json()) == ["s1", "s2"]            # dir without sort is ignored
+
+
+def test_route_sort_ties_keep_files_first_then_id(client, logged_in, stub_qiita, monkeypatch):
+    aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
+    # Sort by prep with every sample in the same prep: nothing to separate them, so the default order stays.
+    _prep_stubs(monkeypatch, stub_qiita, {"s1": [(5, "16S")], "s2": [(5, "16S")], "s3": [(5, "16S")]})
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: {"s2": [("16S", "Raw upload", 20, 2, 0)]})
+    assert _ids(client.get(base + "?sort=prep").get_json()) == ["s2", "s1", "s3"]
+
+
+def test_route_sort_grouped(client, logged_in, stub_qiita, monkeypatch):
+    aid, base = _sort_setup(client, logged_in, stub_qiita, monkeypatch)
+    pairs = lambda page: [(r["prep_id"], r["sample_id"]) for r in page["rows"]]       # noqa: E731
+    g = base + "?group=prep"
+    assert pairs(client.get(g).get_json()) == [(5, "s1"), (7, "s2"), (9, "s1"), (None, "s3")]
+    # sort=prep&dir=desc reverses the groups; "No prep" stays last
+    assert pairs(client.get(g + "&sort=prep&dir=desc").get_json()) == [(9, "s1"), (7, "s2"), (5, "s1"), (None, "s3")]
+    # sort=artifact orders rows inside a group while the groups stay ascending
+    monkeypatch.setattr(stub_qiita, "prep_membership", lambda sid: {"s1": [(5, "16S")], "s2": [(5, "16S")]})
+    assert pairs(client.get(g + "&sort=artifact&dir=asc").get_json()) == [(5, "s2"), (5, "s1"), (None, "s3")]
+    assert pairs(client.get(g + "&sort=artifact&dir=desc").get_json()) == [(5, "s1"), (5, "s2"), (None, "s3")]
+
+
 def test_route_samples_scoped_by_prep_data_type(client, logged_in, stub_qiita, monkeypatch):
     """Studies like 1070 / 1889 (16S / 18S) have no per-sample sequence file
     at all — only prep membership says what data type a sample belongs to.

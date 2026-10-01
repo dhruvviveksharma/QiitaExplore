@@ -37,7 +37,7 @@ from store import (
     selected_by_study,
 )
 from helpers.fastq_manifest import (
-    XLSX_MIMETYPE, count_fastq_artifacts, fetch_export_rows, to_csv, to_xlsx,
+    XLSX_MIMETYPE, count_fastq_artifacts, fetch_export_rows, group_matches, to_csv, to_xlsx,
 )
 from helpers.sample_files import effective, facet_counts, get_sample_files, in_scope, page_files
 from helpers.qiita_fetch import is_study_public
@@ -53,7 +53,16 @@ _SHOW_VALUES = ("all", "with_files", "without_files")
 # {fastq availability int -> API string}; 0 (none) -> None, handled separately.
 _FASTQ_LABEL = {2: "paired", 1: "single"}
 _FILTER_KEYS = ("data_types", "processing", "artifacts")
+_SORT_KEYS = ("prep", "artifact")
 _FILTER_MAX_ITEMS, _FILTER_MAX_LEN = 50, 200
+
+
+def _sort_key(values, desc):
+    """Sort key for a sample's prep / artifact ids: its lowest id (negated for
+    descending), and samples with none last in both directions."""
+    if not values:
+        return (1, 0)
+    return (0, -min(values) if desc else min(values))
 
 
 def _parse_file_filter(value):
@@ -184,7 +193,13 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     one {artifact_id, data_type, processing, r1, r2, barcodes} per artifact) and
     its `prep_ids`. ?offset= ?limit= (1-500, default 200)
     ?q= substring filter on sample id or any metadata value ?show=
-    all|with_files|without_files (default all) ?group=prep.
+    all|with_files|without_files (default all) ?group=prep ?sort=prep|artifact
+    ?dir=asc|desc (default asc).
+
+    sort orders by each sample's lowest prep id / artifact id (artifacts that
+    pass the file_filter), samples with none last either way; ties keep the
+    files-first / id order. Grouped, sort=prep orders the prep groups and
+    sort=artifact the rows inside each group.
 
     group=prep clusters by prep: a sample is listed once under every one of its
     preps whose data type passes the Data type filter (or under prep_id None,
@@ -218,6 +233,11 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     group = request.args.get("group") or None
     if group not in (None, "prep"):
         return jsonify({"error": "group must be prep"}), 400
+    sort = request.args.get("sort") or None
+    direction = request.args.get("dir") or "asc"
+    if sort not in (None, *_SORT_KEYS) or direction not in ("asc", "desc"):
+        return jsonify({"error": "sort must be prep or artifact, dir asc or desc"}), 400
+    desc = direction == "desc"
     q = (request.args.get("q") or "").strip() or None
 
     ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
@@ -238,6 +258,12 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     # Stable sort: samples with a file first, id order preserved within each group.
     ids.sort(key=lambda i: i not in files)
     membership = prep_membership(study_id)
+    if sort == "artifact" or (sort == "prep" and group != "prep"):
+        def values(i):
+            if sort == "prep":
+                return [p for p, _dt in membership.get(i, [])]
+            return [e[2] for e in all_files.get(i, []) if group_matches(file_filter, e[0], e[1], e[2])]
+        ids.sort(key=lambda i: _sort_key(values(i), desc))   # stable: ties keep files-first / id order
     groups = None
     if group == "prep":
         want_dts = file_filter.get("data_types") or []
@@ -245,7 +271,8 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         for i in ids:
             preps = [p for p, dt in membership.get(i, []) if not want_dts or dt in want_dts]
             pairs += [(i, p) for p in (preps or [None])]
-        pairs.sort(key=lambda t: (t[1] is None, t[1] or 0))  # stable: files-first / id order kept inside a prep
+        # stable: the order set above is kept inside a prep
+        pairs.sort(key=lambda t: _sort_key([] if t[1] is None else [t[1]], desc and sort == "prep"))
         prep_dt = {p: dt for preps in membership.values() for p, dt in preps}
         counts = {}
         for _i, p in pairs:
