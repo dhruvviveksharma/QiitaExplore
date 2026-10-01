@@ -281,6 +281,12 @@ function StudyModalOutputs({ study, detail, loading }) {
 // ── Study modal ────────────────────────────────────────────────────────────────
 
 function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, actions }) {
+  const fetchSampleFields = async (sampleId) => {
+    const res = await apiFetch(`/studies/${study.study_id}/samples/${encodeURIComponent(sampleId)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d.fields || null;
+  };
   const [fullscreen,   setFullscreen]   = useState(false);
   const [groupByPrep,  setGroupByPrep]  = useState(false);   // Samples: cluster under prep headers
   // Tracks whether the CURRENT fullscreen=true came from auto-scroll-expand
@@ -404,17 +410,9 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, act
                   <button className={groupByPrep ? 'on' : ''} title="Cluster samples under their prep template"
                     onClick={() => setGroupByPrep(v => !v)}>Group by prep</button>
                 </div>
-                {(() => {
-                  const fetchFields = async (sampleId) => {
-                    const res = await apiFetch(`/studies/${study.study_id}/samples/${encodeURIComponent(sampleId)}`);
-                    if (!res.ok) return null;
-                    const d = await res.json();
-                    return d.fields || null;
-                  };
-                  return groupByPrep
-                    ? <PrepGroupedSamples key={study.study_id} studyId={study.study_id} fetchFields={fetchFields} />
-                    : <SamplesBrowser samples={detail.samples || []} layout="two-pane" fetchFields={fetchFields} />;
-                })()}
+                {groupByPrep
+                  ? <PrepGroupedSamples key={study.study_id} studyId={study.study_id} fetchFields={fetchSampleFields} />
+                  : <SamplesBrowser samples={detail.samples || []} layout="two-pane" fetchFields={fetchSampleFields} />}
               </CollapsibleSection>
             )}
 

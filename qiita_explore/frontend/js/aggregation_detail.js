@@ -17,6 +17,8 @@ const _plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const _AGG_PAGE = 200;
 const _NO_FILTER = { data_types: [], processing: [], artifacts: [] };
 // Starting column widths (px); metadata columns fall back to the hook's 140.
+// Columns whose header click sorts server-side (?sort=): Prep ID / Artifact ID.
+const _SORTABLE = new Set(['prep', 'artifact']);
 const _COL_W = { sel: 32, sample: 170, prep: 90, dtype: 120, fastq: 70, fasta: 60, artifact: 90, r1: 280, r2: 280, barcodes: 280 };
 const _chunk = (arr, n) => {
   const out = [];
@@ -194,10 +196,9 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
   // A data type the header filter excludes stays visible, dimmed: the sample
   // has such a file, it just isn't what the export will contain.
   const dtKept = (dt) => !filt.data_types.length || filt.data_types.includes(dt);
-  const { widthOf, startResize } = useColumnResize(_COL_W);
+  const { widthOf, startResize, isResizing } = useColumnResize(_COL_W);
   // [key, header label] for every column after the checkbox; metadata columns are keyed "m:<name>".
   // Prep ID / Artifact ID headers sort server-side: click cycles asc → desc → off.
-  const sortable = { prep: 'prep', artifact: 'artifact' };
   const cycleSort = (key) => setSort(s => !s || s.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null);
   const heads = [['sample', 'Sample ID'], ['prep', 'Prep ID'], ['dtype', 'Data type'], ['fastq', 'FASTQ'], ['fasta', 'FASTA'],
     ['artifact', 'Artifact ID'], ['r1', 'R1'], ['r2', 'R2'], ['barcodes', 'Barcodes'],
@@ -261,11 +262,11 @@ function AggregationSampleTable({ a, agg, study, filt, facets, onFilterChange, p
           <thead>
             <tr><th></th>
               {heads.map(([k, label]) => (
-                <th key={k} title={sortable[k] ? `${label} — click to sort` : label}
-                  className={sortable[k] ? 'agg-sortable' : undefined}
-                  onClick={sortable[k] ? () => cycleSort(sortable[k]) : undefined}>
-                  {label}{sortable[k] && sort?.key === sortable[k] && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
-                  <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} onClick={e => e.stopPropagation()} />
+                <th key={k} title={_SORTABLE.has(k) ? `${label} — click to sort` : label}
+                  className={_SORTABLE.has(k) ? 'agg-sortable' : undefined}
+                  onClick={_SORTABLE.has(k) ? () => { if (!isResizing()) cycleSort(k); } : undefined}>
+                  {label}{_SORTABLE.has(k) && sort?.key === k && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
+                  <span className="agg-col-resize" onMouseDown={e => startResize(k, e)} />
                 </th>
               ))}</tr>
           </thead>

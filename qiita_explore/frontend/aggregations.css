@@ -135,5 +135,5 @@
   border-radius: var(--radius-s); cursor: pointer; text-align: left; }
 .prep-group-head:hover { background: var(--accent-soft); }
 .prep-group-body { padding: 4px 0 8px 12px; }
-.agg-resizable th.agg-sortable { cursor: pointer; }
+.agg-resizable th.agg-sortable { cursor: pointer; user-select: none; }
 .agg-resizable th.agg-sortable:hover { color: var(--accent-h); }

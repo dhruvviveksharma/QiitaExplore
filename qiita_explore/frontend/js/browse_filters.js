@@ -48,7 +48,6 @@ function FacetMultiSelect({ label, options, selected, onChange, searchable, disa
   const dd = useDropdown(undefined, { hoverClose: false });
   const [q, setQ] = useState('');
   const [pinned, setPinned] = useState([]);
-  useEffect(() => { if (dd.open) setPinned(selected); }, [dd.open]);
   const ql = q.trim().toLowerCase();
   const all = options || [];
   const matching = ql ? all.filter(o => o.name.toLowerCase().includes(ql)) : all;
@@ -62,7 +61,7 @@ function FacetMultiSelect({ label, options, selected, onChange, searchable, disa
   return (
     <div className="dd-root" ref={dd.rootRef}>
       <button type="button" ref={dd.btnRef} className={`dd-trigger bf-trigger ${n ? 'active' : ''}`}
-        onClick={dd.toggle} disabled={disabled}>
+        onClick={e => { if (selectedFirst && !dd.open) setPinned(selected); dd.toggle(e); }} disabled={disabled}>
         <span className="dd-trigger-label">
           {label}{n > 0 && <span className="bf-trigger-n">{n}</span>}
         </span>

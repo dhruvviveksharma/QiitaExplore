@@ -100,7 +100,7 @@ def _path(base_dir, mountpoint, subdirectory, artifact_id, filename):
 
 
 def build_manifest_rows(samples, files, base_dir):
-    """samples: [(sample_id, run_prefix, ...)]; files: [(filepath_type, mountpoint, subdirectory, artifact_id, filename)].
+    """samples: [(sample_id, run_prefix)]; files: [(filepath_type, mountpoint, subdirectory, artifact_id, filename)].
 
     Returns (rows, paired) with rows = [(sample_id, fwd_path, rev_path_or_None)]
     sorted by sample_id. Anything that isn't a reverse read (raw_forward_seqs,
@@ -115,7 +115,7 @@ def build_manifest_rows(samples, files, base_dir):
 
     rows = []
     # Longest prefix first so '1002' claims its files before '100' can.
-    for sample_id, prefix, *_ in sorted(samples, key=lambda s: len(s[1] or ""), reverse=True):
+    for sample_id, prefix in sorted(samples, key=lambda s: len(s[1] or ""), reverse=True):
         if not prefix:
             continue
         f = _claim(fwd, prefix)
@@ -143,7 +143,7 @@ def build_multiplexed_rows(samples, files, base_dir):
     lanes = [(f[0], f[1], rev[i][1] if i < len(rev) else None, bc[i][1] if i < len(bc) else None)
              for i, f in enumerate(fwd)]
     rows = []
-    for sample_id, prefix, *_ in samples:
+    for sample_id, prefix in samples:
         lane = lanes[0] if len(lanes) == 1 else next((l for l in lanes if prefix and prefix in l[0]), None)
         if lane:
             rows.append((sample_id, lane[1], lane[2], lane[3]))

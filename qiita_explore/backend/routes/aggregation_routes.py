@@ -58,11 +58,41 @@ _FILTER_MAX_ITEMS, _FILTER_MAX_LEN = 50, 200
 
 
 def _sort_key(values, desc):
-    """Sort key for a sample's prep / artifact ids: its lowest id (negated for
-    descending), and samples with none last in both directions."""
+    """Sort key for a sample's prep / artifact ids: its lowest id ascending, its
+    highest descending (so the id shown at the top matches the arrow), and
+    samples with none last in both directions."""
     if not values:
         return (1, 0)
-    return (0, -min(values) if desc else min(values))
+    return (0, -max(values) if desc else min(values))
+
+
+def _order_pairs(ids, membership, all_files, file_filter, group, sort, desc):
+    """(pairs, groups): the (sample_id, prep_id) rows to page, and — when grouped —
+    the header info [{prep_id, data_type, count}] (else None). `ids` arrive
+    files-first / id ordered and every sort here is stable, so ties keep that
+    order. Ungrouped, each sample is one row (prep_id None). Grouped, a sample
+    is one row under every prep that passes the Data type filter (or under None,
+    "No prep"); sort=prep orders the groups, sort=artifact the rows inside each."""
+    if sort == "artifact" or (sort == "prep" and not group):
+        def values(i):
+            if sort == "prep":
+                return [p for p, _dt in membership.get(i, [])]
+            return [e[2] for e in all_files.get(i, []) if group_matches(file_filter, e[0], e[1], e[2])]
+        ids = sorted(ids, key=lambda i: _sort_key(values(i), desc))
+    if not group:
+        return [(i, None) for i in ids], None
+    want_dts = file_filter.get("data_types") or []
+    pairs = []
+    for i in ids:
+        preps = [p for p, dt in membership.get(i, []) if not want_dts or dt in want_dts]
+        pairs += [(i, p) for p in (preps or [None])]
+    group_desc = desc and sort == "prep"
+    pairs.sort(key=lambda t: _sort_key([] if t[1] is None else [t[1]], group_desc))
+    prep_dt = {p: dt for preps in membership.values() for p, dt in preps}
+    counts = {}
+    for _i, p in pairs:
+        counts[p] = counts.get(p, 0) + 1
+    return pairs, [{"prep_id": p, "data_type": prep_dt.get(p), "count": n} for p, n in counts.items()]
 
 
 def _parse_file_filter(value):
@@ -235,14 +265,15 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         return jsonify({"error": "group must be prep"}), 400
     sort = request.args.get("sort") or None
     direction = request.args.get("dir") or "asc"
-    if sort not in (None, *_SORT_KEYS) or direction not in ("asc", "desc"):
+    if sort not in (None, *_SORT_KEYS) or (sort and direction not in ("asc", "desc")):
         return jsonify({"error": "sort must be prep or artifact, dir asc or desc"}), 400
     desc = direction == "desc"
     q = (request.args.get("q") or "").strip() or None
 
     ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
     all_files = get_sample_files(study_id)
-    prep_types = prep_data_types(study_id)
+    membership = prep_membership(study_id)
+    prep_types = {sid: sorted({dt for _p, dt in preps}) for sid, preps in membership.items()}
     file_filter = agg["file_filter"]
     # Data-type scope: a sample stays in the table if it has no chosen type
     # filter, or its prep membership / file data types intersect it. This is
@@ -257,29 +288,7 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         ids = [i for i in ids if i not in files]
     # Stable sort: samples with a file first, id order preserved within each group.
     ids.sort(key=lambda i: i not in files)
-    membership = prep_membership(study_id)
-    if sort == "artifact" or (sort == "prep" and group != "prep"):
-        def values(i):
-            if sort == "prep":
-                return [p for p, _dt in membership.get(i, [])]
-            return [e[2] for e in all_files.get(i, []) if group_matches(file_filter, e[0], e[1], e[2])]
-        ids.sort(key=lambda i: _sort_key(values(i), desc))   # stable: ties keep files-first / id order
-    groups = None
-    if group == "prep":
-        want_dts = file_filter.get("data_types") or []
-        pairs = []
-        for i in ids:
-            preps = [p for p, dt in membership.get(i, []) if not want_dts or dt in want_dts]
-            pairs += [(i, p) for p in (preps or [None])]
-        # stable: the order set above is kept inside a prep
-        pairs.sort(key=lambda t: _sort_key([] if t[1] is None else [t[1]], desc and sort == "prep"))
-        prep_dt = {p: dt for preps in membership.values() for p, dt in preps}
-        counts = {}
-        for _i, p in pairs:
-            counts[p] = counts.get(p, 0) + 1
-        groups = [{"prep_id": p, "data_type": prep_dt.get(p), "count": n} for p, n in counts.items()]
-    else:
-        pairs = [(i, None) for i in ids]
+    pairs, groups = _order_pairs(ids, membership, all_files, file_filter, group, sort, desc)
     total = len(pairs)
     page_pairs = pairs[offset:offset + limit]
     page = list(dict.fromkeys(i for i, _p in page_pairs))  # one sample can span several rows
@@ -294,7 +303,7 @@ def api_aggregation_study_samples(aggregation_id, study_id):
         fq, fa = files.get(sid, (0, 0))
         entries = all_files.get(sid, [])
         file_dts = sorted({e[0] for e in entries})
-        rows.append({
+        row = {
             "sample_id": sid, "selected": sid in sel,
             "fastq": _FASTQ_LABEL.get(fq), "fasta": bool(fa),
             # data_types is prep membership ∪ file data types, unfiltered, so
@@ -307,9 +316,10 @@ def api_aggregation_study_samples(aggregation_id, study_id):
             "files": paths[sid],
             "prep_ids": [p for p, _dt in membership.get(sid, [])],
             "fields": fields,
-        })
-        if group == "prep":
-            rows[-1]["prep_id"] = prep_id
+        }
+        if group:
+            row["prep_id"] = prep_id
+        rows.append(row)
     resp = {
         "study_id": study_id, "total": total, "offset": offset, "limit": limit,
         "columns": columns, "selected_count": study.get("selected_samples", 0),
@@ -392,36 +402,27 @@ def _attachment(aggregation_id, ext):
     return {"Content-Disposition": f"attachment; filename=aggregation_{aggregation_id}_samples.{ext}"}
 
 
-@app.route("/api/aggregations/<aggregation_id>/export.csv", methods=["GET"])
-def download_aggregation_csv(aggregation_id):
-    """CSV of every checked sample's per-sample sequence files under the saved
-    file_filter — one row per sample × artifact, columns study_id, sample_id,
-    artifact_id, data_type, processing, R1, R2, barcodes (blank when absent).
-    Samples with no resolvable file are omitted. For scripts: a spreadsheet
-    parses ids like 10317.000001062 as numbers, so the tab offers export.xlsx
-    for those."""
+# ext -> (serializer, mimetype). csv is for scripts (a spreadsheet parses ids like
+# 10317.000001062 as numbers, so the tab also offers xlsx, whose sample_id cells are
+# text); tsv is the csv rows tab-separated; pooled (multiplexed) runs repeat the
+# same paths for every sample of the prep.
+_EXPORTS = {
+    "csv": (to_csv, "text/csv"),
+    "tsv": (lambda rows: to_csv(rows, "\t"), "text/tab-separated-values"),
+    "xlsx": (to_xlsx, XLSX_MIMETYPE),
+}
+
+
+@app.route("/api/aggregations/<aggregation_id>/export.<ext>", methods=["GET"])
+def download_aggregation_export(aggregation_id, ext):
+    """Every checked sample's per-sample sequence files under the saved
+    file_filter as csv / tsv / xlsx — one row per sample × artifact, columns
+    study_id, sample_id, artifact_id, data_type, processing, R1, R2, barcodes
+    (blank when absent). Samples with no resolvable file are omitted."""
+    if ext not in _EXPORTS:
+        return jsonify({"error": "export must be csv, tsv or xlsx"}), 404
     rows, err = _export_rows(aggregation_id)
     if err:
         return err
-    return Response(to_csv(rows), mimetype="text/csv", headers=_attachment(aggregation_id, "csv"))
-
-
-@app.route("/api/aggregations/<aggregation_id>/export.tsv", methods=["GET"])
-def download_aggregation_tsv(aggregation_id):
-    """export.csv's rows, tab-separated. Pooled (multiplexed) runs repeat the
-    same paths for every sample of the prep."""
-    rows, err = _export_rows(aggregation_id)
-    if err:
-        return err
-    return Response(to_csv(rows, "\t"), mimetype="text/tab-separated-values",
-                    headers=_attachment(aggregation_id, "tsv"))
-
-
-@app.route("/api/aggregations/<aggregation_id>/export.xlsx", methods=["GET"])
-def download_aggregation_xlsx(aggregation_id):
-    """The same rows as export.csv as an Excel workbook whose sample_id cells
-    are text, so Excel / Numbers show 10317.000001062 rather than 10317."""
-    rows, err = _export_rows(aggregation_id)
-    if err:
-        return err
-    return Response(to_xlsx(rows), mimetype=XLSX_MIMETYPE, headers=_attachment(aggregation_id, "xlsx"))
+    serialize, mimetype = _EXPORTS[ext]
+    return Response(serialize(rows), mimetype=mimetype, headers=_attachment(aggregation_id, ext))
