@@ -477,7 +477,7 @@ Per-sample sequence-file availability of one study, for the Sample Aggregation t
 
 ### table-aggregations
 
-A user's named Sample Aggregation — a set of samples grouped by study, exported as one list of per-sample sequence files (`GET /api/aggregations/<id>/export.csv` or `export.xlsx`).
+A user's named Sample Aggregation — a set of samples grouped by study, exported as one list of per-sample sequence files (`GET /api/aggregations/<id>/export.<csv|tsv|xlsx>`).
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
@@ -486,7 +486,7 @@ A user's named Sample Aggregation — a set of samples grouped by study, exporte
 | `name` | TEXT | no | — | Display name; inline-renamed in the tab. |
 | `created_at` | TEXT | yes | — | UTC ISO-8601. |
 | `updated_at` | TEXT | yes | — | Bumped by every mutation (`_touch`), including sample toggles. |
-| `file_filter_json` | TEXT | yes | — | *(migration)* `{"data_types": [...], "processing": [...]}` — the tab's Data type / Processing pickers; empty or NULL = any. Drives every sample table and both exports. Exposed as `file_filter` by `_hydrate` in `backend/store/aggregation_crud.py`; written by `set_aggregation_file_filter`. |
+| `file_filter_json` | TEXT | yes | — | *(migration)* **Unused since 2026-09-30.** Held one Data type / Processing / Artifact filter for the whole aggregation; the filter is now per study (`aggregation_studies.file_filter_json`). Bootstrap copies any value left here to the aggregation's studies, without artifact picks, then nulls it (`store/db.py :: _move_aggregation_filters_to_studies`). |
 
 **Keys/constraints:** PK on `aggregation_id`; index `idx_aggregations_user (user_id, updated_at DESC)` serves the list view.
 
@@ -515,10 +515,11 @@ One row per study in an aggregation — a header snapshot taken from the Browse 
 | `year` | INTEGER | yes | — | Year the study was added to Qiita, `first_contact` (ALTER 16). |
 | `is_gold` | INTEGER | yes | — | 0/1 (ALTER 17). |
 | `added_at` | TEXT | yes | — | Insert time; the tab orders by it. |
+| `file_filter_json` | TEXT | yes | — | *(migration, ALTER 20)* This study's `{"data_types": [...], "processing": [...], "artifacts": [...]}` — its sample-table toolbar pickers; empty or NULL = any. Narrows only this study's table and its rows in the export. Exposed as `studies[].file_filter` by `_studies`; written by `set_study_file_filter`. Kept when the study is re-added. |
 
 **Keys/constraints:** composite PK `(aggregation_id, study_id)` — `INSERT OR IGNORE` makes re-adding a study idempotent; FK → `aggregations` `ON DELETE CASCADE`.
 
-**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` / `remove_study_from_aggregation`. The route enforces the 50-study cap.
+**Writes owned by:** `backend/store/aggregation_crud.py :: add_study_to_aggregation` / `remove_study_from_aggregation` / `set_study_file_filter`. The route enforces the 50-study cap.
 
 **Lifecycle:** cascades to `aggregation_samples`.
 
@@ -666,9 +667,12 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 11–12 | `project_chat_messages`, `global_chat_messages` | `ui_payload TEXT` | Structured rendering payloads — this is what persists agentic tool-call segments across a page reload. |
 | 13–17 | `aggregation_studies` | `study_abstract TEXT`, `pi_name TEXT`, `pi_affiliation TEXT`, `year INTEGER`, `is_gold INTEGER` | Study-header snapshot so the Sample Aggregation tab renders Browse-style cards without a Qiita round trip (2026-09-12). |
 | 18 | `study_detail_cache` | `sample_files_json TEXT` | Per-sample FASTQ/FASTA availability map (2026-09-13). **Unused since 2026-09-24**, when the map moved to its own `study_sample_files_cache` table (TKT-086). |
-| 19 | `aggregations` | `file_filter_json TEXT` | The aggregation's saved Data type / Processing filter (2026-09-24). |
+| 19 | `aggregations` | `file_filter_json TEXT` | The aggregation's saved Data type / Processing filter (2026-09-24). **Unused since 2026-09-30**, when the filter moved to each study. |
+| 20 | `aggregation_studies` | `file_filter_json TEXT` | Each study's own Data type / Processing / Artifact filter (2026-09-30). |
 
-Six of the nineteen target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
+After the ALTERs, `_move_aggregation_filters_to_studies` copies any remaining `aggregations.file_filter_json` to that aggregation's studies whose own filter is still NULL, with `artifacts` emptied, and then nulls the aggregation's value. A second boot finds nothing to move, and a study added later starts unfiltered.
+
+Six of the twenty target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
 
 ### 4. TinyDB import (one time only)
 
