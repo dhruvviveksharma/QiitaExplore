@@ -35,7 +35,13 @@ _INSERT_SAMPLE_SQL = (
 
 
 def _studies(conn, aggregation_id: str) -> list:
-    return [_as_dict(r) for r in conn.execute(_STUDIES_SQL, (aggregation_id,)).fetchall()]
+    """The aggregation's studies, each with its own saved `file_filter`."""
+    out = []
+    for r in conn.execute(_STUDIES_SQL, (aggregation_id,)).fetchall():
+        s = _as_dict(r)
+        s["file_filter"] = _file_filter(s.pop("file_filter_json", None))
+        out.append(s)
+    return out
 
 
 def _owned(conn, aggregation_id: str, user_id: str) -> bool:
@@ -66,7 +72,7 @@ def _file_filter(raw) -> dict:
 
 def _hydrate(conn, row) -> dict:
     agg = _as_dict(row)
-    agg["file_filter"] = _file_filter(agg.pop("file_filter_json", None))
+    agg.pop("file_filter_json", None)   # unused since the filter moved to each study
     agg["studies"] = _studies(conn, agg["aggregation_id"])
     return agg
 
@@ -89,8 +95,7 @@ def create_aggregation(user_id: str, name: str) -> dict:
         )
         conn.commit()
     return {"aggregation_id": aggregation_id, "user_id": user_id, "name": name,
-            "created_at": now, "updated_at": now,
-            "file_filter": _file_filter(None), "studies": []}
+            "created_at": now, "updated_at": now, "studies": []}
 
 
 def list_aggregations(user_id: str) -> list:
@@ -120,17 +125,24 @@ def rename_aggregation(aggregation_id: str, user_id: str, name: str) -> Optional
         return _get(conn, aggregation_id, user_id)
 
 
-def set_aggregation_file_filter(aggregation_id: str, user_id: str, file_filter: dict) -> Optional[dict]:
-    """Save the data-type / processing filter; None when not owned. The caller
-    validates the shape (routes/aggregation_routes.py)."""
+def set_study_file_filter(aggregation_id: str, user_id: str, study_id: int,
+                          file_filter: dict) -> Optional[dict]:
+    """Save one study's data-type / processing / artifact filter. Returns the
+    full aggregation, or None when the aggregation isn't owned by user_id or
+    the study isn't in it. The caller validates the shape
+    (routes/aggregation_routes.py)."""
+    now = _now()
     with _conn() as conn:
+        if not _owned(conn, aggregation_id, user_id):
+            return None
         cur = conn.execute(
-            "UPDATE aggregations SET file_filter_json=?, updated_at=? WHERE aggregation_id=? AND user_id=?",
-            (json.dumps(file_filter), _now(), aggregation_id, user_id),
+            "UPDATE aggregation_studies SET file_filter_json=? WHERE aggregation_id=? AND study_id=?",
+            (json.dumps(file_filter), aggregation_id, int(study_id)),
         )
-        conn.commit()
         if cur.rowcount == 0:
             return None
+        _touch(conn, aggregation_id, now)
+        conn.commit()
         return _get(conn, aggregation_id, user_id)
 
 

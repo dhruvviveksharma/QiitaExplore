@@ -107,6 +107,47 @@ def test_store_remove_study_cascades_samples(agg_crud, db_conn):
     assert db_conn.execute("SELECT COUNT(*) FROM aggregation_samples").fetchone()[0] == 0
 
 
+
+_NO_FILTER = {"data_types": [], "processing": [], "artifacts": []}
+
+
+def test_store_study_file_filter(agg_crud):
+    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
+    assert agg_crud.get_aggregation(aid, "u1")["studies"][0]["file_filter"] == _NO_FILTER
+    f = {"data_types": ["16S"], "processing": [], "artifacts": ["11"]}
+    assert agg_crud.set_study_file_filter(aid, "u1", 16326, f)["studies"][0]["file_filter"] == f
+    assert agg_crud.set_study_file_filter(aid, "u2", 16326, f) is None      # not owned
+    assert agg_crud.set_study_file_filter(aid, "u1", 999, f) is None        # study not in it
+    # re-adding the study keeps its filter (INSERT OR IGNORE)
+    assert agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)["studies"][0]["file_filter"] == f
+
+
+def test_store_moves_aggregation_filter_to_studies_once(agg_crud, db_conn):
+    """Pre-2026-09-30 filters lived on the aggregation; the bootstrap copies
+    them to each study minus artifact picks (the cross-study bug), then clears
+    the aggregation's copy so later boots and later-added studies stay as is."""
+    import json
+    import store.db as db
+    aid = agg_crud.create_aggregation("u1", "A")["aggregation_id"]
+    agg_crud.add_study_to_aggregation(aid, "u1", STUDY, 2, SAMPLES)
+    agg_crud.add_study_to_aggregation(aid, "u1", {**STUDY, "study_id": 777}, 1, SAMPLES)
+    old = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"], "artifacts": ["119667"]}
+    db_conn.execute("UPDATE aggregations SET file_filter_json=? WHERE aggregation_id=?", (json.dumps(old), aid))
+    db_conn.commit()
+
+    db._move_aggregation_filters_to_studies(db_conn)
+    db_conn.commit()
+    moved = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"], "artifacts": []}
+    assert [st["file_filter"] for st in agg_crud.get_aggregation(aid, "u1")["studies"]] == [moved, moved]
+    assert db_conn.execute("SELECT file_filter_json FROM aggregations").fetchone()[0] is None
+
+    agg_crud.add_study_to_aggregation(aid, "u1", {**STUDY, "study_id": 888}, 1, SAMPLES)
+    db._move_aggregation_filters_to_studies(db_conn)                       # second boot: no-op
+    db_conn.commit()
+    assert [st["file_filter"] for st in agg_crud.get_aggregation(aid, "u1")["studies"]] == [moved, moved, _NO_FILTER]
+
+
 # ── routes ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -169,7 +210,7 @@ def stub_qiita(monkeypatch):
     monkeypatch.setattr(ar, "prep_membership", lambda sid: {})
     monkeypatch.setattr(ar, "page_files", lambda sid, ids, all_files, file_filter:
                         {i: _S2_FILES if i == "s2" else [] for i in ids})
-    monkeypatch.setattr(ar, "fetch_export_rows", lambda selected, file_filter=None: [
+    monkeypatch.setattr(ar, "fetch_export_rows", lambda selected, file_filters=None: [
         (16326, "s1", 12, "16S", "Raw upload", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz", ""),
     ])
     return ar
@@ -340,15 +381,15 @@ def test_route_export_passes_only_checked_samples(client, logged_in, stub_qiita,
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s2"]}, headers=logged_in)
     seen = {}
 
-    def _capture(selected, file_filter=None):
+    def _capture(selected, file_filters=None):
         seen.update(selected)
-        seen["filter"] = file_filter
+        seen["filters"] = file_filters
         return [(16326, "s1", 12, "16S", "Raw upload", "/a/f.fq.gz", "", "")]
     monkeypatch.setattr(stub_qiita, "fetch_export_rows", _capture)
     filt = {"data_types": ["16S"], "processing": ["Raw upload"], "artifacts": ["12"]}
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": filt}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": filt}, headers=logged_in)
     assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 200
-    assert seen == {16326: {"s1"}, "filter": filt}
+    assert seen == {16326: {"s1"}, "filters": {16326: filt}}
 
 
 def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
@@ -360,7 +401,7 @@ def test_route_export_errors(client, logged_in, stub_qiita, monkeypatch):
     r = client.get(f"/api/aggregations/{aid}/export.csv")
     assert r.status_code == 400 and r.get_json()["error"] == "No samples selected"
 
-    def _raise(selected, file_filter=None):
+    def _raise(selected, file_filters=None):
         raise ValueError("None of the selected samples has a per-sample sequence file")
     monkeypatch.setattr(stub_qiita, "fetch_export_rows", _raise)
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"select": "all"}, headers=logged_in)

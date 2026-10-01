@@ -3,8 +3,10 @@ plus one export (CSV for scripts, xlsx for spreadsheets, TSV) of the checked
 samples' per-sample sequence files — one row per sample × artifact: study_id,
 sample_id, artifact_id, data_type, processing, R1, R2, barcodes.
 
-The aggregation's saved file_filter (data types × processing steps × artifact
-ids; empty = any) has two effects. Its data-type half also scopes the sample table itself:
+Each study in an aggregation has its own saved file_filter (data types ×
+processing steps × artifact ids; empty = any), edited from that study's
+sample-table toolbar and applied only to that study's table and export rows.
+It has two effects. Its data-type half also scopes the sample table itself:
 a sample stays listed if it has no chosen type, or belongs to it by prep
 membership (helpers.study_samples.prep_data_types) or by file (a data type
 without a per-sample file, e.g. a 16S study with only Demultiplexed/BIOM
@@ -28,7 +30,7 @@ from store import (
     create_aggregation,
     get_aggregation,
     rename_aggregation,
-    set_aggregation_file_filter,
+    set_study_file_filter,
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,
@@ -123,52 +125,70 @@ def api_create_aggregation():
 
 @app.route("/api/aggregations/<aggregation_id>", methods=["PATCH"])
 def api_update_aggregation(aggregation_id):
-    """Body: {"name": ...} and/or {"file_filter": {"data_types": [...],
-    "processing": [...], "artifacts": [...]}}. Returns the full aggregation."""
+    """Body: {"name": ...}. Returns the full aggregation. The file filter is
+    saved per study (PATCH …/studies/<study_id>)."""
     body = request.get_json() or {}
-    if "name" not in body and "file_filter" not in body:
-        return jsonify({"error": "name or file_filter required"}), 400
-    try:
-        file_filter = _parse_file_filter(body["file_filter"]) if "file_filter" in body else None
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    name = (body.get("name") or "").strip() if "name" in body else None
-    if name == "":
+    if "file_filter" in body:
+        return jsonify({"error": "file_filter is saved per study: "
+                                 "PATCH /api/aggregations/<id>/studies/<study_id>"}), 400
+    name = (body.get("name") or "").strip()
+    if not name:
         return jsonify({"error": "name required"}), 400
-    agg = get_aggregation(aggregation_id, g.user_id)
-    if agg is not None and name is not None:
-        agg = rename_aggregation(aggregation_id, g.user_id, name)
-    if agg is not None and file_filter is not None:
-        agg = set_aggregation_file_filter(aggregation_id, g.user_id, file_filter)
+    agg = rename_aggregation(aggregation_id, g.user_id, name)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
     return jsonify(agg)
 
 
+@app.route("/api/aggregations/<aggregation_id>/studies/<int:study_id>", methods=["PATCH"])
+def api_set_study_file_filter(aggregation_id, study_id):
+    """Body: {"file_filter": {"data_types": [...], "processing": [...],
+    "artifacts": [...]}} — that study's filter (empty lists = any). Returns the
+    full aggregation."""
+    body = request.get_json() or {}
+    if "file_filter" not in body:
+        return jsonify({"error": "file_filter required"}), 400
+    try:
+        file_filter = _parse_file_filter(body["file_filter"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    agg = set_study_file_filter(aggregation_id, g.user_id, study_id, file_filter)
+    if agg is None:
+        return jsonify({"error": "Aggregation or study not found"}), 404
+    return jsonify(agg)
+
+
 @app.route("/api/aggregations/<aggregation_id>/file-facets", methods=["GET"])
 def api_aggregation_file_facets(aggregation_id):
-    """Options for the Data type / Processing / Artifact pickers across the aggregation's
-    studies (sample counts, facet-style; Data type options include prep-only
-    types with no per-sample file, e.g. a 16S study with only
-    Demultiplexed/BIOM artifacts), plus `exportable`: how many checked
-    samples have a file under the saved filter — i.e. whether the export
-    will contain anything."""
+    """`exportable` (checked samples with a file under their own study's
+    filter — whether the export will contain anything) and `selected`, for the
+    tab header. With ?study_id=, also that study's Data type / Processing /
+    Artifact picker options (sample counts, facet-style, under its own filter;
+    Data type options include prep-only types with no per-sample file, e.g. a
+    16S study with only Demultiplexed/BIOM artifacts) — 404 if the study is
+    not in the aggregation."""
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
-    file_filter = agg["file_filter"]
-    maps = {int(s["study_id"]): get_sample_files(s["study_id"]) for s in agg["studies"]}
-    preps = {int(s["study_id"]): prep_data_types(s["study_id"]) for s in agg["studies"]}
-    data_types, processing, artifacts = facet_counts(maps.values(), preps.values(), file_filter)
     selected = selected_by_study(aggregation_id)
     exportable = 0
-    for sid, ids in selected.items():
-        eff = effective(maps.get(int(sid), {}), file_filter)
-        exportable += sum(1 for i in ids if i in eff)
-    return jsonify({
-        "data_types": data_types, "processing": processing, "artifacts": artifacts, "exportable": exportable,
-        "selected": sum(len(ids) for ids in selected.values()),
-    })
+    for s in agg["studies"]:
+        ids = selected.get(int(s["study_id"]))
+        if ids:
+            eff = effective(get_sample_files(s["study_id"]), s["file_filter"])
+            exportable += sum(1 for i in ids if i in eff)
+    out = {"exportable": exportable, "selected": sum(len(ids) for ids in selected.values())}
+    if request.args.get("study_id") is not None:
+        try:
+            study = _study_in(agg, int(request.args["study_id"]))
+        except ValueError:
+            study = None
+        if study is None:
+            return jsonify({"error": "Study not in aggregation"}), 404
+        sid = study["study_id"]
+        out["data_types"], out["processing"], out["artifacts"] = facet_counts(
+            [get_sample_files(sid)], [prep_data_types(sid)], study["file_filter"])
+    return jsonify(out)
 
 
 @app.route("/api/aggregations/<aggregation_id>", methods=["DELETE"])
@@ -274,7 +294,7 @@ def api_aggregation_study_samples(aggregation_id, study_id):
     all_files = get_sample_files(study_id)
     membership = prep_membership(study_id)
     prep_types = {sid: sorted({dt for _p, dt in preps}) for sid, preps in membership.items()}
-    file_filter = agg["file_filter"]
+    file_filter = study["file_filter"]
     # Data-type scope: a sample stays in the table if it has no chosen type
     # filter, or its prep membership / file data types intersect it. This is
     # broader than `files` below — a 16S study with no per-sample file (only
@@ -353,7 +373,8 @@ def api_set_aggregation_samples(aggregation_id, study_id):
     agg = get_aggregation(aggregation_id, g.user_id)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
-    if _study_in(agg, study_id) is None:
+    study = _study_in(agg, study_id)
+    if study is None:
         return jsonify({"error": "Study not in aggregation"}), 404
     try:
         select = body.get("select")
@@ -365,7 +386,7 @@ def api_set_aggregation_samples(aggregation_id, study_id):
                 kwargs = {"clear": True}
             elif select == "with_files":
                 ids = matching_sample_ids(study_id, q) if q else list_study_sample_ids(study_id)
-                files = effective(get_sample_files(study_id), agg["file_filter"])
+                files = effective(get_sample_files(study_id), study["file_filter"])
                 kwargs = {"add": [i for i in ids if i in files], "clear": True}
             elif select == "matching" and q:
                 kwargs = {"add": matching_sample_ids(study_id, q)}
@@ -393,7 +414,8 @@ def _export_rows(aggregation_id):
         return None, (jsonify({"error": "No samples selected"}), 400)
     try:
         # Resolved at call time so tests can patch the module-level names.
-        return fetch_export_rows(selected, agg["file_filter"]), None
+        filters = {int(s["study_id"]): s["file_filter"] for s in agg["studies"]}
+        return fetch_export_rows(selected, filters), None
     except ValueError as e:
         return None, (jsonify({"error": str(e)}), 404)
 
@@ -415,8 +437,8 @@ _EXPORTS = {
 
 @app.route("/api/aggregations/<aggregation_id>/export.<ext>", methods=["GET"])
 def download_aggregation_export(aggregation_id, ext):
-    """Every checked sample's per-sample sequence files under the saved
-    file_filter as csv / tsv / xlsx — one row per sample × artifact, columns
+    """Every checked sample's per-sample sequence files, each study under its
+    own saved file_filter, as csv / tsv / xlsx — one row per sample × artifact, columns
     study_id, sample_id, artifact_id, data_type, processing, R1, R2, barcodes
     (blank when absent). Samples with no resolvable file are omitted."""
     if ext not in _EXPORTS:

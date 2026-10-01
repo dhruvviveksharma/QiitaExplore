@@ -3,6 +3,8 @@ artifact), Group by prep, Prep ID / Artifact ID sorting and the file facets, wit
 Qiita Postgres stubbed. Split out of test_aggregations.py (500-line cap); the app,
 login and stub fixtures are that module's."""
 
+# ruff: noqa: F811 — the fixtures are imported from test_aggregations (shared
+# module-scoped app), so every test parameter "redefines" an imported name.
 import pytest  # noqa: F401
 
 from .test_aggregations import _add, _app, _create, client, logged_in, stub_qiita  # noqa: F401
@@ -13,26 +15,75 @@ from .test_aggregations import _add, _app, _create, client, logged_in, stub_qiit
 _FILTER_MAP = {"s1": [("Metagenomic", "Atropos v1.1.24", 11, 2, 0)], "s2": [("16S", "Raw upload", 12, 0, 1)]}
 
 
-def test_route_file_filter_patch_validates_and_persists(client, logged_in, stub_qiita):
+def _study(agg, study_id=16326):
+    return next(st for st in agg["studies"] if st["study_id"] == study_id)
+
+
+_EMPTY = {"data_types": [], "processing": [], "artifacts": []}
+
+
+def test_route_study_file_filter_patch_validates_and_persists(client, logged_in, stub_qiita):
     aid = _create(client, logged_in)["aggregation_id"]
-    assert client.get("/api/aggregations").get_json()["aggregations"][0]["file_filter"] == \
-        {"data_types": [], "processing": [], "artifacts": []}
-    url = f"/api/aggregations/{aid}"
+    added = _add(client, logged_in, aid).get_json()
+    assert _study(added)["file_filter"] == _EMPTY
+    assert "file_filter" not in added                         # no aggregation-level filter any more
+    url = f"/api/aggregations/{aid}/studies/16326"
     r = client.patch(url, json={"file_filter": {"data_types": ["16S", "16S"]}}, headers=logged_in)
     assert r.status_code == 200, r.get_json()
-    assert r.get_json()["file_filter"] == {"data_types": ["16S"], "processing": [], "artifacts": []}
-    listed = [a for a in client.get("/api/aggregations").get_json()["aggregations"] if a["aggregation_id"] == aid]
-    assert listed[0]["file_filter"] == {"data_types": ["16S"], "processing": [], "artifacts": []}
+    assert _study(r.get_json())["file_filter"] == {"data_types": ["16S"], "processing": [], "artifacts": []}
+    listed = [x for x in client.get("/api/aggregations").get_json()["aggregations"] if x["aggregation_id"] == aid]
+    assert _study(listed[0])["file_filter"] == {"data_types": ["16S"], "processing": [], "artifacts": []}
     r = client.patch(url, json={"file_filter": {"artifacts": ["140751", "140713"]}}, headers=logged_in)
-    assert r.get_json()["file_filter"]["artifacts"] == ["140713", "140751"]
-    r = client.patch(url, json={"name": "Both", "file_filter": {}}, headers=logged_in)
-    assert (r.get_json()["name"], r.get_json()["file_filter"]) == \
-        ("Both", {"data_types": [], "processing": [], "artifacts": []})
+    assert _study(r.get_json())["file_filter"]["artifacts"] == ["140713", "140751"]
+    assert _study(client.patch(url, json={"file_filter": {}}, headers=logged_in).get_json())["file_filter"] == _EMPTY
     for bad in [{}, {"file_filter": []}, {"file_filter": {"other": []}}, {"file_filter": {"data_types": "16S"}},
                 {"file_filter": {"data_types": [""]}}, {"file_filter": {"artifacts": [12]}}, {"file_filter": {"processing": ["x" * 201]}},
                 {"file_filter": {"data_types": [str(i) for i in range(51)]}}]:
         assert client.patch(url, json=bad, headers=logged_in).status_code == 400, bad
-    assert client.patch("/api/aggregations/nope", json={"file_filter": {}}, headers=logged_in).status_code == 404
+    assert client.patch(f"/api/aggregations/{aid}/studies/777", json={"file_filter": {}}, headers=logged_in).status_code == 404
+    assert client.patch("/api/aggregations/nope/studies/16326", json={"file_filter": {}}, headers=logged_in).status_code == 404
+    # the aggregation itself no longer takes a filter
+    r = client.patch(f"/api/aggregations/{aid}", json={"name": "x", "file_filter": {}}, headers=logged_in)
+    assert r.status_code == 400 and "per study" in r.get_json()["error"]
+
+
+def test_route_study_filters_are_independent(client, logged_in, stub_qiita, monkeypatch):
+    """Each study's filter narrows only that study: picking study A's artifact
+    (artifacts belong to one study) used to empty study B's table and export."""
+    maps = {16326: {"s1": [("Metagenomic", "Raw upload", 11, 2, 0)], "s2": [("16S", "Raw upload", 12, 0, 1)]},
+            777: {"s1": [("Metagenomic", "Raw upload", 21, 2, 0)], "s2": [("Metagenomic", "Raw upload", 22, 2, 0)]}}
+    monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: maps[int(sid)])
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200
+    assert _add(client, logged_in, aid, study_id=777).status_code == 200
+    r = client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["11"]}},
+                     headers=logged_in)
+    assert _study(r.get_json(), 777)["file_filter"] == _EMPTY
+
+    a = client.get(f"/api/aggregations/{aid}/studies/16326/samples").get_json()
+    assert ([x["sample_id"] for x in a["rows"]], a["with_files"]) == (["s1"], 1)
+    b = client.get(f"/api/aggregations/{aid}/studies/777/samples").get_json()
+    assert ([x["sample_id"] for x in b["rows"]], b["with_files"]) == (["s1", "s2"], 2)
+    r = client.patch(f"/api/aggregations/{aid}/studies/777/samples", json={"select": "with_files"}, headers=logged_in)
+    assert _study(r.get_json(), 777)["selected_samples"] == 2
+
+    # options per study; the header count adds each study under its own filter
+    names = lambda d, k: [o["name"] for o in d[k]]  # noqa: E731
+    f777 = client.get(f"/api/aggregations/{aid}/file-facets?study_id=777").get_json()
+    assert names(f777, "artifacts") == ["21", "22"] and names(f777, "data_types") == ["Metagenomic"]
+    f16 = client.get(f"/api/aggregations/{aid}/file-facets?study_id=16326").get_json()
+    assert names(f16, "artifacts") == ["11", "12"]
+    header = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    assert (header["exportable"], header["selected"]) == (1 + 2, 4)
+    assert "artifacts" not in header
+    assert client.get(f"/api/aggregations/{aid}/file-facets?study_id=555").status_code == 404
+    assert client.get(f"/api/aggregations/{aid}/file-facets?study_id=x").status_code == 404
+
+    seen = {}
+    monkeypatch.setattr(stub_qiita, "fetch_export_rows",
+                        lambda selected, filters: seen.update(filters) or [(777, "s1", 21, "M", "Raw upload", "/r1", "", "")])
+    assert client.get(f"/api/aggregations/{aid}/export.csv").status_code == 200
+    assert seen == {16326: {"data_types": [], "processing": [], "artifacts": ["11"]}, 777: _EMPTY}
 
 
 def test_route_samples_and_select_follow_file_filter(client, logged_in, stub_qiita, monkeypatch):
@@ -43,7 +94,7 @@ def test_route_samples_and_select_follow_file_filter(client, logged_in, stub_qii
 
     page = client.get(base).get_json()               # no filter: both have files
     assert page["with_files"] == 2
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
     page = client.get(base).get_json()
     # s1's only data type (Metagenomic, from its file) doesn't match the 16S
     # filter, and it has no prep membership (stubbed empty), so it drops out
@@ -63,7 +114,7 @@ def test_route_samples_follow_artifact_filter(client, logged_in, stub_qiita, mon
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
     base = f"/api/aggregations/{aid}/studies/16326/samples"
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"artifacts": ["11"]}}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["11"]}}, headers=logged_in)
     page = client.get(base).get_json()
     # Only s1 has a file in artifact 11; s2 (artifact 12) is out of scope, not just file-less.
     assert [r["sample_id"] for r in page["rows"]] == ["s1"]
@@ -109,7 +160,7 @@ def test_route_group_by_prep_honours_data_type_filter_and_puts_no_prep_last(clie
     page = client.get(base).get_json()
     assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(5, "s1"), (6, "s1"), (None, "s2")]
     assert page["groups"][-1] == {"prep_id": None, "data_type": None, "count": 1}
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["WGS"]}}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["WGS"]}}, headers=logged_in)
     page = client.get(base).get_json()
     # s1 only under its WGS prep; s2 (16S file, no prep) is out of scope under a WGS filter.
     assert [(r["prep_id"], r["sample_id"]) for r in page["rows"]] == [(6, "s1")]
@@ -145,7 +196,7 @@ def test_route_sort_by_prep_and_artifact(client, logged_in, stub_qiita, monkeypa
     assert _ids(client.get(base + "?sort=artifact&dir=asc").get_json()) == ["s2", "s1", "s3"]
     assert _ids(client.get(base + "?sort=artifact&dir=desc").get_json()) == ["s2", "s1", "s3"]
     # an Artifact filter only counts the artifacts that pass it: s2 restricted to 40, so s1 (30) is first
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"artifacts": ["30", "40"]}}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"artifacts": ["30", "40"]}}, headers=logged_in)
     assert _ids(client.get(base + "?sort=artifact").get_json()) == ["s1", "s2"]
     for bad in ("?sort=bogus", "?sort=prep&dir=up"):
         assert client.get(base + bad).status_code == 400
@@ -194,7 +245,7 @@ def test_route_samples_scoped_by_prep_data_type(client, logged_in, stub_qiita, m
     assert (row["fastq"], row["fasta"], row["data_types"], row["file_data_types"]) == \
         (None, False, ["16S"], [])
 
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["16S"]}}, headers=logged_in)
     page = client.get(base).get_json()
     assert [r["sample_id"] for r in page["rows"]] == ["s1"]
     assert (page["total"], page["with_files"]) == (1, 0)
@@ -205,7 +256,7 @@ def test_route_file_facets_includes_prep_only_type(client, logged_in, stub_qiita
     monkeypatch.setattr(stub_qiita, "prep_data_types", lambda sid: {"s1": ["16S"], "s2": ["18S"]})
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    d = client.get(f"/api/aggregations/{aid}/file-facets?study_id=16326").get_json()
     assert d["data_types"] == [{"name": "16S", "count": 1}, {"name": "18S", "count": 1}]
     assert d["exportable"] == 0
 
@@ -214,16 +265,16 @@ def test_route_file_facets(client, logged_in, stub_qiita, monkeypatch):
     monkeypatch.setattr(stub_qiita, "get_sample_files", lambda sid: _FILTER_MAP)
     aid = _create(client, logged_in)["aggregation_id"]
     assert _add(client, logged_in, aid).status_code == 200
-    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    d = client.get(f"/api/aggregations/{aid}/file-facets?study_id=16326").get_json()
     assert d["data_types"] == [{"name": "16S", "count": 1}, {"name": "Metagenomic", "count": 1}]
     assert d["processing"] == [{"name": "Atropos v1.1.24", "count": 1}, {"name": "Raw upload", "count": 1}]
     assert d["artifacts"] == [{"name": "11", "count": 1}, {"name": "12", "count": 1}]
     assert (d["exportable"], d["selected"]) == (2, 2)
 
-    client.patch(f"/api/aggregations/{aid}", json={"file_filter": {"data_types": ["Metagenomic"]}},
+    client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": {"data_types": ["Metagenomic"]}},
                  headers=logged_in)
     client.patch(f"/api/aggregations/{aid}/studies/16326/samples", json={"remove": ["s1"]}, headers=logged_in)
-    d = client.get(f"/api/aggregations/{aid}/file-facets").get_json()
+    d = client.get(f"/api/aggregations/{aid}/file-facets?study_id=16326").get_json()
     assert d["processing"] == [{"name": "Atropos v1.1.24", "count": 1}]  # narrowed by the data-type pick
     assert (d["exportable"], d["selected"]) == (0, 1)  # s2 is checked but has no metagenomic file
     assert client.get("/api/aggregations/nope/file-facets").status_code == 404

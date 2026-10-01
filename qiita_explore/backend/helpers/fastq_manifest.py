@@ -144,7 +144,7 @@ def build_multiplexed_rows(samples, files, base_dir):
              for i, f in enumerate(fwd)]
     rows = []
     for sample_id, prefix in samples:
-        lane = lanes[0] if len(lanes) == 1 else next((l for l in lanes if prefix and prefix in l[0]), None)
+        lane = lanes[0] if len(lanes) == 1 else next((ln for ln in lanes if prefix and prefix in ln[0]), None)
         if lane:
             rows.append((sample_id, lane[1], lane[2], lane[3]))
     rows.sort()
@@ -301,24 +301,28 @@ def _study_groups(study_ids, selected, artifact_ids=None):
     return groups
 
 
-def _export_groups(selected, file_filter):
+def _export_groups(selected, file_filters):
+    """file_filters: {study_id: file_filter} — each study's groups are matched
+    against that study's own filter (a missing study means no filter)."""
     if not _BASE:
         raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
     study_ids = sorted(int(s) for s, ids in selected.items() if ids)
-    groups = [g for g in _study_groups(study_ids, selected) if group_matches(file_filter, g[1], g[3], g[4])]
+    filters = {int(k): v for k, v in (file_filters or {}).items()}
+    groups = [g for g in _study_groups(study_ids, selected)
+              if group_matches(filters.get(int(g[0])), g[1], g[3], g[4])]
     if not groups:
         raise ValueError("No sequence artifacts of the chosen data type / processing "
                          "in the selected studies")
     return groups
 
 
-def fetch_export_rows(selected, file_filter=None):
+def fetch_export_rows(selected, file_filters=None):
     """selected: {study_id: {sample_id, ...}} — empty sets are ignored.
-    file_filter: the aggregation's saved {"data_types", "processing",
-    "artifacts"} (see group_matches). Returns build_export_rows over every
+    file_filters: {study_id: that study's saved {"data_types", "processing",
+    "artifacts"}} (see group_matches). Returns build_export_rows over every
     matching sequence artifact of those studies. Raises ValueError when no such
     artifact exists or no checked sample resolves to a file."""
-    rows = build_export_rows(_export_groups(selected, file_filter), _BASE)
+    rows = build_export_rows(_export_groups(selected, file_filters), _BASE)
     if not rows:
         raise ValueError("None of the selected samples has a sequence file")
     return rows

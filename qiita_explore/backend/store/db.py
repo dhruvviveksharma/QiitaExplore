@@ -1,5 +1,6 @@
 """SQLite schema creation, migration helpers, and core connection utilities."""
 
+import json
 import os
 import sqlite3
 from datetime import datetime
@@ -347,10 +348,14 @@ def _create_schema(conn):
         ("aggregation_studies", "pi_affiliation", "TEXT"),
         ("aggregation_studies", "year", "INTEGER"),
         ("aggregation_studies", "is_gold", "INTEGER"),
-        # The aggregation's saved data-type / processing filter
-        # ({"data_types": [...], "processing": [...]}; empty = any). It drives
-        # both the sample tables and the export (routes/aggregation_routes.py).
+        # Unused since 2026-09-30: the data-type / processing / artifact filter
+        # moved to aggregation_studies.file_filter_json (one per study; see
+        # _move_aggregation_filters_to_studies). Kept so old DBs migrate alike.
         ("aggregations", "file_filter_json", "TEXT"),
+        # One study's saved filter ({"data_types": [...], "processing": [...],
+        # "artifacts": [...]}; empty = any). Drives that study's sample table
+        # and its rows in the export (routes/aggregation_routes.py).
+        ("aggregation_studies", "file_filter_json", "TEXT"),
         # Unused since 2026-09-24: the availability map moved to its own
         # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),
@@ -360,11 +365,37 @@ def _create_schema(conn):
         except Exception:
             pass
 
+    _move_aggregation_filters_to_studies(conn)
+
     # PATs are verified once at login and never stored. Scrub any legacy
     # ciphertext left from earlier builds (idempotent).
     conn.execute(
         "UPDATE auth_sessions SET pat_encrypted = '' WHERE pat_encrypted != ''"
     )
+
+
+def _move_aggregation_filters_to_studies(conn):
+    """One-time move (idempotent): a filter saved on an aggregation (the
+    pre-2026-09-30 shape) is copied to each of its studies that has none yet,
+    then cleared. Artifact picks are dropped: an aggregation-wide artifact pick
+    is exactly what emptied the other studies' tables and exports, and which
+    study owns an artifact would need Qiita Postgres. Once cleared, later
+    boots (and studies added later) find nothing to copy."""
+    rows = conn.execute(
+        "SELECT aggregation_id, file_filter_json FROM aggregations WHERE file_filter_json IS NOT NULL"
+    ).fetchall()
+    for aggregation_id, raw in rows:
+        try:
+            f = json.loads(raw) or {}
+        except ValueError:
+            f = {}
+        moved = json.dumps({"data_types": list(f.get("data_types") or []),
+                            "processing": list(f.get("processing") or []), "artifacts": []})
+        conn.execute(
+            "UPDATE aggregation_studies SET file_filter_json=? WHERE aggregation_id=? AND file_filter_json IS NULL",
+            (moved, aggregation_id),
+        )
+        conn.execute("UPDATE aggregations SET file_filter_json=NULL WHERE aggregation_id=?", (aggregation_id,))
 
 
 def _bootstrap():

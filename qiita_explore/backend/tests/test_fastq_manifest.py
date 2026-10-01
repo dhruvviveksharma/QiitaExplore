@@ -241,12 +241,25 @@ def test_fetch_export_rows_applies_file_filter(fm, monkeypatch):
     rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
     fake = lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]  # noqa: E731
     with patch.object(fm, "pooled_fetchall", side_effect=fake):
-        out = fm.fetch_export_rows({5: {"s1"}}, {"data_types": [], "processing": ["Atropos v1.1.24"]})
+        out = fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": [], "processing": ["Atropos v1.1.24"]}})
         assert [(r[2], r[4]) for r in out] == [(11, "Atropos v1.1.24")]
-        out = fm.fetch_export_rows({5: {"s1"}}, {"data_types": [], "processing": [], "artifacts": ["10"]})
+        out = fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": [], "processing": [], "artifacts": ["10"]}})
         assert [(r[2], r[4]) for r in out] == [(10, "Raw upload")]
     with patch.object(fm, "pooled_fetchall", side_effect=fake), pytest.raises(ValueError):
-        fm.fetch_export_rows({5: {"s1"}}, {"data_types": ["ITS"], "processing": []})
+        fm.fetch_export_rows({5: {"s1"}}, {5: {"data_types": ["ITS"], "processing": []}})
+
+
+def test_fetch_export_rows_applies_each_studys_own_filter(fm, monkeypatch):
+    # Study 5 picks its artifact 11; study 6 has no filter. 5's pick must not
+    # touch 6's rows (an artifact belongs to one study), and vice versa.
+    monkeypatch.setattr(fm, "_BASE", BASE)
+    rows = [_file_row(study_id=5, artifact_id=10), _file_row(study_id=5, artifact_id=11, prep_id=101),
+            _file_row(study_id=6, artifact_id=20, prep_id=200, filepath="Q1_R1.fastq.gz")]
+    samples = {"100": [("s1", "P1")], "101": [("s1", "P1")], "200": [("t1", "Q1")]}
+    fake = lambda sql, params=None: rows if "study_artifact" in sql else samples[sql.split("prep_")[1].split()[0]]  # noqa: E731
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        out = fm.fetch_export_rows({5: {"s1"}, 6: {"t1"}}, {5: {"artifacts": ["11"]}, 6: {}})
+    assert sorted((r[0], r[1], r[2]) for r in out) == [(5, "s1", 11), (6, "t1", 20)]
 
 
 def test_study_groups_empty_when_no_study_ids_or_no_artifacts(fm):
