@@ -376,6 +376,11 @@ def _create_schema(conn):
         # artifact) rows the study had when snapshotted — the "K / N rows" denominator.
         ("aggregation_studies", "rows_v", "INTEGER DEFAULT 0"),
         ("aggregation_studies", "file_rows", "INTEGER"),
+        # A chat's temporary aggregation (helpers/aggregation_tools.py): set while it
+        # belongs to that chat, NULL once saved. Hidden from the Sample Aggregation
+        # tab, deleted with its chat.
+        ("aggregations", "chat_id", "TEXT"),
+        ("aggregations", "chat_scope", "TEXT"),
         # Unused since 2026-09-24: the availability map moved to its own
         # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),
@@ -385,6 +390,7 @@ def _create_schema(conn):
         except Exception:
             pass
 
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aggregations_chat ON aggregations(chat_id, chat_scope)")
     _move_aggregation_filters_to_studies(conn)
 
     # PATs are verified once at login and never stored. Scrub any legacy

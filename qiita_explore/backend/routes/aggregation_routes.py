@@ -40,6 +40,8 @@ from store import (
     delete_aggregation,
     add_study_to_aggregation,
     remove_study_from_aggregation,
+    remove_rows_by_artifacts,
+    save_chat_aggregation,
     set_aggregation_rows,
     migrate_study_rows,
     selected_rows_in,
@@ -65,6 +67,9 @@ _FASTQ_LABEL = {2: "paired", 1: "single"}
 _FILTER_KEYS = ("data_types", "processing", "artifacts")
 _SORT_KEYS = ("prep", "artifact")
 _FILTER_MAX_ITEMS, _FILTER_MAX_LEN = 50, 200
+# Artifact picks can be many: a chat aggregation that mixes a data type with a
+# prep stores the union as artifact ids (AGP's 16S alone is ~114 artifacts).
+_FILTER_MAX_ARTIFACTS = 5000
 
 
 def _rows_of(all_files, sample_ids, file_filter=None):
@@ -82,7 +87,8 @@ def _parse_file_filter(value):
     out = {}
     for key in _FILTER_KEYS:
         items = value.get(key) or []
-        if (not isinstance(items, list) or len(items) > _FILTER_MAX_ITEMS
+        cap = _FILTER_MAX_ARTIFACTS if key == "artifacts" else _FILTER_MAX_ITEMS
+        if (not isinstance(items, list) or len(items) > cap
                 or not all(isinstance(x, str) and 0 < len(x) <= _FILTER_MAX_LEN for x in items)):
             raise ValueError(help_)
         out[key] = sorted(set(items))
@@ -98,6 +104,66 @@ def api_list_aggregations():
 def api_create_aggregation():
     name = ((request.get_json() or {}).get("name") or "").strip() or "Untitled"
     return jsonify(create_aggregation(g.user_id, name)), 201
+
+
+@app.route("/api/aggregations/<aggregation_id>", methods=["GET"])
+def api_get_aggregation(aggregation_id):
+    """One aggregation — the chat re-reads it after a tool changed it server-side."""
+    agg = get_aggregation(aggregation_id, g.user_id)
+    if agg is None:
+        return jsonify({"error": "Aggregation not found"}), 404
+    return jsonify(agg)
+
+
+@app.route("/api/aggregations/<aggregation_id>/save", methods=["POST"])
+def api_save_chat_aggregation(aggregation_id):
+    """Body {"name"}: keep a chat's temporary aggregation — named, detached from
+    the chat, and listed in the Sample Aggregation tab from now on."""
+    name = ((request.get_json() or {}).get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    agg = save_chat_aggregation(aggregation_id, g.user_id, name[:200])
+    if agg is None:
+        return jsonify({"error": "Aggregation not found"}), 404
+    return jsonify(agg)
+
+
+def _artifact_list(value):
+    """None (= every artifact) or a list of ints; ValueError otherwise."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > _FILTER_MAX_ARTIFACTS:
+        raise ValueError
+    return [int(a) for a in value]
+
+
+@app.route("/api/aggregations/<aggregation_id>/studies/<int:study_id>/undo-add", methods=["POST"])
+def api_undo_chat_aggregation_add(aggregation_id, study_id):
+    """Undo one add_to_chat_aggregation (helpers/aggregation_tools.py), from the
+    `undo` its widget carries: {was_new, added_artifacts, prev_artifacts,
+    prev_filter} (artifact id lists; null = every artifact). A new study is
+    removed; an extended one loses the added artifacts' rows and gets its
+    previous filter back."""
+    body = request.get_json() or {}
+    try:
+        added, prev = _artifact_list(body.get("added_artifacts")), _artifact_list(body.get("prev_artifacts"))
+        prev_filter = _parse_file_filter(body["prev_filter"]) if body.get("prev_filter") is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "added_artifacts / prev_artifacts must be lists of artifact ids or null, "
+                                 "prev_filter a file filter"}), 400
+    agg = get_aggregation(aggregation_id, g.user_id)
+    if agg is None or _study_in(agg, study_id) is None:
+        return jsonify({"error": "Aggregation or study not found"}), 404
+    if body.get("was_new"):
+        return jsonify(remove_study_from_aggregation(aggregation_id, g.user_id, study_id))
+    if prev is None:
+        return jsonify({"error": "Nothing to undo: the study already held every file"}), 400
+    if added is None:           # the add made it the whole study: keep only what it had
+        remove_rows_by_artifacts(aggregation_id, g.user_id, study_id, prev, keep=True)
+    else:
+        remove_rows_by_artifacts(aggregation_id, g.user_id, study_id, added)
+    ff = prev_filter or {"data_types": [], "processing": [], "artifacts": sorted(str(a) for a in prev)}
+    return jsonify(set_study_file_filter(aggregation_id, g.user_id, study_id, ff))
 
 
 @app.route("/api/aggregations/<aggregation_id>", methods=["PATCH"])

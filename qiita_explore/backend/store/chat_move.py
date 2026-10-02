@@ -136,6 +136,10 @@ def _move_chat_between_scopes(
             "UPDATE chat_pinned_studies SET chat_scope = ? WHERE chat_id = ? AND chat_scope = ?",
             (to_scope, chat_id, from_scope),
         )
+        conn.execute(   # the chat's temporary aggregation moves with it
+            "UPDATE aggregations SET chat_scope = ? WHERE chat_id = ? AND chat_scope = ?",
+            (to_scope, chat_id, from_scope),
+        )
 
         conn.execute(f"DELETE FROM {src_msgs_tbl} WHERE chat_id = ?", (chat_id,))
         conn.execute(f"DELETE FROM {src_chats_tbl} WHERE chat_id = ?", (chat_id,))

@@ -5,6 +5,7 @@ import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 from .crud import _decode_ui, _insert_chat_message_pair
+from .aggregation_crud import delete_chat_aggregations
 
 
 def list_global_chats(user_id: str, limit: int = 200, include_archived: bool = False):
@@ -172,9 +173,11 @@ def set_global_chat_archived(user_id: str, chat_id: str, archived: bool):
 def delete_global_chat(user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "DELETE FROM global_chats WHERE user_id = ? AND chat_id = ?",
             (resolved_user, chat_id),
         )
+        if cur.rowcount:
+            delete_chat_aggregations(conn, chat_id, "global")
         conn.commit()
     return {"ok": True}

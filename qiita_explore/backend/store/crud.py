@@ -4,6 +4,7 @@ import json
 import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
+from .aggregation_crud import delete_chat_aggregations
 
 PROJECT_STUDIES_CAP = 20
 
@@ -175,10 +176,16 @@ def update_project(project_id: str, user_id: str, name: str = None):
 def delete_project(project_id: str, user_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
-        conn.execute(
+        chat_ids = [r[0] for r in conn.execute(
+            "SELECT pc.chat_id FROM project_chats pc JOIN projects p ON p.project_id = pc.project_id"
+            " WHERE pc.project_id = ? AND p.user_id = ?", (project_id, resolved_user)).fetchall()]
+        cur = conn.execute(
             "DELETE FROM projects WHERE project_id = ? AND user_id = ?",
             (project_id, resolved_user),
         )
+        if cur.rowcount:
+            for chat_id in chat_ids:            # the project's chats go by cascade; their
+                delete_chat_aggregations(conn, chat_id, "project")   # temporary aggregations here
         conn.commit()
     return True
 
@@ -475,10 +482,12 @@ def set_chat_archived(project_id: str, user_id: str, chat_id: str, archived: boo
 def delete_chat(project_id: str, user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "DELETE FROM project_chats WHERE project_id = ? AND user_id = ? AND chat_id = ?",
             (project_id, resolved_user, chat_id),
         )
+        if cur.rowcount:
+            delete_chat_aggregations(conn, chat_id, "project")
         conn.execute(
             "UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",
             (_now(), project_id, resolved_user),

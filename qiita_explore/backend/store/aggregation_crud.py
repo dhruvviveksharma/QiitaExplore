@@ -92,17 +92,57 @@ def _get(conn, aggregation_id: str, user_id: str) -> Optional[dict]:
     return None if row is None else _hydrate(conn, row)
 
 
-def create_aggregation(user_id: str, name: str) -> dict:
+def create_aggregation(user_id: str, name: str, chat_id: str = None, chat_scope: str = None) -> dict:
+    """A saved aggregation, or — with chat_id / chat_scope — that chat's
+    temporary one (see get_chat_aggregation)."""
     aggregation_id = str(uuid.uuid4())[:12]
     now = _now()
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO aggregations(aggregation_id, user_id, name, created_at, updated_at) VALUES(?,?,?,?,?)",
-            (aggregation_id, user_id, name, now, now),
+            "INSERT INTO aggregations(aggregation_id, user_id, name, created_at, updated_at, chat_id, chat_scope)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (aggregation_id, user_id, name, now, now, chat_id, chat_scope),
         )
         conn.commit()
     return {"aggregation_id": aggregation_id, "user_id": user_id, "name": name,
-            "created_at": now, "updated_at": now, "studies": []}
+            "created_at": now, "updated_at": now, "chat_id": chat_id, "chat_scope": chat_scope,
+            "studies": []}
+
+
+def get_chat_aggregation(user_id: str, chat_id: str, chat_scope: str) -> Optional[dict]:
+    """The chat's temporary aggregation, or None. It is an ordinary aggregation
+    with chat_id / chat_scope set: hidden from the Sample Aggregation tab,
+    deleted with its chat (delete_chat_aggregations), kept by
+    save_chat_aggregation."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM aggregations WHERE user_id=? AND chat_id=? AND chat_scope=?",
+            (user_id, chat_id, chat_scope),
+        ).fetchone()
+        return None if row is None else _hydrate(conn, row)
+
+
+def save_chat_aggregation(aggregation_id: str, user_id: str, name: str) -> Optional[dict]:
+    """Name a chat's temporary aggregation and detach it from the chat, which
+    makes it a saved one. None when it doesn't exist / isn't owned."""
+    now = _now()
+    with _conn() as conn:
+        cur = conn.execute(
+            "UPDATE aggregations SET name=?, chat_id=NULL, chat_scope=NULL, updated_at=?"
+            " WHERE aggregation_id=? AND user_id=?",
+            (name, now, aggregation_id, user_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        conn.commit()
+        return _get(conn, aggregation_id, user_id)
+
+
+def delete_chat_aggregations(conn, chat_id: str, chat_scope: str) -> None:
+    """Drop a chat's temporary aggregation (studies and rows cascade). Called
+    inside the chat-delete transaction, only after that delete matched the
+    caller's own chat."""
+    conn.execute("DELETE FROM aggregations WHERE chat_id=? AND chat_scope=?", (chat_id, chat_scope))
 
 
 def list_aggregations(user_id: str) -> list:
@@ -235,6 +275,32 @@ def set_aggregation_rows(aggregation_id: str, user_id: str, study_id: int, *,
                 "DELETE FROM aggregation_files WHERE aggregation_id=? AND study_id=? AND sample_id=? AND artifact_id=?",
                 [(aggregation_id, sid, str(s), int(a)) for s, a in remove],
             )
+        _touch(conn, aggregation_id, now)
+        conn.commit()
+        return _get(conn, aggregation_id, user_id)
+
+
+def remove_rows_by_artifacts(aggregation_id: str, user_id: str, study_id: int, artifact_ids,
+                             keep: bool = False) -> Optional[dict]:
+    """Drop one study's checked rows whose artifact is in artifact_ids — or,
+    with keep, every row whose artifact is NOT in them (the undo of a chat
+    aggregation add). Returns the full aggregation, or None if not owned."""
+    now = _now()
+    sid = int(study_id)
+    ids = [int(a) for a in artifact_ids]
+    with _conn() as conn:
+        if not _owned(conn, aggregation_id, user_id):
+            return None
+        marks = ",".join("?" * len(ids))
+        if keep:
+            where = f" AND artifact_id NOT IN ({marks})" if ids else ""
+        elif ids:
+            where = f" AND artifact_id IN ({marks})"
+        else:
+            where = None
+        if where is not None:
+            conn.execute(f"DELETE FROM aggregation_files WHERE aggregation_id=? AND study_id=?{where}",
+                         (aggregation_id, sid, *ids))
         _touch(conn, aggregation_id, now)
         conn.commit()
         return _get(conn, aggregation_id, user_id)
