@@ -8,8 +8,11 @@
 //   useDropdown (hooks/useDropdown.js), WreathLoader (loaders.js),
 //   AggregationDetail, SampleMetadataPane, _plural (aggregation_detail.js)
 
+// The list holds saved aggregations and every chat's temporary one (chat_id set,
+// chat_aggregation_bar.js); the tab and the Browse picker show saved ones only.
 function useAggregations() {
   const [aggregations, setAggregations] = useState(null); // null until the first GET resolves
+  const [focusId, setFocusId] = useState(null);           // one the tab should open (from a chat)
 
   useEffect(() => {
     apiJson('/aggregations')
@@ -46,8 +49,22 @@ function useAggregations() {
   // one study; drives that study's sample table and its rows in the export.
   const setStudyFileFilter = async (id, studyId, file_filter) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}`, { method: 'PATCH', body: JSON.stringify({ file_filter }) }));
+  // A chat tool changed this one server-side: re-read it (and add it if new).
+  const sync = async (id) => {
+    const a = await apiJson(`/aggregations/${id}`);
+    setAggregations(list => (list || []).some(x => x.aggregation_id === id)
+      ? (list || []).map(x => x.aggregation_id === id ? a : x) : [a, ...(list || [])]);
+    return a;
+  };
+  // Keep a chat's temporary aggregation: named, and listed in the tab from now on.
+  const save = async (id, name) =>
+    replace(await apiJson(`/aggregations/${id}/save`, { method: 'POST', body: JSON.stringify({ name }) }));
+  // undo: the `undo` a chat_aggregation_update widget carries.
+  const undoAdd = async (id, studyId, undo) =>
+    replace(await apiJson(`/aggregations/${id}/studies/${studyId}/undo-add`, { method: 'POST', body: JSON.stringify(undo) }));
 
-  return { aggregations, create, rename, remove, addStudy, removeStudy, setRows, setStudyFileFilter };
+  return { aggregations, create, rename, remove, addStudy, removeStudy, setRows, setStudyFileFilter,
+           sync, save, undoAdd, focusId, focus: setFocusId };
 }
 
 // The header the server snapshots onto aggregation_studies so the tab can
@@ -73,7 +90,7 @@ const _aggStudyBody = (study) => ({
 function AggregateCardButton({ study, agg }) {
   const dd = useDropdown(r => ({ top: r.bottom + 4, left: Math.max(8, r.right - 200) }));
   const [err, setErr] = useState('');
-  const list = agg.aggregations || [];
+  const list = (agg.aggregations || []).filter(a => !a.chat_id);   // saved ones only
 
   const add = async (a) => {
     setErr('');
@@ -127,9 +144,17 @@ function AggregationsTab({ agg }) {
   // {study_id, sample_id} whose metadata fills the right-hand pane; lives here
   // (not in the detail) so it survives collapsing the study's sample table.
   const [picked,    setPicked]    = useState(null);
-  const list   = agg.aggregations;
-  const active = (list || []).find(a => a.aggregation_id === activeId) || null;
+  const list   = agg.aggregations && agg.aggregations.filter(a => !a.chat_id);   // a chat's stays in the chat
+  const active = (agg.aggregations || []).find(a => a.aggregation_id === activeId) || null;
   useEffect(() => { setPicked(null); }, [activeId]);
+  // Opened from a chat ("View" / "Open ↗"): show that one, even a chat's temporary one.
+  useEffect(() => {
+    if (agg.focusId) { setActiveId(agg.focusId); agg.focus(null); }
+  }, [agg.focusId]);
+  const saveTemp = async (a) => {
+    const name = prompt('Save this chat aggregation as:', '');
+    if (name && name.trim()) await agg.save(a.aggregation_id, name.trim());
+  };
 
   const createNew = async () => {
     const name = prompt('Aggregation name:', 'Untitled');
@@ -162,6 +187,12 @@ function AggregationsTab({ agg }) {
           <div className="agg-empty">
             <p>No aggregations yet.</p>
             <p>Click <strong>+ Aggregate</strong> on any study card, or <strong>+ New</strong> above.</p>
+          </div>
+        )}
+        {active?.chat_id && (
+          <div className="agg-card active agg-temp">
+            <span className="agg-name">{active.name} <span className="agg-temp-tag">temporary · from a chat</span></span>
+            <button className="merge-btn-ghost" onClick={() => saveTemp(active)}>Save…</button>
           </div>
         )}
         {(list || []).map(a => (

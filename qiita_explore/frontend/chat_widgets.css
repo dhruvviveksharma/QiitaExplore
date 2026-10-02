@@ -53,3 +53,30 @@
   background: var(--surface); color: var(--text); min-width: 180px;
 }
 .cw-agg-done { font-size: 12.5px; color: var(--text-2); }
+
+/* Aggregations list (list_aggregations): one row per aggregation, its studies below */
+.cw-agglist { border-top: 1px solid var(--border-soft); padding: 6px 0; }
+.cw-agglist:first-of-type { border-top: 0; }
+.cw-agglist-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cw-agglist-toggle {
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 0;
+  font: inherit; color: var(--text); cursor: pointer;
+}
+.cw-agglist-meta { font-size: 11.5px; color: var(--text-3); }
+.cw-agglist-study { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0 5px 18px; }
+.cw-agglist-title { font-size: 12.5px; font-weight: 500; }
+.cw-agglist-empty { padding-left: 18px; }
+.agg-temp-tag {
+  font-size: 10.5px; font-weight: 600; color: var(--accent-h); background: var(--accent-soft);
+  border-radius: 999px; padding: 1px 7px;
+}
+
+/* This chat's aggregation bar, above the composer (chat_aggregation_bar.js) */
+.chat-agg-bar .chat-agg-chip { cursor: default; padding-right: 8px; }
+.chat-agg-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.chat-agg-btn {
+  font-size: 11.5px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--text-2); text-decoration: none; cursor: pointer;
+}
+.chat-agg-btn:hover:not(:disabled):not(.disabled) { border-color: var(--accent); color: var(--accent); }
+.chat-agg-btn:disabled, .chat-agg-btn.disabled { opacity: .5; cursor: default; }
