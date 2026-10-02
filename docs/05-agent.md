@@ -206,7 +206,7 @@ Structured `{field, value}` filters against sample metadata, for when the user n
 
 ## Study detail tools (added 2026-10)
 
-Both chats also get seven tools over one study, in `backend/helpers/study_tools.py`. Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
+Both chats also get ten tools over studies and the user's aggregations: `backend/helpers/study_tools.py`, plus `backend/helpers/aggregation_tools.py` for `add_to_chat_aggregation`, `save_chat_aggregation` and `list_aggregations`. Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
 
 | Tool | What the user sees | What the model gets |
 |---|---|---|
@@ -215,7 +215,10 @@ Both chats also get seven tools over one study, in `backend/helpers/study_tools.
 | `get_sample_metadata` | One sample's metadata card | That sample's preps and `field: value` lines (values ≤ 200 chars) |
 | `get_prep_graph` | `ArtifactNetwork` for one prep; a clicked node lists its files | An indented outline of artifacts and jobs (≤ 80 nodes) |
 | `list_artifact_files` | Files with download links and full paths | Filenames, file types and ids — **never paths** |
-| `propose_aggregation_add` | A confirm card: scope, counts, aggregation picker, Add | "Proposal only — nothing was added", counts, the user's aggregations |
+| `add_to_chat_aggregation` | **Writes.** What was added to this chat's aggregation, the new totals, Undo, View | What was added and the totals; "already added — the user can Undo" |
+| `save_chat_aggregation` | "Saved as …" with Open ↗ | That it is now in the Sample Aggregation tab |
+| `list_aggregations` | The user's saved aggregations and this chat's, each expandable to its studies | Each aggregation's studies, checked rows and filters (≤ 20 aggregations, ≤ 50 studies each) |
+| `propose_aggregation_add` | A confirm card for a **saved** aggregation the user named: scope, counts, picker, Add | "Proposal only — nothing was added", counts, the user's saved aggregations |
 | `resolve_study` | A "Which study?" picker, when ambiguous | Either the resolved id, or the candidates and an instruction to stop and ask |
 
 **Rules every one follows.**
@@ -240,9 +243,25 @@ An explicit "study 10317" in the text is used as is. Everything else becomes a p
 
 **`propose_aggregation_add` never writes.** It returns the file filter (data types, plus the per-sample artifacts of the chosen preps), the sample and row counts against the whole study, a suggested target, and why it can't be added (a prep with no per-sample files, or an empty scope). The card's **Add** posts that filter to `POST /api/aggregations/<id>/studies`, which saves it on the study in the same insert.
 
+### This chat's aggregation (added 2026-10-02)
+
+Each chat can hold one **temporary aggregation**. It is an ordinary aggregation with `aggregations.chat_id` / `chat_scope` set, so the Sample Aggregation tab's sample table, filters and export all work on it.
+
+**Lifecycle**
+- **Hidden** from the tab's list and from the Browse "+ Aggregate" picker.
+- **In the chat:** shown in a bar above the composer (`chat_aggregation_bar.js`).
+- **Deleted** with its chat, or with its chat's project, and moved with the chat between scopes.
+- **Saving:** `save_chat_aggregation` (or the bar's "Save as…") names it and clears `chat_id`, which makes it a saved one. The next add starts a new temporary one.
+
+**`add_to_chat_aggregation` writes immediately** — a scratchpad doesn't need a confirm card.
+- **Scope as artifacts:** a study, its data types or its preps are expressed as per-sample-file artifacts, so repeated adds union. The stored filter is compacted back to data types when the union covers whole types.
+- **Refusals change nothing:** an unknown data type or prep, an empty scope, an already-held scope, and the 50-study cap.
+- **Undo:** each result carries an undo record, `{was_new, added_artifacts, prev_artifacts, prev_filter}`. Its widget sends it to `POST /api/aggregations/<id>/studies/<sid>/undo-add`, which either removes a newly added study or drops the added artifacts' rows and restores the previous filter.
+- **Saved aggregations:** `propose_aggregation_add` is now only for a saved aggregation the user names. "Create an aggregation" in a chat means this chat's temporary one.
+
 ## Slash commands force a tool (added 2026-10)
 
-`/preps`, `/samples`, `/sample`, `/graph`, `/files` and `/aggregate` (`frontend/js/chat_slash.js`) send `force_tool {name, args, text}` with the message. `request_utils.parse_force_tool` validates it, and `stream_agent` runs a `ForcedPlan` (`helpers/forced_tool.py`). Each forced round:
+`/preps`, `/graph`, `/files`, `/aggregate` (→ `add_to_chat_aggregation`) and `/aggregations [name]` (→ `list_aggregations`, no study) (`frontend/js/chat_slash.js`; `/samples` and `/sample` were removed 2026-10-02 — their tools remain) send `force_tool {name, args, text}` with the message. `request_utils.parse_force_tool` validates it, and `stream_agent` runs a `ForcedPlan` (`helpers/forced_tool.py`). Each forced round:
 - offers only the forced tool's schema;
 - **Anthropic:** names it in `tool_choice`;
 - **NRP:** sends `tool_choice: "required"`, per `MODEL_METADATA[…]["forced_tool_choice"]`. If a server rejects `tool_choice` with a 400, the round is retried once without it;

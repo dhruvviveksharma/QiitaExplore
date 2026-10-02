@@ -73,7 +73,7 @@ The frontend mirrors this: both `sendMessage` call sites wire `onTokenAgent`, `o
 
 ### Study slash commands (`force_tool`, added 2026-10)
 
-`/preps`, `/samples`, `/sample`, `/graph`, `/files` and `/aggregate` are parsed in the browser (`chat_slash.js :: parseStudySlash`) into a `force_tool {name, args[, text]}` body field. Both endpoints accept it. The message itself is sent and saved exactly as typed.
+`/preps`, `/graph`, `/files`, `/aggregate` and `/aggregations` are parsed in the browser (`chat_slash.js :: parseStudySlash`) into a `force_tool {name, args[, text]}` body field. Both endpoints accept it. The message itself is sent and saved exactly as typed.
 
 **What the forced round looks like on the wire.** A forced round's tokens are withheld, so it shows up only as `segment_tool_call` and `segment_tool_result`. A synthesized call looks the same as a real one, apart from its `force_…` id. The new `ui_payload` kinds are listed in [Appendix C](appendix-c-agent-tools-and-sse.md).
 

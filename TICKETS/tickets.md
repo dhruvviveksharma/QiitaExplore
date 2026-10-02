@@ -3026,6 +3026,33 @@ when cached, but cold `/detail` costs seconds for big studies (AGP ~5 s).
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-10-01*
+## TKT-096: A Chat Aggregation's Undo Is Approximate After Hand Edits
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Each `add_to_chat_aggregation` result carries an undo record (was the study new; which
+artifacts it added; the previous artifacts and filter). Undo replays that record: it removes
+a new study, or drops the added artifacts' rows and restores the previous filter. The
+record is a snapshot. If the user then edits the same study by hand in the tab (re-checks
+rows, changes its filter) or adds to it again, an older Undo no longer reverses exactly
+one step. The widget also forgets that it was undone after a reload, so Undo can be pressed
+again (harmless: a removed study 404s, an extension removes nothing new).
+
+### Plan
+
+- Store undo records server-side with a sequence number per aggregation, and only allow
+  undoing the latest unchanged step; persist "undone" so a reloaded widget shows it.
+
+### Files
+
+- `qiita_explore/backend/helpers/aggregation_tools.py`, `routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/chat_aggregate_widget.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-10-02*
 
 ---

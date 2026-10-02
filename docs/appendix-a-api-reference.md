@@ -163,13 +163,16 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
-| GET | `/api/aggregations` | `api_list_aggregations` | session | The caller's aggregations, studies and checked-row counts embedded |
+| GET | `/api/aggregations` | `api_list_aggregations` | session | The caller's aggregations, studies and checked-row counts embedded — including chats' temporary ones (`chat_id` / `chat_scope` set), which the frontend keeps out of the tab |
 | POST | `/api/aggregations` | `api_create_aggregation` | session | Create an aggregation (`{name}`) |
 | PATCH | `/api/aggregations/<aggregation_id>` | `api_update_aggregation` | session | Rename (`{name}`) |
 | PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_set_study_file_filter` | session | Save that study's Data type / Processing / Artifact `file_filter` |
 | GET | `/api/aggregations/<aggregation_id>/file-facets` | `api_aggregation_file_facets` | session | How many checked rows the export would contain; with `?study_id=`, that study's picker options |
 | DELETE | `/api/aggregations/<aggregation_id>` | `api_delete_aggregation` | session | Delete (cascades to studies and rows) |
 | POST | `/api/aggregations/<aggregation_id>/studies` | `api_add_study_to_aggregation` | session | Add a whole study — every (sample, artifact) row checked |
+| GET | `/api/aggregations/<aggregation_id>` | `api_get_aggregation` | session | One aggregation (the chat re-reads one a tool changed) |
+| POST | `/api/aggregations/<aggregation_id>/save` | `api_save_chat_aggregation` | session | `{name}`: keep a chat's temporary aggregation — named, detached from the chat, listed in the tab |
+| POST | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/undo-add` | `api_undo_chat_aggregation_add` | session | Undo one `add_to_chat_aggregation` from its `{was_new, added_artifacts, prev_artifacts, prev_filter}` |
 | DELETE | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_remove_study_from_aggregation` | session | Remove a study and its checked rows |
 | GET | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_aggregation_study_samples` | session | One page of the study's rows — a row is a (sample, artifact) pair, its artifact fixing its prep — files-first under the study's `file_filter`, with `selected`/`prep_id`/`file`/`fastq`/`fasta`/`data_types`; `?group=prep`, `?sort=prep\|artifact&dir=` |
 | PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_set_aggregation_rows` | session | Check / uncheck rows (`add` / `remove` of `{sample_id, artifact_id}`, or `select`) |
