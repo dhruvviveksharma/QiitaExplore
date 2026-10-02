@@ -132,9 +132,10 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/study_actions.js`           | 31    | `StudyActions` — the study action row (Pin / Add to Project, + Aggregate, + Merge) shared by Browse cards and the study modal header |
 | `frontend/js/study_modal.js`             | 279   | `StudyModal` — the overlay shell (scroll-to-expand, expand button opens the study page) plus the add-to-project / add-to-merge bars |
 | `frontend/js/study_detail.js`            | 220   | `StudyHeader`, `StudyDetailBody`, `StudySamplesSection`, `PrepTemplatesSection`, `StudyOutputs`, `StudyPage`, `sampleFieldsFetcher` — the study view shared by the modal, `#/studies/<id>` and the chat widgets. Styles in `frontend/study_detail.css` |
-| `frontend/js/chat_slash.js`              | 55    | `STUDY_SLASH_COMMANDS` (`/preps /samples /sample /graph /files /aggregate`) and `parseStudySlash` → `force_tool` |
+| `frontend/js/chat_slash.js`              | 53    | `STUDY_SLASH_COMMANDS` (`/preps /graph /files /aggregate /aggregations`) and `parseStudySlash` → `force_tool` |
 | `frontend/js/chat_study_widgets.js`      | 251   | `ChatStudyWidget` and one widget per study-tool payload kind (`STUDY_WIDGET_KINDS`), `chatWidgetCtx(s)`, the "Which study?" picker. Styles in `frontend/chat_widgets.css` |
-| `frontend/js/chat_aggregate_widget.js`   | 109   | `AggregationProposalCard` — the chat's add-to-aggregation confirm card |
+| `frontend/js/chat_aggregate_widget.js`   | 224   | `AggregationProposalCard` (confirm card for a saved aggregation), `ChatAggregationUpdate` (an add to this chat's aggregation, with Undo), `AggregationSavedWidget`, `AggregationListWidget` |
+| `frontend/js/chat_aggregation_bar.js`    | 47    | `ChatAggregationBar` — this chat's temporary aggregation above the composer: study chips, View, CSV / xlsx, Save as…, Clear |
 | `frontend/js/app.js`                     | 38    | `App` (auth gate), `AuthenticatedApp`, `ReactDOM.createRoot`                                                         |
 
 
@@ -475,6 +476,12 @@ The Per-sample FASTQ section is not rendered for now. `ArtifactNetwork` draws ev
   - `sendCommand`, which the "Which study?" picker uses to re-send the command with the chosen id.
 - **Study card:** every study display opens with `ChatStudyCard`: the Browse grid's `StudyCard`, look only (no click, no buttons). The study report (`SamplesReportBubble`) and the aggregation card use it too, and the "Which study?" picker is a grid of them with **Use** as each card's only action. It shows what the payload has at once, then the full header from `fetchStudyHeader` (`utils.js`), which caches `GET /studies/<id>` per study with in-flight de-duplication, like `fetchStudyDetail`.
 - **Memo:** `ToolCallCard` is memoized, and `widgetCtx` is rebuilt every render. So `toolCardPropsEqual` compares its live parts (`agg.aggregations` and `sending`), not the object.
+
+**This chat's aggregation.** `useAggregations` holds saved aggregations and every chat's temporary one (`chat_id` set).
+- **Tab and Browse picker:** both list only saved ones.
+- **The bar:** `ChatAggregationBar` finds the open chat's temporary aggregation by `chat_id` + scope.
+- **After a tool writes server-side:** a widget calls `agg.sync(id)` (`GET /api/aggregations/<id>`) when the live list lacks that aggregation or holds an older copy, so the bar updates at once.
+- **Opening one in the tab:** `agg.focus(id)` plus the aggregations view (`chatWidgetCtx.openAggregation`). This works for a temporary one too, which the tab then shows marked "temporary · from a chat" with Save….
 
 **`useOutsideClose`** (`hooks/useOutsideClose.js`) closes the model picker on a mousedown anywhere outside it, except on the model chip, which toggles the picker itself. The listener attaches on the next tick, because the "+" menu and the slash menu open the picker on a mousedown that is still bubbling.
 

@@ -489,11 +489,14 @@ A user's named Sample Aggregation — a set of samples grouped by study, exporte
 | `updated_at` | TEXT | yes | — | Bumped by every mutation (`_touch`), including sample toggles. |
 | `file_filter_json` | TEXT | yes | — | *(migration)* **Unused since 2026-09-30.** Held one Data type / Processing / Artifact filter for the whole aggregation; the filter is now per study (`aggregation_studies.file_filter_json`). Bootstrap copies any value left here to the aggregation's studies, without artifact picks, then nulls it (`store/db.py :: _move_aggregation_filters_to_studies`). |
 
-**Keys/constraints:** PK on `aggregation_id`; index `idx_aggregations_user (user_id, updated_at DESC)` serves the list view.
+| `chat_id` | TEXT | yes | — | *(migration, 2026-10-02)* Set while this is a chat's temporary aggregation (`helpers/aggregation_tools.py`); NULL once saved (`save_chat_aggregation`). |
+| `chat_scope` | TEXT | yes | — | *(migration)* `global` or `project`, with `chat_id`. |
+
+**Keys/constraints:** PK on `aggregation_id`; index `idx_aggregations_user (user_id, updated_at DESC)` serves the list view; `idx_aggregations_chat (chat_id, chat_scope)` finds a chat's temporary one.
 
 **Writes owned by:** `backend/store/aggregation_crud.py`.
 
-**Lifecycle:** cascades to `aggregation_studies`, which cascades to `aggregation_files` (and the legacy `aggregation_samples`).
+**Lifecycle:** cascades to `aggregation_studies`, which cascades to `aggregation_files` (and the legacy `aggregation_samples`). A chat's temporary aggregation is deleted with its chat (`delete_chat`, `delete_global_chat`, `delete_project`, each only when it matched the caller's own chat) and follows the chat in `chat_move`.
 
 ---
 
@@ -679,6 +682,7 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 18 | `study_detail_cache` | `sample_files_json TEXT` | Per-sample FASTQ/FASTA availability map (2026-09-13). **Unused since 2026-09-24**, when the map moved to its own `study_sample_files_cache` table (TKT-086). |
 | 19 | `aggregations` | `file_filter_json TEXT` | The aggregation's saved Data type / Processing filter (2026-09-24). **Unused since 2026-09-30**, when the filter moved to each study. |
 | 20 | `aggregation_studies` | `file_filter_json TEXT` | Each study's own Data type / Processing / Artifact filter (2026-09-30). |
+| — | `aggregations` | `chat_id TEXT`, `chat_scope TEXT` | A chat's temporary aggregation (2026-10-02); NULL = saved. |
 
 After the ALTERs, `_move_aggregation_filters_to_studies` copies any remaining `aggregations.file_filter_json` to that aggregation's studies whose own filter is still NULL, with `artifacts` emptied, and then nulls the aggregation's value. A second boot finds nothing to move, and a study added later starts unfiltered.
 

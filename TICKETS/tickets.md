@@ -2916,7 +2916,7 @@ straight into the aggregation export.
 ## TKT-092: Export Per-Prep Demultiplexed Files for Studies With No Per-Sample File
 
 **Severity:** Low
-**Status:** Open (study 1889 is now covered through its raw `FASTQ` artifact, TKT-096; this ticket remains for studies with only `Demultiplexed`)
+**Status:** Open (study 1889 is now covered through its raw `FASTQ` artifact, TKT-098; this ticket remains for studies with only `Demultiplexed`)
 
 ### Description
 
@@ -3026,9 +3026,36 @@ when cached, but cold `/detail` costs seconds for big studies (AGP ~5 s).
 
 ---
 
+## TKT-096: A Chat Aggregation's Undo Is Approximate After Hand Edits
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Each `add_to_chat_aggregation` result carries an undo record (was the study new; which
+artifacts it added; the previous artifacts and filter). Undo replays that record: it removes
+a new study, or drops the added artifacts' rows and restores the previous filter. The
+record is a snapshot. If the user then edits the same study by hand in the tab (re-checks
+rows, changes its filter) or adds to it again, an older Undo no longer reverses exactly
+one step. The widget also forgets that it was undone after a reload, so Undo can be pressed
+again (harmless: a removed study 404s, an extension removes nothing new).
+
+### Plan
+
+- Store undo records server-side with a sequence number per aggregation, and only allow
+  undoing the latest unchanged step; persist "undone" so a reloaded widget shows it.
+
+### Files
+
+- `qiita_explore/backend/helpers/aggregation_tools.py`, `routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/chat_aggregate_widget.js`
+
 ---
 
-## TKT-096: Raw Multiplexed `FASTQ` Artifacts Are Invisible to the Manifest and Aggregate Export
+---
+
+## TKT-098: Raw Multiplexed `FASTQ` Artifacts Are Invisible to the Manifest and Aggregate Export
 
 **Severity:** Medium (1136 studies, 460 public, have only a raw `FASTQ` artifact)
 **Status:** Resolved 2026-09-29 — `FASTQ` artifacts join the availability map and exports via `fastq_manifest._resolve` / `build_multiplexed_rows` (files zipped into lanes by sorted name; one lane serves the whole prep, several lanes route by `run_prefix`). New `export.tsv` (Study id, Sample id, Prep type, Processing, R1, R2, barcodes file, barcode); CSV/xlsx gain `raw_barcodes` rows.
@@ -3062,6 +3089,8 @@ artifacts. Both hit the same problem: one file holds many samples.
 - `qiita_explore/backend/helpers/fastq_manifest.py` (`_WHERE_FASTQ`, `_WHERE_SEQ`, `_claim`)
 
 ---
+
+*Generated: 2026-09-03 | Updated: 2026-10-02*
 
 ---
 
