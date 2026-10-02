@@ -23,10 +23,10 @@
 .chat-study-card:hover { border-color: var(--border); box-shadow: none; }
 .samples-report-bubble .chat-study-card { margin-bottom: 0; }   /* the bubble's own gap spaces it */
 
-/* Preps: the table gets the larger share of the ~840px reply, with compact
-   cells; the graph column stays in view while a long prep list scrolls. */
-.cw .study-prep-table { flex: 3 1 420px; }
-.cw .study-prep-graph { flex: 2 1 320px; position: sticky; top: 8px; }
+/* Preps: in a reply the graph sits below the prep table (the study page keeps
+   them side by side); both take the full width, with compact table cells. */
+.cw .study-prep-split { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.cw .study-prep-table, .cw .study-prep-graph { flex: none; width: 100%; }
 .cw .study-prep-table .prep-table { font-size: 11.5px; }
 .cw .study-prep-table .prep-table td, .cw .study-prep-table .prep-table th { padding-right: 6px; white-space: nowrap; }
 
