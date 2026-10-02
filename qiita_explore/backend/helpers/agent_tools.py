@@ -1,8 +1,6 @@
 """Tool registry and execution dispatch for the agentic chat loop."""
 
 import logging
-from dataclasses import dataclass
-from typing import Optional
 
 from services.study_service import (
     search_studies_with_sql,
@@ -19,19 +17,9 @@ from helpers.pinned_context import _build_full_samples_block
 from config import (SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDATES,
                     PINNED_CHARS_PER_STUDY)
 from store import SCOPE_PROJECT, SCOPE_GLOBAL, get_project_id_for_chat, get_project_studies_only
+from helpers.tool_result import ToolResult  # noqa: F401 — re-exported; tests import it from here
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ToolResult:
-    text: str                          # Fed back to the model as a tool message
-    label: str                         # Shown in step_done UI
-    detail: str = ""                   # Shown as sub-label in step_done UI
-    ui_payload: Optional[dict] = None  # If set, emitted as a `ui` SSE event
-    executed: bool = True              # False when no real work happened (e.g.
-                                       # empty-input early return) — such calls
-                                       # must not consume a search-budget slot.
 
 
 def _result_studies(studies, via=None):
@@ -100,8 +88,9 @@ def _allowed_project_study_ids(project_id: str) -> set:
 
 
 def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
-                 deep_search: bool = False) -> ToolResult:
-    """Dispatch a tool call by name and return a ToolResult."""
+                 deep_search: bool = False, user_id=None) -> ToolResult:
+    """Dispatch a tool call by name and return a ToolResult. `user_id` is the
+    signed-in user (None from the CLI harness)."""
     if scope == SCOPE_GLOBAL:
         return _execute_global_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
     if scope == SCOPE_PROJECT:

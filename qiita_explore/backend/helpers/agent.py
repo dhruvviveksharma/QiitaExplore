@@ -75,7 +75,8 @@ def _tools_within_search_budget(tools, search_calls_used: int):
     return [t for t in tools if t.get("function", t)["name"] not in blocked]
 
 
-def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used):
+def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used,
+                       user_id=None):
     """Yield segment events for one tool call; return (result_text,
     consumed_search_slot, failed) — `failed` is the structured fact of a raise."""
     step_name = f"tool_{name}_{call_id}"
@@ -91,7 +92,8 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
         return (msg, False, False)
     t0 = time.perf_counter()
     try:
-        result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+        result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search,
+                              user_id=user_id)
     except Exception as exc:
         dt = time.perf_counter() - t0
         logger.exception("tool %s raised after %.3fs", name, dt)
@@ -113,7 +115,8 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
     return (result.text, _is_budgeted_search_tool(name) and getattr(result, "executed", True), False)
 
 
-def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools):
+def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
+                            user_id=None):
     anth_tools = _openai_tools_to_anthropic(tools)
     msgs = list(api_msgs)
     search_calls_used = 0
@@ -211,7 +214,7 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
             result_text, consumed_search_slot, failed = yield from _execute_tool_call(
                 tu["name"], tu["args"], tu["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_calls_used=search_calls_used,
+                search_calls_used=search_calls_used, user_id=user_id,
             )
             if consumed_search_slot:
                 search_calls_used += 1
@@ -273,6 +276,7 @@ def stream_agent(
     turn_rows: Optional[list] = None,
     user_content: Optional[str] = None,
     history_summary: Optional[str] = None,
+    user_id=None,
 ) -> Generator[dict, None, None]:
     """
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
@@ -312,7 +316,8 @@ def stream_agent(
         api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
     if provider == "anthropic":
         yield from _stream_anthropic_agent(
-            llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools)
+            llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
+            user_id=user_id)
         return
 
     search_calls_used = 0
@@ -427,7 +432,7 @@ def stream_agent(
             result_text, consumed_search_slot, failed = yield from _execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_calls_used=search_calls_used,
+                search_calls_used=search_calls_used, user_id=user_id,
             )
             if consumed_search_slot:
                 search_calls_used += 1

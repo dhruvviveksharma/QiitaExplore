@@ -37,7 +37,7 @@ def run_turn(agent_mod, monkeypatch):
     """Run one stream_agent turn against scripted fakes; returns
     (events, fake_client, fake_execute_tool)."""
     def _run(script, execute_tool, *, provider="nrp", tools=None, messages=None,
-             max_iters=None, search_budget=None):
+             max_iters=None, search_budget=None, **extra):
         client = (FakeAnthropicClient(script) if provider == "anthropic"
                   else FakeOpenAIClient(script))
         monkeypatch.setattr(agent_mod, "get_client", lambda model: (client, provider))
@@ -57,6 +57,7 @@ def run_turn(agent_mod, monkeypatch):
         )
         if max_iters is not None:
             kwargs["max_iters"] = max_iters
+        kwargs.update(extra)
         events = list(agent_mod.stream_agent(
             messages or [{"role": "user", "content": "hi"}], **kwargs))
         return events, client, execute_tool

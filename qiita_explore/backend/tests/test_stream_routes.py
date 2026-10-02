@@ -76,10 +76,11 @@ def fake_turn(monkeypatch):
         openai_text_round("Here you go."),
     ]
     fake_client = FakeOpenAIClient(script)
-    calls = []
+    calls, user_ids = [], []
 
-    def fake_execute_tool(name, args, *, scope, chat_id, deep_search=False):
+    def fake_execute_tool(name, args, *, scope, chat_id, deep_search=False, user_id=None):
         calls.append((name, args, scope, deep_search))
+        user_ids.append(user_id)
         return _tool_result()
 
     monkeypatch.setattr(agent_mod, "get_client", lambda model: (fake_client, "nrp"))
@@ -88,6 +89,7 @@ def fake_turn(monkeypatch):
     # title-generation thread — stub it so no test makes a real LLM call.
     monkeypatch.setattr(title_mod, "llm_chat", lambda *a, **k: "Route title")
     fake_client.tool_calls = calls
+    fake_client.tool_user_ids = user_ids
     return fake_client
 
 
@@ -142,7 +144,7 @@ class TestGlobalStream:
 
         monkeypatch.setattr(agent_mod, "get_client", lambda model: (fake_client, "nrp"))
         monkeypatch.setattr(agent_mod, "execute_tool",
-                           lambda name, args, *, scope, chat_id, deep_search=False: _tool_result())
+                           lambda name, args, *, scope, chat_id, deep_search=False, user_id=None: _tool_result())
         monkeypatch.setattr(title_mod, "llm_chat", lambda *a, **k: "Route title")
 
         chat_id = _new_global_chat(client, logged_in)
@@ -223,6 +225,13 @@ class TestGlobalStream:
         resp.get_data()  # drain the stream so the generator actually runs
         name, args, scope, deep = fake_turn.tool_calls[0]
         assert (name, scope, deep) == ("search_studies", "global", True)
+
+    def test_signed_in_user_reaches_the_tool(self, client, logged_in, fake_turn):
+        chat_id = _new_global_chat(client, logged_in)
+        client.post(f"/api/global-chats/{chat_id}/message/stream",
+                    json={"message": "q", "model": "minimax-m2"}, headers=logged_in).get_data()
+        me = client.get("/api/auth/me").get_json()["user_id"]
+        assert me and fake_turn.tool_user_ids == [me]
 
     def test_stream_requires_csrf(self, client, logged_in, fake_turn):
         chat_id = _new_global_chat(client, logged_in)

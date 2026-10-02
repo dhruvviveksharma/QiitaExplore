@@ -141,6 +141,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             turn_rows=turn_rows,
             user_content=user_content,
             history_summary=history_summary,
+            user_id=user_id,
         ):
             etype = event["type"]
             if etype == "transcript_append":
