@@ -268,7 +268,7 @@ The heaviest read in the app, and the one place the multi-layer `study_detail_ca
 Cache assembly proceeds in four independent stages, each of which can hit or miss separately and writes back on miss:
 
 1. **Preps + artifacts** — from `preps_json` / `artifacts_json`, else `_fetch_study_detail_from_qiita`.
-2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`.
+2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` or `visibility` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`. Artifact nodes carry `visibility` (`public` / `private` / `sandbox` / `archived`); the study modal's chart hides `archived` ones, which Qiita leaves with no parent link.
 3. **Prep metadata** — from `prep_metadata_json`, else fanned out over a `ThreadPoolExecutor` (max 8 workers) calling `_fetch_prep_metadata_summary` per prep id, and merged into each prep dict in place.
 4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch.
 

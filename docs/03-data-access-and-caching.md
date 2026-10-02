@@ -83,7 +83,7 @@ Its limits follow directly from being per-worker (see [`01-architecture.md`](01-
 
 The heavy layer. One row per study, holding preps, artifacts, the artifact graph, prep metadata, sample lists, a sample-context text block, and a total sample count. Six-hour TTL, hardcoded as `_STUDY_DETAIL_CACHE_TTL_HOURS` in `backend/store/cache.py` — it is **not** environment-tunable.
 
-Beyond the TTL there is a **staleness probe**: `backend/routes/study_routes.py` re-fetches the artifact graph if cached artifact nodes lack `filepaths` or job nodes lack `command_params`. This catches rows written by an older version of the code whose shape has since gained fields, without requiring a cache-wide invalidation or a migration.
+Beyond the TTL there is a **staleness probe**: `backend/routes/study_routes.py` re-fetches the artifact graph if cached artifact nodes lack `filepaths` or `visibility`, or job nodes lack `command_params`. This catches rows written by an older version of the code whose shape has since gained fields, without requiring a cache-wide invalidation or a migration.
 
 > **Known defect — the TTL check fails open.** `backend/store/cache.py :: get_study_detail_cache` wraps its age comparison in a bare `except Exception: pass`, so an unparseable `cached_at` yields a **cache hit** on an arbitrarily stale row rather than a miss. Compare `backend/store/auth_store.py :: get_session_by_token`, which fails *closed* on a malformed timestamp. The auth path gets this right; the cache path does not. Low impact today, but it is the wrong default.
 

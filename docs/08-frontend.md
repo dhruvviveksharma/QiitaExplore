@@ -79,6 +79,7 @@ flowchart LR
         MA["merge_artifacts.js"] --> MT["merge_tree.js"]
         MT --> MD["merge_detail.js"]
         MD --> MW["merge_workspace.js"]
+        MW --> AN["artifact_network.js<br/>ArtifactNetwork"]
     end
 
     subgraph G["aggregation feature (order matters within)"]
@@ -96,7 +97,7 @@ flowchart LR
 
 
 
-Arrows read *"defines globals consumed by"*. The chain is close to linear because the load order is literally sequential; the merge files form a sub-chain of their own (`merge_artifacts.js` defines `prepReachableSet` and `ArtifactOutputsView`, which `merge_tree.js` and `study_modal.js` both consume).
+Arrows read *"defines globals consumed by"*. The chain is close to linear because the load order is literally sequential; the merge files form a sub-chain of their own (`merge_artifacts.js` defines `prepReachableSet`, `filterGraphByPrep`, `FileLink`, `FlagList` and `ArtifactOutputsView`; `merge_tree.js` defines `jobLabels` / `jobVariants`; `artifact_network.js` consumes them plus `SamplePeek` from `merge_detail.js`, and `study_modal.js` consumes `ArtifactNetwork`).
 
 ### File inventory
 
@@ -119,14 +120,15 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/app_state.js`               | 633   | `useAppState()` — the whole application state and every action                                                       |
 | `frontend/js/app_render.js`              | 601   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
 | `frontend/js/merge_artifacts.js`         | 354   | Artifact graph filtering, BIOM cards, pipeline breadcrumb, global BIOM selector                                      |
-| `frontend/js/merge_tree.js`              | 291   | Provenance forest — org-chart and indented-list renderers                                                            |
+| `frontend/js/merge_tree.js`              | 301   | Provenance forest — org-chart and indented-list renderers (Merge panel); `jobVariants` / `jobLabels` name sibling jobs that run the same command |
 | `frontend/js/merge_detail.js`            | 404   | Study summary card, sample peek, merge preview/validation, job status and history                                    |
 | `frontend/js/merge_workspace.js`         | 438   | `MergeWorkspacePanel`, `MergeStudySlot`, `MergesTab`                                                                 |
+| `frontend/js/artifact_network.js`        | 217   | `ArtifactNetwork` — the study modal's Qiita-style left-to-right processing chart (artifact triangles, job circles; click a node for its files or parameters; archived artifacts hidden). Styles in `frontend/artifact_network.css` |
 | `frontend/js/fastq_manifest.js`          | 39    | `FastqManifestSection` — per-artifact QIIME2 manifest download in the study modal                                    |
 | `frontend/js/aggregation_detail.js`      | 307   | `AggregationDetail` (card grid, Data type / Processing pickers via `FacetMultiSelect`, xlsx + CSV links), `AggregationSampleTable` (paged checkboxes, Data type column, Show filter), `SampleMetadataPane` |
 | `frontend/js/aggregations.js`            | 196   | `useAggregations` (incl. `setFileFilter`), `AggregateCardButton` (Browse "+ Aggregate"), `AggregationsTab` shell    |
 | `frontend/js/study_actions.js`           | 31    | `StudyActions` — the study action row (Pin / Add to Project, + Aggregate, + Merge) shared by Browse cards and the study modal header |
-| `frontend/js/study_modal.js`             | 423   | `StudyModal` (header renders `StudyActions` in compact and fullscreen) plus the add-to-project / add-to-merge bars   |
+| `frontend/js/study_modal.js`             | 421   | `StudyModal` (header renders `StudyActions` in compact and fullscreen) plus the add-to-project / add-to-merge bars   |
 | `frontend/js/app.js`                     | 38    | `App` (auth gate), `AuthenticatedApp`, `ReactDOM.createRoot`                                                         |
 
 
@@ -439,7 +441,7 @@ Four tiers, distinguished by what they know about.
 
 **The four** `merge_`* **files — a self-contained feature.** They form their own load-ordered chain and are the only part of the frontend that manages substantial state outside `useAppState`; `MergeWorkspacePanel` runs its own fetches, validation polling, and job status. `app_state.js` holds only the three keys needed to *open* the feature (`mergeWorkspaceId`, `showMergePanel`, `pendingMergeStudy`). The seam is deliberate — merge is reachable both as a full page (`view.type === 'merges'`, rendered `embedded`) and as a slide-over panel from anywhere else, and the same component serves both.
 
-`study_modal.js` **— a bridge.** `StudyModal` is presentational, but `AddToProjectBar` and `AddToMergeBar` each fetch their own list and post their own mutation, because the modal is reachable from contexts that have no relevant surrounding state (an inline study card inside a tool result, for instance). `StudyModalOutputs` reuses `ArtifactOutputsView` from `merge_artifacts.js` with `selectable={false}` — the same provenance viewer as the merge page, in read-only mode.
+`study_modal.js` **— a bridge.** `StudyModal` is presentational, but `AddToProjectBar` and `AddToMergeBar` each fetch their own list and post their own mutation, because the modal is reachable from contexts that have no relevant surrounding state (an inline study card inside a tool result, for instance). `StudyModalOutputs` draws the study's processing network with `ArtifactNetwork` (`artifact_network.js`), one prep at a time like Qiita's own chart: the prep picker defaults to the first prep and is hidden for a single-prep study. Every artifact is drawn, including intermediate ones such as Demultiplexed, and nothing but the chart shows until a node is clicked. Archived artifacts (Qiita drops their parent links) are hidden behind a "N archived artifacts hidden · Show" note. Only a study whose cached detail has no graph falls back to `ArtifactOutputsView`'s flat table; the Merge panel keeps `ArtifactOutputsView` and its selectable BIOM cards.
 
 ### Markdown and XSS
 

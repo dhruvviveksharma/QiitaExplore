@@ -1,8 +1,8 @@
 // Study detail modal — extracted from app_render.js (TKT-011)
 // Globals in scope: React, useState, useEffect, useRef (utils.js),
 //   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js), PrepGroupedSamples (prep_samples.js),
-//   ArtifactOutputsView, prepReachableSet (merge_artifacts.js),
-//   ProvenanceForest (merge_tree.js), FastqManifestSection (fastq_manifest.js)
+//   ArtifactOutputsView, prepReachableSet, filterGraphByPrep (merge_artifacts.js),
+//   ArtifactNetwork (artifact_network.js), FastqManifestSection (fastq_manifest.js)
 
 // ── Add to project ────────────────────────────────────────────────────────────
 
@@ -228,36 +228,36 @@ function StudyActionBar({ study }) {
 
 // ── Study outputs section (tree + workspace bar) ───────────────────────────────
 
+// The study's processing network (ArtifactNetwork), one prep at a time like
+// Qiita's own chart: the picker defaults to the first prep (AGP has 308) and is
+// hidden for a single-prep study. "Other" holds non-archived artifacts that no
+// prep reaches. A study whose cached detail has no graph keeps the flat table.
 function StudyModalOutputs({ study, detail, loading }) {
-  const [sampleCounts, setSampleCounts] = useState({});
-  const [prepFilter,   setPrepFilter]   = useState('');
-
-  useEffect(() => {
-    if (!detail?.artifact_graph) return;
-    const biomIds = detail.artifact_graph
-      .filter(n => n.kind === 'artifact' && n.artifact_type === 'BIOM' && n.artifact_id)
-      .map(n => n.artifact_id);
-    if (!biomIds.length) return;
-    apiPost('/artifacts/sample-counts', { study_id: study.study_id, artifact_ids: biomIds })
-      .then(r => r.ok ? r.json() : {})
-      .then(counts => setSampleCounts(prev => ({ ...prev, ...counts })));
-  }, [detail]);
-
+  const [prepFilter, setPrepFilter] = useState('');   // '' = the study's first prep
   const graph = detail?.artifact_graph || [];
+  if (!graph.length) {
+    return (
+      <div>
+        <ArtifactOutputsView detail={detail} loading={loading} chosenIds={[]} onToggleArtifact={() => {}}
+          prepFilter="" recommendedId={null} sampleCounts={{}} studyId={study.study_id} selectable={false} />
+        <StudyActionBar study={study} />
+      </div>
+    );
+  }
+  const preps = detail.preps || [];
   const reachable = prepReachableSet(graph);
-  const hasOrphans = graph.length > 0 && graph.some(n => !reachable.has(n.node_id));
+  const orphans = graph.filter(n => !reachable.has(n.node_id));
+  const hasOrphans = orphans.some(n => !(n.kind === 'artifact' && n.visibility === 'archived'));
+  const prep = prepFilter === '' ? (preps[0]?.prep_template_id ?? 'other') : prepFilter;
+  const shown = prep === 'other' ? orphans : filterGraphByPrep(graph, prep);
 
   return (
     <div>
-      {detail && (detail.preps || []).length > 1 && (
+      {(preps.length > 1 || (hasOrphans && preps.length > 0)) && (
         <div style={{ marginBottom: 8 }}>
-          <select className="merge-dt-select" value={prepFilter}
-            onChange={e => {
-              const v = e.target.value;
-              setPrepFilter(v === '' ? '' : v === 'other' ? 'other' : +v);
-            }}>
-            <option value="">All preps</option>
-            {(detail.preps || []).map(p => (
+          <select className="merge-dt-select" value={prep}
+            onChange={e => setPrepFilter(e.target.value === 'other' ? 'other' : +e.target.value)}>
+            {preps.map(p => (
               <option key={p.prep_template_id} value={p.prep_template_id}>
                 Prep {p.prep_template_id} · {p.data_type || '?'}
               </option>
@@ -266,13 +266,7 @@ function StudyModalOutputs({ study, detail, loading }) {
           </select>
         </div>
       )}
-      <ArtifactOutputsView
-        detail={detail} loading={loading}
-        chosenIds={[]} onToggleArtifact={() => {}}
-        prepFilter={prepFilter} recommendedId={null}
-        sampleCounts={sampleCounts} studyId={study.study_id}
-        selectable={false}
-      />
+      <ArtifactNetwork key={String(prep)} graph={shown} studyId={study.study_id} />
       <StudyActionBar study={study} />
     </div>
   );
