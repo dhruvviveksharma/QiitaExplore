@@ -727,6 +727,14 @@ function useAppState() {
     const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
     const deepMatch = /^\/deepsearch\s+(.+)/is.exec(msg);
     const sendMsg   = deepMatch ? deepMatch[1].trim() : msg;
+    // Study commands (/preps, /graph, … — chat_slash.js) force their tool; a
+    // malformed one stays in the box with its usage line.
+    const forced = parseStudySlash(msg);
+    if (forced?.error) {
+      setCompErr(forced.error); setSending(false);
+      if (typeof msgOverride !== 'string') setInput(msg);
+      return;
+    }
     const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
@@ -774,6 +782,7 @@ function useAppState() {
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(forced?.force_tool && { force_tool: forced.force_tool }),
           },
           chatId, ctrl.signal,
           {
@@ -802,6 +811,7 @@ function useAppState() {
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(forced?.force_tool && { force_tool: forced.force_tool }),
             deep_search: true,
           },
           chatId, ctrl.signal,
@@ -953,7 +963,7 @@ function useAppState() {
   const isChat         = view.type === 'project-chat' || view.type === 'global-chat';
   const canSend        = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending;
   const slashMatches   = /^\/\S*$/.test(input)
-    ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()))
+    ? [...SLASH_COMMANDS, ...STUDY_SLASH_COMMANDS].filter(c => c.cmd.startsWith(input.toLowerCase()))
     : [];
 
   const topTitle = useMemo(() => {
