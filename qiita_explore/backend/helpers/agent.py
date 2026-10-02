@@ -499,4 +499,31 @@ def _tool_label(name: str, args: dict) -> str:
         kws = args.get("keywords") or []
         parts = [f"{f['field']}={f['value']}" for f in ff[:2]] + kws[:2]
         return f"Sample search: {', '.join(parts)}…" if parts else "Searching sample metadata…"
+    return _study_tool_label(name, args)
+
+
+def _study_tool_label(name: str, args: dict) -> str:
+    """Running labels for helpers/study_tools.py — the user always sees which
+    study tool is working."""
+    sid = args.get("study_id", "?")
+    if name == "resolve_study":
+        text = str(args.get("text") or "")
+        return f'Finding the study for "{text[:40]}{"…" if len(text) > 40 else ""}"…'
+    if name == "get_study_preps":
+        return f"Loading preps for study {sid}" + (f" · {args['data_type']}" if args.get("data_type") else "") + "…"
+    if name == "show_study_samples":
+        part = (f" · prep {args['prep_id']}" if args.get("prep_id") else
+                f" · {args['data_type']}" if args.get("data_type") else "")
+        return f"Loading samples for study {sid}{part}…"
+    if name == "get_sample_metadata":
+        return f"Loading metadata for sample {args.get('sample_id', '?')}…"
+    if name == "get_prep_graph":
+        return f"Loading processing graph for study {sid}" + (
+            f" · prep {args['prep_id']}" if args.get("prep_id") else "") + "…"
+    if name == "list_artifact_files":
+        part = (f" · artifact {args['artifact_id']}" if args.get("artifact_id") else
+                f" · prep {args['prep_id']}" if args.get("prep_id") else "")
+        return f"Listing files for study {sid}{part}…"
+    if name == "propose_aggregation_add":
+        return f"Preparing aggregation proposal for study {sid}…"
     return f"Running {name}…"

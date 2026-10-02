@@ -18,6 +18,8 @@ from config import (SAMPLE_SEARCH_DEFAULT_CANDIDATES, SAMPLE_SEARCH_DEEP_CANDIDA
                     PINNED_CHARS_PER_STUDY)
 from store import SCOPE_PROJECT, SCOPE_GLOBAL, get_project_id_for_chat, get_project_studies_only
 from helpers.tool_result import ToolResult  # noqa: F401 — re-exported; tests import it from here
+from helpers.agent_tool_schemas import STUDY_TOOL_NAMES
+from helpers.study_tools import execute_study_tool
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,8 @@ def execute_tool(name: str, args: dict, *, scope: str, chat_id: str,
                  deep_search: bool = False, user_id=None) -> ToolResult:
     """Dispatch a tool call by name and return a ToolResult. `user_id` is the
     signed-in user (None from the CLI harness)."""
+    if name in STUDY_TOOL_NAMES:
+        return execute_study_tool(name, args, scope=scope, chat_id=chat_id, user_id=user_id)
     if scope == SCOPE_GLOBAL:
         return _execute_global_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
     if scope == SCOPE_PROJECT:

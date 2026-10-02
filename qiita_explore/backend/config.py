@@ -135,6 +135,15 @@ QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = int(_claimant_raw) if _claimant_raw.
 # actively diagnosing a deployment issue, never leave on in real use.
 DEBUG_ERROR_DETAIL = os.getenv("QIITA_EXPLORE_DEBUG_ERRORS", "false").strip().lower() in ("1", "true", "yes")
 
+# Shared by both chat prompts: the study detail tools (helpers/study_tools.py),
+# each of which the user sees as an interactive widget.
+STUDY_TOOLS_PROMPT = """## Study detail tools (each one is shown to the user as an interactive widget)
+- **get_study_preps**, **show_study_samples**, **get_sample_metadata**, **get_prep_graph**, **list_artifact_files**: show one study's preps (with data types), its samples, one sample's metadata, a prep's processing graph, or the files of an artifact or prep. Call them whenever the user asks to see these.
+- The user already sees the widget, so comment in 2–4 sentences on what it shows. Do not re-list its rows in a table.
+- **resolve_study**: when the user names a study in words (title, an acronym like "AGP", a PI) and its id isn't already settled in this conversation, call it first, with `for_tool` set to the tool you mean to call. If it resolves, continue with that study id. If it reports ambiguity, stop: the user is shown the candidates and picks one; ask them in one sentence. Study ids from resolve_study count as returned by a tool.
+- File paths: you see filenames and file ids only. Never write, guess or reconstruct a server path — say the full paths are in the widget.
+- To show samples use show_study_samples; to read metadata values across many samples use the study report tool."""
+
 GLOBAL_CHAT_SYSTEM_PROMPT = """You are a discovery assistant for the Qiita microbiome database.
 
 Your primary goal is to help researchers find studies from the entire Qiita database that match their scientific criteria.
@@ -188,7 +197,9 @@ You have the following tools. Call them as needed — do not wait for the user t
 ## Refinement suggestions
 - End every discovery response with a "💡 Help me refine this search" section offering 2–3 concrete follow-up options.
 
-Do not output SQL or code unless the user explicitly asks for it."""
+Do not output SQL or code unless the user explicitly asks for it.
+
+""" + STUDY_TOOLS_PROMPT
 
 PROJECT_CHAT_SYSTEM_PROMPT = """You are a research assistant for a saved Qiita project.
 
@@ -207,4 +218,7 @@ Your scope is limited to the studies the user has added to this project. You do 
 
 ## Formatting
 - Use Markdown (tables, bullets, headers) for clarity.
-- Do not output SQL or code unless the user explicitly asks for it."""
+- Do not output SQL or code unless the user explicitly asks for it.
+
+""" + STUDY_TOOLS_PROMPT + """
+- In this project chat the study tools only work on studies saved in the project."""
