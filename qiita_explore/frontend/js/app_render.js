@@ -36,7 +36,7 @@ function renderApp(s, account) {
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql, bf,
+    query, results, searching, searched, deepSearching, deepIds, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
@@ -586,13 +586,24 @@ function renderApp(s, account) {
 
               {!searching && (
                 <>
-                  <div className="browse-count">{searched ? `${results.length} results` : 'GOLD studies'}</div>
+                  <div className="browse-count">
+                    {searched ? `${results.length} results` : 'GOLD studies'}
+                    {searched && deepSearching && <span className="browse-count-sub"> · searching sample metadata…</span>}
+                    {searched && !deepSearching && deepIds.size > 0 && (
+                      <span className="browse-count-sub"> ({deepIds.size} found in sample metadata)</span>
+                    )}
+                  </div>
                   {addStudyErr && <div className="browse-error">{addStudyErr}</div>}
-                  {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
+                  {searched && results.length === 0 && !deepSearching && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
-                    {displayStudies.map(study => (
-                      <StudyCard key={study.study_id} study={study} onClick={() => openStudyModal(study)}
-                        actions={<StudyActions study={study} ctx={studyActionsCtx} />} />
+                    {displayStudies.map((study, i) => (
+                      <React.Fragment key={study.study_id}>
+                        {searched && deepIds.has(study.study_id) && !deepIds.has(displayStudies[i - 1]?.study_id) && (
+                          <div className="browse-deep-divider">Also found in sample metadata</div>
+                        )}
+                        <StudyCard study={study} onClick={() => openStudyModal(study)}
+                          actions={<StudyActions study={study} ctx={studyActionsCtx} />} />
+                      </React.Fragment>
                     ))}
                   </div>
                 </>

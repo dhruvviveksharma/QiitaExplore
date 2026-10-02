@@ -21,6 +21,10 @@ function useAppState() {
   const [firstStudies, setFirstStudies] = useState([]);
   const [searching,    setSearching]    = useState(false);
   const [searched,     setSearched]     = useState(false);
+  // Deep (sample-metadata) search runs after the fast text pass; its extra
+  // studies are appended to `results` and their ids kept here.
+  const [deepSearching, setDeepSearching] = useState(false);
+  const [deepIds,       setDeepIds]       = useState(() => new Set());
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [showSql,      setShowSql]      = useState(false);
@@ -897,20 +901,46 @@ function useAppState() {
       return;
     }
     if (override) setQuery(override);
-    setSearching(true); setSearched(false);
+    setSearching(true); setSearched(false); setDeepSearching(false); setDeepIds(new Set());
     // Filter clicks fire back-to-back; a slow earlier response must not
     // overwrite a later one.
     const seq = ++searchSeqRef.current;
-    const res = await apiPost('/search', { query: q, deep_search: true, filters: browseFiltersBody(f) });
-    if (seq !== searchSeqRef.current) return;
+    const isCurrent = () => seq === searchSeqRef.current;
+    // Two passes over the same query: the text match answers in ~0.2 s and
+    // renders the grid; the deep pass also probes up to 500 studies' sample
+    // metadata (2–15 s) and only appends studies the grid doesn't show yet, so
+    // nothing already on screen moves. Both start now.
+    const body = { query: q, filters: browseFiltersBody(f) };
+    const deepReq = apiPost('/search', { ...body, deep_search: true }).catch(() => null);
+    const res = await apiPost('/search', { ...body, deep_search: false });
+    if (!isCurrent()) return;
+    let shown = [];
     if (res.ok) {
       const d = await res.json();
-      setResults(d.results || []);
+      shown = d.results || [];
+      setResults(shown);
       setSqlQuery(d.sql_query || null);
       setAppliedFilters(d.applied_filters || null);
     }
     else setResults([]);
     setSearched(true); setSearching(false);
+    if (!res.ok) return;
+    // Opening one of the top results should be instant (utils.js).
+    prefetchStudyDetails(shown.slice(0, 5).map(s => s.study_id), isCurrent);
+    setDeepSearching(true);
+    try {
+      const dr = await deepReq;
+      if (!isCurrent() || !dr || !dr.ok) return;
+      const have  = new Set(shown.map(s => s.study_id));
+      const extra = ((await dr.json()).results || []).filter(s => !have.has(s.study_id));
+      if (isCurrent() && extra.length) {
+        setResults([...shown, ...extra]);
+        setDeepIds(new Set(extra.map(s => s.study_id)));
+      }
+    } catch (_) {
+    } finally {
+      if (isCurrent()) setDeepSearching(false);
+    }
   };
   // Passes the next filters explicitly — bf.filters is still the old value
   // in this closure.
@@ -953,7 +983,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql, bf,
+    query, results, searching, searched, deepSearching, deepIds, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,

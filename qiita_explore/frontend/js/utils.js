@@ -118,6 +118,17 @@ function renderMarkdown(text) {
   );
 }
 
+// Warm fetchStudyDetail for a search's top results, one at a time (most relevant
+// first) so background loading never piles up on the server; stops as soon as
+// isCurrent() reports a newer search. Each load also fills the backend's 6 h
+// study_detail_cache. Errors are ignored: opening the card simply retries.
+async function prefetchStudyDetails(ids, isCurrent) {
+  for (const id of ids) {
+    if (!isCurrent()) return;
+    try { await fetchStudyDetail(id); } catch (_) {}
+  }
+}
+
 // Module-scope coalescing for /studies/<id>/detail. All callers (modal + every
 // SamplesReportBubble) share one in-flight promise + one cached result per study,
 // so we don't slam the (slow, single-transaction) Qiita DB with parallel duplicates.
