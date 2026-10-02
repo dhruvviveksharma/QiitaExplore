@@ -34,8 +34,8 @@ class TestOpenAIForced:
         script = [openai_tool_call_round("c1", "get_prep_graph", '{"study_id": 10317, "prep_id": 1115}'),
                   openai_text_round("It has 54 nodes.")]
         events, client, tool = run_turn(script, make_fake_execute_tool(tool_result()), tools=TOOLS, force_tool=GRAPH)
-        assert _names(client.calls[0]) == ["get_prep_graph"] and "tool_choice" not in client.calls[0]
-        assert len(_names(client.calls[1])) == len(TOOLS)
+        assert _names(client.calls[0]) == ["get_prep_graph"] and client.calls[0]["tool_choice"] == "required"
+        assert len(_names(client.calls[1])) == len(TOOLS) and "tool_choice" not in client.calls[1]
         assert tool.calls == [("get_prep_graph", {"study_id": 10317, "prep_id": 1115})]
         assert tokens_of(events) == "It has 54 nodes."
 
@@ -69,13 +69,14 @@ class TestOpenAIForced:
         assert [c[0] for c in tool.calls] == ["get_prep_graph"] and _calls(events)[0]["name"] == "tool_get_prep_graph_c1"
 
     @pytest.mark.parametrize("flag, want", [("required", "required"),
-                                            ("named", {"type": "function", "function": {"name": "get_prep_graph"}})])
+                                            ("named", {"type": "function", "function": {"name": "get_prep_graph"}}),
+                                            (None, None)])
     def test_tool_choice_only_where_the_model_supports_it(self, run_turn, agent_mod, monkeypatch, flag, want):
         monkeypatch.setitem(agent_mod.MODEL_METADATA, "minimax-m2", {**agent_mod.MODEL_METADATA["minimax-m2"],
                                                                      "forced_tool_choice": flag})
         script = [openai_tool_call_round("c1", "get_prep_graph", "{}"), openai_text_round("ok")]
         _, client, _ = run_turn(script, make_fake_execute_tool(tool_result()), tools=TOOLS, force_tool=GRAPH)
-        assert client.calls[0]["tool_choice"] == want and "tool_choice" not in client.calls[1]
+        assert client.calls[0].get("tool_choice") == want and "tool_choice" not in client.calls[1]
 
     def test_a_rejected_tool_choice_is_retried_without_it(self, run_turn, agent_mod, monkeypatch):
         monkeypatch.setitem(agent_mod.MODEL_METADATA, "minimax-m2", {**agent_mod.MODEL_METADATA["minimax-m2"],

@@ -21,11 +21,16 @@ ALLOWED_MODELS = {
     "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8",
 }
 
+# forced_tool_choice: how a study slash command forces its tool on an OpenAI-
+# compatible model (helpers/forced_tool.py) — "required", "named", or unset (no
+# tool_choice sent). Probed 2026-10-01 on NRP: all four accept both and return
+# the call ("named" ends with finish_reason "stop"); "required" is used. Claude
+# models always get Anthropic's named tool_choice.
 MODEL_METADATA = {
-    "qwen3-small":       {"provider": "nrp",       "tier": "main",       "size": "27B",  "context": 1_000_000, "modalities": "image, video"},
-    "deepseek-v4-flash": {"provider": "nrp",       "tier": "evaluating", "size": "304B", "context": 1_048_576, "modalities": "—"},
-    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 300_000,   "modalities": "—"},
-    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—"},
+    "qwen3-small":       {"provider": "nrp",       "tier": "main",       "size": "27B",  "context": 1_000_000, "modalities": "image, video", "forced_tool_choice": "required"},
+    "deepseek-v4-flash": {"provider": "nrp",       "tier": "evaluating", "size": "304B", "context": 1_048_576, "modalities": "—", "forced_tool_choice": "required"},
+    "glm-5":             {"provider": "nrp",       "tier": "evaluating", "size": "744B", "context": 300_000,   "modalities": "—", "forced_tool_choice": "required"},
+    "minimax-m2":        {"provider": "nrp",       "tier": "evaluating", "size": "230B", "context": 204_800,   "modalities": "—", "forced_tool_choice": "required"},
     "claude-haiku-4-5":  {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image"},
     "claude-sonnet-4-6": {"provider": "anthropic", "tier": "main",       "size": "—",    "context": 200_000,   "modalities": "image"},
     "claude-opus-4-8":   {"provider": "anthropic", "tier": "evaluating", "size": "—",    "context": 200_000,   "modalities": "image"},
