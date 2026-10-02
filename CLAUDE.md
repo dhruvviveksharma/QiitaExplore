@@ -58,7 +58,7 @@ Whenever we are interacting with the chatbot, I must see status of what function
 
 # Hard Constraints
 
-- No file in `qiita_explore/` may exceed 500 lines. If approaching limit, split and ticket it.
+- No file in `qiita_explore/` may exceed 750 lines. If approaching limit, split and ticket it.
 - Unplanned work → `TICKETS/tickets.md`, not speculative code.
 
 ---

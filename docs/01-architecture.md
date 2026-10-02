@@ -170,7 +170,7 @@ backend/
 The intended layering is `routes → helpers/services → store`, and it mostly holds. Two observations worth knowing:
 
 - **`store/__init__.py` is a flat re-export facade.** Consumers write `from store import get_project`, never `from store.crud import get_project`. This keeps the internal split (which has changed as files were divided to stay under the repo's 500-line cap) invisible to callers.
-- **The 500-line-per-file cap is a repo convention**, stated in `CLAUDE.md`. Several modules exist purely because of it — `artifact_routes.py` was split out of `merge_routes.py`, `global_chat_crud.py` out of `crud.py`, `merge_helpers.py` out of `merge_routes.py`. Each carries a header comment saying so. If you are wondering why a module boundary looks arbitrary, this is usually why.
+- **The 750-line-per-file cap is a repo convention**, stated in `CLAUDE.md` (500 until 2026-10-01). Several modules exist purely because of it — `artifact_routes.py` was split out of `merge_routes.py`, `global_chat_crud.py` out of `crud.py`, `merge_helpers.py` out of `merge_routes.py`. Each carries a header comment saying so. If you are wondering why a module boundary looks arbitrary, this is usually why.
 
 ---
 

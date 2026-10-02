@@ -60,7 +60,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 |---|---|---|
 | [`README.md`](../README.md) | Product framing, screenshots, quick start | **Stale on architecture.** Says four agent tools (there are five), predates authentication entirely, and says Flask serves the frontend when nginx does. Where it disagrees with this set, this set is current. |
 | [`INSTALL.md`](../INSTALL.md) | First-time setup — conda, pip, config file | [`09-operations.md`](09-operations.md) covers running and diagnosing, never setup. |
-| [`CLAUDE.md`](../CLAUDE.md) | Development conventions, the 500-line cap, ticket policy | Also stale in two places: it names `gemma3` as the LLM (the roster is in [`appendix-d`](appendix-d-configuration.md)) and references a `test_data_studies/` directory that no longer exists. |
+| [`CLAUDE.md`](../CLAUDE.md) | Development conventions, the 750-line cap, ticket policy | Also stale in two places: it names `gemma3` as the LLM (the roster is in [`appendix-d`](appendix-d-configuration.md)) and references a `test_data_studies/` directory that no longer exists. |
 | [`TICKETS/tickets.md`](../TICKETS/tickets.md) | Full ticket bodies | These docs cite `TKT-0NN` and a one-line impact. Never restated here. |
 | `TICKETS/qiita-auth-integration.md` | Design history | **Describes an OIDC proxy design that was never built.** If you are reading it to learn how auth works, read [`02-authentication.md`](02-authentication.md) instead. |
 
