@@ -1,6 +1,10 @@
 """Shared request-parsing and SSE-response helpers for the chat stream routes."""
 
+import json
+
 from flask import Response, jsonify, stream_with_context
+
+from helpers.agent_tool_schemas import STUDY_TOOL_NAMES
 
 from helpers.llm_helpers import _sse
 from helpers.qiita_fetch import _build_samples_report_payload, _pin_studies_validated
@@ -39,6 +43,46 @@ def parse_chat_stream_body(data):
     if not user_content:
         return None, None, None, None, (jsonify({'error': 'message required'}), 400)
     return user_content, model, report_study_id, pin_study_ids, None
+
+
+_FORCE_TOOL_MAX_BYTES = 2048
+_FORCE_TEXT_MAX = 500
+
+
+def parse_force_tool(data, tools):
+    """The optional `force_tool` {name, args, text} of a study slash command
+    (helpers/forced_tool.py). Returns (force or None, err_response): the name
+    must be a study tool this route offers (not resolve_study, which the
+    server runs itself), args may only use that tool's own keys, and it can't
+    ride along with /report or /pin."""
+    raw = data.get("force_tool")
+    if raw is None:
+        return None, None
+
+    def bad(msg):
+        return None, (jsonify({"error": msg}), 400)
+
+    if not isinstance(raw, dict):
+        return bad("force_tool must be an object")
+    if data.get("report_study_id") is not None or data.get("pin_study_ids") is not None:
+        return bad("force_tool can't be combined with /report or /pin")
+    if len(json.dumps(raw)) > _FORCE_TOOL_MAX_BYTES:
+        return bad("force_tool is too large")
+    schemas = {t["function"]["name"]: t["function"] for t in tools}
+    name = raw.get("name")
+    if name not in STUDY_TOOL_NAMES or name == "resolve_study" or name not in schemas:
+        return bad("force_tool.name must be one of this chat's study tools")
+    args, text = raw.get("args") or {}, raw.get("text") or ""
+    if not isinstance(args, dict) or set(args) - set(schemas[name]["parameters"]["properties"]):
+        return bad(f"force_tool.args may only use {name}'s own arguments")
+    if not isinstance(text, str) or len(text) > _FORCE_TEXT_MAX:
+        return bad(f"force_tool.text must be a string of at most {_FORCE_TEXT_MAX} characters")
+    if "study_id" in args:
+        try:
+            args = {**args, "study_id": int(args["study_id"])}
+        except (TypeError, ValueError):
+            return bad("force_tool.args.study_id must be an integer")
+    return {"name": name, "args": args, "text": text.strip()}, None
 
 
 def build_full_msgs(messages, user_content):

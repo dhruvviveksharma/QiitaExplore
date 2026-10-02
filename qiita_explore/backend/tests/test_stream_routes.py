@@ -281,3 +281,48 @@ class TestProjectStream:
         assert "not part of this project" in text
         assert [e for e, _ in events][-1] == "done"
         assert fake_turn.calls == []  # never reached the LLM
+
+
+# ── force_tool (study slash commands) ────────────────────────────────────────
+
+class TestForceTool:
+    FORCE = {"name": "get_prep_graph", "args": {"study_id": 10317, "prep_id": 1115}}
+
+    def test_global_chat_forces_the_tool_and_saves_the_slash_text(self, client, logged_in, fake_turn):
+        chat_id = _new_global_chat(client, logged_in)
+        resp = client.post(f"/api/global-chats/{chat_id}/message/stream",
+                           json={"message": "/graph 10317 1115", "model": "minimax-m2", "force_tool": self.FORCE},
+                           headers=logged_in)
+        events = parse_sse(resp.get_data(as_text=True))
+        # The scripted model calls search_studies; the forced round runs get_prep_graph instead.
+        assert [c[0] for c in fake_turn.tool_calls] == ["get_prep_graph"]
+        assert fake_turn.tool_calls[0][1] == {"study_id": 10317, "prep_id": 1115}
+        assert [t["function"]["name"] for t in fake_turn.calls[0]["tools"]] == ["get_prep_graph"]
+        assert [e for e, _ in events][-1] == "done"
+        msgs = client.get(f"/api/global-chats/{chat_id}", headers=logged_in).get_json()["messages"]
+        assert msgs[0]["content"] == "/graph 10317 1115"                     # no hint saved
+
+    def test_project_chat_forwards_force_tool(self, client, logged_in, fake_turn):
+        proj = client.post("/api/projects", json={"name": "F"}, headers=logged_in).get_json()
+        chat = client.post(f"/api/projects/{proj['project_id']}/chats", json={}, headers=logged_in).get_json()
+        resp = client.post(f"/api/projects/{proj['project_id']}/chats/{chat['chat_id']}/message/stream",
+                           json={"message": "/preps AGP", "model": "minimax-m2",
+                                 "force_tool": {"name": "get_study_preps", "args": {}, "text": "AGP"}},
+                           headers=logged_in)
+        resp.get_data()
+        assert fake_turn.tool_calls[0][:2] == ("resolve_study", {"text": "AGP", "for_tool": "get_study_preps"})
+
+    @pytest.mark.parametrize("force, extra", [
+        ("x", {}),                                                           # not an object
+        ({"name": "search_studies", "args": {}}, {}),                        # not a study tool
+        ({"name": "resolve_study", "args": {"text": "a"}}, {}),              # the server runs this one itself
+        ({"name": "get_prep_graph", "args": {"study_id": 1, "nope": 2}}, {}),
+        ({"name": "get_prep_graph", "args": {"study_id": "abc"}}, {}),
+        ({"name": "get_prep_graph", "args": {}, "text": "x" * 501}, {}),
+        ({"name": "get_prep_graph", "args": {"study_id": 1}}, {"report_study_id": 1}),
+    ])
+    def test_rejected(self, client, logged_in, fake_turn, force, extra):
+        chat_id = _new_global_chat(client, logged_in)
+        resp = client.post(f"/api/global-chats/{chat_id}/message/stream",
+                           json={"message": "/graph", "force_tool": force, **extra}, headers=logged_in)
+        assert resp.status_code == 400 and fake_turn.calls == []

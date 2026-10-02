@@ -54,7 +54,7 @@ def _partial_ui_payload(segments_list, current_text):
 def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_study_id,
                      pin_study_ids, system_prompt, tools, full_msgs, persist,
                      build_context, report_guard=None, deep_search=False,
-                     project_id=None):
+                     project_id=None, force_tool=None):
     yield ': keepalive\n\n'
     assistant_parts = []
     segments_list   = []
@@ -142,6 +142,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             user_content=user_content,
             history_summary=history_summary,
             user_id=user_id,
+            force_tool=force_tool,
         ):
             etype = event["type"]
             if etype == "transcript_append":
