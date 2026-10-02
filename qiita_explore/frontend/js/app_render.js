@@ -739,6 +739,10 @@ function renderApp(s, account) {
               onClose={() => setShowModelPicker(false)}
             />
           )}
+          {isChat && view.chatId && (   /* this chat's temporary aggregation (chat_aggregation_bar.js) */
+            <ChatAggregationBar agg={agg} chatId={view.chatId} scope={view.type === 'project-chat' ? 'project' : 'global'}
+              onOpen={chatWidgetCtx(s).openAggregation} />
+          )}
           {isChat && view.chatId && (
             <PinnedBar
               studies={pinnedMeta}

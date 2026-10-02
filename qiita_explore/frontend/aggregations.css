@@ -137,3 +137,5 @@
 .prep-group-body { padding: 4px 0 8px 12px; }
 .agg-resizable th.agg-sortable { cursor: pointer; user-select: none; }
 .agg-resizable th.agg-sortable:hover { color: var(--accent-h); }
+/* A chat's temporary aggregation, shown in the list only while opened from that chat */
+.agg-card.agg-temp { cursor: default; }

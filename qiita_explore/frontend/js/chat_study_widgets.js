@@ -9,11 +9,13 @@
 //   PrepTemplatesSection, StudySamplesSection, sampleFieldsFetcher (study_detail.js),
 //   SamplesBrowser, SampleFieldsCard (components.js), PrepGroupedSamples (prep_samples.js),
 //   ArtifactNetwork, FilePathRow (artifact_network.js), filterGraphByPrep (merge_artifacts.js),
-//   AggregationProposalCard (chat_aggregate_widget.js), STUDY_SLASH_COMMANDS (chat_slash.js),
+//   AggregationProposalCard, ChatAggregationUpdate, AggregationSavedWidget, AggregationListWidget
+//   (chat_aggregate_widget.js), STUDY_SLASH_COMMANDS (chat_slash.js),
 //   PinIcon (icons.js)
 
 const STUDY_WIDGET_KINDS = new Set(['study_preps', 'study_samples', 'sample_metadata', 'prep_graph',
-  'artifact_files', 'aggregation_proposal', 'study_choice']);
+  'artifact_files', 'aggregation_proposal', 'study_choice',
+  'chat_aggregation_update', 'aggregation_saved', 'aggregation_list']);
 const _CHAT_GRAPH = { zoomNeedsModifier: true, showPaths: true };
 const _FILES_SHOWN = 50;
 
@@ -25,6 +27,8 @@ function chatWidgetCtx(s) {
     // fromModal: the study page's Back is history.back(), i.e. this chat.
     openStudyPage: sid => s.setView({ type: 'study', studyId: sid, fromModal: true }),
     openAggregations: () => { s.setView({ type: 'aggregations' }); s.setSidebarCollapsed(true); },
+    // One aggregation in the Sample Aggregation tab — a chat's temporary one too.
+    openAggregation: id => { s.agg.focus(id); s.setView({ type: 'aggregations' }); s.setSidebarCollapsed(true); },
     sendCommand: text => s.sendMessage(text),
   };
 }
@@ -43,7 +47,8 @@ function ChatStudyWidget({ payload, ctx }) {
   const Body = {
     study_preps: PrepsWidget, study_samples: SamplesWidget, sample_metadata: SampleWidget,
     prep_graph: GraphWidget, artifact_files: FilesWidget, study_choice: StudyChoiceWidget,
-    aggregation_proposal: AggregationProposalCard,
+    aggregation_proposal: AggregationProposalCard, chat_aggregation_update: ChatAggregationUpdate,
+    aggregation_saved: AggregationSavedWidget, aggregation_list: AggregationListWidget,
   }[payload.kind];
   return (
     <WidgetBoundary>
