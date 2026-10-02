@@ -533,6 +533,14 @@ The second streaming endpoint, and the most branch-heavy handler in the codebase
 
 Shares `parse_chat_stream_body` with the project stream, so the same **400** cases apply; **404** for an unknown chat.
 
+Both streams also accept `"force_tool": {"name", "args", "text"}`, sent by the study slash commands (`/preps`, `/graph`, …). `parse_force_tool` validates it, and **400** covers:
+- the name isn't a study tool the chat offers;
+- an arg isn't that tool's own;
+- `text` is over 500 characters;
+- it is combined with `report_study_id` / `pin_study_ids`.
+
+See [`05-agent.md`](05-agent.md#slash-commands-force-a-tool-added-2026-10).
+
 Pinned context is built once up front (emitting a `pinned_reports` step) when pinned studies exist. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
 
 The normal branch always delegates to `stream_agent` with `TOOL_SCHEMAS`, translating its events onto the wire: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. In parallel the handler accumulates a `segments_list` — text runs are flushed into `{"type": "text", ...}` entries whenever a tool call interrupts them, and each tool segment is matched back to its result by scanning for the first not-yet-`done` segment with the same `name`. On completion the segments are frozen into the persisted `ui_payload`:
@@ -773,7 +781,7 @@ A selected name with nothing left is still listed, at count 0, so it can be unti
 
 ### api_add_study_to_aggregation
 
-`POST /api/aggregations/<aggregation_id>/studies` — body `{"study": {study_id, study_title, study_abstract, data_types, num_samples, num_preps, pi_name, pi_affiliation, year, is_gold}}`: the Browse card's header, snapshotted so the tab renders the same card. Only `study_id` is validated. **403** if the study is not public, **404** unknown/unowned aggregation, **400** over the 50-study cap. Resolves the study's availability map (`helpers/sample_files.get_sample_files`) and stores one checked row per `(sample, artifact)` in it, snapshotting `file_rows`. Re-adding a study already present is a no-op — it does **not** re-check rows the user unchecked. Artifacts that appear in Qiita later are not auto-checked (use *Select all*).
+`POST /api/aggregations/<aggregation_id>/studies` — body `{"study": {study_id, study_title, study_abstract, data_types, num_samples, num_preps, pi_name, pi_affiliation, year, is_gold}}`: the Browse card's header, snapshotted so the tab renders the same card. Only `study_id` is validated. **403** if the study is not public, **404** unknown/unowned aggregation, **400** over the 50-study cap. Resolves the study's availability map (`helpers/sample_files.get_sample_files`) and stores one checked row per `(sample, artifact)` in it, snapshotting `file_rows`. Re-adding a study already present is a no-op — it does **not** re-check rows the user unchecked. Artifacts that appear in Qiita later are not auto-checked (use *Select all*). An optional `file_filter` (`{data_types, processing, artifacts}`, validated like the PATCH; **400** when malformed) checks only the rows it keeps and is saved as the study's filter in the same insert. The chat's aggregation card sends it.
 
 ### api_remove_study_from_aggregation
 

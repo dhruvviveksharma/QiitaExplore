@@ -71,6 +71,19 @@ Both streams use the same agent segment contract. The difference is scope and wh
 
 The frontend mirrors this: both `sendMessage` call sites wire `onTokenAgent`, `onAgentStart`, `onSegmentToolCall`, and `onSegmentToolResult`. `/pin` and `/report` turns on either scope still use the steps/content bubble (`m.steps`, `m.content`) because those branches never enter `stream_agent`.
 
+### Study slash commands (`force_tool`, added 2026-10)
+
+`/preps`, `/samples`, `/sample`, `/graph`, `/files` and `/aggregate` are parsed in the browser (`chat_slash.js :: parseStudySlash`) into a `force_tool {name, args[, text]}` body field. Both endpoints accept it. The message itself is sent and saved exactly as typed.
+
+**What the forced round looks like on the wire.** A forced round's tokens are withheld, so it shows up only as `segment_tool_call` and `segment_tool_result`. A synthesized call looks the same as a real one, apart from its `force_…` id. The new `ui_payload` kinds are listed in [Appendix C](appendix-c-agent-tools-and-sse.md).
+
+**Rejected with a 400 before the stream opens** when any of these holds:
+- `force_tool` is not an object;
+- its name isn't one of the chat's study tools (`resolve_study` is excluded; the server runs it itself);
+- its args use keys outside that tool's own schema;
+- `text` is over 500 characters;
+- it is combined with `/report` or `/pin`.
+
 ---
 
 

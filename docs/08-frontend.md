@@ -111,26 +111,30 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/icons.js`                   | 60    | Five inline stroke SVG components (`ChevronIcon`, `MergeIcon`, `SunIcon`, `MoonIcon`, `BoltIcon`)                    |
 | `frontend/js/loaders.js`                 | 168   | Canvas-drawn loading animations (`InfinityLoader`, `WreathLoader`)                                                    |
 | `frontend/js/auth.js`                    | 179   | `useAuth`, `ConnectQiita`, `LegacyClaimBanner`, `AccountBar`                                                         |
-| `frontend/js/components.js`              | 869   | Shared components — samples browser, `SampleFieldsCard`, prep/artifact tables, agent bubbles, model picker, slash menu |
+| `frontend/js/hooks/useOutsideClose.js`   | 25    | `useOutsideClose(onClose, ignoreSelector)` — closes an always-open panel (the model picker) on a mousedown outside it |
+| `frontend/js/components.js`              | 875   | Shared components — samples browser, `SampleFieldsCard`, prep/artifact tables, agent bubbles, model picker, slash menu |
 | `frontend/js/hooks/useModelSelection.js` | 30    | Model choice with per-chat and global `localStorage` persistence                                                     |
 | `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
 | `frontend/js/browse_filters.js`          | 173   | Browse facet filters — `useBrowseFilters`, `FacetMultiSelect` (multi-select `useDropdown`), `YearRangeSlider`, `BrowseFilterBar` |
 | `frontend/browse_filters.css`            | 75    | Styles for the above (kept out of `style.css`, which is over the line cap)                                          |
 | `frontend/aggregations.css`              | 109   | Sample Aggregation tab styles (sibling of `style.css`, same reason)                                                 |
 | `frontend/js/study_card.js`              | 41    | `StudyCard` — the study card shared by the Browse grid and the Sample Aggregation tab                               |
-| `frontend/js/app_state.js`               | 1012  | `useAppState()` — the whole application state and every action                                                       |
-| `frontend/js/app_render.js`              | 853   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
+| `frontend/js/app_state.js`               | 1022  | `useAppState()` — the whole application state and every action                                                       |
+| `frontend/js/app_render.js`              | 854   | `renderApp(s)` — sidebar, topbar, browse grid, chat transcript, composer                                             |
 | `frontend/js/merge_artifacts.js`         | 354   | Artifact graph filtering, BIOM cards, pipeline breadcrumb, global BIOM selector                                      |
 | `frontend/js/merge_tree.js`              | 301   | Provenance forest — org-chart and indented-list renderers (Merge panel); `jobVariants` / `jobLabels` name sibling jobs that run the same command |
 | `frontend/js/merge_detail.js`            | 404   | Study summary card, sample peek, merge preview/validation, job status and history                                    |
 | `frontend/js/merge_workspace.js`         | 438   | `MergeWorkspacePanel`, `MergeStudySlot`, `MergesTab`                                                                 |
-| `frontend/js/artifact_network.js`        | 294   | `ArtifactNetwork` — the study view's Qiita-style left-to-right processing chart (artifact triangles, job circles; click a node for its files or parameters; archived artifacts hidden). Opens fitted to the whole graph; wheel zooms at the cursor, drag pans. Styles in `frontend/artifact_network.css` |
+| `frontend/js/artifact_network.js`        | 315   | `ArtifactNetwork` — the study view's Qiita-style left-to-right processing chart (artifact triangles, job circles; click a node for its files or parameters; archived artifacts hidden). Opens fitted to the whole graph; wheel zooms at the cursor, drag pans. In a chat reply (`zoomNeedsModifier`) only Ctrl/⌘ + wheel or a pinch zooms; `showPaths` lists a node's files as `FilePathRow`s (download, type, full path + copy). Styles in `frontend/artifact_network.css` |
 | `frontend/js/fastq_manifest.js`          | 39    | `FastqManifestSection` — per-artifact QIIME2 manifest download; hidden from the study view for now (2026-10)         |
 | `frontend/js/aggregation_detail.js`      | 307   | `AggregationDetail` (card grid, Data type / Processing pickers via `FacetMultiSelect`, xlsx + CSV links), `AggregationSampleTable` (paged checkboxes, Data type column, Show filter), `SampleMetadataPane` |
-| `frontend/js/aggregations.js`            | 196   | `useAggregations` (incl. `setFileFilter`), `AggregateCardButton` (Browse "+ Aggregate"), `AggregationsTab` shell    |
+| `frontend/js/aggregations.js`            | 198   | `useAggregations` (incl. `setStudyFileFilter`; `addStudy` takes an optional `file_filter`), `AggregateCardButton` (Browse "+ Aggregate"), `AggregationsTab` shell |
 | `frontend/js/study_actions.js`           | 31    | `StudyActions` — the study action row (Pin / Add to Project, + Aggregate, + Merge) shared by Browse cards and the study modal header |
 | `frontend/js/study_modal.js`             | 279   | `StudyModal` — the overlay shell (scroll-to-expand, expand button opens the study page) plus the add-to-project / add-to-merge bars |
-| `frontend/js/study_detail.js`            | 208   | `StudyHeader`, `StudyDetailBody`, `PrepTemplatesSection`, `StudyOutputs`, `StudyPage` — the study view shared by the modal and `#/studies/<id>`. Styles in `frontend/study_detail.css` |
+| `frontend/js/study_detail.js`            | 220   | `StudyHeader`, `StudyDetailBody`, `StudySamplesSection`, `PrepTemplatesSection`, `StudyOutputs`, `StudyPage`, `sampleFieldsFetcher` — the study view shared by the modal, `#/studies/<id>` and the chat widgets. Styles in `frontend/study_detail.css` |
+| `frontend/js/chat_slash.js`              | 55    | `STUDY_SLASH_COMMANDS` (`/preps /samples /sample /graph /files /aggregate`) and `parseStudySlash` → `force_tool` |
+| `frontend/js/chat_study_widgets.js`      | 251   | `ChatStudyWidget` and one widget per study-tool payload kind (`STUDY_WIDGET_KINDS`), `chatWidgetCtx(s)`, the "Which study?" picker. Styles in `frontend/chat_widgets.css` |
+| `frontend/js/chat_aggregate_widget.js`   | 109   | `AggregationProposalCard` — the chat's add-to-aggregation confirm card |
 | `frontend/js/app.js`                     | 38    | `App` (auth gate), `AuthenticatedApp`, `ReactDOM.createRoot`                                                         |
 
 
@@ -174,7 +178,7 @@ The buckets, roughly:
 
 The secondary cost is that a 96-key return and a 91-key destructure must be kept in agreement by hand. They currently are: five keys are returned and never destructured (`loadProjects`, `fetchProjectDetail`, `loadGlobalChats`, `loadFirstStudies`, `lastContent`), and nothing is destructured that is not returned. `lastContent` exists only to drive a scroll effect inside the hook; the four loaders are called internally on mount. They are dead weight in the return value, not bugs.
 
-**The exit** is TKT-036, which proposes splitting `app_state.js` into `sse_helpers.js`, expanded `loaders.js`, `search_helpers.js`, and `chat_actions.js`, leaving a ~200-line hook. Some of the groundwork has already landed — `useModelSelection` was extracted (TKT-033), and the project-chat and global-chat `sendMessage` branches were deduplicated behind a shared `streamChat`. The file split itself is unstarted, and `app_state.js` remains over the repo's 500-line cap at 633.
+**The exit** is TKT-036, which proposes splitting `app_state.js` into `sse_helpers.js`, expanded `loaders.js`, `search_helpers.js`, and `chat_actions.js`, leaving a ~200-line hook. Some of the groundwork has already landed — `useModelSelection` was extracted (TKT-033), and the project-chat and global-chat `sendMessage` branches were deduplicated behind a shared `streamChat`. The file split itself is unstarted, and `app_state.js` remains over the repo's 750-line cap at 1022.
 
 ### `chatCache`
 
@@ -457,6 +461,22 @@ Four tiers, distinguished by what they know about.
 
 The Per-sample FASTQ section is not rendered for now. `ArtifactNetwork` draws every artifact, including intermediate ones such as Demultiplexed, and nothing but the chart shows until a node is clicked. Archived artifacts (Qiita drops their parent links) are hidden behind a "N archived artifacts hidden · Show" note. The chart opens scaled to fit the whole graph (never above 1×); the wheel zooms at the cursor up to 2.5× and is not passed on, so the modal neither scrolls nor auto-expands under it; dragging pans. Only a study whose cached detail has no graph falls back to `ArtifactOutputsView`'s flat table; the Merge panel keeps `ArtifactOutputsView` and its selectable BIOM cards.
 
+**Study widgets in chat replies (added 2026-10).** The chat's study tools (see [`05-agent.md`](05-agent.md#study-detail-tools-added-2026-10)) save a small `ui_payload` of ids.
+
+- **Dispatch:** `ToolResultWidget` hands every kind in `STUDY_WIDGET_KINDS` to `ChatStudyWidget` (`chat_study_widgets.js`).
+- **Data:** the widget loads what it shows through the study view's own endpoints and caches (`fetchStudyDetail`, `/sample-preps`, `/preps/<k>/samples`, `/samples/<id>`). A reloaded chat therefore re-renders its widgets.
+- **Reuse:** the widgets reuse the study view's components: `PrepTemplatesSection`, `StudySamplesSection`, `PrepGroupedSamples` (with a `dataType` filter), `SampleFieldsCard`, and `ArtifactNetwork` with `zoomNeedsModifier` and `showPaths`.
+- **Layout:** each sits in an error boundary under a head with **Open study ↗**. That is a real `#/studies/<id>` link: a plain click opens the page in place with `fromModal: true`, so Back returns to the chat.
+- **App state:** the widgets reach it through one `widgetCtx` (`chatWidgetCtx(s)`, built in `app_render.js`):
+  - `agg` — the app's single `useAggregations`, so an Add from the chat updates the Sample Aggregation tab;
+  - `sending`;
+  - `openStudyPage`;
+  - `openAggregations`;
+  - `sendCommand`, which the "Which study?" picker uses to re-send the command with the chosen id.
+- **Memo:** `ToolCallCard` is memoized, and `widgetCtx` is rebuilt every render. So `toolCardPropsEqual` compares its live parts (`agg.aggregations` and `sending`), not the object.
+
+**`useOutsideClose`** (`hooks/useOutsideClose.js`) closes the model picker on a mousedown anywhere outside it, except on the model chip, which toggles the picker itself. The listener attaches on the next tick, because the "+" menu and the slash menu open the picker on a mousedown that is still bubbling.
+
 ### Markdown and XSS
 
 Model output is untrusted input, and it is rendered as HTML in exactly two places — `app_render.js` for legacy plain-token messages, and `components.js :: AgentMessageBubble` for agent text segments. Both go through the same pipeline:
@@ -528,7 +548,7 @@ Stated plainly.
 
 - **There are no frontend tests of any kind.** No unit tests, no component tests, no end-to-end browser tests, no test runner, no `package.json` to hang one off. The backend has a `tests/` tree with unit, e2e, and benchmark suites; the frontend has nothing. Every frontend change is verified by a human opening a browser, which is why `CLAUDE.md` requires running barnacle and walking the golden path before calling a UI change done. This is the single largest gap in the frontend's engineering story.
 - ~~No URL routing.~~ Fixed — see "URL routing" above. Chats and studies are both hash-addressable; chat links remain owner-only (existing session/ownership checks are unchanged), studies are global-scoped and gated only by `is_study_public`.
-- **Four files exceed the repo's 750-line cap** (500 until 2026-10-01) — `style.css` (2021, exempt in practice as a stylesheet), `app_state.js` (1012, TKT-036), `components.js` (869, TKT-038), and `app_render.js` (853, TKT-037). All three JS splits are planned and unstarted.
+- **Four files exceed the repo's 750-line cap** (500 until 2026-10-01) — `style.css` (2021, exempt in practice as a stylesheet), `app_state.js` (1022, TKT-036), `components.js` (875, TKT-038), and `app_render.js` (854, TKT-037). All three JS splits are planned and unstarted.
 - **Runtime transpile cost on every cold load.** Around 6,000 lines through Babel standalone before first paint, with no minification and no caching of the compiled output. TKT-020.
 - **Manual cache-bust versioning.** A forgotten `?v=` bump ships a fix that the developer sees and users do not.
 - `SamplesReportBubble` **calls hooks after an early return.** `frontend/js/components.js :: SamplesReportBubble` opens with `if (!ui) return null;` and then calls `useState` three times. If a mounted instance ever receives a null `ui` after a non-null one, React throws on the hook-count mismatch. Every current call site guards `ui`, so it does not fire today — but it is a Rules-of-Hooks violation waiting for a fourth call site.

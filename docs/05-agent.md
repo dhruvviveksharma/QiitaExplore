@@ -204,6 +204,65 @@ Structured `{field, value}` filters against sample metadata, for when the user n
 
 
 
+## Study detail tools (added 2026-10)
+
+Both chats also get seven tools over one study, in `backend/helpers/study_tools.py`. Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
+
+| Tool | What the user sees | What the model gets |
+|---|---|---|
+| `get_study_preps` | Prep table; clicking a prep shows its processing graph beside it | A data-type summary (preps and samples per type) and up to 40 prep rows |
+| `show_study_samples` | Sample list with each clicked sample's metadata on the right | Counts, the first 10 ids, the metadata column names — not values |
+| `get_sample_metadata` | One sample's metadata card | That sample's preps and `field: value` lines (values ≤ 200 chars) |
+| `get_prep_graph` | `ArtifactNetwork` for one prep; a clicked node lists its files | An indented outline of artifacts and jobs (≤ 80 nodes) |
+| `list_artifact_files` | Files with download links and full paths | Filenames, file types and ids — **never paths** |
+| `propose_aggregation_add` | A confirm card: scope, counts, aggregation picker, Add | "Proposal only — nothing was added", counts, the user's aggregations |
+| `resolve_study` | A "Which study?" picker, when ambiguous | Either the resolved id, or the candidates and an instruction to stop and ask |
+
+**Rules every one follows.**
+- **Project gate:** in a project chat the study must be in the project. This is checked before any Qiita read. Every study must also be public (`is_study_public`).
+- **Paths:** tool text goes to the LLM provider, so it carries filenames and ids only. Server paths appear only in the widget.
+- **Text size:** capped at 6,000 characters, key facts first. Replayed history keeps only 2,000 per tool result.
+- **Payloads:** only ids and small scalars. The widget loads its data through the study view's own endpoints and caches. Each payload also carries `result_summary`, the text fallback.
+- **Data source:** preps and graphs come from `helpers/study_detail.py`, the same assembly `/api/studies/<id>/detail` returns.
+- **`user_id`:** threaded `stream_chat_turn` → `stream_agent` → `_execute_tool_call` → `execute_tool`. Only `propose_aggregation_add` reads it, to list the user's aggregations.
+
+**`resolve_study`** (`helpers/study_resolve.py`) is deliberately cautious. A study is used without asking only when it is the chat's own and the single one that matches the text. "The chat's own" means pinned, or in a project chat any project study. A match is:
+- its id;
+- the title's acronym, or the start of it ("AGP" ↔ "American Gut Project", and "… Australia" too);
+- two or more title or alias words;
+- the PI's surname;
+- or, when the text names nothing ("show me the samples"), the only chat study.
+
+An explicit "study 10317" in the text is used as is. Everything else becomes a picker:
+- matching pins first;
+- then public studies whose title acronym the text uses (a memoized title scan; text search can't find "AGP");
+- then the Browse text search (the fast pass only).
+
+**`propose_aggregation_add` never writes.** It returns the file filter (data types, plus the per-sample artifacts of the chosen preps), the sample and row counts against the whole study, a suggested target, and why it can't be added (a prep with no per-sample files, or an empty scope). The card's **Add** posts that filter to `POST /api/aggregations/<id>/studies`, which saves it on the study in the same insert.
+
+## Slash commands force a tool (added 2026-10)
+
+`/preps`, `/samples`, `/sample`, `/graph`, `/files` and `/aggregate` (`frontend/js/chat_slash.js`) send `force_tool {name, args, text}` with the message. `request_utils.parse_force_tool` validates it, and `stream_agent` runs a `ForcedPlan` (`helpers/forced_tool.py`). Each forced round:
+- offers only the forced tool's schema;
+- **Anthropic:** names it in `tool_choice`;
+- **NRP:** sends `tool_choice: "required"`, per `MODEL_METADATA[…]["forced_tool_choice"]`. If a server rejects `tool_choice` with a 400, the round is retried once without it;
+- hides the model's text and keeps its call with the forced arguments merged in (forced keys win);
+- runs the call even when the server ends it with `finish_reason: "stop"`.
+
+If the model calls nothing, the loop synthesizes the call (id `force_…`, logged `force_tool_synthesized`). A slash command therefore always shows its widget. A hint naming the tool rides on the live user turn and is never saved.
+
+Without a study id the plan is `resolve_study` first:
+- **If it resolves:** the next round is forced to the target tool with that `study_id`.
+- **If not:** the next round has no tools, so the model can only ask the user to pick.
+
+After the forced rounds every tool is available again and the model comments.
+
+**NRP probe, 2026-10-01:** qwen3-small, deepseek-v4-flash, glm-5 and minimax-m2 all accept `"required"` and the named form, and all return the forced call. The named form ends with `finish_reason: "stop"`. With no `tool_choice`, the single offered tool plus the hint was still enough for all four.
+
+---
+
+
+
 ## What the LLM does not do
 
 Stated plainly, because the opposite is a reasonable assumption:

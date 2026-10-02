@@ -896,6 +896,9 @@ consolidated 6 duplicated `.slice(0, 60)` sites into a `truncateTitle()`
 helper, netting a few added lines for the fix's own guard logic). The split
 below is still unstarted and now more overdue.
 
+**2026-10-01:** 1022 lines, against a cap now raised to 750. This session's chat
+slash commands added only ~10 lines (new code went to `chat_slash.js`).
+
 ### Plan
 
 
@@ -932,6 +935,9 @@ below is still unstarted and now more overdue.
 
 Now **646 lines** — still over cap, number stale, conclusion unchanged.
 
+**2026-10-01:** 854 lines (cap now 750); the study page and chat widgets added
+only call sites here.
+
 ### Plan
 
 
@@ -967,6 +973,9 @@ Now **646 lines** — still over cap, number stale, conclusion unchanged.
 ### Update (verified 2026-08-17)
 
 Now **738 lines** — still over cap, number stale, conclusion unchanged.
+
+**2026-10-01:** 875 lines (cap now 750); the chat widgets live in
+`chat_study_widgets.js`, and only their dispatch and memo lines were added here.
 
 ### Plan
 
@@ -2944,6 +2953,79 @@ but there is no way to actually get their reads out through this tab.
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-09-24*
+## TKT-093: A Failed Artifact-Graph Fetch Is Cached as an Empty Graph for 6 h
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`helpers/artifact_graph.fetch_artifact_graph` returns `[]` on any exception, and
+`helpers/study_detail._load` caches that as `artifact_graph_json = "[]"`. The staleness
+check only looks at the first artifact/job node's keys, so an empty list passes. One
+transient Postgres error therefore leaves the study with no processing graph in the
+study view, the modal and the chat widgets until the 6 h cache expires. Found while
+extracting the `/detail` assembly (2026-10-01); not fixed there, which was a pure move.
+
+### Plan
+
+- Treat a cached `"[]"` graph as a miss (a public study always has artifacts), and skip
+  the write when the fetch returns `[]`.
+- Test: a cached empty graph is re-fetched; an empty fetch result isn't stored.
+
+### Files
+
+- `qiita_explore/backend/helpers/study_detail.py`
+- `qiita_explore/backend/helpers/artifact_graph.py`
+
+---
+
+## TKT-094: `show_study_samples` Can't Pre-Filter the List
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The chat's samples widget shows a prep's, a data type's, or the whole study's samples.
+"Show me the stool samples of AGP" can't narrow the list itself: the tool has no `query`
+argument, and the widget's filter box starts empty. The model can only point at the box.
+
+### Plan
+
+- Add `query` to `show_study_samples` (matched with `study_samples.matching_sample_ids`),
+  carry it in the payload, and give `SamplesBrowser` an initial filter (or fetch the
+  matching ids for the widget).
+
+### Files
+
+- `qiita_explore/backend/helpers/study_tools.py`, `helpers/agent_tool_schemas.py`
+- `qiita_explore/frontend/js/chat_study_widgets.js`, `js/components.js`
+
+---
+
+## TKT-095: Chat Study Widgets Load Eagerly When a Long Chat Opens
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Every study widget in a chat fetches its data on mount, so opening a chat with many of
+them fires one `/detail` (or samples) request per distinct study at once. That is cheap
+when cached, but cold `/detail` costs seconds for big studies (AGP ~5 s).
+
+### Plan
+
+- Mount widget bodies when they scroll into view (IntersectionObserver), with a fixed
+  placeholder height.
+
+### Files
+
+- `qiita_explore/frontend/js/chat_study_widgets.js`
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-10-01*
 
 ---

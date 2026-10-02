@@ -75,6 +75,15 @@ Neither provider hands `stream_agent` a complete tool call in one piece — both
 | `pin_study` | `study_ids` | yes (explicit, surfaced) | no |
 | `search_by_sample` | none (but needs ≥1 of `field_filters`/`keywords`) | no | no |
 | `compute_diversity` | `study_ids` | no | no — but always a stub response regardless |
+| `get_study_preps` | `study_id` | no | no |
+| `show_study_samples` | `study_id` | no | no |
+| `get_sample_metadata` | `study_id`, `sample_id` | no | no |
+| `get_prep_graph` | `study_id` | no | no |
+| `list_artifact_files` | `study_id` | no | no |
+| `propose_aggregation_add` | `study_id` | no | no — and it never writes |
+| `resolve_study` | `text` | no | no |
+
+The last seven are the study detail tools (`helpers/study_tools.py`), in both chats. Their arguments, rules and payloads are in [`05-agent.md`](05-agent.md#study-detail-tools-added-2026-10).
 
 ### search_studies
 
@@ -405,6 +414,15 @@ On `done`, an agent turn's accumulated segments are frozen into one JSON structu
 | `pin_study` | `"tool_call"` | no — `null` on no valid IDs |
 | `search_by_sample` | `"tool_call"` (reduced fields if no criteria) | yes — reduced shape, not `null` |
 | `compute_diversity` | — | always `null`, every call |
+| `get_study_preps` | `"study_preps"` `{study_id, study_title, data_type}` | no — `null` on a refusal or unknown data type |
+| `show_study_samples` | `"study_samples"` `{study_id, study_title, prep_id, data_type, total}` | no |
+| `get_sample_metadata` | `"sample_metadata"` `{study_id, sample_id}` | no |
+| `get_prep_graph` | `"prep_graph"` `{study_id, study_title, prep_id, data_type}` | no |
+| `list_artifact_files` | `"artifact_files"` `{study_id, study_title, prep_id, artifact_ids}` | no |
+| `propose_aggregation_add` | `"aggregation_proposal"` `{study_id, study_title, scope, file_filter, counts, suggest, blocked, warnings}` | no — `null` on unknown data type / prep |
+| `resolve_study` | `"study_resolved"` `{study_id, study_title}` or `"study_choice"` `{for_tool, text, candidates}` | no — `null` when nothing matched |
+
+Every study-tool payload also carries `result_summary`. The frontend (`chat_study_widgets.js :: STUDY_WIDGET_KINDS`) renders all of these except `study_resolved`, which falls back to its summary line.
 
 A frontend renderer switching on `result.ui_payload.kind` must therefore handle `"tool_call"`, `"samples_report"`, and `null`/absent as three genuinely distinct cases per tool, not just success vs. failure.
 
