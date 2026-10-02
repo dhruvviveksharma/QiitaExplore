@@ -798,6 +798,7 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
   const [apiKeyInput,  setApiKeyInput]  = React.useState('');
   const [pendingClaude, setPendingClaude] = React.useState(null);
   const [saving,       setSaving]       = React.useState(false);
+  const rootRef = useOutsideClose(onClose, '.composer-model-chip');   // the chip toggles it itself
 
   const pick = (id) => {
     if (id.startsWith('claude-') && !anthropicKeySet) { setPendingClaude(id); return; }
@@ -819,7 +820,7 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
   );
 
   return (
-    <div className="model-picker-card">
+    <div className="model-picker-card" ref={rootRef}>
       <div className="model-picker-header">
         <span>Choose model</span>
         <button className="model-picker-close" onClick={onClose}>×</button>
