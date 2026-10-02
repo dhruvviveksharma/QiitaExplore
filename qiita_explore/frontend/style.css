@@ -1122,31 +1122,6 @@ input, textarea { font-family: var(--sans); }
   box-shadow: none;
   padding: 16px 0;
 }
-.samples-report-header {
-  border-bottom: 1px solid var(--border-soft);
-  padding-bottom: 8px;
-}
-.samples-report-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text);
-}
-.samples-report-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 4px;
-  color: var(--text-3);
-  font-size: 11px;
-}
-.samples-report-abstract {
-  margin-top: 8px;
-  font-size: 11.5px;
-  color: var(--text-2, var(--muted));
-  line-height: 1.55;
-  max-height: 120px;
-  overflow-y: auto;
-}
 .samples-browser-stacked {
   display: flex;
   flex-direction: column;

@@ -5,7 +5,7 @@
 // the study without a refresh. Which aggregations already hold the study is
 // read from that live list, so the card is right after a reload too.
 // Globals in scope: React, useState (utils.js), apiJson (utils.js), useDropdown (hooks/useDropdown.js),
-//   ChevronIcon (icons.js), _aggStudyBody (aggregations.js), WidgetHead (chat_study_widgets.js)
+//   ChevronIcon (icons.js), _aggStudyBody (aggregations.js), WidgetHead, ChatStudyCard (chat_study_widgets.js)
 
 const _AGG_STUDY_CAP = 50;   // AGGREGATION_STUDIES_CAP, store/aggregation_crud.py
 const _n = x => (x ?? 0).toLocaleString();
@@ -52,9 +52,9 @@ function AggregationProposalCard({ p, ctx }) {
 
   return (
     <>
-      <WidgetHead title="Add to sample aggregation" sub={`Study ${p.study_id}`} studyId={p.study_id} ctx={ctx} />
+      <ChatStudyCard studyId={p.study_id} seed={{ study_title: p.study_title }} />
+      <WidgetHead title="Add to sample aggregation" studyId={p.study_id} ctx={ctx} />
       <div className="cw-agg">
-        {p.study_title && <div className="cw-agg-study">{p.study_title}</div>}
         <div className="cw-agg-scope">
           Scope: {scope} · {_n(c.samples)} samples · {_n(c.rows)} file rows
           {c.rows !== c.study_rows && <span className="cw-files-meta"> (of {_n(c.study_rows)} in the study)</span>}

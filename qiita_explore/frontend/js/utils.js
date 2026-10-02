@@ -149,6 +149,26 @@ async function fetchStudyDetail(studyId, { signal } = {}) {
   return p;
 }
 
+// The same coalescing for a study's header (GET /studies/<id> — what a Browse card
+// shows, incl. year and GOLD), used by the chat's study cards: several displays of
+// one study cost one request. null when it can't be read (not cached, so a later
+// render retries).
+const _studyHeaderCache    = new Map();
+const _studyHeaderInflight = new Map();
+async function fetchStudyHeader(studyId) {
+  if (_studyHeaderCache.has(studyId)) return _studyHeaderCache.get(studyId);
+  if (_studyHeaderInflight.has(studyId)) return _studyHeaderInflight.get(studyId);
+  const p = (async () => {
+    const res = await apiFetch(`/studies/${studyId}`);
+    if (!res.ok) return null;
+    const h = await res.json();
+    _studyHeaderCache.set(studyId, h);
+    return h;
+  })().catch(() => null).finally(() => { _studyHeaderInflight.delete(studyId); });
+  _studyHeaderInflight.set(studyId, p);
+  return p;
+}
+
 async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart, onStepDone,
                                     onAgentStart, onSegmentToolCall, onSegmentToolResult }, signal) {
   const reader = response.body.getReader();

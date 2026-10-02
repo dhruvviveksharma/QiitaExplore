@@ -473,6 +473,7 @@ The Per-sample FASTQ section is not rendered for now. `ArtifactNetwork` draws ev
   - `openStudyPage`;
   - `openAggregations`;
   - `sendCommand`, which the "Which study?" picker uses to re-send the command with the chosen id.
+- **Study card:** every study display opens with `ChatStudyCard`: the Browse grid's `StudyCard`, look only (no click, no buttons). The study report (`SamplesReportBubble`) and the aggregation card use it too, and the "Which study?" picker is a grid of them with **Use** as each card's only action. It shows what the payload has at once, then the full header from `fetchStudyHeader` (`utils.js`), which caches `GET /studies/<id>` per study with in-flight de-duplication, like `fetchStudyDetail`.
 - **Memo:** `ToolCallCard` is memoized, and `widgetCtx` is rebuilt every render. So `toolCardPropsEqual` compares its live parts (`agg.aggregations` and `sending`), not the object.
 
 **`useOutsideClose`** (`hooks/useOutsideClose.js`) closes the model picker on a mousedown anywhere outside it, except on the model chip, which toggles the picker itself. The listener attaches on the next tick, because the "+" menu and the slash menu open the picker on a mousedown that is still bubbling.

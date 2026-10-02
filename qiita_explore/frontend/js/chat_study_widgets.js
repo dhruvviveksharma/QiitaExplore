@@ -3,7 +3,9 @@
 // the same endpoints and caches as the study view, so a saved chat re-renders
 // its widgets on reload. ToolResultWidget (components.js) hands every kind in
 // STUDY_WIDGET_KINDS to ChatStudyWidget, with the ctx from chatWidgetCtx.
-// Globals in scope: React, useState, useEffect (utils.js), apiJson, fetchStudyDetail (utils.js),
+// Each display opens with the study's home-page card (ChatStudyCard).
+// Globals in scope: React, useState, useEffect (utils.js), apiJson, fetchStudyDetail, fetchStudyHeader (utils.js),
+//   StudyCard (study_card.js),
 //   PrepTemplatesSection, StudySamplesSection, sampleFieldsFetcher (study_detail.js),
 //   SamplesBrowser, SampleFieldsCard (components.js), PrepGroupedSamples (prep_samples.js),
 //   ArtifactNetwork, FilePathRow (artifact_network.js), filterGraphByPrep (merge_artifacts.js),
@@ -68,7 +70,21 @@ function WidgetHead({ title, sub, studyId, ctx }) {
   );
 }
 
-const _studyLabel = p => `Study ${p.study_id}${p.study_title ? ` · ${p.study_title}` : ''}`;
+// The Browse grid's StudyCard, look only (no onClick; buttons only via
+// `actions`, which the picker uses for Use). Shows `seed` — what the payload
+// already has — at once, then the full header (abstract, year, GOLD, preps).
+function ChatStudyCard({ studyId, seed, actions }) {
+  const [header, setHeader] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetchStudyHeader(studyId).then(h => { if (live && h) setHeader(h); });
+    return () => { live = false; };
+  }, [studyId]);
+  return <StudyCard study={{ study_id: studyId, ...(seed || {}), ...(header || {}) }}
+    className="chat-study-card" actions={actions} />;
+}
+
+const _seed = p => ({ study_title: p.study_title });
 
 function useStudyDetail(studyId) {
   const [state, setState] = useState({ detail: null, loading: true, error: '' });
@@ -96,7 +112,8 @@ function PrepsWidget({ p, ctx }) {
     ? { ...st.detail, preps: (st.detail.preps || []).filter(x => x.data_type === p.data_type) } : st.detail;
   return (
     <>
-      <WidgetHead title={`Preps · ${_studyLabel(p)}`} sub={p.data_type} studyId={p.study_id} ctx={ctx} />
+      <ChatStudyCard studyId={p.study_id} seed={_seed(p)} />
+      <WidgetHead title="Preps" sub={p.data_type} studyId={p.study_id} ctx={ctx} />
       {st.error || st.detail?.isPrivate ? detailNote(st) : (
         <PrepTemplatesSection study={{ study_id: p.study_id }} detail={detail} loading={st.loading}
           graphProps={_CHAT_GRAPH} />
@@ -109,7 +126,8 @@ function SamplesWidget({ p, ctx }) {
   const sub = p.prep_id != null ? `prep ${p.prep_id}` : p.data_type;
   return (
     <>
-      <WidgetHead title={`Samples · ${_studyLabel(p)}`} sub={sub} studyId={p.study_id} ctx={ctx} />
+      <ChatStudyCard studyId={p.study_id} seed={_seed(p)} />
+      <WidgetHead title="Samples" sub={sub} studyId={p.study_id} ctx={ctx} />
       {p.prep_id != null ? <PrepSamples p={p} />
         : p.data_type ? <PrepGroupedSamples studyId={p.study_id} dataType={p.data_type}
                           fetchFields={sampleFieldsFetcher(p.study_id)} />
@@ -162,7 +180,8 @@ function SampleWidget({ p, ctx }) {
   }, [p.study_id, p.sample_id]);
   return (
     <>
-      <WidgetHead title={`Sample ${p.sample_id}`} sub={`study ${p.study_id}`} studyId={p.study_id} ctx={ctx} />
+      <ChatStudyCard studyId={p.study_id} />
+      <WidgetHead title={`Sample ${p.sample_id}`} studyId={p.study_id} ctx={ctx} />
       {fields === null ? <p className="cw-note">No metadata found.</p>
         : <div className="cw-sample"><SampleFieldsCard sampleId={p.sample_id} fields={fields} loading={fields === undefined} /></div>}
     </>
@@ -174,8 +193,9 @@ function GraphWidget({ p, ctx }) {
   const note = detailNote(st);
   return (
     <>
+      <ChatStudyCard studyId={p.study_id} seed={_seed(p)} />
       <WidgetHead title={`Processing graph · prep ${p.prep_id}${p.data_type ? ` (${p.data_type})` : ''}`}
-        sub={_studyLabel(p)} studyId={p.study_id} ctx={ctx} />
+        studyId={p.study_id} ctx={ctx} />
       {note || <ArtifactNetwork key={p.prep_id} graph={filterGraphByPrep(st.detail.artifact_graph || [], p.prep_id)}
                  studyId={p.study_id} {..._CHAT_GRAPH} />}
     </>
@@ -193,7 +213,8 @@ function FilesWidget({ p, ctx }) {
   let budget = all ? Infinity : _FILES_SHOWN;
   return (
     <>
-      <WidgetHead title={`Files · ${_studyLabel(p)}`} sub={p.prep_id != null ? `prep ${p.prep_id}` : null}
+      <ChatStudyCard studyId={p.study_id} seed={_seed(p)} />
+      <WidgetHead title="Files" sub={p.prep_id != null ? `prep ${p.prep_id}` : null}
         studyId={p.study_id} ctx={ctx} />
       {note || (
         <div className="cw-files">
@@ -232,18 +253,15 @@ function StudyChoiceWidget({ p, ctx }) {
   return (
     <>
       <WidgetHead title="Which study did you mean?" sub={p.text ? `“${p.text}”` : null} ctx={ctx} />
-      <div className="cw-choices">
+      <div className="cw-choice-grid">
         {(p.candidates || []).map(c => (
-          <div key={c.study_id} className={`cw-choice${picked === c.study_id ? ' on' : ''}`}>
-            <span className="cw-choice-pin" title={c.pinned ? 'Pinned to this chat' : undefined}>
-              {c.pinned && <PinIcon size={12} />}</span>
-            <span className="cw-choice-id">{c.study_id}</span>
-            <span className="cw-choice-title">{c.study_title}</span>
-            <span className="cw-choice-meta">{[c.pi_name, c.num_samples != null && `${c.num_samples.toLocaleString()} samples`,
-              c.data_types].filter(Boolean).join(' · ')}</span>
-            <button className="btn-card-add" disabled={picked != null || !!ctx.sending} onClick={() => use(c)}>
-              {picked === c.study_id ? '✓ Using' : 'Use'}</button>
-          </div>
+          <ChatStudyCard key={c.study_id} studyId={c.study_id}
+            seed={{ study_title: c.study_title, pi_name: c.pi_name, num_samples: c.num_samples, data_types: c.data_types }}
+            actions={<>
+              {c.pinned && <span className="cw-pinned-tag"><PinIcon size={11} /> Pinned</span>}
+              <button className="btn-card-add" disabled={picked != null || !!ctx.sending} onClick={() => use(c)}>
+                {picked === c.study_id ? '✓ Using' : 'Use'}</button>
+            </>} />
         ))}
       </div>
     </>

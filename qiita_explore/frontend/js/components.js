@@ -419,16 +419,7 @@ function SamplesReportBubble({ ui, messageKey }) {
   const keyBase = messageKey || `study-${study_id}`;
   return (
     <div className="samples-report-bubble">
-      <div className="samples-report-header">
-        <div className="samples-report-title">Study {study_id}: {header.study_title || 'Untitled study'}</div>
-        <div className="samples-report-meta">
-          {header.pi_name ? <span>PI: {header.pi_name}{header.pi_affiliation ? ` (${header.pi_affiliation})` : ''}</span> : null}
-          {numSamples != null ? <span>{numSamples} samples</span> : null}
-          {header.data_types ? <span>{header.data_types}</span> : null}
-          {header.num_preps != null ? <span>{header.num_preps} preps</span> : null}
-        </div>
-        {header.study_abstract && <div className="samples-report-abstract">{header.study_abstract}</div>}
-      </div>
+      <ChatStudyCard studyId={study_id} seed={header} />   {/* the home-page card (chat_study_widgets.js) */}
       <CollapsibleSection id={`${keyBase}-samples`} title="Samples"
         subtitle={`${numSamples} total${samples.length < numSamples ? `, showing ${samples.length}` : ''}`}
         defaultOpen={true}>

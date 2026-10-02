@@ -17,6 +17,12 @@
 .cw-error { color: var(--accent); }
 .cw-sample .sample-preview-card { max-height: 360px; }
 
+/* The Browse grid's StudyCard at the top of each display (ChatStudyCard). It
+   isn't clickable here, so no pointer and no hover accent. */
+.chat-study-card { cursor: default; margin-bottom: 10px; }
+.chat-study-card:hover { border-color: var(--border); box-shadow: none; }
+.samples-report-bubble .chat-study-card { margin-bottom: 0; }   /* the bubble's own gap spaces it */
+
 /* Preps: the table gets the larger share of the ~840px reply, with compact
    cells; the graph column stays in view while a long prep list scrolls. */
 .cw .study-prep-table { flex: 3 1 420px; }
@@ -29,23 +35,16 @@
 .cw-files-name { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
 .cw-files-meta { font-weight: 400; color: var(--text-3); font-size: 11.5px; }
 
-/* "Which study?" picker */
-.cw-choices { display: flex; flex-direction: column; }
-.cw-choice {
-  display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; grid-template-areas: "pin id title use" ". . meta use";
-  column-gap: 8px; align-items: center; padding: 6px 4px; border-top: 1px solid var(--border-soft);
+/* "Which study?" picker: home-page cards, Use in each card's action row */
+.cw-choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.cw-choice-grid .chat-study-card { margin-bottom: 0; }
+.cw-pinned-tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+  color: var(--accent-h); background: var(--accent-soft); border-radius: 999px; padding: 3px 8px;
 }
-.cw-choice:first-child { border-top: 0; }
-.cw-choice.on { background: var(--accent-soft); border-radius: var(--radius-s); }
-.cw-choice-pin { grid-area: pin; color: var(--accent); }
-.cw-choice-id { grid-area: id; font-weight: 600; color: var(--accent); font-size: 12.5px; }
-.cw-choice-title { grid-area: title; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cw-choice-meta { grid-area: meta; font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cw-choice .btn-card-add { grid-area: use; }
 
 /* Aggregation confirm card */
 .cw-agg { display: flex; flex-direction: column; gap: 6px; }
-.cw-agg-study { font-weight: 600; }
 .cw-agg-scope { font-size: 12.5px; color: var(--text-2); }
 .cw-agg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 .cw-agg-label { font-size: 11.5px; color: var(--text-3); }
