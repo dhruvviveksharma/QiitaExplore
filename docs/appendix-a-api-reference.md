@@ -268,9 +268,9 @@ The heaviest read in the app, and the one place the multi-layer `study_detail_ca
 Cache assembly proceeds in four independent stages, each of which can hit or miss separately and writes back on miss:
 
 1. **Preps + artifacts** — from `preps_json` / `artifacts_json`, else `_fetch_study_detail_from_qiita`.
-2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` or `visibility` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`. Artifact nodes carry `visibility` (`public` / `private` / `sandbox` / `archived`); the study modal's chart hides `archived` ones, which Qiita leaves with no parent link.
+2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` or `visibility` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`. Artifact nodes carry `visibility` (`public` / `private` / `sandbox` / `archived`); the study view's chart hides `archived` ones, which Qiita leaves with no parent link.
 3. **Prep metadata** — from `prep_metadata_json`, else fanned out over a `ThreadPoolExecutor` (max 8 workers) calling `_fetch_prep_metadata_summary` per prep id, and merged into each prep dict in place.
-4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch.
+4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch. Since 2026-10 the live fetch reads `qiita.sample_{id}` directly by its primary key (`WHERE sample_id <> 'qiita_sample_column_names' ORDER BY sample_id LIMIT %s`) instead of joining `study_sample`, which made it extract JSON for every sample before keeping 200 (AGP: 12.4 s → 0.1 s). `total_samples` still counts `qiita.study_sample`. `_fetch_full_sample_metadata` reads the same way.
 
 A fifth step populates `samples_context` (the LLM context text) when absent. Response:
 

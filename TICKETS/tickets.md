@@ -621,6 +621,13 @@ longer touch the `ILIKE` path at all — `browse_query_to_sql` short-circuits th
 `s.study_id = ANY(%s)` and the route skips the deep probe. Text queries are
 unchanged; TKT-080 is the in-repo alternative to the upstream index.
 
+**Related (2026-10-01):** the browse grid no longer waits for the deep pass. It sends a
+`deep_search: false` request (measured 0.08–0.18 s on barnacle) and renders, while a
+concurrent `deep_search: true` request (2–15 s: soil 15.1 s, infant gut 5.9 s) appends
+the studies it adds. The top 5 results' `/detail` is preloaded one at a time. This
+hides the latency from first paint; the server-side cost is unchanged, so this ticket
+and TKT-080 stand.
+
 ---
 
 
@@ -2438,6 +2445,11 @@ the dependency at the cost of a second source of truth.
 2. `search_studies_with_sql` gains an index-backed path for `relevance_keywords` /
    `match_keywords` while the index is fresh; falls back to SQL when it is stale.
 3. Re-run `tests/benchmarks/search_latency.py` / `concurrent_bench.py` before/after.
+
+**Note (2026-10-01):** the browse UI now renders the text pass first and appends deep
+matches later (see TKT-024), so the 2–15 s deep sample-metadata probe is off the path to
+first paint. It still runs on the server for every browse search; an index remains the
+real fix.
 
 ### Files
 

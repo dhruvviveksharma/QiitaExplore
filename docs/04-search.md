@@ -85,6 +85,20 @@ The request body may carry `filters: {pis, data_types, year_min, year_max}` (sha
 
 "Year" is `qiita.study.first_contact`: when the study was created in Qiita. Qiita stores no publication date (`study_publication` holds DOI/PubMed IDs only), so the UI says **"Year added"**. Every study-header row now carries `year` (`_STUDY_COUNT_COLUMNS`).
 
+### Progressive results and preloading (added 2026-10)
+
+The browse box sends **two** `POST /api/search` requests with the same body, started together (`app_state.js :: doSearch`):
+
+| Pass | `deep_search` | Measured on barnacle | What the grid does |
+|---|---|---|---|
+| Fast | `false` | 0.08–0.18 s | Renders as soon as it answers. |
+| Deep | `true` | 2–15 s (soil 15.1 s, infant gut 5.9 s, mouse 2.9 s) | Appends only studies the grid doesn't already show, in the deep response's order, under an "Also found in sample metadata" divider. Nothing on screen moves. |
+
+- **While the deep pass runs**, the count line reads "N results · searching sample metadata…"; afterwards "N results (M found in sample metadata)".
+- **A newer search wins.** Every step checks `searchSeqRef`, so an old deep reply arriving late is dropped.
+- **The top 5 fast results are preloaded** (`utils.js :: prefetchStudyDetails`): one `GET /studies/<id>/detail` at a time, most relevant first, stopping when a newer search starts. They go through `fetchStudyDetail`'s in-memory cache and in-flight de-duplication, so opening one of those cards reuses the preload. Each preload also fills the backend's 6 h `study_detail_cache`.
+- **The backend is unchanged.** The deep pass still costs what it did; it is just off the path to first paint. The agent's `search_studies` tool keeps its single deep call.
+
 ---
 
 
@@ -277,6 +291,8 @@ That last point is the important one. **A timeout degrades recall; it never fail
 ## Known performance problem
 
 > **TKT-024 —** `/api/search` **latency ranges from 86 ms to 13.5 s** across the benchmark suite in `backend/tests/benchmarks/`. These are measured numbers, not estimates.
+>
+> Since 2026-10 the browse grid no longer waits on the slow part: the text-only pass renders first and deep matches are appended later (see [Progressive results](#progressive-results-and-preloading-added-2026-10)). The server-side cost below is unchanged.
 
 Three compounding causes (one now partly resolved):
 
