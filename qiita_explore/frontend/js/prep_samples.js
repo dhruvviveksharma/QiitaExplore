@@ -7,7 +7,8 @@
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiJson (utils.js),
 //   SamplesBrowser, SampleFieldsCard (components.js)
 
-function PrepGroupedSamples({ studyId, fetchFields }) {
+// dataType (the chat's samples widget) keeps only that data type's preps.
+function PrepGroupedSamples({ studyId, fetchFields, dataType }) {
   const [groups, setGroups] = useState(null);
   const [open,   setOpen]   = useState({});   // key -> bool; key is prep_id, or 'none' for samples in no prep
   const [loaded, setLoaded] = useState({});   // key -> response, or 'loading'
@@ -18,7 +19,7 @@ function PrepGroupedSamples({ studyId, fetchFields }) {
   useEffect(() => {
     let live = true;
     apiJson(`/studies/${studyId}/sample-preps`)
-      .then(d => { if (live) setGroups(d.groups || []); })
+      .then(d => { if (live) setGroups((d.groups || []).filter(g => !dataType || g.data_type === dataType)); })
       .catch(e => { if (live) setErr(e.message); });
     return () => { live = false; };
   }, [studyId]);

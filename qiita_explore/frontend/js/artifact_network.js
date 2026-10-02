@@ -17,10 +17,12 @@
 // The chart opens scaled to fit (whole graph visible, never above 1×); the mouse
 // wheel zooms at the cursor (up to 2.5×) and dragging pans. The wheel is taken
 // over while the pointer is on the chart, so the modal under it neither scrolls
-// nor auto-expands.
+// nor auto-expands. In a chat reply (zoomNeedsModifier) only Ctrl/⌘ + wheel or a
+// pinch zooms, so scrolling the conversation past the chart still works.
+// showPaths lists a clicked artifact's files with their full server paths.
 // Globals in scope: React, useState, useEffect, useRef (utils.js), apiPost (utils.js),
 //   FileLink, FlagList (merge_artifacts.js), jobLabels, jobVariants (merge_tree.js),
-//   SamplePeek (merge_detail.js)
+//   SamplePeek (merge_detail.js), CopyResponseButton (components.js)
 
 const _AN_COL = 230;      // px between depth levels
 const _AN_ROW = 76;       // px between leaf rows
@@ -77,7 +79,7 @@ function _anNodeLines(n, variant) {
   return [n.name || n.artifact_type || `artifact ${n.artifact_id}`, `(${n.artifact_type || '?'})`];
 }
 
-function ArtifactNetwork({ graph, studyId }) {
+function ArtifactNetwork({ graph, studyId, zoomNeedsModifier, showPaths }) {
   const [selected, setSelected] = useState(null);
   const [scale, setScale] = useState(null);         // null = follow the fit scale
   const [boxW, setBoxW] = useState(0);              // chart viewport width, for the fit scale
@@ -146,6 +148,7 @@ function ArtifactNetwork({ graph, studyId }) {
     const el = boxRef.current;
     if (!el) return;
     const onWheel = (e) => {
+      if (zoomNeedsModifier && !e.ctrlKey && !e.metaKey) return;   // let the chat scroll
       e.preventDefault();
       e.stopPropagation();
       if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) { el.scrollLeft += e.deltaX; return; }
@@ -155,7 +158,7 @@ function ArtifactNetwork({ graph, studyId }) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [hasChart]);
+  }, [hasChart, zoomNeedsModifier]);
 
   const onPanStart = (e) => {
     if (e.button !== 0) return;
@@ -247,9 +250,10 @@ function ArtifactNetwork({ graph, studyId }) {
 
       {sel ? (
         <ArtifactNetworkDetail key={sel.node_id} node={sel} label={labels[sel.node_id]}
-          samples={counts[sel.artifact_id]} studyId={studyId} />
+          samples={counts[sel.artifact_id]} studyId={studyId} showPaths={showPaths} />
       ) : live.length > 0 && (
-        <p className="an-hint">Click a node to see its files · scroll to zoom, drag to pan.</p>
+        <p className="an-hint">Click a node to see its files · {zoomNeedsModifier
+          ? 'Ctrl/⌘ + scroll or pinch to zoom' : 'scroll to zoom'}, drag to pan.</p>
       )}
     </div>
   );
@@ -257,7 +261,7 @@ function ArtifactNetwork({ graph, studyId }) {
 
 // The clicked node: an artifact's id, type, visibility and files (a BIOM also
 // its sample count and sample list), or a job's command and parameters.
-function ArtifactNetworkDetail({ node, label, samples, studyId }) {
+function ArtifactNetworkDetail({ node, label, samples, studyId, showPaths }) {
   const [peek, setPeek] = useState(false);
   if (node.kind === 'job') {
     const hasParams = Object.keys(node.command_params || {}).length > 0;
@@ -279,8 +283,11 @@ function ArtifactNetworkDetail({ node, label, samples, studyId }) {
         {node.name || node.artifact_type} <span className="an-detail-id">(ID: {node.artifact_id})</span>
       </div>
       <div className="an-detail-sub">{facts.join(' · ')}</div>
+      {showPaths && files.map(fp => (
+        <FilePathRow key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />
+      ))}
       <div className="ao-files-row">
-        {files.map(fp => <FileLink key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />)}
+        {!showPaths && files.map(fp => <FileLink key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />)}
         {files.length === 0 && <span className="an-detail-sub">No files.</span>}
         {isBiom && (
           <button className="ao-samples-btn" onClick={() => setPeek(p => !p)}>
@@ -289,6 +296,20 @@ function ArtifactNetworkDetail({ node, label, samples, studyId }) {
         )}
       </div>
       {peek && <SamplePeek artifactId={node.artifact_id} studyId={studyId} onClose={() => setPeek(false)} />}
+    </div>
+  );
+}
+
+// One file: download link (named by the file), its type, and the full server
+// path with a copy button. The chat shows paths here only — the model never
+// sees them (helpers/study_tools.py).
+function FilePathRow({ fp, artifactId, studyId }) {
+  return (
+    <div className="an-file-row">
+      <FileLink fp={fp} artifactId={artifactId} studyId={studyId} />
+      <span className="an-file-type">{fp.filepath_type}</span>
+      <code className="an-file-path" title={fp.full_path}>{fp.full_path}</code>
+      <CopyResponseButton title="Copy path" text={fp.full_path} />
     </div>
   );
 }

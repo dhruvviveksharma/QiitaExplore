@@ -1,0 +1,56 @@
+/* Inline study widgets in chat replies (js/chat_study_widgets.js,
+   js/chat_aggregate_widget.js). Sibling of style.css (over the line cap),
+   linked after study_detail.css, whose split / selected-row rules the preps
+   and grouped-samples widgets reuse. */
+
+.cw {
+  margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-m);
+  background: var(--surface); font-size: 13px; color: var(--text); min-width: 0;
+}
+.cw-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; min-width: 0; }
+.cw-title { font-weight: 600; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cw-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.cw-spacer { flex: 1; }
+.cw-open { font-size: 11.5px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.cw-open:hover { text-decoration: underline; }
+.cw-note { font-size: 12px; color: var(--text-3); margin: 4px 0; }
+.cw-error { color: var(--accent); }
+.cw-sample .sample-preview-card { max-height: 360px; }
+
+/* Preps: the table gets the larger share of the ~840px reply, with compact
+   cells; the graph column stays in view while a long prep list scrolls. */
+.cw .study-prep-table { flex: 3 1 420px; }
+.cw .study-prep-graph { flex: 2 1 320px; position: sticky; top: 8px; }
+.cw .study-prep-table .prep-table { font-size: 11.5px; }
+.cw .study-prep-table .prep-table td, .cw .study-prep-table .prep-table th { padding-right: 6px; white-space: nowrap; }
+
+/* Files: one block per artifact; rows from FilePathRow (artifact_network.css). */
+.cw-files { display: flex; flex-direction: column; gap: 10px; }
+.cw-files-name { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
+.cw-files-meta { font-weight: 400; color: var(--text-3); font-size: 11.5px; }
+
+/* "Which study?" picker */
+.cw-choices { display: flex; flex-direction: column; }
+.cw-choice {
+  display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; grid-template-areas: "pin id title use" ". . meta use";
+  column-gap: 8px; align-items: center; padding: 6px 4px; border-top: 1px solid var(--border-soft);
+}
+.cw-choice:first-child { border-top: 0; }
+.cw-choice.on { background: var(--accent-soft); border-radius: var(--radius-s); }
+.cw-choice-pin { grid-area: pin; color: var(--accent); }
+.cw-choice-id { grid-area: id; font-weight: 600; color: var(--accent); font-size: 12.5px; }
+.cw-choice-title { grid-area: title; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cw-choice-meta { grid-area: meta; font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cw-choice .btn-card-add { grid-area: use; }
+
+/* Aggregation confirm card */
+.cw-agg { display: flex; flex-direction: column; gap: 6px; }
+.cw-agg-study { font-weight: 600; }
+.cw-agg-scope { font-size: 12.5px; color: var(--text-2); }
+.cw-agg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.cw-agg-label { font-size: 11.5px; color: var(--text-3); }
+.cw-agg-name {
+  font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--text); min-width: 180px;
+}
+.cw-agg-done { font-size: 12.5px; color: var(--text-2); }

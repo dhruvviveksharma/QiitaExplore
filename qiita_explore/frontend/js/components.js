@@ -252,7 +252,7 @@ function SampleFieldsCard({ sampleId, fields, loading, uniformFields = _NO_UNIFO
               Show only varying
             </label>
           )}
-          <button className="sample-preview-close" onClick={onClose}>✕</button>
+          {onClose && <button className="sample-preview-close" onClick={onClose}>✕</button>}
         </div>
       </div>
       <div className="sample-preview-body">
@@ -488,8 +488,9 @@ function PiFilterLine({ pi }) {
 }
 
 // ─── ToolResultWidget ─────────────────────────────────────────────────────────
-function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned }) {
+function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned, widgetCtx }) {
   if (!payload) return null;
+  if (STUDY_WIDGET_KINDS.has(payload.kind)) return <ChatStudyWidget payload={payload} ctx={widgetCtx} />;   // chat_study_widgets.js
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
   const studies = payload.result_studies || [];
@@ -530,16 +531,20 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
 // flush, and its callback props are recreated each time (they're only read
 // inside click handlers, never render-branch conditions), so a default
 // shallow compare would never skip. Only seg / msgKey / pinnedStudyIds
-// (by value — pin toggles must re-render the card) determine the output.
+// (by value — pin toggles must re-render the card) determine the output, plus
+// the study widgets' live inputs: the aggregations list and whether a reply is
+// streaming (widgetCtx is rebuilt every render, so compare its parts).
 function toolCardPropsEqual(prev, next) {
   if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
+  const pw = prev.widgetCtx || {}, nw = next.widgetCtx || {};
+  if (pw.agg?.aggregations !== nw.agg?.aggregations || pw.sending !== nw.sending) return false;
   const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
   if (a === b) return true;
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
 }
 
-const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies }) {
+const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies, widgetCtx }) {
   const isPinned = sid => (pinnedStudyIds || []).includes(sid);
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
@@ -588,7 +593,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMe
         </div>
       )}
       {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`}
-                 onPin={onPin} onMerge={onMerge} onOpen={onOpen} isPinned={isPinned} />}
+                 onPin={onPin} onMerge={onMerge} onOpen={onOpen} isPinned={isPinned} widgetCtx={widgetCtx} />}
       {done && !seg.result?.ui_payload && seg.result?.label && (
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
@@ -621,7 +626,7 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep, widgetCtx }) {
   const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
@@ -650,7 +655,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
             onViewAllStudies={onViewAllStudies}
-            pinnedStudyIds={pinnedStudyIds} />
+            pinnedStudyIds={pinnedStudyIds} widgetCtx={widgetCtx} />
         ) : null
       )}
       {isStreaming && !(segments || []).length && !steps?.length && !pendingStep && (

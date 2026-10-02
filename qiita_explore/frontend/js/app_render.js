@@ -668,7 +668,8 @@ function renderApp(s, account) {
                           onViewAllStudies={openSearchResultsPanel}
                           pinnedStudyIds={pinnedMeta.map(p => p.study_id)}
                           steps={m.steps || []}
-                          pendingStep={m.pendingStep} />
+                          pendingStep={m.pendingStep}
+                          widgetCtx={chatWidgetCtx(s)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
