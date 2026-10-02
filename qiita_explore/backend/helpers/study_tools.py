@@ -68,10 +68,13 @@ def _int(value):
 
 def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
     """Dispatch one of STUDY_TOOL_NAMES (helpers/agent_tool_schemas.py).
-    `user_id` is only read by propose_aggregation_add (the user's aggregations)."""
+    `user_id` is only read by the aggregation tools (the user's aggregations)."""
     args = args or {}
     if name == "resolve_study":
         return _tool_resolve_study(args, scope=scope, chat_id=chat_id)
+    if name in ("list_aggregations", "save_chat_aggregation"):
+        from helpers import aggregation_tools   # imported here: it reuses this module's helpers
+        return aggregation_tools.execute(name, args, scope=scope, chat_id=chat_id, user_id=user_id)
     sid = _int(args.get("study_id"))
     if sid is None:
         return _err(name, "study_id must be an integer Qiita study id.", "bad study_id")
@@ -85,6 +88,9 @@ def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
     header = _fetch_study_header_cached(sid) or {}
     if name == "propose_aggregation_add":
         return _tool_propose_aggregation(sid, header, args, user_id)
+    if name == "add_to_chat_aggregation":
+        from helpers.aggregation_tools import tool_add_to_chat_aggregation
+        return tool_add_to_chat_aggregation(sid, header, args, scope=scope, chat_id=chat_id, user_id=user_id)
     tool = {
         "get_study_preps":     _tool_preps,
         "show_study_samples":  _tool_samples,
@@ -453,6 +459,8 @@ def _tool_propose_aggregation(sid, header, args, user_id):
 
     aggs = []
     for a in (list_aggregations(user_id) if user_id else []):
+        if a.get("chat_id"):                     # a chat's temporary one: add_to_chat_aggregation's
+            continue
         ids = {int(s["study_id"]) for s in a.get("studies") or []}
         aggs.append({"aggregation_id": a["aggregation_id"], "name": a["name"], "studies": len(ids),
                      "has_study": sid in ids, "full": len(ids) >= AGGREGATION_STUDIES_CAP})
@@ -467,7 +475,8 @@ def _tool_propose_aggregation(sid, header, args, user_id):
     elif named:
         suggest = {"aggregation_id": named["aggregation_id"], "name": named["name"]}
     elif want:
-        suggest = {"aggregation_id": None, "name": want}          # created when the user clicks Add
+        warnings.append(f'there is no saved aggregation named "{want}" (new ones start as this chat\'s '
+                        "aggregation: use add_to_chat_aggregation)")
     elif len(open_aggs) == 1:
         suggest = {"aggregation_id": open_aggs[0]["aggregation_id"], "name": open_aggs[0]["name"]}
 
@@ -485,7 +494,8 @@ def _tool_propose_aggregation(sid, header, args, user_id):
             f'"{a["name"]}" ({a["studies"]} studies' + (", already has this study" if a["has_study"] else "")
             + (", full" if a["full"] else "") + ")" for a in aggs[:20]))
     else:
-        lines.append("The user has no aggregations yet; the card can create one.")
+        lines.append("The user has no saved aggregations; add it to this chat's aggregation instead "
+                     "(add_to_chat_aggregation).")
     if suggest:
         lines.append(f'Suggested target: "{suggest["name"]}"' + (" (new)" if suggest["aggregation_id"] is None else "") + ".")
     summary = f"{len(rows)} file rows · {scope_txt}"

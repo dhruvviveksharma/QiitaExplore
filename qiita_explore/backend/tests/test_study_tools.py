@@ -362,10 +362,14 @@ def test_proposal_blocked_and_unknown(agg_st):
 def test_proposal_targets_named_new_full_and_containing(agg_st, monkeypatch):
     aggs = [{"aggregation_id": "a1", "name": "Gut cohort", "studies": [{"study_id": SID}]},
             {"aggregation_id": "a2", "name": "Oral", "studies": [{"study_id": i} for i in range(50)]},
-            {"aggregation_id": "a3", "name": "Skin", "studies": []}]
+            {"aggregation_id": "a3", "name": "Skin", "studies": []},
+            {"aggregation_id": "t1", "name": "Chat aggregation", "studies": [], "chat_id": "c1", "chat_scope": "global"}]
     monkeypatch.setattr(agg_st, "list_aggregations", lambda uid: aggs)
     r = propose(agg_st, aggregation_name="gut cohort")
     assert r.ui_payload["suggest"] is None and '"Gut cohort" already has this study' in r.text
     assert '"Oral" already holds 50' in propose(agg_st, aggregation_name="Oral").text
-    assert propose(agg_st, aggregation_name="New one").ui_payload["suggest"] == {"aggregation_id": None, "name": "New one"}
-    assert propose(agg_st).ui_payload["suggest"] == {"aggregation_id": "a3", "name": "Skin"}   # the only open one
+    r = propose(agg_st, aggregation_name="New one")      # new ones start as this chat's aggregation
+    assert r.ui_payload["suggest"] is None and "add_to_chat_aggregation" in r.text
+    r = propose(agg_st)
+    assert r.ui_payload["suggest"] == {"aggregation_id": "a3", "name": "Skin"}   # the only open saved one
+    assert "Chat aggregation" not in r.text                                      # temporary ones aren't targets

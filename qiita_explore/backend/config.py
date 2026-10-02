@@ -145,7 +145,9 @@ DEBUG_ERROR_DETAIL = os.getenv("QIITA_EXPLORE_DEBUG_ERRORS", "false").strip().lo
 STUDY_TOOLS_PROMPT = """## Study detail tools (each one is shown to the user as an interactive widget)
 - **get_study_preps**, **show_study_samples**, **get_sample_metadata**, **get_prep_graph**, **list_artifact_files**: show one study's preps (with data types), its samples, one sample's metadata, a prep's processing graph, or the files of an artifact or prep. Call them whenever the user asks to see these.
 - The user already sees the widget, so comment in 2–4 sentences on what it shows. Do not re-list its rows in a table.
-- **propose_aggregation_add**: when the user wants a study (or some of its data types / preps) in a sample aggregation. It adds nothing: the user confirms on the card. Never say the study was added.
+- **add_to_chat_aggregation**: when the user wants studies (or some of their data types / preps) collected, added or aggregated, or asks to create an aggregation. It adds to THIS chat's temporary aggregation immediately; say in one sentence what was added (the user can Undo on the card, export it, or save it).
+- **save_chat_aggregation**: when the user asks to save, keep or name this chat's aggregation. **list_aggregations**: when they ask what aggregations they have or what is in one.
+- **propose_aggregation_add**: only when the user names one of their SAVED aggregations to add to. It adds nothing: the user confirms on the card. Never say the study was added.
 - **resolve_study**: when the user names a study in words (title, an acronym like "AGP", a PI) and its id isn't already settled in this conversation, call it first, with `for_tool` set to the tool you mean to call. If it resolves, continue with that study id. If it reports ambiguity, stop: the user is shown the candidates and picks one; ask them in one sentence. Study ids from resolve_study count as returned by a tool.
 - File paths: you see filenames and file ids only. Never write, guess or reconstruct a server path — say the full paths are in the widget.
 - To show samples use show_study_samples; to read metadata values across many samples use the study report tool."""

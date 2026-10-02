@@ -109,6 +109,23 @@ class TestOpenAIForced:
         assert tokens_of(events) == "Which of these did you mean?"
 
 
+    def test_aggregations_command_needs_no_study(self, run_turn):
+        force = {"name": "list_aggregations", "args": {"name": "Gut cohort"}, "text": ""}
+        script = [openai_tool_call_round("c1", "list_aggregations", "{}"), openai_text_round("You have one.")]
+        _, client, tool = run_turn(script, make_fake_execute_tool(tool_result()), tools=TOOLS, force_tool=force)
+        assert _names(client.calls[0]) == ["list_aggregations"]
+        assert tool.calls == [("list_aggregations", {"name": "Gut cohort"})]
+
+    def test_aggregate_by_name_resolves_then_adds_to_the_chat_aggregation(self, run_turn):
+        force = {"name": "add_to_chat_aggregation", "args": {}, "text": "AGP 16S"}
+        script = [openai_tool_call_round("c1", "resolve_study", "{}"),
+                  openai_tool_call_round("c2", "add_to_chat_aggregation", '{"data_types": ["16S"]}'),
+                  openai_text_round("Added AGP's 16S samples.")]
+        _, client, tool = run_turn(script, make_fake_execute_tool(RESOLVED, tool_result()), tools=TOOLS, force_tool=force)
+        assert [c[0] for c in tool.calls] == ["resolve_study", "add_to_chat_aggregation"]
+        assert tool.calls[1][1] == {"data_types": ["16S"], "study_id": 10317}
+
+
 class TestAnthropicForced:
 
     def test_tool_choice_names_the_tool_and_text_is_hidden(self, run_turn):

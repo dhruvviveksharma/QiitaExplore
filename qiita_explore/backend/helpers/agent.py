@@ -588,4 +588,10 @@ def _study_tool_label(name: str, args: dict) -> str:
         return f"Listing files for study {sid}{part}…"
     if name == "propose_aggregation_add":
         return f"Preparing aggregation proposal for study {sid}…"
+    if name == "add_to_chat_aggregation":
+        return f"Adding study {sid} to this chat's aggregation…"
+    if name == "save_chat_aggregation":
+        return "Saving this chat's aggregation…"
+    if name == "list_aggregations":
+        return "Loading your aggregations…"
     return f"Running {name}…"

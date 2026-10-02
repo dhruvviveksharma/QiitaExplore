@@ -20,6 +20,7 @@ import json
 import uuid
 
 RESOLVE = "resolve_study"
+NO_STUDY_TOOLS = frozenset({"list_aggregations", "save_chat_aggregation"})   # no resolve round
 
 
 class ForcedPlan:
@@ -27,7 +28,8 @@ class ForcedPlan:
         self.target = force["name"]
         self.args = dict(force.get("args") or {})       # forced keys win over the model's
         self.text = force.get("text") or ""
-        self.queue = [self.target] if "study_id" in self.args else [RESOLVE, self.target]
+        needs_study = self.target not in NO_STUDY_TOOLS and "study_id" not in self.args
+        self.queue = [RESOLVE, self.target] if needs_study else [self.target]
         self.ask_next = False                           # resolve was ambiguous
 
     def current(self):

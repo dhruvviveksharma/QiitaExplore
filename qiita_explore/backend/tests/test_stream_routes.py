@@ -312,6 +312,14 @@ class TestForceTool:
         resp.get_data()
         assert fake_turn.tool_calls[0][:2] == ("resolve_study", {"text": "AGP", "for_tool": "get_study_preps"})
 
+    def test_aggregations_command_is_accepted(self, client, logged_in, fake_turn):
+        chat_id = _new_global_chat(client, logged_in)
+        resp = client.post(f"/api/global-chats/{chat_id}/message/stream", headers=logged_in,
+                           json={"message": "/aggregations Gut", "model": "minimax-m2",
+                                 "force_tool": {"name": "list_aggregations", "args": {"name": "Gut"}}})
+        resp.get_data()
+        assert resp.status_code == 200 and fake_turn.tool_calls[0][:2] == ("list_aggregations", {"name": "Gut"})
+
     @pytest.mark.parametrize("force, extra", [
         ("x", {}),                                                           # not an object
         ({"name": "search_studies", "args": {}}, {}),                        # not a study tool

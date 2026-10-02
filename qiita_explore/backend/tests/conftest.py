@@ -64,7 +64,7 @@ def fresh_db(tmp_path, monkeypatch):
     for mod_name in list(sys.modules.keys()):
         if 'sql_store' in mod_name or 'store' in mod_name or mod_name in (
             'helpers.qiita_fetch', 'helpers.agent_tools',
-            'helpers.study_detail', 'helpers.study_tools',
+            'helpers.study_detail', 'helpers.study_tools', 'helpers.aggregation_tools',
         ):
             del sys.modules[mod_name]
 
