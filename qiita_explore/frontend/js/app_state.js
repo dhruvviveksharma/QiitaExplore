@@ -963,6 +963,7 @@ function useAppState() {
     }
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
     if (view.type === 'aggregations') return 'Sample Aggregation';
+    if (view.type === 'study') return `Study ${view.studyId}`;
     return 'Browse Studies';
   }, [view, chatCache, projects]);
 

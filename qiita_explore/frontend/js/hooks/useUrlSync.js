@@ -16,6 +16,8 @@ function hashToView(path) {
     return { type: 'merges' };
   if (path === '/aggregations')
     return { type: 'aggregations' };
+  if ((m = /^\/studies\/(\d+)\/?$/.exec(path)))
+    return { type: 'study', studyId: parseInt(m[1], 10) };
   return { type: 'browse' }; // covers '/browse', bare '/', and anything unmatched
 }
 
@@ -29,6 +31,8 @@ function viewToPath(view) {
     return '/merges';
   if (view.type === 'aggregations')
     return '/aggregations';
+  if (view.type === 'study' && view.studyId != null)
+    return `/studies/${view.studyId}`;
   return '/browse';
 }
 

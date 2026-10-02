@@ -541,6 +541,15 @@ function renderApp(s, account) {
           {/* ── SAMPLE AGGREGATION ── */}
           {view.type === 'aggregations' && <AggregationsTab agg={agg} />}
 
+          {/* ── STUDY PAGE (js/study_detail.js) ── */}
+          {/* Back returns to the modal it was opened from, else to Browse. */}
+          {view.type === 'study' && (
+            <StudyPage studyId={view.studyId}
+              shareUrl={window.location.origin + window.location.pathname + buildHash(view, null)}
+              renderActions={st => <StudyActions study={st} ctx={studyActionsCtx} />}
+              onBack={() => (view.fromModal ? window.history.back() : setView({ type: 'browse' }))} />
+          )}
+
           {/* ── BROWSE ── */}
           {view.type === 'browse' && (
             <div className="browse-panel">
@@ -716,7 +725,7 @@ function renderApp(s, account) {
         </div>
 
         {/* Composer */}
-        {view.type !== 'merges' && view.type !== 'aggregations' && <div className="composer-wrap">
+        {view.type !== 'merges' && view.type !== 'aggregations' && view.type !== 'study' && <div className="composer-wrap">
           {showModelPicker && (
             <ModelPickerCard
               current={selectedModel}
@@ -812,6 +821,7 @@ function renderApp(s, account) {
         <StudyModal study={modalStudy} detail={modalDetail}
           loading={modalDetailLoading} onClose={closeModal}
           actions={<StudyActions study={modalStudy} ctx={studyActionsCtx} />}
+          onOpenPage={() => { setView({ type: 'study', studyId: modalStudy.study_id, fromModal: true }); closeModal(); }}
           drawerOpen={!!(showMergePanel || resultsDrawerOpen)}
           shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}

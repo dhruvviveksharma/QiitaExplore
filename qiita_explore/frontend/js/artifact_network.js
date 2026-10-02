@@ -13,7 +13,12 @@
 // tidy-tree layout is enough and no graph library is needed: x is the depth,
 // leaves take successive rows, a parent sits midway between its first and last
 // child.
-// Globals in scope: React, useState, useEffect (utils.js), apiPost (utils.js),
+//
+// The chart opens scaled to fit (whole graph visible, never above 1×); the mouse
+// wheel zooms at the cursor (up to 2.5×) and dragging pans. The wheel is taken
+// over while the pointer is on the chart, so the modal under it neither scrolls
+// nor auto-expands.
+// Globals in scope: React, useState, useEffect, useRef (utils.js), apiPost (utils.js),
 //   FileLink, FlagList (merge_artifacts.js), jobLabels, jobVariants (merge_tree.js),
 //   SamplePeek (merge_detail.js)
 
@@ -22,7 +27,9 @@ const _AN_ROW = 76;       // px between leaf rows
 const _AN_PAD_X = 110;    // room for the first / last column's centred labels
 const _AN_PAD_TOP = 46;   // room for the top row's two label lines
 const _AN_R = 13;         // node radius
-const _AN_ZOOMS = [0.5, 0.65, 0.8, 1, 1.2, 1.45];
+const _AN_FIT_H = 440;    // chart height the fit scale aims for (.an-scroll max-height less padding)
+const _AN_MAX_Z = 2.5;
+const _AN_GUTTER = 44;     // .an-scroll's horizontal padding; the left part clears the zoom buttons
 const _AN_LABEL_MAX = 30;
 
 const _anArchived = (n) => n.kind === 'artifact' && n.visibility === 'archived';
@@ -72,7 +79,8 @@ function _anNodeLines(n, variant) {
 
 function ArtifactNetwork({ graph, studyId }) {
   const [selected, setSelected] = useState(null);
-  const [zoom, setZoom] = useState(3);              // index into _AN_ZOOMS (1×)
+  const [scale, setScale] = useState(null);         // null = follow the fit scale
+  const [boxW, setBoxW] = useState(0);              // chart viewport width, for the fit scale
   const [showArchived, setShowArchived] = useState(false);
   const [counts, setCounts] = useState({});         // {artifact_id: samples}, fetched on click
 
@@ -96,18 +104,87 @@ function ArtifactNetwork({ graph, studyId }) {
   const W = _AN_PAD_X * 2 + Math.max(0, cols - 1) * _AN_COL;
   const H = _AN_PAD_TOP + 12 + Math.max(0, rows - 1) * _AN_ROW + _AN_R + 22;
   const at = (id) => ({ cx: _AN_PAD_X + pos[id].x * _AN_COL, cy: _AN_PAD_TOP + 12 + pos[id].y * _AN_ROW });
-  const z = _AN_ZOOMS[zoom];
+  const fit = Math.min(1, boxW > _AN_GUTTER ? (boxW - _AN_GUTTER) / W : 1, _AN_FIT_H / H);
+  const z = scale ?? fit;
+
+  const boxRef = useRef(null);
+  const cur = useRef({});        // this render's z and fit, for the native listeners
+  cur.current = { z, fit };
+  const anchor = useRef(null);   // content point to put back under the pointer after a zoom
+  const dragged = useRef(false); // the last press moved, so its click is not a node click
+
+  // Zoom to `next`, keeping the content under viewport point (px, py) in place.
+  const zoomTo = (next, px, py) => {
+    const el = boxRef.current, { z: z0, fit: lo } = cur.current;
+    const nz = Math.min(_AN_MAX_Z, Math.max(lo, next));
+    if (!el || Math.abs(nz - z0) < 1e-4) return;
+    anchor.current = { x: (el.scrollLeft + px) / z0, y: (el.scrollTop + py) / z0, px, py };
+    setScale(nz);
+  };
+  React.useLayoutEffect(() => {
+    const el = boxRef.current, a = anchor.current;
+    anchor.current = null;
+    if (el && a) { el.scrollLeft = a.x * z - a.px; el.scrollTop = a.y * z - a.py; }
+  }, [z]);
+
+  // The fit follows the viewport width (the modal growing to fullscreen, a resized page).
+  const hasChart = live.length > 0;
+  React.useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    setBoxW(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasChart]);
+
+  // Native and non-passive: React's onWheel can't preventDefault, and the event
+  // must not reach the modal's own wheel handler. A horizontal trackpad swipe
+  // still pans; ctrl+wheel is a trackpad pinch.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) { el.scrollLeft += e.deltaX; return; }
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+      const r = el.getBoundingClientRect();
+      zoomTo(cur.current.z * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.002)), e.clientX - r.left, e.clientY - r.top);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [hasChart]);
+
+  const onPanStart = (e) => {
+    if (e.button !== 0) return;
+    const el = boxRef.current, x0 = e.clientX, y0 = e.clientY, sl = el.scrollLeft, st = el.scrollTop;
+    dragged.current = false;
+    const move = (ev) => {
+      const dx = ev.clientX - x0, dy = ev.clientY - y0;
+      if (!dragged.current && Math.abs(dx) + Math.abs(dy) <= 3) return;
+      dragged.current = true;
+      el.scrollLeft = sl - dx; el.scrollTop = st - dy;
+    };
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+  const pick = (id) => { if (!dragged.current) setSelected(id); };
+  const zoomStep = (k) => { const el = boxRef.current; zoomTo(z * k, el.clientWidth / 2, el.clientHeight / 2); };
 
   return (
     <div className="an-root">
       {live.length > 0 ? (
         <div className="an-chart">
           <div className="an-zoom">
-            <button type="button" title="Zoom out" disabled={zoom === 0} onClick={() => setZoom(i => i - 1)}>−</button>
-            <button type="button" title="Zoom in" disabled={zoom === _AN_ZOOMS.length - 1} onClick={() => setZoom(i => i + 1)}>+</button>
-            <button type="button" title="Actual size" onClick={() => setZoom(3)}>1:1</button>
+            <button type="button" title="Zoom out" disabled={z <= fit + 1e-4} onClick={() => zoomStep(1 / 1.25)}>−</button>
+            <button type="button" title="Zoom in" disabled={z >= _AN_MAX_Z - 1e-4} onClick={() => zoomStep(1.25)}>+</button>
+            <button type="button" title="Fit the whole graph" className="an-fit" disabled={scale == null}
+              onClick={() => setScale(null)}>Fit</button>
           </div>
-          <div className="an-scroll">
+          <div ref={boxRef} className={`an-scroll${z > fit + 1e-4 ? ' an-pan' : ''}`} onMouseDown={onPanStart}>
             <svg className="an-svg" width={W * z} height={H * z} viewBox={`0 0 ${W} ${H}`}>
               <defs>
                 <marker id="an-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -128,7 +205,7 @@ function ArtifactNetwork({ graph, studyId }) {
                 const on = selected === n.node_id;
                 return (
                   <g key={n.node_id} className={`an-node an-${n.kind}${on ? ' an-on' : ''}`}
-                    role="button" tabIndex={0} onClick={() => setSelected(n.node_id)}
+                    role="button" tabIndex={0} onClick={() => pick(n.node_id)}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(n.node_id); } }}>
                     <title>{lines.join(' ')}</title>
                     {lines.map((t, i) => (
@@ -172,7 +249,7 @@ function ArtifactNetwork({ graph, studyId }) {
         <ArtifactNetworkDetail key={sel.node_id} node={sel} label={labels[sel.node_id]}
           samples={counts[sel.artifact_id]} studyId={studyId} />
       ) : live.length > 0 && (
-        <p className="an-hint">Click a node to see its files.</p>
+        <p className="an-hint">Click a node to see its files · scroll to zoom, drag to pan.</p>
       )}
     </div>
   );

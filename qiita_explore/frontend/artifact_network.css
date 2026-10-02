@@ -7,8 +7,10 @@
 .app.dark .an-root { --an-job: #4fae5f; --an-job-edge: #8fe09b; }
 
 .an-chart { position: relative; border: 1px solid var(--border-soft); border-radius: var(--radius-m); background: var(--surface); }
-.an-scroll { overflow: auto; max-height: 460px; padding: 4px; }
-.an-svg { display: block; }
+.an-scroll { overflow: auto; max-height: 460px; padding: 4px 4px 4px 40px; }
+.an-scroll.an-pan { cursor: grab; }
+.an-scroll.an-pan:active { cursor: grabbing; }
+.an-svg { display: block; user-select: none; }
 
 .an-zoom { position: absolute; top: 8px; left: 8px; z-index: 1; display: flex; flex-direction: column; gap: 4px; }
 .an-zoom button {
@@ -17,6 +19,7 @@
 }
 .an-zoom button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .an-zoom button:disabled { opacity: .4; cursor: default; }
+.an-zoom .an-fit { font-size: 10.5px; }
 
 .an-edge { fill: none; stroke: var(--text-3); stroke-width: 1.6; }
 .an-arrowhead { fill: var(--text-3); }

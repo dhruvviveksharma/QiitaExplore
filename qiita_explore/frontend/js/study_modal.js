@@ -1,8 +1,8 @@
-// Study detail modal — extracted from app_render.js (TKT-011)
+// Study detail modal — extracted from app_render.js (TKT-011). The header and
+// sections are shared with the study page (study_detail.js).
 // Globals in scope: React, useState, useEffect, useRef (utils.js),
-//   apiFetch, apiPost (utils.js), PrepsTable, SamplesBrowser (components.js), PrepGroupedSamples (prep_samples.js),
-//   ArtifactOutputsView, prepReachableSet, filterGraphByPrep (merge_artifacts.js),
-//   ArtifactNetwork (artifact_network.js), FastqManifestSection (fastq_manifest.js)
+//   apiFetch, apiPost (utils.js), StudyHeader, StudyDetailBody (study_detail.js),
+//   ExpandCompressIcon (icons.js)
 
 // ── Add to project ────────────────────────────────────────────────────────────
 
@@ -226,66 +226,10 @@ function StudyActionBar({ study }) {
   );
 }
 
-// ── Study outputs section (tree + workspace bar) ───────────────────────────────
-
-// The study's processing network (ArtifactNetwork), one prep at a time like
-// Qiita's own chart: the picker defaults to the first prep (AGP has 308) and is
-// hidden for a single-prep study. "Other" holds non-archived artifacts that no
-// prep reaches. A study whose cached detail has no graph keeps the flat table.
-function StudyModalOutputs({ study, detail, loading }) {
-  const [prepFilter, setPrepFilter] = useState('');   // '' = the study's first prep
-  const graph = detail?.artifact_graph || [];
-  if (!graph.length) {
-    return (
-      <div>
-        <ArtifactOutputsView detail={detail} loading={loading} chosenIds={[]} onToggleArtifact={() => {}}
-          prepFilter="" recommendedId={null} sampleCounts={{}} studyId={study.study_id} selectable={false} />
-        <StudyActionBar study={study} />
-      </div>
-    );
-  }
-  const preps = detail.preps || [];
-  const reachable = prepReachableSet(graph);
-  const orphans = graph.filter(n => !reachable.has(n.node_id));
-  const hasOrphans = orphans.some(n => !(n.kind === 'artifact' && n.visibility === 'archived'));
-  const prep = prepFilter === '' ? (preps[0]?.prep_template_id ?? 'other') : prepFilter;
-  const shown = prep === 'other' ? orphans : filterGraphByPrep(graph, prep);
-
-  return (
-    <div>
-      {(preps.length > 1 || (hasOrphans && preps.length > 0)) && (
-        <div style={{ marginBottom: 8 }}>
-          <select className="merge-dt-select" value={prep}
-            onChange={e => setPrepFilter(e.target.value === 'other' ? 'other' : +e.target.value)}>
-            {preps.map(p => (
-              <option key={p.prep_template_id} value={p.prep_template_id}>
-                Prep {p.prep_template_id} · {p.data_type || '?'}
-              </option>
-            ))}
-            {hasOrphans && <option value="other">Other</option>}
-          </select>
-        </div>
-      )}
-      <ArtifactNetwork key={String(prep)} graph={shown} studyId={study.study_id} />
-      <StudyActionBar study={study} />
-    </div>
-  );
-}
-
 // ── Study modal ────────────────────────────────────────────────────────────────
 
-function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, actions }) {
-  const fetchSampleFields = async (sampleId) => {
-    const res = await apiFetch(`/studies/${study.study_id}/samples/${encodeURIComponent(sampleId)}`);
-    if (!res.ok) return null;
-    const d = await res.json();
-    return d.fields || null;
-  };
-  const [fullscreen,   setFullscreen]   = useState(false);
-  const [groupByPrep,  setGroupByPrep]  = useState(false);   // Samples: cluster under prep headers
-  // Tracks whether the CURRENT fullscreen=true came from auto-scroll-expand
-  // rather than an explicit click — only an auto-expand auto-collapses.
-  const [autoExpanded, setAutoExpanded] = useState(false);
+function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, actions, onOpenPage }) {
+  const [fullscreen, setFullscreen] = useState(false);
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -295,15 +239,11 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, act
   }, [onClose]);
 
   // Scrolling down in the compact view auto-expands to fullscreen for more
-  // room; scrolling back up reverses it — but only when the expansion was
-  // itself automatic. An explicit click on the expand button sticks until
-  // the user explicitly restores it, even after scrolling up.
+  // room; scrolling back up reverses it. (The expand button opens the study
+  // page instead, so fullscreen only ever comes from scrolling.)
   const handleCardScroll = () => {
     const top = cardRef.current?.scrollTop ?? 0;
-    if (!fullscreen && top > 0) {
-      setFullscreen(true);
-      setAutoExpanded(true);
-    }
+    if (!fullscreen && top > 0) setFullscreen(true);
   };
 
   // Collapse is driven by wheel direction rather than scrollTop position:
@@ -314,107 +254,25 @@ function StudyModal({ study, detail, loading, onClose, shareUrl, drawerOpen, act
   // expand and immediately collapse again in a flicker.
   const handleCardWheel = e => {
     const top = cardRef.current?.scrollTop ?? 0;
-    if (fullscreen && autoExpanded && top <= 0 && e.deltaY < 0) {
-      setFullscreen(false);
-      setAutoExpanded(false);
-    }
+    if (fullscreen && top <= 0 && e.deltaY < 0) setFullscreen(false);
   };
-
-  const toggleFullscreen = () => {
-    setAutoExpanded(false); // any explicit click clears the "auto" flag
-    setFullscreen(p => !p);
-  };
-
-  const showStats = !(!loading && detail?.isPrivate) &&
-    (study.data_types || study.num_samples != null || study.num_preps != null);
 
   return (
     <div className={`modal-overlay${drawerOpen ? ' with-drawer' : ''}`} onClick={onClose}>
       <div ref={cardRef} className={`modal-card${fullscreen ? ' modal-fullscreen' : ''}`}
         onClick={e => e.stopPropagation()} onScroll={handleCardScroll} onWheel={handleCardWheel}>
-        <div className="modal-header-bar">
-          <div className="modal-header-top">
-            <div className="modal-header-left">
-              <span className="modal-id">Study ID {study.study_id}</span>
-              {shareUrl && (
-                <div className="modal-copy-link">
-                  <CopyResponseButton title="Copy study link" text={shareUrl} />
-                </div>
-              )}
-            </div>
-            <div className="modal-header-right">
-              {/* Same row as the Browse card (js/study_actions.js), in both sizes. */}
-              {actions && <div className="modal-header-actions">{actions}</div>}
-              <button className="modal-expand" title={fullscreen ? 'Restore' : 'Fullscreen'}
-                onClick={toggleFullscreen}>
-                <ExpandCompressIcon expanded={fullscreen} />
+        <StudyHeader study={study} detail={detail} loading={loading} shareUrl={shareUrl}
+          right={<>
+            {/* Same row as the Browse card (js/study_actions.js), in both sizes. */}
+            {actions && <div className="modal-header-actions">{actions}</div>}
+            {onOpenPage && (
+              <button className="modal-expand" title="Open as page" onClick={onOpenPage}>
+                <ExpandCompressIcon expanded={false} />
               </button>
-              <button className="modal-close" onClick={onClose}>×</button>
-            </div>
-          </div>
-          <div className="modal-title">{study.study_title || 'Untitled study'}</div>
-          {showStats && (
-            <div className="modal-stats">
-              {splitTypes(study.data_types).map(t => (
-                <span key={t} className="dtype-chip">{t}</span>
-              ))}
-              {study.num_samples != null && <span className="modal-stat">{study.num_samples} samples</span>}
-              {study.num_preps   != null && <span className="modal-stat">{study.num_preps} preps</span>}
-            </div>
-          )}
-        </div>
-
-        {!loading && detail?.isPrivate ? (
-          <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'3rem 1rem', gap:'1rem', color:'#aaa'}}>
-            <span style={{fontSize:'4rem', lineHeight:1}}>✕</span>
-            <span style={{fontSize:'1rem', fontStyle:'italic', textAlign:'center'}}>This is a private study and its data is not publicly available.</span>
-          </div>
-        ) : (
-          <>
-            {study.study_abstract && (
-              <CollapsibleSection id="study-modal-abstract" title="Abstract" defaultOpen>
-                <p>{study.study_abstract}</p>
-              </CollapsibleSection>
             )}
-            {study.pi_name && (
-              <CollapsibleSection id="study-modal-pi" title="Principal Investigator" defaultOpen>
-                <p>{study.pi_name}{study.pi_affiliation ? ` — ${study.pi_affiliation}` : ''}</p>
-              </CollapsibleSection>
-            )}
-            {study.pi_email && (
-              <CollapsibleSection id="study-modal-contact" title="Contact" defaultOpen>
-                <p>{study.pi_email}</p>
-              </CollapsibleSection>
-            )}
-
-            <CollapsibleSection id="study-modal-preps" title="Prep Templates"
-              subtitle={detail ? `${(detail.preps || []).length}` : undefined} defaultOpen>
-              <PrepsTable detail={detail} loading={loading} />
-            </CollapsibleSection>
-
-            <FastqManifestSection detail={detail} studyId={study.study_id} />
-
-            {!loading && detail && (
-              <CollapsibleSection id="study-modal-samples" title="Samples"
-                subtitle={detail.total_samples != null
-                  ? `${detail.total_samples} total${detail.total_samples > 200 ? ', showing first 200' : ''}`
-                  : undefined}
-                defaultOpen>
-                <div className="agg-seg" style={{ marginBottom: 8, width: 'fit-content' }}>
-                  <button className={groupByPrep ? 'on' : ''} title="Cluster samples under their prep template"
-                    onClick={() => setGroupByPrep(v => !v)}>Group by prep</button>
-                </div>
-                {groupByPrep
-                  ? <PrepGroupedSamples key={study.study_id} studyId={study.study_id} fetchFields={fetchSampleFields} />
-                  : <SamplesBrowser samples={detail.samples || []} layout="two-pane" fetchFields={fetchSampleFields} />}
-              </CollapsibleSection>
-            )}
-
-            <CollapsibleSection id="study-modal-outputs" title="Outputs" defaultOpen>
-              <StudyModalOutputs study={study} detail={detail} loading={loading} />
-            </CollapsibleSection>
-          </>
-        )}
+            <button className="modal-close" onClick={onClose}>×</button>
+          </>} />
+        <StudyDetailBody key={study.study_id} study={study} detail={detail} loading={loading} />
       </div>
     </div>
   );

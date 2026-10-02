@@ -37,12 +37,13 @@ const FIELD_GROUPS = [
 ];
 
 // ─── SamplesBrowser: shared two-pane / stacked sample viewer ──────────────────
-function SamplesBrowser({ samples, layout, fetchFields, bare }) {
+// With onPick the caller owns the selection (activeId) and shows the sample's
+// metadata itself (PrepGroupedSamples); the browser then renders only the list.
+function SamplesBrowser({ samples, layout, fetchFields, bare, activeId: pickedId, onPick }) {
   const [activeId,     setActiveId]     = useState(null);
   const [activeFields, setActiveFields] = useState(null);
   const [loading,      setLoading]      = useState(false);
   const [filterText,   setFilterText]   = useState('');
-  const [showVaryingOnly, setShowVaryingOnly] = useState(false);
   const [leftPct, setLeftPct] = useState(55);
   const dragging = React.useRef(false);
   const containerRef = React.useRef(null);
@@ -110,37 +111,6 @@ function SamplesBrowser({ samples, layout, fetchFields, bare }) {
     return uniform;
   }, [samples]);
 
-  const groupedActiveFields = useMemo(() => {
-    if (!activeFields) return [];
-    const remaining = new Map(Object.entries(activeFields).filter(([, v]) => v != null && v !== ''));
-    const result = [];
-    for (const [groupName, keys] of FIELD_GROUPS) {
-      const entries = [];
-      for (const target of keys) {
-        for (const k of [...remaining.keys()]) {
-          if (k.toLowerCase() === target.toLowerCase()) { entries.push([k, remaining.get(k)]); remaining.delete(k); }
-        }
-      }
-      if (entries.length) result.push([groupName, entries]);
-    }
-    if (remaining.size) result.push(['Other', [...remaining.entries()].sort(([a], [b]) => a.localeCompare(b))]);
-    return result;
-  }, [activeFields]);
-
-  const visibleGroups = useMemo(() => {
-    if (!showVaryingOnly || uniformFields.size === 0) return groupedActiveFields;
-    return groupedActiveFields
-      .map(([g, entries]) => [g, entries.filter(([k]) => !uniformFields.has(k))])
-      .filter(([, entries]) => entries.length);
-  }, [groupedActiveFields, uniformFields, showVaryingOnly]);
-
-  const hiddenUniformCount = useMemo(() => {
-    if (!showVaryingOnly || !activeFields) return 0;
-    let n = 0;
-    for (const k of Object.keys(activeFields)) if (uniformFields.has(k)) n++;
-    return n;
-  }, [activeFields, uniformFields, showVaryingOnly]);
-
   if (!samples || samples.length === 0) {
     return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No samples found.</p>;
   }
@@ -184,8 +154,8 @@ function SamplesBrowser({ samples, layout, fetchFields, bare }) {
             const f = s.fields || {};
             const collectionDate = s.collection_timestamp || f.collection_timestamp || f.collection_date || '';
             return (
-              <tr key={s.sample_id} onClick={() => onRowClick(s)}
-                style={{cursor:'pointer', background: activeId === s.sample_id ? 'var(--accent-bg,#f0f4ff)' : ''}}>
+              <tr key={s.sample_id} onClick={() => (onPick ? onPick(s) : onRowClick(s))}
+                style={{cursor:'pointer', background: (onPick ? pickedId : activeId) === s.sample_id ? 'var(--accent-bg,#f0f4ff)' : ''}}>
                 <td>{s.sample_id}</td>
                 {showPrep && <td>{(s.prep_ids || []).join(', ') || '—'}</td>}
                 <td>{s.anonymized_name || f.anonymized_name || '—'}</td>
@@ -199,43 +169,10 @@ function SamplesBrowser({ samples, layout, fetchFields, bare }) {
     </div>
   );
 
-  const canVaryToggle = uniformFields.size > 0;
-  const detailEl = loading ? (
-    <div style={{flex:1, color:'var(--text-3)', fontSize:'0.85rem', paddingTop:'0.5rem'}}>Loading…</div>
-  ) : activeFields ? (
-    <div className="sample-preview-card">
-      <div className="sample-preview-header">
-        <span>{activeId}</span>
-        <div style={{display:'flex', alignItems:'center', gap:8}}>
-          {canVaryToggle && (
-            <label className="sample-preview-toggle">
-              <input type="checkbox" checked={showVaryingOnly} onChange={e => setShowVaryingOnly(e.target.checked)} />
-              Show only varying
-            </label>
-          )}
-          <button className="sample-preview-close" onClick={() => { setActiveId(null); setActiveFields(null); }}>✕</button>
-        </div>
-      </div>
-      <div className="sample-preview-body">
-        {visibleGroups.map(([groupName, entries]) => (
-          <div key={groupName} className="sample-preview-group">
-            <h5 className="sample-preview-group-title">{groupName}</h5>
-            {entries.map(([k, v]) => (
-              <div key={k} className="sample-preview-row">
-                <span className="sample-preview-key">{k}</span>
-                <span className="sample-preview-val">{String(v)}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-        {showVaryingOnly && hiddenUniformCount > 0 && (
-          <div className="sample-preview-hidden-note">
-            {hiddenUniformCount} uniform field{hiddenUniformCount === 1 ? '' : 's'} hidden
-          </div>
-        )}
-      </div>
-    </div>
-  ) : null;
+  const detailEl = onPick ? null : (
+    <SampleFieldsCard sampleId={activeId} fields={activeFields} loading={loading} uniformFields={uniformFields}
+      onClose={() => { setActiveId(null); setActiveFields(null); }} />
+  );
 
   if (isStacked) {
     return <div className="samples-browser-stacked">{toolbarEl}{tableEl}{detailEl}</div>;
@@ -263,8 +200,86 @@ function SamplesBrowser({ samples, layout, fetchFields, bare }) {
   );
 }
 
+// ─── SampleFieldsCard: one sample's metadata, grouped by FIELD_GROUPS ────────
+// SamplesBrowser's detail pane, also shown on its own beside PrepGroupedSamples.
+// uniformFields: keys with a single value across the list, which "Show only
+// varying" hides (empty when the list carries no per-sample fields).
+const _NO_UNIFORM = new Set();
+function SampleFieldsCard({ sampleId, fields, loading, uniformFields = _NO_UNIFORM, onClose }) {
+  const [showVaryingOnly, setShowVaryingOnly] = useState(false);
+  const groupedActiveFields = useMemo(() => {
+    if (!fields) return [];
+    const remaining = new Map(Object.entries(fields).filter(([, v]) => v != null && v !== ''));
+    const result = [];
+    for (const [groupName, keys] of FIELD_GROUPS) {
+      const entries = [];
+      for (const target of keys) {
+        for (const k of [...remaining.keys()]) {
+          if (k.toLowerCase() === target.toLowerCase()) { entries.push([k, remaining.get(k)]); remaining.delete(k); }
+        }
+      }
+      if (entries.length) result.push([groupName, entries]);
+    }
+    if (remaining.size) result.push(['Other', [...remaining.entries()].sort(([a], [b]) => a.localeCompare(b))]);
+    return result;
+  }, [fields]);
+
+  const visibleGroups = useMemo(() => {
+    if (!showVaryingOnly || uniformFields.size === 0) return groupedActiveFields;
+    return groupedActiveFields
+      .map(([g, entries]) => [g, entries.filter(([k]) => !uniformFields.has(k))])
+      .filter(([, entries]) => entries.length);
+  }, [groupedActiveFields, uniformFields, showVaryingOnly]);
+
+  const hiddenUniformCount = useMemo(() => {
+    if (!showVaryingOnly || !fields) return 0;
+    let n = 0;
+    for (const k of Object.keys(fields)) if (uniformFields.has(k)) n++;
+    return n;
+  }, [fields, uniformFields, showVaryingOnly]);
+
+  if (loading) return <div style={{flex:1, color:'var(--text-3)', fontSize:'0.85rem', paddingTop:'0.5rem'}}>Loading…</div>;
+  if (!fields) return null;
+  const canVaryToggle = uniformFields.size > 0;
+  return (
+    <div className="sample-preview-card">
+      <div className="sample-preview-header">
+        <span>{sampleId}</span>
+        <div style={{display:'flex', alignItems:'center', gap:8}}>
+          {canVaryToggle && (
+            <label className="sample-preview-toggle">
+              <input type="checkbox" checked={showVaryingOnly} onChange={e => setShowVaryingOnly(e.target.checked)} />
+              Show only varying
+            </label>
+          )}
+          <button className="sample-preview-close" onClick={onClose}>✕</button>
+        </div>
+      </div>
+      <div className="sample-preview-body">
+        {visibleGroups.map(([groupName, entries]) => (
+          <div key={groupName} className="sample-preview-group">
+            <h5 className="sample-preview-group-title">{groupName}</h5>
+            {entries.map(([k, v]) => (
+              <div key={k} className="sample-preview-row">
+                <span className="sample-preview-key">{k}</span>
+                <span className="sample-preview-val">{String(v)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+        {showVaryingOnly && hiddenUniformCount > 0 && (
+          <div className="sample-preview-hidden-note">
+            {hiddenUniformCount} uniform field{hiddenUniformCount === 1 ? '' : 's'} hidden
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── PrepsTable ───────────────────────────────────────────────────────────────
-function PrepsTable({ detail, loading, onMount }) {
+// With onSelect, rows are clickable and the selectedId row is highlighted.
+function PrepsTable({ detail, loading, onMount, selectedId, onSelect }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div style={{margin:'20px auto'}}><InfinityLoader w={80} h={50} /></div>;
@@ -278,7 +293,8 @@ function PrepsTable({ detail, loading, onMount }) {
         <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
         <tbody>
           {shown.map(p => (
-            <tr key={p.prep_template_id}>
+            <tr key={p.prep_template_id} onClick={onSelect ? () => onSelect(p.prep_template_id) : undefined}
+              className={onSelect ? `prep-row-pick${p.prep_template_id === selectedId ? ' on' : ''}` : undefined}>
               <td>{p.prep_template_id}</td>
               <td>{p.data_type || '—'}</td>
               <td>{p.investigation_type || '—'}</td>
