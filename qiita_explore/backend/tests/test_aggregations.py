@@ -391,3 +391,47 @@ def test_route_export_tsv(client, logged_in, stub_qiita, monkeypatch):
     assert lines[0].split("\t") == ["study_id", "sample_id", "artifact_id", "data_type", "processing",
                                     "R1", "R2", "barcodes"]
     assert lines[1].split("\t")[:3] == ["16326", "s1", "12"]
+
+
+# ── chat aggregation routes: GET one, save, undo-add ─────────────────────────
+
+def test_route_get_one_and_save(client, logged_in, stub_qiita):
+    import routes.aggregation_routes as ar
+    # The module-scoped app still holds the store it was built with (fresh_db
+    # re-imports store per test), so create through the route's own binding.
+    create = ar.get_aggregation.__globals__["create_aggregation"]
+    who = client.get("/api/auth/me").get_json()["user_id"]
+    a = create(who, "Chat aggregation", chat_id="c1", chat_scope="global")
+    aid = a["aggregation_id"]
+    r = client.get(f"/api/aggregations/{aid}")
+    assert r.status_code == 200 and r.get_json()["chat_id"] == "c1"
+    assert client.get("/api/aggregations/nope").status_code == 404
+    assert client.post(f"/api/aggregations/{aid}/save", json={"name": " "}, headers=logged_in).status_code == 400
+    r = client.post(f"/api/aggregations/{aid}/save", json={"name": "Gut cohort"}, headers=logged_in)
+    assert r.status_code == 200 and (r.get_json()["name"], r.get_json()["chat_id"]) == ("Gut cohort", None)
+
+
+def test_route_undo_add(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    assert _add(client, logged_in, aid).status_code == 200            # s2 x artifacts 12, 13
+    url = f"/api/aggregations/{aid}/studies/16326/undo-add"
+    # An extension that added artifact 13 to a study that had only 12: 13's row goes, the filter returns.
+    prev = {"data_types": ["16S"], "processing": [], "artifacts": []}
+    r = client.post(url, headers=logged_in, json={"was_new": False, "added_artifacts": [13],
+                                                  "prev_artifacts": [12], "prev_filter": prev})
+    study = r.get_json()["studies"][0]
+    assert r.status_code == 200 and study["selected_rows"] == 1 and study["file_filter"] == prev
+    assert client.post(url, headers=logged_in, json={"was_new": False, "added_artifacts": None,
+                                                     "prev_artifacts": None}).status_code == 400
+    assert client.post(url, headers=logged_in, json={"added_artifacts": "x"}).status_code == 400
+    r = client.post(url, headers=logged_in, json={"was_new": True})
+    assert r.status_code == 200 and r.get_json()["studies"] == []
+    assert client.post(url, headers=logged_in, json={"was_new": True}).status_code == 404
+
+
+def test_route_filter_accepts_many_artifacts(client, logged_in, stub_qiita):
+    aid = _create(client, logged_in)["aggregation_id"]
+    _add(client, logged_in, aid)
+    ff = {"data_types": [], "processing": [], "artifacts": [str(i) for i in range(120)]}
+    r = client.patch(f"/api/aggregations/{aid}/studies/16326", json={"file_filter": ff}, headers=logged_in)
+    assert r.status_code == 200, r.get_json()
