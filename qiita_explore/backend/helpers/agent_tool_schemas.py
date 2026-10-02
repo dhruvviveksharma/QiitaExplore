@@ -345,11 +345,33 @@ STUDY_TOOL_SCHEMAS = [
          "artifact_id": {"type": "integer", "description": "One artifact."},
          "prep_id": {"type": "integer", "description": "Every artifact of this prep (default: the first prep)."}},
         ["study_id"]),
+    _fn("add_to_chat_aggregation",
+        "Add a study - or only some of its data types or preps - to THIS CHAT's temporary sample aggregation "
+        "(created on first use; it exports per-sample FASTQ file lists). It is added immediately: the user "
+        "sees what was added with an Undo button, and can export it or save it as a named aggregation. Use it "
+        "whenever the user wants to collect, gather, add or aggregate studies, preps or samples in this chat, "
+        "or to create an aggregation.",
+        {"study_id": _STUDY_ID,
+         "data_types": {"type": "array", "items": {"type": "string"},
+                        "description": "Only these data types, e.g. ['16S']."},
+         "prep_ids": {"type": "array", "items": {"type": "integer"}, "description": "Only these preps."}},
+        ["study_id"]),
+    _fn("save_chat_aggregation",
+        "Save this chat's temporary aggregation under a name: it moves to the Sample Aggregation tab and "
+        "is kept after the chat is deleted. Only when the user asks to save, keep or name it.",
+        {"name": {"type": "string", "description": "The name for the saved aggregation."}},
+        ["name"]),
+    _fn("list_aggregations",
+        "List the user's saved sample aggregations and this chat's temporary one: each one's studies, "
+        "checked file rows and per-study filter. Use it when the user asks what aggregations they have or "
+        "what is in one.",
+        {"name": {"type": "string", "description": "Only the saved aggregation with this name."}},
+        []),
     _fn("propose_aggregation_add",
-        "Propose adding a study - or only some of its data types or preps - to one of the user's sample "
-        "aggregations (the Sample Aggregation tab, which exports per-sample FASTQ file lists). This adds "
-        "NOTHING: the user sees a card with the scope and counts, picks the aggregation and clicks Add. "
-        "Never say the study was added.",
+        "Propose adding a study - or only some of its data types or preps - to one of the user's SAVED "
+        "aggregations that they name. This adds NOTHING: the user sees a card with the scope and counts, "
+        "picks the aggregation and clicks Add. Never say the study was added. When no saved aggregation is "
+        "named, use add_to_chat_aggregation instead.",
         {"study_id": _STUDY_ID,
          "data_types": {"type": "array", "items": {"type": "string"},
                         "description": "Only these data types, e.g. ['16S']."},
@@ -364,7 +386,8 @@ STUDY_TOOL_SCHEMAS = [
         {"text": {"type": "string", "description": "The user's words that name the study."},
          "for_tool": {"type": "string", "description": "The study tool you will call next.",
                       "enum": ["get_study_preps", "show_study_samples", "get_sample_metadata",
-                               "get_prep_graph", "list_artifact_files", "propose_aggregation_add"]}},
+                               "get_prep_graph", "list_artifact_files", "add_to_chat_aggregation",
+                               "propose_aggregation_add"]}},
         ["text"]),
 ]
 
