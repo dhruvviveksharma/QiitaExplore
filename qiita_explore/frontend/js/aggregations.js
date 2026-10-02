@@ -33,8 +33,10 @@ function useAggregations() {
     await apiJson(`/aggregations/${id}`, { method: 'DELETE' });
     setAggregations(list => (list || []).filter(a => a.aggregation_id !== id));
   };
-  const addStudy = async (id, study) =>
-    replace(await apiJson(`/aggregations/${id}/studies`, { method: 'POST', body: JSON.stringify({ study }) }));
+  // file_filter (optional, from the chat's aggregation card) adds only the rows it keeps.
+  const addStudy = async (id, study, file_filter) =>
+    replace(await apiJson(`/aggregations/${id}/studies`, {
+      method: 'POST', body: JSON.stringify(file_filter ? { study, file_filter } : { study }) }));
   const removeStudy = async (id, studyId) =>
     replace(await apiJson(`/aggregations/${id}/studies/${studyId}`, { method: 'DELETE' }));
   // body: {add:[{sample_id, artifact_id}], remove:[…]} or {select:'all'|'none'|'with_files'|'matching', q}

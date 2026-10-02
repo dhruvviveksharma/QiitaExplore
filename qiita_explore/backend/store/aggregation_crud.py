@@ -164,10 +164,11 @@ def delete_aggregation(aggregation_id: str, user_id: str) -> bool:
 
 
 def add_study_to_aggregation(aggregation_id: str, user_id: str, study: dict,
-                             fastq_artifact_count: int, rows=()) -> Optional[dict]:
-    """Add a study with every (sample_id, artifact_id) in rows checked. Returns
-    the full aggregation, or None if it doesn't exist / isn't owned by user_id.
-    The study cap is enforced by the route."""
+                             fastq_artifact_count: int, rows=(), file_filter=None) -> Optional[dict]:
+    """Add a study with every (sample_id, artifact_id) in rows checked and, when
+    given, its file_filter saved in the same insert. Returns the full
+    aggregation, or None if it doesn't exist / isn't owned by user_id. The
+    study cap is enforced by the route."""
     now = _now()
     sid = int(study["study_id"])
     rows = list(rows)
@@ -178,12 +179,13 @@ def add_study_to_aggregation(aggregation_id: str, user_id: str, study: dict,
             """INSERT OR IGNORE INTO aggregation_studies
                (aggregation_id, study_id, study_title, data_types, num_samples, num_preps,
                 fastq_artifact_count, study_abstract, pi_name, pi_affiliation, year, is_gold,
-                added_at, rows_v, file_rows)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+                added_at, rows_v, file_rows, file_filter_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
             (aggregation_id, sid, study.get("study_title"), study.get("data_types"),
              study.get("num_samples"), study.get("num_preps"), fastq_artifact_count,
              study.get("study_abstract"), study.get("pi_name"), study.get("pi_affiliation"),
-             study.get("year"), int(bool(study.get("is_gold"))), now, len(rows)),
+             study.get("year"), int(bool(study.get("is_gold"))), now, len(rows),
+             json.dumps(file_filter) if file_filter else None),
         )
         # Only a freshly added study gets its rows checked: re-adding one
         # that is already here must not undo what the user unchecked.

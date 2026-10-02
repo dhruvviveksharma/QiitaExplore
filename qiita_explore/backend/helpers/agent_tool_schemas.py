@@ -345,6 +345,18 @@ STUDY_TOOL_SCHEMAS = [
          "artifact_id": {"type": "integer", "description": "One artifact."},
          "prep_id": {"type": "integer", "description": "Every artifact of this prep (default: the first prep)."}},
         ["study_id"]),
+    _fn("propose_aggregation_add",
+        "Propose adding a study - or only some of its data types or preps - to one of the user's sample "
+        "aggregations (the Sample Aggregation tab, which exports per-sample FASTQ file lists). This adds "
+        "NOTHING: the user sees a card with the scope and counts, picks the aggregation and clicks Add. "
+        "Never say the study was added.",
+        {"study_id": _STUDY_ID,
+         "data_types": {"type": "array", "items": {"type": "string"},
+                        "description": "Only these data types, e.g. ['16S']."},
+         "prep_ids": {"type": "array", "items": {"type": "integer"}, "description": "Only these preps."},
+         "aggregation_name": {"type": "string",
+                              "description": "The aggregation the user named, if any (a new one if none has this name)."}},
+        ["study_id"]),
     _fn("resolve_study",
         "Find which study the user means when they name it in words (title, acronym such as 'AGP', PI) "
         "rather than by id. Call it before the study tools when the id isn't already settled in this "

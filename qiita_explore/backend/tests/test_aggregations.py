@@ -333,6 +333,21 @@ def test_route_401_without_session(_app):
     assert _app.test_client().get("/api/aggregations").status_code == 401
 
 
+def test_route_add_with_file_filter_seeds_only_its_rows(client, logged_in, stub_qiita):
+    """The chat's aggregation card adds a scoped study: only the rows the filter
+    keeps start checked, and the filter is saved on the study in the same insert."""
+    aid = _create(client, logged_in)["aggregation_id"]
+    ff = {"data_types": ["16S"], "processing": [], "artifacts": ["13"]}
+    r = client.post(f"/api/aggregations/{aid}/studies", headers=logged_in,
+                    json={"study": {**STUDY, "study_id": 16326}, "file_filter": ff})
+    assert r.status_code == 200, r.get_json()
+    study = r.get_json()["studies"][0]
+    assert study["file_filter"] == ff and study["selected_rows"] == 1      # s2's artifact 13 only
+    bad = client.post(f"/api/aggregations/{aid}/studies", headers=logged_in,
+                      json={"study": {**STUDY, "study_id": 16327}, "file_filter": {"oops": []}})
+    assert bad.status_code == 400
+
+
 def test_route_post_requires_csrf(client, logged_in):
     assert client.post("/api/aggregations", json={"name": "x"}).status_code == 403
 

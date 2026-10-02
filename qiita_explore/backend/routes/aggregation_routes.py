@@ -181,10 +181,19 @@ def api_delete_aggregation(aggregation_id):
 def api_add_study_to_aggregation(aggregation_id):
     """Add a whole study: every one of its (sample, artifact) rows starts checked. The body's
     `study` is the Browse card's header (title, abstract, PI, year, GOLD,
-    counts), snapshotted for the tab's cards."""
-    study = (request.get_json() or {}).get("study")
+    counts), snapshotted for the tab's cards. An optional `file_filter` (the
+    chat's aggregation card) adds only the rows it keeps and is saved as the
+    study's filter in the same insert."""
+    body = request.get_json() or {}
+    study = body.get("study")
     if not study or study.get("study_id") is None:
         return jsonify({"error": "study with study_id required"}), 400
+    file_filter = None
+    if body.get("file_filter") is not None:
+        try:
+            file_filter = _parse_file_filter(body["file_filter"])
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
     study_id = int(study["study_id"])
     if not is_study_public(study_id):
         return jsonify({"error": "Study is not public and cannot be added"}), 403
@@ -195,8 +204,8 @@ def api_add_study_to_aggregation(aggregation_id):
         return jsonify({"error": f"Aggregation has reached the maximum of {AGGREGATION_STUDIES_CAP} studies"}), 400
     files = get_sample_files(study_id)
     study = {**study, "num_samples": len(list_study_sample_ids(study_id))}
-    agg = add_study_to_aggregation(aggregation_id, g.user_id, study,
-                                   count_fastq_artifacts(study_id), _rows_of(files, files))
+    agg = add_study_to_aggregation(aggregation_id, g.user_id, study, count_fastq_artifacts(study_id),
+                                   _rows_of(files, files, file_filter), file_filter=file_filter)
     if agg is None:
         return jsonify({"error": "Aggregation not found"}), 404
     return jsonify(agg)

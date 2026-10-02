@@ -308,3 +308,64 @@ def test_execute_tool_routes_study_tools_in_both_scopes(st, monkeypatch, scope):
     monkeypatch.setattr(at, "execute_study_tool", lambda name, args, **kw: seen.append((name, kw)) or "ok")
     assert at.execute_tool("get_prep_graph", {"study_id": SID}, scope=scope, chat_id="c1", user_id=None) == "ok"
     assert seen == [("get_prep_graph", {"scope": scope, "chat_id": "c1", "user_id": None})]
+
+
+# ── propose_aggregation_add ─────────────────────────────────────────────────
+
+# s1: a 16S file in artifact 1 (prep 7); s2: 16S in artifact 1 and a Metagenomic file in 5 (prep 8).
+FILES = {"10317.s1": [("16S", "Raw upload", 1, 2, 0)],
+         "10317.s2": [("16S", "Raw upload", 1, 2, 0), ("Metagenomic", "Raw upload", 5, 2, 0)]}
+
+
+@pytest.fixture
+def agg_st(st, monkeypatch):
+    monkeypatch.setattr(st, "get_sample_files", lambda sid: FILES)
+    monkeypatch.setattr(st, "prep_data_types", lambda sid: {"10317.s3": ["16S"]})
+    monkeypatch.setattr(st, "artifact_preps", lambda sid: {1: 7, 2: 7, 3: 7, 5: 8, 9: 9})
+    return st
+
+
+def propose(st, user_id="u1", **args):
+    return st.execute_study_tool("propose_aggregation_add", {"study_id": SID, **args},
+                                 scope="global", chat_id="c1", user_id=user_id)
+
+
+def test_proposal_never_writes(agg_st):
+    from store import create_aggregation, get_aggregation
+    a = create_aggregation("u1", "Gut cohort")
+    r = propose(agg_st, data_types=["16S"])
+    assert r.ui_payload["suggest"] == {"aggregation_id": a["aggregation_id"], "name": "Gut cohort"}
+    assert get_aggregation(a["aggregation_id"], "u1")["studies"] == []
+    assert r.text.startswith("Proposal only — nothing was added")
+
+
+def test_proposal_scopes_by_data_type_and_prep(agg_st):
+    r = propose(agg_st, user_id=None, data_types=["16s"])
+    assert r.ui_payload["file_filter"] == {"data_types": ["16S"], "processing": [], "artifacts": []}
+    assert r.ui_payload["counts"] == {"samples": 2, "rows": 2, "study_rows": 3}
+    r = propose(agg_st, user_id=None, prep_ids=[8])
+    assert r.ui_payload["file_filter"]["artifacts"] == ["5"] and r.ui_payload["counts"]["rows"] == 1
+    assert r.ui_payload["blocked"] is None
+    r = propose(agg_st, user_id=None)
+    assert r.ui_payload["file_filter"] is None and r.ui_payload["counts"]["rows"] == 3
+    no_paths(r)
+
+
+def test_proposal_blocked_and_unknown(agg_st):
+    r = propose(agg_st, user_id=None, prep_ids=[9])        # prep 9's artifact has no per-sample files
+    assert r.ui_payload["blocked"] == "prep 9 has no per-sample FASTQ/FASTA files" and "Cannot add" in r.text
+    assert propose(agg_st, user_id=None, prep_ids=[4242]).ui_payload is None
+    r = propose(agg_st, user_id=None, data_types=["ITS"])
+    assert r.ui_payload is None and "16S, Metagenomic" in r.text
+
+
+def test_proposal_targets_named_new_full_and_containing(agg_st, monkeypatch):
+    aggs = [{"aggregation_id": "a1", "name": "Gut cohort", "studies": [{"study_id": SID}]},
+            {"aggregation_id": "a2", "name": "Oral", "studies": [{"study_id": i} for i in range(50)]},
+            {"aggregation_id": "a3", "name": "Skin", "studies": []}]
+    monkeypatch.setattr(agg_st, "list_aggregations", lambda uid: aggs)
+    r = propose(agg_st, aggregation_name="gut cohort")
+    assert r.ui_payload["suggest"] is None and '"Gut cohort" already has this study' in r.text
+    assert '"Oral" already holds 50' in propose(agg_st, aggregation_name="Oral").text
+    assert propose(agg_st, aggregation_name="New one").ui_payload["suggest"] == {"aggregation_id": None, "name": "New one"}
+    assert propose(agg_st).ui_payload["suggest"] == {"aggregation_id": "a3", "name": "Skin"}   # the only open one

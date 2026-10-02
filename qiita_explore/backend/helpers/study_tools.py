@@ -1,6 +1,7 @@
 """Chat tools over one study, available in global and project chats alike:
 preps (with data types), samples, one sample's metadata, a prep's processing
-graph, artifact files, and resolve_study (which study does free text mean).
+graph, artifact files, propose_aggregation_add (a confirm card — it never
+writes), and resolve_study (which study does free text mean).
 
 Each tool returns compact text for the model and a small ui_payload (ids only)
 that the chat renders as an interactive widget (frontend/js/chat_study_widgets.js),
@@ -20,8 +21,10 @@ from collections import Counter
 from services.llm import browse_query_to_sql
 from services.relevance import build_pi_required_filter
 from services.study_service import detect_data_types, expand_keyword_variants, search_studies_with_sql
-from store import SCOPE_PROJECT, allowed_project_study_ids, get_project_id_for_chat, \
-    get_project_studies_only, list_pinned_studies
+from store import AGGREGATION_STUDIES_CAP, SCOPE_PROJECT, allowed_project_study_ids, \
+    get_project_id_for_chat, get_project_studies_only, list_aggregations, list_pinned_studies
+from helpers.fastq_manifest import group_matches
+from helpers.sample_files import get_sample_files
 from helpers.pg_pool import pooled_fetchall
 from helpers.qiita_fetch import (
     _PUBLIC_ARTIFACT_EXISTS, _fetch_study_header_cached, _fetch_study_headers, is_study_public,
@@ -29,8 +32,8 @@ from helpers.qiita_fetch import (
 from helpers.study_detail import load_preps_and_graph
 from helpers.study_resolve import acronym_rank, identifying_tokens, resolve_text
 from helpers.study_samples import (
-    fetch_prep_samples, fetch_sample_fields, list_study_sample_ids, prep_groups,
-    prep_membership, study_columns,
+    artifact_preps, fetch_prep_samples, fetch_sample_fields, list_study_sample_ids, prep_data_types,
+    prep_groups, prep_membership, study_columns,
 )
 from helpers.tool_result import ToolResult
 
@@ -64,7 +67,8 @@ def _int(value):
 
 
 def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
-    """Dispatch one of STUDY_TOOL_NAMES (helpers/agent_tool_schemas.py)."""
+    """Dispatch one of STUDY_TOOL_NAMES (helpers/agent_tool_schemas.py).
+    `user_id` is only read by propose_aggregation_add (the user's aggregations)."""
     args = args or {}
     if name == "resolve_study":
         return _tool_resolve_study(args, scope=scope, chat_id=chat_id)
@@ -79,6 +83,8 @@ def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
     if not is_study_public(sid):
         return _err(name, f"Study {sid} is private or does not exist.", "private or not found")
     header = _fetch_study_header_cached(sid) or {}
+    if name == "propose_aggregation_add":
+        return _tool_propose_aggregation(sid, header, args, user_id)
     tool = {
         "get_study_preps":     _tool_preps,
         "show_study_samples":  _tool_samples,
@@ -386,6 +392,110 @@ def _tool_files(sid, header, args):
         text=_clip("\n".join(lines)), label=f"Files of study {sid}", detail=summary,
         ui_payload={"kind": "artifact_files", "study_id": sid, "study_title": header.get("study_title"),
                     "prep_id": prep_id, "artifact_ids": [n.get("artifact_id") for n in nodes],
+                    "result_summary": summary})
+
+
+# ── propose_aggregation_add ─────────────────────────────────────────────────
+
+def _as_list(value):
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _file_rows(files, file_filter=None):
+    """[(sample_id, artifact_id)] of a study's per-sample file map
+    (helpers.sample_files.get_sample_files) that pass file_filter — the rows an
+    add checks (routes/aggregation_routes.py _rows_of)."""
+    return [(sample, e[2]) for sample, entries in files.items() for e in entries
+            if file_filter is None or group_matches(file_filter, e[0], e[1], e[2])]
+
+
+def _tool_propose_aggregation(sid, header, args, user_id):
+    """Scope, counts and target for adding a study (or some of its data types /
+    preps) to one of the user's aggregations. Writes nothing: the card's Add
+    button posts the returned file_filter to POST /api/aggregations/<id>/studies."""
+    files = get_sample_files(sid)
+    available = sorted({e[0] for es in files.values() for e in es}
+                       | {d for ds in prep_data_types(sid).values() for d in ds})
+    data_types, unknown = [], []
+    for v in _as_list(args.get("data_types")):
+        dt = _match_data_type(str(v), available)
+        (data_types if dt else unknown).append(dt or str(v))
+    if unknown:
+        return ToolResult(text=f"{_title(sid, header)} has no {', '.join(unknown)} data. Its data types: "
+                               f"{', '.join(available) or 'none'}.",
+                          label="Aggregation proposal", detail="unknown data type")
+    prep_ids = sorted({p for p in (_int(x) for x in _as_list(args.get("prep_ids"))) if p is not None})
+    blocked, warnings, artifacts = None, [], []
+    if prep_ids:
+        a2p, with_files = artifact_preps(sid), {e[2] for es in files.values() for e in es}
+        known = set(a2p.values())
+        bad = [p for p in prep_ids if p not in known]
+        if bad:
+            return ToolResult(text=f"{_title(sid, header)} has no prep {', '.join(map(str, bad))}.",
+                              label="Aggregation proposal", detail="unknown prep")
+        for p in prep_ids:
+            mine = [a for a, prep in a2p.items() if prep == p and a in with_files]
+            if not mine:
+                blocked = f"prep {p} has no per-sample FASTQ/FASTA files"
+            artifacts += mine
+    scoped = bool(data_types or prep_ids)
+    file_filter = ({"data_types": sorted(set(data_types)), "processing": [],
+                    "artifacts": sorted({str(a) for a in artifacts})} if scoped else None)
+    study_rows = _file_rows(files)
+    rows = _file_rows(files, file_filter) if scoped else study_rows
+    samples = len({s for s, _a in rows})
+    if scoped and not rows and not blocked:
+        blocked = "nothing in that scope has per-sample FASTQ/FASTA files"
+    if not study_rows:
+        warnings.append("the study has no per-sample FASTQ/FASTA files, so it would be added with no file rows")
+
+    aggs = []
+    for a in (list_aggregations(user_id) if user_id else []):
+        ids = {int(s["study_id"]) for s in a.get("studies") or []}
+        aggs.append({"aggregation_id": a["aggregation_id"], "name": a["name"], "studies": len(ids),
+                     "has_study": sid in ids, "full": len(ids) >= AGGREGATION_STUDIES_CAP})
+    open_aggs = [a for a in aggs if not a["has_study"] and not a["full"]]
+    want = str(args.get("aggregation_name") or "").strip()
+    named = next((a for a in aggs if want and a["name"].lower() == want.lower()), None)
+    suggest = None
+    if named and named["has_study"]:
+        warnings.append(f'"{named["name"]}" already has this study')
+    elif named and named["full"]:
+        warnings.append(f'"{named["name"]}" already holds {AGGREGATION_STUDIES_CAP} studies')
+    elif named:
+        suggest = {"aggregation_id": named["aggregation_id"], "name": named["name"]}
+    elif want:
+        suggest = {"aggregation_id": None, "name": want}          # created when the user clicks Add
+    elif len(open_aggs) == 1:
+        suggest = {"aggregation_id": open_aggs[0]["aggregation_id"], "name": open_aggs[0]["name"]}
+
+    scope_txt = ", ".join(filter(None, [f"data type {', '.join(sorted(set(data_types)))}" if data_types else "",
+                                        f"prep {', '.join(map(str, prep_ids))}" if prep_ids else ""])) or "the whole study"
+    lines = ["Proposal only — nothing was added. The user must pick an aggregation and click Add on the card.",
+             f"{_title(sid, header)}, scope {scope_txt}: {samples} samples, {len(rows)} file rows "
+             f"(of {len(study_rows)} in the study)."]
+    if blocked:
+        lines.append(f"Cannot add: {blocked}.")
+    if warnings:
+        lines.append("Note: " + "; ".join(warnings) + ".")
+    if aggs:
+        lines.append("The user's aggregations: " + "; ".join(
+            f'"{a["name"]}" ({a["studies"]} studies' + (", already has this study" if a["has_study"] else "")
+            + (", full" if a["full"] else "") + ")" for a in aggs[:20]))
+    else:
+        lines.append("The user has no aggregations yet; the card can create one.")
+    if suggest:
+        lines.append(f'Suggested target: "{suggest["name"]}"' + (" (new)" if suggest["aggregation_id"] is None else "") + ".")
+    summary = f"{len(rows)} file rows · {scope_txt}"
+    return ToolResult(
+        text=_clip("\n".join(lines)), label="Aggregation proposal", detail=summary,
+        ui_payload={"kind": "aggregation_proposal", "study_id": sid, "study_title": header.get("study_title"),
+                    "scope": {"data_types": sorted(set(data_types)), "prep_ids": prep_ids},
+                    "file_filter": file_filter,
+                    "counts": {"samples": samples, "rows": len(rows), "study_rows": len(study_rows)},
+                    "suggest": suggest, "blocked": blocked, "warnings": warnings,
                     "result_summary": summary})
 
 
