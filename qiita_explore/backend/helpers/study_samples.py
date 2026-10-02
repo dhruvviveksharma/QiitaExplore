@@ -214,3 +214,17 @@ def fetch_samples_by_ids(study_id, sample_ids):
     order = {sid: i for i, sid in enumerate(ids)}
     rows.sort(key=lambda r: order.get(r[0], len(ids)))
     return rows
+
+
+def fetch_sample_fields(study_id, sample_id):
+    """One sample's metadata as {field: value} (without the internal
+    qiita_study_id key), or None when the study has no such sample."""
+    rows = pooled_fetchall(
+        f"SELECT sample_values FROM {_table(study_id)} WHERE sample_id = %s AND sample_id <> %s",
+        [sample_id, SENTINEL],
+    )
+    if not rows:
+        return None
+    fields = dict(rows[0][0])
+    fields.pop("qiita_study_id", None)
+    return fields

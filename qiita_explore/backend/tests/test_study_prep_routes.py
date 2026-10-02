@@ -1,6 +1,7 @@
 """Study-card prep routes: /sample-preps, /preps/<pid>/samples, and the prep_ids
 attached to /detail's samples. Postgres-touching names are patched on the route
-module (same app fixture pattern as test_fastq_manifest)."""
+module, or on helpers/study_detail.py through the route's binding to it (same app
+fixture pattern as test_fastq_manifest)."""
 import os
 import sys
 
@@ -71,10 +72,10 @@ def test_prep_samples_parses_prep_id_and_clamps_limit(client, sr, monkeypatch):
 
 def test_detail_samples_carry_prep_ids(client, sr, monkeypatch):
     sid = 71001
-    sr.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
+    sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
                                  samples_context="ctx", artifact_graph_json="[]", prep_metadata_json="{}",
                                  samples_json='[{"sample_id": "s1"}, {"sample_id": "s2"}]', total_samples=2)
-    monkeypatch.setattr(sr, "prep_membership", lambda s: {"s1": [(7, "16S"), (8, "WGS")]})
+    monkeypatch.setattr(sr.study_detail, "prep_membership", lambda s: {"s1": [(7, "16S"), (8, "WGS")]})
     d = client.get(f"/api/studies/{sid}/detail").get_json()
     assert [(x["sample_id"], x["prep_ids"]) for x in d["samples"]] == [("s1", [7, 8]), ("s2", [])]
 
@@ -88,13 +89,20 @@ def test_detail_refetches_graph_cached_before_visibility(client, sr, monkeypatch
     graph cached before that field existed is treated as stale and rebuilt."""
     import json
     sid = 71002 if refetched else 71003
-    sr.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
+    sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
                                  samples_context="ctx", artifact_graph_json=json.dumps([node]),
                                  prep_metadata_json="{}", samples_json="[]", total_samples=0)
     fresh = [{**node, "visibility": "public", "name": "rebuilt"}]
     calls = []
-    monkeypatch.setattr(sr, "fetch_artifact_graph", lambda s: calls.append(s) or fresh)
-    monkeypatch.setattr(sr, "prep_membership", lambda s: {})
+    monkeypatch.setattr(sr.study_detail, "fetch_artifact_graph", lambda s: calls.append(s) or fresh)
+    monkeypatch.setattr(sr.study_detail, "prep_membership", lambda s: {})
     graph = client.get(f"/api/studies/{sid}/detail").get_json()["artifact_graph"]
     assert calls == ([sid] if refetched else [])
     assert graph == (fresh if refetched else [node])
+
+
+def test_sample_detail_uses_pooled_lookup(client, sr, monkeypatch):
+    monkeypatch.setattr(sr, "fetch_sample_fields", lambda sid, sample: {"a": 1} if sample == "s/1" else None)
+    assert client.get("/api/studies/71004/samples/s/1").get_json() == {"sample_id": "s/1", "fields": {"a": 1}}
+    assert client.get("/api/studies/71004/samples/nope").status_code == 404
+    assert client.get("/api/studies/99999/samples/s/1").status_code == 404     # not public

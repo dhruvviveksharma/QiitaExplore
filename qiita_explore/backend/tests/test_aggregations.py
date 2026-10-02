@@ -345,19 +345,20 @@ def test_study_detail_refetches_when_cached_row_has_no_preps(client, logged_in, 
     availability map persisted "[]" into some; the modal must refetch rather
     than serve zero preps as a hit."""
     import routes.study_routes as sr
+    sd = sr.study_detail
 
-    # Write through the route module's own binding: fresh_db re-imports
+    # Write through the route's own binding to helpers/study_detail: fresh_db re-imports
     # store per test, but this module-scoped app still holds the original.
-    sr.upsert_study_detail_cache(sid, preps_json, preps_json, samples_context="ctx")
+    sd.upsert_study_detail_cache(sid, preps_json, preps_json, samples_context="ctx")
     fetched = []
     monkeypatch.setattr(sr, "is_study_public", lambda sid: True)
-    monkeypatch.setattr(sr, "_fetch_study_detail_from_qiita",
+    monkeypatch.setattr(sd, "_fetch_study_detail_from_qiita",
                         lambda sid: (fetched.append(sid) or ([{"prep_template_id": 7, "data_type": "16S"}], [])))
-    monkeypatch.setattr(sr, "fetch_artifact_graph", lambda sid: [])
-    monkeypatch.setattr(sr, "_fetch_prep_metadata_summary", lambda pid: {})
-    monkeypatch.setattr(sr, "_fetch_study_samples", lambda sid, limit=200: ([], 0))
-    monkeypatch.setattr(sr, "_fetch_sample_context_text", lambda sid: "")
-    monkeypatch.setattr(sr, "prep_membership", lambda sid: {})
+    monkeypatch.setattr(sd, "fetch_artifact_graph", lambda sid: [])
+    monkeypatch.setattr(sd, "_fetch_prep_metadata_summary", lambda pid: {})
+    monkeypatch.setattr(sd, "_fetch_study_samples", lambda sid, limit=200: ([], 0))
+    monkeypatch.setattr(sd, "_fetch_sample_context_text", lambda sid: "")
+    monkeypatch.setattr(sd, "prep_membership", lambda sid: {})
     r = client.get(f"/api/studies/{sid}/detail")
     assert r.status_code == 200, r.get_json()
     assert fetched == [sid]

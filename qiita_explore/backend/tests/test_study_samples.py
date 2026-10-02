@@ -169,3 +169,18 @@ def test_artifact_preps_lowest_prep_wins_and_is_memoized(ss):
         assert ss.artifact_preps(5) == {7: 100}
         assert ss.artifact_preps("5") == {7: 100}                 # served from the memo
     assert m.call_count == 1 and "ORDER BY pa.prep_template_id" in m.call_args[0][0]
+
+
+# ── fetch_sample_fields ──────────────────────────────────────────────────────
+
+def test_fetch_sample_fields_binds_id_and_sentinel_and_drops_study_key(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=[({"qiita_study_id": "232", "ph": "7"},)]) as m:
+        assert ss.fetch_sample_fields(232, "232.s1") == {"ph": "7"}
+    sql, params = m.call_args[0]
+    assert "FROM qiita.sample_232 WHERE sample_id = %s AND sample_id <> %s" in sql
+    assert params == ["232.s1", SENT]
+
+
+def test_fetch_sample_fields_unknown_sample(ss):
+    with patch.object(ss, "pooled_fetchall", return_value=[]):
+        assert ss.fetch_sample_fields(232, "nope") is None
