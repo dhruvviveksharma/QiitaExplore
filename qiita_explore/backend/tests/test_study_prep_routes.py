@@ -77,3 +77,24 @@ def test_detail_samples_carry_prep_ids(client, sr, monkeypatch):
     monkeypatch.setattr(sr, "prep_membership", lambda s: {"s1": [(7, "16S"), (8, "WGS")]})
     d = client.get(f"/api/studies/{sid}/detail").get_json()
     assert [(x["sample_id"], x["prep_ids"]) for x in d["samples"]] == [("s1", [7, 8]), ("s2", [])]
+
+
+@pytest.mark.parametrize("node, refetched", [
+    ({"kind": "artifact", "node_id": "a1", "filepaths": []}, True),                              # pre-visibility cache
+    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public"}, False),
+])
+def test_detail_refetches_graph_cached_before_visibility(client, sr, monkeypatch, node, refetched):
+    """The study modal's chart hides archived artifacts by `visibility`, so a
+    graph cached before that field existed is treated as stale and rebuilt."""
+    import json
+    sid = 71002 if refetched else 71003
+    sr.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
+                                 samples_context="ctx", artifact_graph_json=json.dumps([node]),
+                                 prep_metadata_json="{}", samples_json="[]", total_samples=0)
+    fresh = [{**node, "visibility": "public", "name": "rebuilt"}]
+    calls = []
+    monkeypatch.setattr(sr, "fetch_artifact_graph", lambda s: calls.append(s) or fresh)
+    monkeypatch.setattr(sr, "prep_membership", lambda s: {})
+    graph = client.get(f"/api/studies/{sid}/detail").get_json()["artifact_graph"]
+    assert calls == ([sid] if refetched else [])
+    assert graph == (fresh if refetched else [node])
