@@ -664,10 +664,11 @@ input, textarea { font-family: var(--sans); }
 .tool-call-show-query   { font-size: 11px; font-weight: 500; color: var(--text-3); cursor: pointer; margin-left: 10px; }
 .tool-call-show-query:hover { color: var(--accent); text-decoration: underline; }
 
-/* Search results drawer (View all →) — floating bubble, inset from the edge */
+/* Search results drawer (View all →) — floating bubble, inset from the edge.
+   Its width (resizable) and card grid are in search_results.css. */
 .search-results-panel {
   position: fixed; top: 12px; right: 12px; bottom: 12px;
-  width: 400px; height: auto;
+  width: 400px; max-width: calc(100vw - 24px); height: auto;
   z-index: 200; background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -703,14 +704,6 @@ input, textarea { font-family: var(--sans); }
 .search-results-panel-close:hover { color: var(--text); }
 .search-results-panel-body { flex: 1; overflow-y: auto; padding: 12px 14px 20px; }
 .search-results-empty { font-size: 0.85rem; color: var(--text-3); margin: 8px 0; }
-.search-results-list { display: flex; flex-direction: column; gap: 10px; }
-.search-results-row { display: flex; gap: 8px; align-items: flex-start; }
-.search-results-rank {
-  flex-shrink: 0; min-width: 28px; margin-top: 10px;
-  font-size: 0.72rem; font-weight: 600; color: var(--text-3);
-}
-.search-results-card-wrap { flex: 1; min-width: 0; }
-.search-results-card-wrap .inline-study-card { margin: 0; }
 
 /* ── Inline study cards (inside chat tool results) ───────────── */
 .inline-study-cards { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1138,7 +1131,7 @@ input, textarea { font-family: var(--sans); }
 
 .show-more-btn { margin-top: 6px; background: none; border: none; color: var(--text-3); font-size: 0.8rem; cursor: pointer; padding: 2px 0; }
 .show-more-btn:hover { color: var(--accent); }
-.main.merge-open { padding-right: 430px; transition: padding-right 220ms ease; }
+.main.merge-open { padding-right: var(--drawer-space, 430px); transition: padding-right 220ms ease; }
 /* Workspace picker (floating panel create state) */
 .merge-picker-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
 .merge-ws-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
@@ -1318,7 +1311,7 @@ input, textarea { font-family: var(--sans); }
 }
 /* Keep the study card in the leftover column when the right drawer is open
    (search-results bubble + gutter / merge panel). Width is % of this overlay, not vw. */
-.modal-overlay.with-drawer { right: 430px; }
+.modal-overlay.with-drawer { right: var(--drawer-space, 430px); }
 @keyframes fadeIn { from { opacity:0; } }
 .modal-card {
   background: var(--surface);

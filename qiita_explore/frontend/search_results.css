@@ -1,0 +1,36 @@
+/* Search results drawer (js/search_results_panel.js): resizable from its left
+   edge; the study cards keep their 220px. Each item (rank + card) is a fixed
+   260px grid track, and space-between turns any extra width into spacing until
+   another column fits. Sibling of style.css (over the line cap), which keeps the
+   drawer's frame and --drawer-space users. */
+.search-results-list {
+  display: grid; grid-template-columns: repeat(auto-fill, 260px);
+  justify-content: space-between; column-gap: 16px; row-gap: 10px; align-items: start;
+}
+.search-results-list .show-more-btn { grid-column: 1 / -1; }
+.search-results-row { display: flex; gap: 8px; align-items: flex-start; }
+.search-results-rank {
+  flex: none; width: 32px; margin-top: 10px;
+  font-size: 0.72rem; font-weight: 600; color: var(--text-3);
+}
+.search-results-card-wrap { flex: none; }
+.search-results-card-wrap .inline-study-card { margin: 0; }
+
+/* The left-edge handle: an 8px strip, a grip that shows on hover / focus / drag. */
+.search-results-resize {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 8px; z-index: 2;
+  cursor: ew-resize; touch-action: none; outline: none;
+}
+.search-results-resize::after {
+  content: ''; position: absolute; left: 3px; top: 50%; width: 3px; height: 44px; margin-top: -22px;
+  border-radius: 2px; background: var(--border); opacity: 0; transition: opacity var(--t), background var(--t);
+}
+.search-results-panel:hover .search-results-resize::after,
+.search-results-resize:focus-visible::after,
+.drawer-resizing .search-results-resize::after { opacity: 1; }
+.search-results-resize:hover::after, .search-results-resize:focus-visible::after,
+.drawer-resizing .search-results-resize::after { background: var(--accent); }
+/* While dragging: no text selection, the resize cursor everywhere, and the page's
+   room for the drawer follows the pointer instead of easing behind it. */
+.drawer-resizing, .drawer-resizing * { cursor: ew-resize !important; user-select: none; }
+.drawer-resizing .main.merge-open { transition: none; }
