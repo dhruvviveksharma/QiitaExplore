@@ -2916,7 +2916,7 @@ straight into the aggregation export.
 ## TKT-092: Export Per-Prep Demultiplexed Files for Studies With No Per-Sample File
 
 **Severity:** Low
-**Status:** Open
+**Status:** Open (study 1889 is now covered through its raw `FASTQ` artifact, TKT-096; this ticket remains for studies with only `Demultiplexed`)
 
 ### Description
 
@@ -3026,6 +3026,52 @@ when cached, but cold `/detail` costs seconds for big studies (AGP ~5 s).
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-10-01*
+---
+
+## TKT-096: Raw Multiplexed `FASTQ` Artifacts Are Invisible to the Manifest and Aggregate Export
+
+**Severity:** Medium (1136 studies, 460 public, have only a raw `FASTQ` artifact)
+**Status:** Resolved 2026-09-29 — `FASTQ` artifacts join the availability map and exports via `fastq_manifest._resolve` / `build_multiplexed_rows` (files zipped into lanes by sorted name; one lane serves the whole prep, several lanes route by `run_prefix`). New `export.tsv` (Study id, Sample id, Prep type, Processing, R1, R2, barcodes file, barcode); CSV/xlsx gain `raw_barcodes` rows.
+
+### Description
+
+Found on barnacle (2026-09-29) while tracing AGP's
+`758_Knight_AFG_16s_w_phiX_NoIndex_L001_R{1,2,3}_001.fastq.gz`. Study 10317, prep 1115 →
+artifact 2947 has type **`FASTQ`**: a raw multiplexed upload with `raw_forward_seqs` (R1),
+`raw_barcodes` (R2) and `raw_reverse_seqs` (R3) in `raw_data/` (subdirectory=false). All
+449 of the prep's samples share `run_prefix = Knight_AFG_16s_w_phiX_NoIndex_L001`.
+`helpers/fastq_manifest._WHERE_FASTQ` / `_WHERE_SEQ` accept only `per_sample_FASTQ` and
+`FASTA`, so this artifact never reaches `build_manifest_rows`. Even if the filter allowed it,
+`_claim` pops each file once, so only one of the 449 samples would get the path, and the
+barcodes file would be dropped.
+
+This is the raw-upload counterpart of TKT-092, which covers the post-split `Demultiplexed`
+artifacts. Both hit the same problem: one file holds many samples.
+
+### Plan
+
+- Measure first. Count the studies whose only sequence artifact is `FASTQ` (and no
+  `per_sample_FASTQ`/`FASTA`/`Demultiplexed`) to see whether this is worth handling apart
+  from TKT-092.
+- If it is, add it to the TKT-092 design as a prep-level row type (e.g. `file_type =
+  multiplexed_fastq`). List R1/R2/R3 including `raw_barcodes`, and repeat the path for every
+  sample in the prep. Do not claim-once.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py` (`_WHERE_FASTQ`, `_WHERE_SEQ`, `_claim`)
 
 ---
+
+---
+
+---
+
+## TKT-097: Follow-ups to Group by prep / per-row selection
+
+Status 2026-09-30: the first two follow-ups originally listed here — a row's file paths / Processing / Artifact filters not scoped to its prep, and grouped `?sort=artifact` ranking by all of a sample's preps — are **done**: a row is now one `(sample, artifact)` pair and the artifact fixes its prep (`helpers/aggregation_rows.py`, `study_samples.artifact_preps`).
+
+Still open:
+- "Select whole prep" checkbox on the group header rows (per-row selection already lets a single prep + artifact be isolated, one row at a time).
+- A saved per-study **Prep** picker next to Artifact (narrows the table, counts and export by prep), now cheap because `artifact_preps` maps artifact → prep.
+- Artifacts that appear in Qiita after a study is added are not auto-checked (selection rows are written when the study is added); "Select all" picks them up. Consider flagging a study whose `file_rows` snapshot is stale.

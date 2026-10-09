@@ -75,6 +75,8 @@ qiita_pet/*.conf
 qiita_db/support_files/patches/test_db_sql/91.sql
 
 *.env
+# Backups of .env (they hold the same secrets)
+.env.bak*
 
 # Archives
 *.tar.gz
