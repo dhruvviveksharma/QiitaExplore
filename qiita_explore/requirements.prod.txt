@@ -20,6 +20,9 @@ psycopg2-binary
 redis
 biom-format
 
+# ── Sample Aggregation xlsx export ──────────────────────────────────────────
+openpyxl==3.1.5
+
 # ── Qiita PAT authentication ─────────────────────────────────────────────────
 httpx>=0.25,<1.0
 cryptography>=41.0

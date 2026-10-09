@@ -36,7 +36,7 @@ function renderApp(s, account) {
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
+    query, results, searching, searched, deepSearching, deepIds, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
@@ -49,12 +49,14 @@ function renderApp(s, account) {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    applyBrowseFilters,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
-    activeMsgs, slashMatches,
+    activeMsgs, slashMatches, composerHistory, browseHistory, contextUsage,
+    agg,
   } = s;
 
   // One list of {study_id, study_title}; ids are derived where a bare id is
@@ -64,6 +66,22 @@ function renderApp(s, account) {
   const hasGlobalPins      = view.type === 'global-chat' && pinnedMeta.length > 0;
   const hasSourcesBar      = hasProjectSources || hasGlobalPins;
   const resultsDrawerOpen  = !!(searchResultsPanel && !searchResultsClosing);
+  // One action row for Browse cards and the study modal (js/study_actions.js).
+  // Pin means "pin to this chat" in a chat, "stage for the composer" in
+  // Browse, and is hidden where there is no composer (merges, aggregations).
+  const hasPin = sid => pinnedMeta.some(p => p.study_id === sid);
+  const studyActionsCtx = {
+    agg, openProjId, projStudyIds, addStudyToProject,
+    pin: view.chatId ? {
+      isOn: hasPin,
+      toggle: st => hasPin(st.study_id) ? unpinStudy(view.chatId, st.study_id) : pinStudy(view.chatId, st),
+    } : view.type === 'browse' ? {
+      isOn: sid => ctxStudyIds.includes(sid),
+      toggle: st => setCtxStudies(prev => prev.some(x => x.study_id === st.study_id)
+        ? prev.filter(x => x.study_id !== st.study_id) : [...prev, st]),
+    } : null,
+    onMerge: SHOW_MERGES ? st => { setPendingMergeStudy(st); openMergePanel(true); } : null,
+  };
 
   // Shared save for both sidebar chat lists' inline rename (see chat-row
   // rendering below) — mirrors MergesTab's saveRename pattern.
@@ -413,15 +431,17 @@ function renderApp(s, account) {
       <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}${isChat ? scrollCollapse.barClass : ''}`}>
-          {(view.type === 'browse' || view.type === 'merges') ? (
+          {(view.type === 'browse' || view.type === 'merges' || view.type === 'aggregations') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
                 onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
+              <button className={`topbar-nav${view.type === 'aggregations' ? ' active' : ''}`}
+                onClick={() => { setView({ type: 'aggregations' }); setSidebarCollapsed(true); }}>Sample Aggregation</button>
               {SHOW_MERGES && (
                 <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
                   onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
               )}
-              {view.type === 'merges' && (
+              {(view.type === 'merges' || view.type === 'aggregations') && (
                 <button
                   className="sidebar-toggle-btn"
                   title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
@@ -518,6 +538,18 @@ function renderApp(s, account) {
             </div>
           )}
 
+          {/* ── SAMPLE AGGREGATION ── */}
+          {view.type === 'aggregations' && <AggregationsTab agg={agg} />}
+
+          {/* ── STUDY PAGE (js/study_detail.js) ── */}
+          {/* Back returns to the modal it was opened from, else to Browse. */}
+          {view.type === 'study' && (
+            <StudyPage studyId={view.studyId}
+              shareUrl={window.location.origin + window.location.pathname + buildHash(view, null)}
+              renderActions={st => <StudyActions study={st} ctx={studyActionsCtx} />}
+              onBack={() => (view.fromModal ? window.history.back() : setView({ type: 'browse' }))} />
+          )}
+
           {/* ── BROWSE ── */}
           {view.type === 'browse' && (
             <div className="browse-panel">
@@ -527,13 +559,14 @@ function renderApp(s, account) {
                   placeholder="Search by keyword, author, or topic…"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && doSearch()}
+                  onKeyDown={e => { if (browseHistory.onKey(e, query, setQuery)) return; if (e.key === 'Enter') doSearch(); }}
                 />
-                <button className="btn-search" onClick={() => doSearch()} disabled={searching || !query.trim()}>
+                <button className="btn-search" onClick={() => doSearch()}
+                  disabled={searching || (!query.trim() && !hasBrowseFilters(bf.filters))}>
                   {searching ? '…' : 'Search'}
                 </button>
                 {searched && (
-                  <button className="btn-clear" onClick={() => { setQuery(''); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
+                  <button className="btn-clear" onClick={() => { setQuery(''); bf.clear(); setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null); }}>
                     Clear
                   </button>
                 )}
@@ -545,6 +578,7 @@ function renderApp(s, account) {
                 ))}
               </div>
 
+              <BrowseFilterBar facets={bf.facets} filters={bf.filters} onChange={applyBrowseFilters} />
 
               {(sqlQuery || appliedFilters?.pi) && (
                 <>
@@ -561,66 +595,25 @@ function renderApp(s, account) {
 
               {!searching && (
                 <>
-                  <div className="browse-count">{searched ? `${results.length} results` : 'GOLD studies'}</div>
+                  <div className="browse-count">
+                    {searched ? `${results.length} results` : 'GOLD studies'}
+                    {searched && deepSearching && <span className="browse-count-sub"> · searching sample metadata…</span>}
+                    {searched && !deepSearching && deepIds.size > 0 && (
+                      <span className="browse-count-sub"> ({deepIds.size} found in sample metadata)</span>
+                    )}
+                  </div>
                   {addStudyErr && <div className="browse-error">{addStudyErr}</div>}
-                  {searched && results.length === 0 && <div className="state-empty">No studies matched your search.</div>}
+                  {searched && results.length === 0 && !deepSearching && <div className="state-empty">No studies matched your search.</div>}
                   <div className="studies-grid">
-                    {displayStudies.map(study => {
-                      const inProj = projStudyIds.includes(study.study_id);
-                      const inCtx  = ctxStudyIds.includes(study.study_id);
-                      const dataTypeList = splitTypes(study.data_types);
-                      const metaParts = [
-                        study.num_samples != null ? `${study.num_samples} samples` : null,
-                        study.num_preps    != null ? `${study.num_preps} preps`    : null,
-                      ].filter(Boolean);
-                      return (
-                        <div key={study.study_id} className="study-card" onClick={() => openStudyModal(study)}>
-                          <div className="study-card-top">
-                            <div style={{display:'flex',gap:'6px',alignItems:'center'}}>
-                              <span className="study-id-badge">ID {study.study_id}</span>
-                              {study.is_gold && <span className="gold-badge">GOLD</span>}
-                            </div>
-                            <div className="study-card-actions" onClick={e => e.stopPropagation()}>
-                              {openProjId ? (
-                                <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
-                                  {inProj ? '✓ Saved' : '+ Add to Project'}
-                                </button>
-                              ) : (
-                                <button className={`btn-card-ctx ${inCtx ? 'on' : ''}`}
-                                  onClick={() => setCtxStudies(prev =>
-                                    inCtx ? prev.filter(s => s.study_id !== study.study_id) : [...prev, study])}>
-                                  {inCtx ? '✓ Pinned' : '+ Pin'}
-                                </button>
-                              )}
-                              {SHOW_MERGES && (
-                                <button className="btn-card-merge"
-                                  onClick={() => {
-                                    setPendingMergeStudy(study);
-                                    openMergePanel(true);
-                                  }}>
-                                  + Merge
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="study-card-title">{study.study_title || 'Untitled study'}</div>
-                          <div className="study-card-abstract">{study.study_abstract || 'No abstract available.'}</div>
-                          {dataTypeList.length > 0 && (
-                            <div className="study-card-types">
-                              {dataTypeList.map(t => <span key={t} className="dtype-chip">{t}</span>)}
-                            </div>
-                          )}
-                          {metaParts.length > 0 && (
-                            <div className="study-card-meta">{metaParts.join(' · ')}</div>
-                          )}
-                          {(study.pi_name || study.pi_affiliation) && (
-                            <div className="study-card-pi">
-                              {[study.pi_name, study.pi_affiliation].filter(Boolean).join(' · ')}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {displayStudies.map((study, i) => (
+                      <React.Fragment key={study.study_id}>
+                        {searched && deepIds.has(study.study_id) && !deepIds.has(displayStudies[i - 1]?.study_id) && (
+                          <div className="browse-deep-divider">Also found in sample metadata</div>
+                        )}
+                        <StudyCard study={study} onClick={() => openStudyModal(study)}
+                          actions={<StudyActions study={study} ctx={studyActionsCtx} />} />
+                      </React.Fragment>
+                    ))}
                   </div>
                 </>
               )}
@@ -675,7 +668,8 @@ function renderApp(s, account) {
                           onViewAllStudies={openSearchResultsPanel}
                           pinnedStudyIds={pinnedMeta.map(p => p.study_id)}
                           steps={m.steps || []}
-                          pendingStep={m.pendingStep} />
+                          pendingStep={m.pendingStep}
+                          widgetCtx={chatWidgetCtx(s)} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'samples_report' ? (
                         <SamplesReportBubble ui={m.ui} messageKey={`${view.chatId}-${i}`} />
                       ) : m.role === 'assistant' && m.ui?.kind === 'systems_status' ? (
@@ -732,7 +726,7 @@ function renderApp(s, account) {
         </div>
 
         {/* Composer */}
-        {view.type !== 'merges' && <div className="composer-wrap">
+        {view.type !== 'merges' && view.type !== 'aggregations' && view.type !== 'study' && <div className="composer-wrap">
           {showModelPicker && (
             <ModelPickerCard
               current={selectedModel}
@@ -744,6 +738,10 @@ function renderApp(s, account) {
               }}
               onClose={() => setShowModelPicker(false)}
             />
+          )}
+          {isChat && view.chatId && (   /* this chat's temporary aggregation (chat_aggregation_bar.js) */
+            <ChatAggregationBar agg={agg} chatId={view.chatId} scope={view.type === 'project-chat' ? 'project' : 'global'}
+              onOpen={chatWidgetCtx(s).openAggregation} />
           )}
           {isChat && view.chatId && (
             <PinnedBar
@@ -779,7 +777,8 @@ function renderApp(s, account) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => {
-                const menuOpen = slashMatches.length > 0 && !slashDismissed;
+                // While ↑ / ↓ steps through history, the arrows stay with it, not the slash menu.
+                const menuOpen = slashMatches.length > 0 && !slashDismissed && !composerHistory.browsing(input);
                 if (menuOpen) {
                   if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, slashMatches.length - 1)); return; }
                   if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
@@ -790,6 +789,7 @@ function renderApp(s, account) {
                   }
                   if (e.key === 'Escape')    { e.preventDefault(); setSlashDismissed(true); return; }
                 }
+                if (composerHistory.onKey(e, input, setInput)) return;
                 if (e.key === 'Enter' && !e.shiftKey && (isChat || view.type === 'browse')) { e.preventDefault(); sendMessage(); }
               }}
               disabled={!(isChat || view.type === 'browse') || sending}
@@ -808,6 +808,7 @@ function renderApp(s, account) {
                 )}
               </div>
               <span style={{flex:1}} />
+              {isChat && view.chatId && <ContextBar usage={contextUsage} model={selectedModel} />}
               <span className="composer-model-chip"
                     onClick={() => setShowModelPicker(v => !v)}
                     title="Click or type /model to change">
@@ -827,6 +828,8 @@ function renderApp(s, account) {
       {modalStudy && (
         <StudyModal study={modalStudy} detail={modalDetail}
           loading={modalDetailLoading} onClose={closeModal}
+          actions={<StudyActions study={modalStudy} ctx={studyActionsCtx} />}
+          onOpenPage={() => { setView({ type: 'study', studyId: modalStudy.study_id, fromModal: true }); closeModal(); }}
           drawerOpen={!!(showMergePanel || resultsDrawerOpen)}
           shareUrl={window.location.origin + window.location.pathname + buildHash(view, modalStudy.study_id)} />
       )}

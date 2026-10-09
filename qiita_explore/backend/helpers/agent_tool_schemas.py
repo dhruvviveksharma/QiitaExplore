@@ -296,3 +296,102 @@ PROJECT_TOOL_SCHEMAS = [
         },
     },
 ]
+
+
+# ── Study detail tools (helpers/study_tools.py) — both chat scopes ───────────
+# Each one is shown to the user as an interactive widget in the reply.
+
+def _fn(name, description, properties, required):
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": properties, "required": required}}}
+
+
+_STUDY_ID = {"type": "integer", "description": "The Qiita study ID."}
+
+STUDY_TOOL_SCHEMAS = [
+    _fn("get_study_preps",
+        "Show a study's prep templates (one per sequencing run) with their data types, sample counts, "
+        "platform and status. The user sees an interactive table; clicking a prep shows its processing "
+        "graph. Use for questions about a study's preps, data types or sequencing.",
+        {"study_id": _STUDY_ID,
+         "data_type": {"type": "string", "description": "Only preps of this data type, e.g. '16S', 'Metagenomic'."}},
+        ["study_id"]),
+    _fn("show_study_samples",
+        "Show a study's samples to the user as a list with each clicked sample's metadata beside it. "
+        "You get the count, the first sample ids and the metadata column names — not the values "
+        "(use get_sample_metadata for one sample, or the study report tool to read values across samples).",
+        {"study_id": _STUDY_ID,
+         "prep_id": {"type": "integer", "description": "Only the samples of this prep."},
+         "data_type": {"type": "string", "description": "Only samples in preps of this data type."}},
+        ["study_id"]),
+    _fn("get_sample_metadata",
+        "All metadata fields of one sample of a study, and which preps it is in.",
+        {"study_id": _STUDY_ID,
+         "sample_id": {"type": "string", "description": "The sample id, e.g. '10317.000001002'."}},
+        ["study_id", "sample_id"]),
+    _fn("get_prep_graph",
+        "Show the processing graph of one prep, like Qiita's chart: raw files -> demultiplexed -> "
+        "processed -> BIOM tables, with the processing jobs between them. The user can click any node "
+        "for its files or job parameters. You get an outline of the artifacts and steps.",
+        {"study_id": _STUDY_ID,
+         "prep_id": {"type": "integer", "description": "The prep (default: the study's first prep). "
+                                                       "An artifact id shows that artifact's prep."}},
+        ["study_id"]),
+    _fn("list_artifact_files",
+        "List the files of one artifact, or of every artifact of a prep. You get filenames, file types "
+        "and ids only — never server paths; the user sees full paths and download links in the widget.",
+        {"study_id": _STUDY_ID,
+         "artifact_id": {"type": "integer", "description": "One artifact."},
+         "prep_id": {"type": "integer", "description": "Every artifact of this prep (default: the first prep)."}},
+        ["study_id"]),
+    _fn("add_to_chat_aggregation",
+        "Add a study - or only some of its data types or preps - to THIS CHAT's temporary sample aggregation "
+        "(created on first use; it exports per-sample FASTQ file lists). It is added immediately: the user "
+        "sees what was added with an Undo button, and can export it or save it as a named aggregation. Use it "
+        "whenever the user wants to collect, gather, add or aggregate studies, preps or samples in this chat, "
+        "or to create an aggregation.",
+        {"study_id": _STUDY_ID,
+         "data_types": {"type": "array", "items": {"type": "string"},
+                        "description": "Only these data types, e.g. ['16S']."},
+         "prep_ids": {"type": "array", "items": {"type": "integer"}, "description": "Only these preps."}},
+        ["study_id"]),
+    _fn("save_chat_aggregation",
+        "Save this chat's temporary aggregation under a name: it moves to the Sample Aggregation tab and "
+        "is kept after the chat is deleted. Only when the user asks to save, keep or name it.",
+        {"name": {"type": "string", "description": "The name for the saved aggregation."}},
+        ["name"]),
+    _fn("list_aggregations",
+        "List the user's saved sample aggregations and this chat's temporary one: each one's studies, "
+        "checked file rows and per-study filter. Use it when the user asks what aggregations they have or "
+        "what is in one.",
+        {"name": {"type": "string", "description": "Only the saved aggregation with this name."}},
+        []),
+    _fn("propose_aggregation_add",
+        "Propose adding a study - or only some of its data types or preps - to one of the user's SAVED "
+        "aggregations that they name. This adds NOTHING: the user sees a card with the scope and counts, "
+        "picks the aggregation and clicks Add. Never say the study was added. When no saved aggregation is "
+        "named, use add_to_chat_aggregation instead.",
+        {"study_id": _STUDY_ID,
+         "data_types": {"type": "array", "items": {"type": "string"},
+                        "description": "Only these data types, e.g. ['16S']."},
+         "prep_ids": {"type": "array", "items": {"type": "integer"}, "description": "Only these preps."},
+         "aggregation_name": {"type": "string",
+                              "description": "The aggregation the user named, if any (a new one if none has this name)."}},
+        ["study_id"]),
+    _fn("resolve_study",
+        "Find which study the user means when they name it in words (title, acronym such as 'AGP', PI) "
+        "rather than by id. Call it before the study tools when the id isn't already settled in this "
+        "conversation. If it reports ambiguity, stop: the user is shown candidates to pick from.",
+        {"text": {"type": "string", "description": "The user's words that name the study."},
+         "for_tool": {"type": "string", "description": "The study tool you will call next.",
+                      "enum": ["get_study_preps", "show_study_samples", "get_sample_metadata",
+                               "get_prep_graph", "list_artifact_files", "add_to_chat_aggregation",
+                               "propose_aggregation_add"]}},
+        ["text"]),
+]
+
+STUDY_TOOL_NAMES = frozenset(t["function"]["name"] for t in STUDY_TOOL_SCHEMAS)
+
+TOOL_SCHEMAS += STUDY_TOOL_SCHEMAS
+PROJECT_TOOL_SCHEMAS += STUDY_TOOL_SCHEMAS

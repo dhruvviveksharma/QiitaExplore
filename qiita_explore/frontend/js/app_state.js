@@ -12,6 +12,7 @@ function useAppState() {
   const [openProject, setOpenProject] = useState(null);
   const [view,        setView]        = useState(() => parseHash(window.location.hash).view);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const agg = useAggregations(); // Sample Aggregation list + mutators (js/aggregations.js)
   const [chatCache,   setChatCache]   = useState({});
   const [globalChats, setGlobalChats] = useState([]);
   const [projInnerTab, setProjInnerTab] = useState('chats');
@@ -20,9 +21,16 @@ function useAppState() {
   const [firstStudies, setFirstStudies] = useState([]);
   const [searching,    setSearching]    = useState(false);
   const [searched,     setSearched]     = useState(false);
+  // Deep (sample-metadata) search runs after the fast text pass; its extra
+  // studies are appended to `results` and their ids kept here.
+  const [deepSearching, setDeepSearching] = useState(false);
+  const [deepIds,       setDeepIds]       = useState(() => new Set());
   const [sqlQuery,     setSqlQuery]     = useState(null);
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [showSql,      setShowSql]      = useState(false);
+  // Browse facet filters (PI / data type / year added) — js/browse_filters.js.
+  const bf = useBrowseFilters();
+  const searchSeqRef = useRef(0);
   const [ctxStudies,   setCtxStudies]   = useState([]);
   const [showNewProj,  setShowNewProj]  = useState(false);
   const [newProjName,  setNewProjName]  = useState('');
@@ -70,6 +78,8 @@ function useAppState() {
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
   const scrollCollapse = useScrollCollapse(view.chatId);
+  // ↑ / ↓ recall in the Browse bar (hooks/useInputHistory.js); the composer's is below activeMsgs.
+  const browseHistory   = useInputHistory('browse');
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
@@ -96,6 +106,10 @@ function useAppState() {
   // Derived — must be computed before effects that reference them
   const activeMsgs  = view.chatId ? (chatCache[view.chatId]?.messages || []) : [];
   const lastContent = activeMsgs[activeMsgs.length - 1]?.content;
+  // In a chat, ↑ / ↓ walk its own messages as typed (`sent`; a reload's content already is).
+  const chatSent = useMemo(() => view.chatId
+    ? activeMsgs.filter(m => m.role === 'user').map(m => m.sent || m.content) : null, [view.chatId, activeMsgs]);
+  const composerHistory = useInputHistory('composer', { transcript: chatSent, resetKey: view.chatId });
 
   useEffect(() => {
     if (!taRef.current) return;
@@ -183,6 +197,7 @@ function useAppState() {
         title: d.title,
         pinnedStudyMeta: d.pinned_study_meta || [],
         totalStudiesInProject: d.total_studies_in_project,
+        contextUsage: d.context_usage || null,
       },
     }));
   };
@@ -475,7 +490,7 @@ function useAppState() {
       return !patch || patch === cur ? prev : { ...prev, [chatId]: { ...cur, ...patch } };
     });
 
-  const optimisticAppend = (chatId, userMsg) =>
+  const optimisticAppend = (chatId, userMsg, sent = userMsg) =>
     setChatCache(prev => {
       const c = prev[chatId] || { messages: [], title: truncateTitle(userMsg) };
       return {
@@ -484,7 +499,7 @@ function useAppState() {
           ...c,
           messages: [
             ...c.messages,
-            { role: 'user',      content: userMsg },
+            { role: 'user',      content: userMsg, sent },
             { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null },
           ],
         },
@@ -530,6 +545,7 @@ function useAppState() {
     await parseSSE(res, {
       onUi:        (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
       onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
+      onContextUsage: (usage) => patchChat(chatId, () => ({ contextUsage: usage })),   // the composer's ContextBar
       onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
         ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
       })),
@@ -700,6 +716,7 @@ function useAppState() {
   const sendMessage = async (msgOverride) => {
     const msg = (typeof msgOverride === 'string' ? msgOverride : input).trim();
     if (!msg || sending) return;
+    composerHistory.record(msg);
     setSending(true); setCompErr('');
     if (typeof msgOverride !== 'string') setInput('');
 
@@ -719,6 +736,8 @@ function useAppState() {
     const pinStudyIds   = pinMatch ? pinMatch[1].trim().split(/\s+/).map(Number).filter(n => Number.isInteger(n) && !isNaN(n)) : null;
     const deepMatch = /^\/deepsearch\s+(.+)/is.exec(msg);
     const sendMsg   = deepMatch ? deepMatch[1].trim() : msg;
+    // Study commands (/preps, /graph, … — chat_slash.js) force their tool.
+    const forced = parseStudySlash(msg);
     const displayMsg    = reportStudyId != null ? `/report ${reportStudyId} - Full study report`
                         : pinStudyIds   != null ? `/pin ${pinStudyIds.join(' ')} - Pinning studies`
                         : msg;
@@ -746,7 +765,7 @@ function useAppState() {
           ? await ensureChatId(workView, '/systems')
           : null;
         if (!chatId) return;
-        optimisticAppend(chatId, '/systems — Model status');
+        optimisticAppend(chatId, '/systems — Model status', msg);
         patchLast(chatId, m => ({ ...m, pendingStep: { name: 'probe', label: 'Probing all models…' } }));
         const res = await apiFetch('/systems');
         if (!res.ok) throw new Error('Systems check failed');
@@ -758,7 +777,7 @@ function useAppState() {
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
         chatId = await ensureChatId(workView, truncateTitle(displayMsg));
-        optimisticAppend(chatId, displayMsg);
+        optimisticAppend(chatId, displayMsg, msg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
           {
@@ -766,6 +785,7 @@ function useAppState() {
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(forced?.force_tool && { force_tool: forced.force_tool }),
           },
           chatId, ctrl.signal,
           {
@@ -786,7 +806,7 @@ function useAppState() {
 
       } else if (workView.type === 'global-chat') {
         chatId = await ensureChatId(workView, truncateTitle(displayMsg));
-        optimisticAppend(chatId, displayMsg);
+        optimisticAppend(chatId, displayMsg, msg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
           {
@@ -794,6 +814,7 @@ function useAppState() {
             model: selectedModel,
             ...(reportStudyId != null && { report_study_id: reportStudyId }),
             ...(pinStudyIds   != null && { pin_study_ids: pinStudyIds }),
+            ...(forced?.force_tool && { force_tool: forced.force_tool }),
             deep_search: true,
           },
           chatId, ctrl.signal,
@@ -883,21 +904,61 @@ function useAppState() {
     if (res.ok) { const d = await res.json(); if (d.project) setOpenProject(d.project); }
   };
 
-  const doSearch = async (override) => {
+  const doSearch = async (override, filtersOverride) => {
     const q = (override ?? query).trim();
-    if (!q) return;
+    const f = filtersOverride ?? bf.filters;
+    if (!q && !hasBrowseFilters(f)) {
+      // Nothing to search by (e.g. the last filter chip was removed with an
+      // empty box) — back to the GOLD grid.
+      setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null);
+      return;
+    }
+    if (q) browseHistory.record(q);
     if (override) setQuery(override);
-    setSearching(true); setSearched(false);
-    const res = await apiPost('/search', { query: q, deep_search: true });
+    setSearching(true); setSearched(false); setDeepSearching(false); setDeepIds(new Set());
+    // Filter clicks fire back-to-back; a slow earlier response must not
+    // overwrite a later one.
+    const seq = ++searchSeqRef.current;
+    const isCurrent = () => seq === searchSeqRef.current;
+    // Two passes over the same query: the text match answers in ~0.2 s and
+    // renders the grid; the deep pass also probes up to 500 studies' sample
+    // metadata (2–15 s) and only appends studies the grid doesn't show yet, so
+    // nothing already on screen moves. Both start now.
+    const body = { query: q, filters: browseFiltersBody(f) };
+    const deepReq = apiPost('/search', { ...body, deep_search: true }).catch(() => null);
+    const res = await apiPost('/search', { ...body, deep_search: false });
+    if (!isCurrent()) return;
+    let shown = [];
     if (res.ok) {
       const d = await res.json();
-      setResults(d.results || []);
+      shown = d.results || [];
+      setResults(shown);
       setSqlQuery(d.sql_query || null);
       setAppliedFilters(d.applied_filters || null);
     }
     else setResults([]);
     setSearched(true); setSearching(false);
+    if (!res.ok) return;
+    // Opening one of the top results should be instant (utils.js).
+    prefetchStudyDetails(shown.slice(0, 5).map(s => s.study_id), isCurrent);
+    setDeepSearching(true);
+    try {
+      const dr = await deepReq;
+      if (!isCurrent() || !dr || !dr.ok) return;
+      const have  = new Set(shown.map(s => s.study_id));
+      const extra = ((await dr.json()).results || []).filter(s => !have.has(s.study_id));
+      if (isCurrent() && extra.length) {
+        setResults([...shown, ...extra]);
+        setDeepIds(new Set(extra.map(s => s.study_id)));
+      }
+    } catch (_) {
+    } finally {
+      if (isCurrent()) setDeepSearching(false);
+    }
   };
+  // Passes the next filters explicitly — bf.filters is still the old value
+  // in this closure.
+  const applyBrowseFilters = next => { bf.setFilters(next); doSearch(undefined, next); };
 
   // ─── derived ──────────────────────────────────────────────────────────────────
   const projStudyIds   = useMemo(() => (openProject?.studies || []).map(s => s.study_id), [openProject]);
@@ -906,7 +967,7 @@ function useAppState() {
   const isChat         = view.type === 'project-chat' || view.type === 'global-chat';
   const canSend        = (isChat || view.type === 'browse') && input.trim().length > 0 && !sending;
   const slashMatches   = /^\/\S*$/.test(input)
-    ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(input.toLowerCase()))
+    ? [...SLASH_COMMANDS, ...STUDY_SLASH_COMMANDS].filter(c => c.cmd.startsWith(input.toLowerCase()))
     : [];
 
   const topTitle = useMemo(() => {
@@ -915,6 +976,8 @@ function useAppState() {
       return chatCache[view.chatId]?.title || proj?.name || 'Project Chat';
     }
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
+    if (view.type === 'aggregations') return 'Sample Aggregation';
+    if (view.type === 'study') return `Study ${view.studyId}`;
     return 'Browse Studies';
   }, [view, chatCache, projects]);
 
@@ -935,7 +998,7 @@ function useAppState() {
     // state values
     projects, projLoading, openProjId, openProject, view,
     chatCache, globalChats, projInnerTab,
-    query, results, searching, searched, sqlQuery, appliedFilters, showSql,
+    query, results, searching, searched, deepSearching, deepIds, sqlQuery, appliedFilters, showSql, bf,
     ctxStudies, showNewProj, newProjName, mergeWorkspaceId, showMergePanel, pendingMergeStudy, sidebarCollapsed,
     editingChatId, editChatVal,
     showArchivedProj, archivedProjChats, showArchivedGlobal, archivedGlobalChats,
@@ -950,12 +1013,15 @@ function useAppState() {
     createProject, deleteProject, addStudyToProject, removeStudy,
     openProjChat, openGlobChat, newProjChat, deleteProjChat, newGlobChat, deleteGlobChat,
     unpinStudy, pinStudy, sendMessage, stopGenerating, openStudyModal, closeModal, enrichAllStudies, doSearch,
+    applyBrowseFilters,
     completeSlash, renameChat, renameProjChat, renameGlobChat,
     setProjChatPinned, setGlobChatPinned, setProjChatArchived, setGlobChatArchived,
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
-    activeMsgs, slashMatches,
+    activeMsgs, slashMatches, composerHistory, browseHistory,
+    contextUsage: view.chatId ? chatCache[view.chatId]?.contextUsage : null,
+    agg,
   };
 }

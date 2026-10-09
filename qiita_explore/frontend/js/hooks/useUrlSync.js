@@ -14,6 +14,10 @@ function hashToView(path) {
     return { type: 'global-chat', chatId: decodeURIComponent(m[1]) };
   if (path === '/merges' && SHOW_MERGES)
     return { type: 'merges' };
+  if (path === '/aggregations')
+    return { type: 'aggregations' };
+  if ((m = /^\/studies\/(\d+)\/?$/.exec(path)))
+    return { type: 'study', studyId: parseInt(m[1], 10) };
   return { type: 'browse' }; // covers '/browse', bare '/', and anything unmatched
 }
 
@@ -25,6 +29,10 @@ function viewToPath(view) {
     return `/chats/${view.chatId}`;
   if (view.type === 'merges' && SHOW_MERGES)
     return '/merges';
+  if (view.type === 'aggregations')
+    return '/aggregations';
+  if (view.type === 'study' && view.studyId != null)
+    return `/studies/${view.studyId}`;
   return '/browse';
 }
 

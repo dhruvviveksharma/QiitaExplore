@@ -1,6 +1,6 @@
 # Appendix A — API Reference
 
-Complete reference for the QiitaExplore HTTP surface: 52 endpoints, all under `/api/`.
+Complete reference for the QiitaExplore HTTP surface: 73 endpoints (counted from `@app.route`, 2026-09-30), all under `/api/`.
 
 This appendix is the single source of truth for the HTTP surface. It is derived directly from the seven route modules in `backend/routes/` plus the auth guard in `backend/helpers/auth_middleware.py`. If an endpoint is not listed here, it does not exist; if the behavior described here disagrees with the code, the code is right and this file needs updating.
 
@@ -82,13 +82,14 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | GET | `/api/auth/legacy-default` | `api_auth_legacy_default` | session | Whether legacy `"default"` data can be claimed |
 | POST | `/api/auth/claim-default` | `api_auth_claim_default` | session | Claim legacy `"default"`-owned rows |
 
-### Studies — `backend/routes/study_routes.py` (7)
+### Studies — `backend/routes/study_routes.py` (8)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
 | GET | `/api/studies/<int:study_id>/detail` | `api_study_detail` | session | Preps, artifacts, artifact graph, samples |
 | GET | `/api/studies/<int:study_id>/samples/<path:sample_id>` | `api_sample_detail` | session | All metadata fields for one sample |
-| POST | `/api/search` | `search` | session | LLM-planned study search |
+| POST | `/api/search` | `search` | session | Browse search: regex planner, relevance ranking, facet filters |
+| GET | `/api/search/facets` | `api_search_facets` | session | PI / data-type / year-added option lists for the Browse filters |
 | GET | `/api/systems` | `api_systems` | session | Live health probe of every allowed model |
 | GET | `/api/settings` | `api_get_settings` | session | Whether an Anthropic key is stored |
 | POST | `/api/settings` | `api_post_settings` | session | Store an Anthropic API key |
@@ -157,6 +158,25 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | POST | `/api/artifacts/sample-counts` | `get_artifact_sample_counts` | session | Batch `{artifact_id: count}` |
 | GET | `/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download` | `download_artifact_file` | session | Download one file from an artifact |
 | GET | `/api/merge-jobs/<job_id>/download` | `download_merge_result` | session | Download a finished merge tarball |
+
+### Aggregations — `backend/routes/aggregation_routes.py` (11)
+
+| Method | Path | Flask endpoint | Auth | Purpose |
+|---|---|---|---|---|
+| GET | `/api/aggregations` | `api_list_aggregations` | session | The caller's aggregations, studies and checked-row counts embedded — including chats' temporary ones (`chat_id` / `chat_scope` set), which the frontend keeps out of the tab |
+| POST | `/api/aggregations` | `api_create_aggregation` | session | Create an aggregation (`{name}`) |
+| PATCH | `/api/aggregations/<aggregation_id>` | `api_update_aggregation` | session | Rename (`{name}`) |
+| PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_set_study_file_filter` | session | Save that study's Data type / Processing / Artifact `file_filter` |
+| GET | `/api/aggregations/<aggregation_id>/file-facets` | `api_aggregation_file_facets` | session | How many checked rows the export would contain; with `?study_id=`, that study's picker options |
+| DELETE | `/api/aggregations/<aggregation_id>` | `api_delete_aggregation` | session | Delete (cascades to studies and rows) |
+| POST | `/api/aggregations/<aggregation_id>/studies` | `api_add_study_to_aggregation` | session | Add a whole study — every (sample, artifact) row checked |
+| GET | `/api/aggregations/<aggregation_id>` | `api_get_aggregation` | session | One aggregation (the chat re-reads one a tool changed) |
+| POST | `/api/aggregations/<aggregation_id>/save` | `api_save_chat_aggregation` | session | `{name}`: keep a chat's temporary aggregation — named, detached from the chat, listed in the tab |
+| POST | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/undo-add` | `api_undo_chat_aggregation_add` | session | Undo one `add_to_chat_aggregation` from its `{was_new, added_artifacts, prev_artifacts, prev_filter}` |
+| DELETE | `/api/aggregations/<aggregation_id>/studies/<int:study_id>` | `api_remove_study_from_aggregation` | session | Remove a study and its checked rows |
+| GET | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_aggregation_study_samples` | session | One page of the study's rows — a row is a (sample, artifact) pair, its artifact fixing its prep — files-first under the study's `file_filter`, with `selected`/`prep_id`/`file`/`fastq`/`fasta`/`data_types`; `?group=prep`, `?sort=prep\|artifact&dir=` |
+| PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_set_aggregation_rows` | session | Check / uncheck rows (`add` / `remove` of `{sample_id, artifact_id}`, or `select`) |
+| GET | `/api/aggregations/<aggregation_id>/export.<ext>` | `download_aggregation_export` | session | The checked rows' sequence files, each study under its own `file_filter`, as `csv` / `tsv` / `xlsx` |
 
 ---
 
@@ -251,9 +271,9 @@ The heaviest read in the app, and the one place the multi-layer `study_detail_ca
 Cache assembly proceeds in four independent stages, each of which can hit or miss separately and writes back on miss:
 
 1. **Preps + artifacts** — from `preps_json` / `artifacts_json`, else `_fetch_study_detail_from_qiita`.
-2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`.
+2. **Artifact graph** — from `artifact_graph_json`. A cached graph is discarded as stale if artifact nodes lack a `filepaths` or `visibility` key or job nodes lack `command_params`, then re-fetched via `fetch_artifact_graph`. Artifact nodes carry `visibility` (`public` / `private` / `sandbox` / `archived`); the study view's chart hides `archived` ones, which Qiita leaves with no parent link.
 3. **Prep metadata** — from `prep_metadata_json`, else fanned out over a `ThreadPoolExecutor` (max 8 workers) calling `_fetch_prep_metadata_summary` per prep id, and merged into each prep dict in place.
-4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch.
+4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch. Since 2026-10 the live fetch reads `qiita.sample_{id}` directly by its primary key (`WHERE sample_id <> 'qiita_sample_column_names' ORDER BY sample_id LIMIT %s`) instead of joining `study_sample`, which made it extract JSON for every sample before keeping 200 (AGP: 12.4 s → 0.1 s). `total_samples` still counts `qiita.study_sample`. `_fetch_full_sample_metadata` reads the same way.
 
 A fifth step populates `samples_context` (the LLM context text) when absent. Response:
 
@@ -279,36 +299,56 @@ Returns `{"sample_id": "...", "fields": {...}}` for one sample, reading `sample_
 
 `POST /api/search` — session + CSRF.
 
-The browse-grid search. An LLM translates natural language into a SQL `WHERE` fragment, which is then executed against the Qiita study tables.
+The browse-grid search. A regex planner (`browse_query_to_sql` — no LLM, despite the module name) turns the text into a SQL `WHERE` fragment; optional facet filters narrow it; results are ranked by relevance.
 
-Request:
+Request (`filters` and every key inside it are optional; `{"query": q}` alone still works):
 
 ```json
-{ "query": "infant gut microbiome", "deep_search": false }
+{ "query": "550 mouse gut", "deep_search": true,
+  "filters": { "pis": ["Rob Knight"], "data_types": ["16S"], "year_min": 2012, "year_max": 2020 } }
 ```
 
-Empty `query` → **400** `{"error": "Query is required"}`.
+Empty `query` **with no filters** → **400** `{"error": "Query is required"}`. Empty `query` with filters is filter-only browsing (LIMIT 120, ordered by sample count). A non-integer `year_min`/`year_max` → **400**. `pis` is capped at 50 names, `data_types` at 20; an inverted year range is swapped.
 
 Behavior:
 
-1. `llm_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, `applied_filters`, and PI resolution metadata. Missing pieces default to `1=1`, `[]`, and `50`.
-2. `search_studies_with_sql(...)` runs the text search with expanded keywords as `relevance_keywords` (title 30, alias 15, PI 20, abstract 10 per hit). Sample-metadata layer adds +1 per matching keyword on merged results. PI veto applies only when `resolve_pi` finds a match in `study_person`.
-3. When `deep_search` is true, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB (full text), bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500). Results merge and re-rank with the same unified scorer.
+1. `browse_query_to_sql(user_query)` returns a plan dict with `where_clause`, `params`, `search_limit`, `keywords`, `study_ids`, `id_only`, `phrase`, `applied_filters`, and PI resolution metadata. Bare integers are study IDs, never keywords; an `id_only` plan is exactly `s.study_id = ANY(%s)`.
+2. `build_browse_filter_where` ANDs PI names / year bounds into that WHERE (`sp_pi.name = ANY(%s)`, `EXTRACT(YEAR FROM s.first_contact) >= / <= %s`); data types pass through `search_studies_with_sql(data_types=...)`.
+3. `search_studies_with_sql(...)` runs the text search with expanded keywords as `relevance_keywords` (title 30, alias 15, PI 20, abstract 10 per hit, +1000 for a study whose id was in the query, +25 when the whole query appears in the title). PI veto applies only when `resolve_pi` finds a match in `study_person`.
+4. When `deep_search` is true **and** the plan is not `id_only` **and** there are terms to probe, a second pass runs `search_studies_by_sample_meta` over per-study `sample_{id}` JSONB, bounded by `SAMPLE_SEARCH_DEEP_CANDIDATES` (default 500) and narrowed by the filters' data types / PIs / years. Merged rows are then gated exactly by `study_passes_browse_filters` and re-ranked by `finalize_search_results` (same weights, +1 per keyword with a sample-metadata hit).
 
-Response echoes the plan and `applied_filters`:
+Response echoes the plan, the PI `applied_filters`, and the normalised `filters` (`null` when none were sent); every row carries `year` (year the study was added to Qiita):
 
 ```json
 {
-  "results": [],
-  "sql_query": { "keywords": [], "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } } },
+  "results": [{ "study_id": 550, "study_title": "…", "year": 2015, "relevance": 1030, "...": "..." }],
+  "sql_query": { "keywords": ["mouse", "gut"], "study_ids": [550], "id_only": false, "phrase": "mouse gut",
+                 "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } } },
   "applied_filters": { "pi": { "input": [], "resolved": [], "veto_applied": false } },
-  "count": 0
+  "filters": { "pis": ["Rob Knight"], "data_types": ["16S"], "year_min": 2012, "year_max": 2020 },
+  "count": 1
 }
 ```
 
 Any exception is caught, traceback-printed, and returned as **500** with `str(e)`.
 
 `backend/routes/study_routes.py :: search`
+
+### api_search_facets
+
+`GET /api/search/facets` — session.
+
+Option lists for the Browse filter pickers, over public studies only, recomputed at most every 6 h per Gunicorn worker (`services/browse_filters.py :: get_search_facets`). PIs are grouped by `study_person.name` — the same column the `pis` filter matches on.
+
+```json
+{
+  "pis": [{ "name": "Rob Knight", "count": 312 }],
+  "years": { "min": 2011, "max": 2026 },
+  "data_types": [{ "name": "16S", "count": 1450 }]
+}
+```
+
+`backend/routes/study_routes.py :: api_search_facets`
 
 ### api_systems
 
@@ -496,6 +536,14 @@ The second streaming endpoint, and the most branch-heavy handler in the codebase
 
 Shares `parse_chat_stream_body` with the project stream, so the same **400** cases apply; **404** for an unknown chat.
 
+Both streams also accept `"force_tool": {"name", "args", "text"}`, sent by the study slash commands (`/preps`, `/graph`, …). `parse_force_tool` validates it, and **400** covers:
+- the name isn't a study tool the chat offers;
+- an arg isn't that tool's own;
+- `text` is over 500 characters;
+- it is combined with `report_study_id` / `pin_study_ids`.
+
+See [`05-agent.md`](05-agent.md#slash-commands-force-a-tool-added-2026-10).
+
 Pinned context is built once up front (emitting a `pinned_reports` step) when pinned studies exist. The pin and report branches behave as in the project stream, differing only in scope (`SCOPE_GLOBAL`) and in passing `GLOBAL_CHAT_SYSTEM_PROMPT`.
 
 The normal branch always delegates to `stream_agent` with `TOOL_SCHEMAS`, translating its events onto the wire: `agent_start`, `token`, `segment_tool_call {name, label, args}`, and `segment_tool_result {name, label, detail, ui_payload}`. In parallel the handler accumulates a `segments_list` — text runs are flushed into `{"type": "text", ...}` entries whenever a tool call interrupts them, and each tool segment is matched back to its result by scanning for the first not-yet-`done` segment with the same `name`. On completion the segments are frozen into the persisted `ui_payload`:
@@ -681,6 +729,101 @@ Every failure mode raises `ValueError` and is returned as **403** — including 
 Sends the merge result tarball as `merge_<job_id>.tar.gz` with mimetype `application/gzip`. **404** if the job is unknown or owned by another user; **400** `{"error": "Job is <status>, not done"}` if incomplete; **404** `{"error": "Result file not found"}` if the recorded `result_path` is absent from disk. (`backend/routes/artifact_routes.py :: download_merge_result`)
 
 ---
+
+## Aggregations
+
+A Sample Aggregation is a user-owned, named set of **file rows** grouped by study (`backend/store/aggregation_crud.py`; tables `aggregations`, `aggregation_studies`, `aggregation_files` — see appendix B). A row is a `(sample_id, artifact_id)` pair: the sample's file in one artifact, and since every artifact belongs to exactly one prep (`qiita.preparation_artifact`; checked on AGP, 5,969 of 5,969 artifacts) a row also fixes its **prep** (`helpers/study_samples.artifact_preps`). Adding a study checks every one of its rows; the tab then unchecks or re-checks individual rows, so one sample's two artifacts can be exported separately. A sample with no file under the study's filter is a placeholder row that can't be checked. (Before 2026-09-30 selection was per sample in `aggregation_samples`; such a study is migrated lazily on first use — `aggregation_crud.migrate_study_rows`.) Every mutation returns the full aggregation, and the frontend patches its state from that body rather than re-fetching:
+
+```json
+{ "aggregation_id": "…", "user_id": "…", "name": "…", "created_at": "…", "updated_at": "…",
+  "studies": [{ "study_id": 232, "study_title": "…", "study_abstract": "…", "data_types": "16S",
+                "num_samples": 115, "num_preps": 1, "fastq_artifact_count": 1,
+                "pi_name": "…", "pi_affiliation": "…", "year": 2015, "is_gold": 1,
+                "selected_rows": 113, "file_rows": 115, "rows_v": 1, "added_at": "…",
+                "file_filter": { "data_types": ["Metagenomic"], "processing": [], "artifacts": [] } }] }
+```
+
+`num_samples` is the number of sample rows of the study when it was added (the `qiita_sample_column_names` sentinel excluded); `fastq_artifact_count` counts its `per_sample_FASTQ` + `FASTA` artifacts at add time; `file_rows` is how many `(sample, artifact)` rows it had then (the badge's denominator; `null` for a study not yet migrated); `selected_rows` is live (for an unmigrated study it is still the count of checked samples).
+
+Each study's `file_filter` is its own saved choice of **data types** (e.g. `Metagenomic`, `16S`), **artifact ids** (as strings) and **processing steps** — the Qiita command that produced each per-sample artifact, e.g. `Atropos v1.1.24`, `Adapter and host filtering v2023.12`, or `Raw upload` for uploads (`qiita.software_command.name` via `artifact.command_id`). An empty list means any. Processing exists because one metagenomic prep often holds the same reads two or three times (raw, adapter-trimmed, host-filtered): measured on AGP (10317), 96 of 191 metagenomic preps have 2–3 `per_sample_FASTQ` artifacts, so an unfiltered export carries ~8 files per sample. Data type covers a broader case too: a study can have samples with **no per-sample sequence file at all** — e.g. a 16S study whose only artifacts are `Demultiplexed`/`BIOM` (measured: studies 101, 1070, 1889) — and those samples still belong to a data type via **prep membership** (`qiita.prep_template_sample`, `helpers/study_samples.prep_data_types`), same as the Browse card's chips.
+
+The filter is **per study** (since 2026-09-30): each study's sample-table toolbar lists that study's own options and edits that study's filter, which narrows only that study's table and its rows in the export. It used to live on the aggregation, so one study's toolbar offered every study's artifacts, and an artifact pick (artifacts belong to exactly one Qiita study) emptied every other study's table and export. On upgrade, an aggregation-level filter was copied to each of its studies without its artifact picks (`store/db.py :: _move_aggregation_filters_to_studies`).
+
+Within a study the filter has two effects:
+1. **Scope** — which samples are in the sample table at all. A sample stays listed if no data type is chosen, or its prep membership **or** file data types intersect the chosen set (`helpers/sample_files.in_scope`). A chosen artifact is stricter: the sample must have a file in one of the chosen artifacts. Processing never narrows scope.
+2. **File counting** — `fastq`/`fasta`, files-first order, `show`, `with_files`, `select: "with_files"`, `file-facets`'s counts, and the export all use the **full** filter (data type, processing **and** artifact). Matching is per artifact (`helpers/fastq_manifest.group_matches`), and `run_prefix` claiming is per artifact too, so filtering never changes which file a kept sample resolves to.
+
+A sample in scope only by prep membership (no matching file) shows `fastq: null`, `fasta: false` — "—" in the UI — rather than being hidden.
+
+### api_list_aggregations / api_create_aggregation / api_update_aggregation / api_delete_aggregation
+
+`GET /api/aggregations` → `{"aggregations": [...]}`. `POST /api/aggregations` `{"name"}` (blank → "Untitled") → **201**. `PATCH /api/aggregations/<id>` `{"name"}` → the aggregation; **400** on a blank name, or if the body carries `file_filter` (the filter is saved per study — see below); **404** unknown/unowned. `DELETE /api/aggregations/<id>` → `{"deleted": id}`; the study and row records cascade.
+
+### api_set_study_file_filter
+
+`PATCH /api/aggregations/<aggregation_id>/studies/<int:study_id>` — body `{"file_filter": {"data_types": [...], "processing": [...], "artifacts": [...]}}`, that study's whole filter (omitted keys and empty lists mean any). Returns the full aggregation (`store/aggregation_crud.py :: set_study_file_filter`). **400** when `file_filter` is missing or malformed (unknown key, a non-list, an empty or >200-char string, or >50 items per list; duplicates are dropped and lists sorted); **404** when the aggregation is unknown/unowned or the study is not in it. Re-adding a study keeps its filter.
+
+### api_aggregation_file_facets
+
+`GET /api/aggregations/<aggregation_id>/file-facets` — `{"exportable", "selected"}` for the tab header: `selected` is every checked row, `exportable` the checked rows that pass **their own study's** filter. With `?study_id=<id>` (**404** if the study is not in the aggregation) the response also carries that study's picker options, under its own filter:
+
+```json
+{ "exportable": 7306, "selected": 41601,
+  "data_types": [{ "name": "16S", "count": 118 }, { "name": "Full Length Operon", "count": 73 },
+                  { "name": "Metagenomic", "count": 7306 }],
+  "processing": [{ "name": "Adapter and host filtering v2023.12", "count": 3771 }, { "name": "Raw upload", "count": 7379 }],
+  "artifacts": [{ "name": "43738", "count": 210 }, { "name": "90914", "count": 210 }] }
+```
+
+`facet_counts(file_maps, prep_maps, file_filter)` (`helpers/sample_files.py`) computes the lists for that one study, facet-style so picking one option doesn't hide the others:
+- **Data type** counts are distinct samples **in scope** for that type (prep membership ∪ file, same as `in_scope` above) — `16S` above comes entirely from prep membership, since studies 101/1070 have no per-sample file. These counts **ignore the processing filter**, since scope doesn't depend on it.
+- **Processing** counts are distinct samples with a matching **file**, narrowed by the data-type filter (unaffected by data types that have no file, since processing describes files).
+- **Artifact** counts are distinct samples with a file in that artifact under the data-type and processing picks; only this study's artifacts are listed, ordered numerically.
+
+A selected name with nothing left is still listed, at count 0, so it can be unticked. `exportable` is the number of **checked** rows under the full saved filter — `0` means both exports would 404, and the tab disables them; it can be lower than a data type's scope count when that type has no file (e.g. picking `16S` alone against studies 101/1070 gives `exportable: 0`). Computes each study's availability map (`get_sample_files`, cached 6 h) and prep-membership map (`prep_data_types`, memoized 1 h) — the first call on a cold 50-study aggregation can take tens of seconds.
+
+### api_add_study_to_aggregation
+
+`POST /api/aggregations/<aggregation_id>/studies` — body `{"study": {study_id, study_title, study_abstract, data_types, num_samples, num_preps, pi_name, pi_affiliation, year, is_gold}}`: the Browse card's header, snapshotted so the tab renders the same card. Only `study_id` is validated. **403** if the study is not public, **404** unknown/unowned aggregation, **400** over the 50-study cap. Resolves the study's availability map (`helpers/sample_files.get_sample_files`) and stores one checked row per `(sample, artifact)` in it, snapshotting `file_rows`. Re-adding a study already present is a no-op — it does **not** re-check rows the user unchecked. Artifacts that appear in Qiita later are not auto-checked (use *Select all*). An optional `file_filter` (`{data_types, processing, artifacts}`, validated like the PATCH; **400** when malformed) checks only the rows it keeps and is saved as the study's filter in the same insert. The chat's aggregation card sends it.
+
+### api_remove_study_from_aggregation
+
+`DELETE /api/aggregations/<aggregation_id>/studies/<int:study_id>` → the aggregation; the study's `aggregation_files` rows go with it (FK cascade).
+
+### api_aggregation_study_samples
+
+`GET /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples?offset=0&limit=200&q=&show=all&group=&sort=&dir=` — `limit` 1–500 **rows** (a page is one SQLite `IN (…)` bind list, kept under the 999-variable ceiling), `q` = case-insensitive substring over the sample id or any metadata value (`sample_values::text ILIKE`), `show` = `all` | `with_files` | `without_files`, `group` = `prep`, `sort` = `prep` | `artifact` with `dir` = `asc` | `desc` (**400** for anything else). Response:
+
+```json
+{ "study_id": 232, "total": 115, "offset": 0, "limit": 200, "with_files": 88,
+  "columns": ["sample_type", "host_body_site", "env_material", "empo_3"], "selected_count": 113,
+  "rows": [{ "sample_id": "232.…", "artifact_id": 2247, "prep_id": 1134, "selected": true,
+             "fastq": "paired", "fasta": false, "prep_ids": [1134],
+             "data_types": ["16S"], "file_data_types": ["16S"], "processing": ["Raw upload"],
+             "file": { "r1": "/qmounts/…_R1.fastq.gz", "r2": "/qmounts/…_R2.fastq.gz", "barcodes": "" },
+             "fields": { "sample_type": "…", "…": "…" } }],
+  "groups": [{ "prep_id": 1134, "data_type": "16S", "count": 2 }] }   // only with ?group=prep
+```
+
+Two narrowing passes, both driven by the study's saved `file_filter`. First **scope**: `ids` is filtered to `helpers.sample_files.in_scope(prep_types, entries, file_filter)` — a sample stays if no data type is chosen, or its prep membership (`helpers.study_samples.prep_data_types`) or file data types intersect it; processing plays no part here. Then **file availability**: `helpers.sample_files.get_sample_files` narrowed by the **full** filter via `effective()` → `{sample_id: (fastq, fasta)}` (the map itself is per data type × processing step, see appendix B `study_sample_files_cache`); `show` filters the in-scope list by this, and it is then stably re-sorted files-first (samples with a file first, original id order preserved within each group) before the `offset`/`limit` slice — a plain SQL `LIMIT`/`OFFSET` over `qiita.sample_<id>` cannot express availability-first ordering.
+
+**Rows.** A row is one `(sample, artifact)` pair under the study's filter (`helpers/aggregation_rows.order_rows`); `prep_id` is its artifact's prep (`artifact_preps`). A sample with no file under the filter is one placeholder row (`artifact_id: null`, `file: null`, `selected: false`, never checkable; `prep_ids` lists its member preps). `selected` is per row. `total`, `offset`/`limit` and `with_files` count rows. `sort` orders rows by `prep_id` or `artifact_id` (rows with none last either way; ties keep files-first / id order). `group=prep` clusters rows under their prep, ascending (a placeholder goes under each member prep that passes the Data type filter, else `prep_id: null` = "No prep"), `groups` carries each group's header data, `sort=prep` orders the groups and `sort=artifact` the rows inside them.
+
+Paging happens in **Python**, not SQL, for the same reason. `with_files` is the count of file rows (in-scope samples) **within the `q`-filtered set, before `show` narrows it** — it is the fixed "N" for the tab's "With files (N)" toggle regardless of which `show` value is currently selected. Per row, `fastq`/`fasta` are under the full filter; `data_types` is prep membership **∪** file data types, unfiltered, so the tab can show every type the sample belongs to (dimmed when the current filter excludes it); `file_data_types` is the subset that has an actual per-sample file, for solid-vs-outline chip styling — a type in `data_types` but not `file_data_types` means "this sample is in a prep of that type, but Qiita has no per-sample sequence file for it" (e.g. a 16S study with only `Demultiplexed`/`BIOM` artifacts); `processing` lists the steps of the sample's files, unfiltered. `columns` are up to four display columns picked from the study's own metadata column list (`helpers/study_samples.display_columns`, memoized per worker for an hour); the full field set of one sample is `GET /api/studies/<sid>/samples/<sample_id>`. **404** if the study is not in the aggregation; **400** on a non-integer offset/limit.
+
+### api_set_aggregation_rows
+
+`PATCH /api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` — body either `{"add": [{"sample_id", "artifact_id"}, ...], "remove": [...]}` (≤ 50,000 rows each; `artifact_id` an integer) or `{"select": "all" | "none" | "with_files" | "matching", "q": "..."}`. `"all"` (every row of the study, filter-independent) / `"none"` / `"with_files"` (the rows under the study's saved `file_filter` — exactly what the export can contain, optionally narrowed by `q`) **replace** the whole selection; `"matching"` (requires `q`) **adds** every row of the samples the text filter hits to whatever is already checked. Returns the full aggregation; **400** on any other body. Rows are stored as given — a bogus pair is counted but never resolves to a file in the export. A study still on legacy per-sample selection is migrated first.
+
+### download_aggregation_export
+
+`GET /api/aggregations/<aggregation_id>/export.<ext>` with `ext` = `csv` | `tsv` | `xlsx` (any other → **404**), `Content-Disposition: attachment; filename=aggregation_<id>_samples.<ext>`. One table, header `study_id,sample_id,artifact_id,data_type,processing,R1,R2,barcodes` (`helpers/fastq_manifest.EXPORT_HEADER`): one row per **checked** `(sample, artifact)` row, each study restricted to its own saved `file_filter` (`fetch_export_rows(selected, {study_id: filter})`). R1 is the forward read, or a `FASTA` artifact's `raw_fasta`; R2 and barcodes are blank when absent. A sample in two preps, or in two processing copies of one prep, gets a row for each; a pooled (multiplexed) run repeats the same paths for every sample of its prep. Files are matched to samples by `run_prefix` over the prep's **full** sample list and only then filtered to the checked `(sample_id, artifact_id)` set (`helpers/fastq_manifest.build_export_rows` — longest-prefix-first claiming needs every sample present). Samples with no resolvable file are omitted. **400** `No rows selected`; **404** when the studies have no sequence artifact matching their filters, or no checked sample resolves.
+
+`csv` is for scripts and pandas, and `tsv` is the same rows tab-separated. `xlsx` (`to_xlsx`, openpyxl write-only, bold frozen header) writes every column but `study_id` as a **text** cell with number format `@`. That is the fix for "the sample id shows the study id": opened in Excel or Numbers, the CSV's `10317.000001062` parses as a number and displays as `10317`, identical to `study_id`. It replaced an earlier `?spreadsheet=1` CSV that wrote `="…"` formulas, which only read as text in apps that evaluate CSV formulas.
+
+Plain links from the tab either way: the session cookie rides along on top-level navigation and GET carries no CSRF.
+
+`backend/routes/aggregation_routes.py`
 
 ## Notes and observations
 

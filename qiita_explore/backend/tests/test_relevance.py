@@ -13,6 +13,7 @@ from services.study_service import (
 )
 from services.relevance import (
     RELEVANCE_WEIGHTS,
+    finalize_search_results,
     score_study_text_fields,
     compute_total_relevance,
     study_matches_pi,
@@ -299,3 +300,120 @@ class TestPiDetailSuffix:
     def test_not_found(self):
         s = pi_detail_suffix({"input": ["Nobody"], "resolved": [], "veto_applied": False})
         assert "unfiltered" in s
+
+
+class TestBuildKeywordLateralBoost:
+    def test_exact_id_boost_binds_first_and_sits_outside_sum(self):
+        sql, params = build_keyword_lateral(["mouse"], boost_study_ids=[550])
+        assert params == [[550], ["mouse"]]
+        assert sql.index("s.study_id = ANY(%s)") < sql.index("unnest(%s::text[])")
+        # Outside COALESCE(SUM(...), 0) so a 3-keyword query doesn't triple it.
+        assert sql.index("), 0)") < sql.index("s.study_id = ANY(%s)")
+        assert f"THEN {RELEVANCE_WEIGHTS['exact_id']} ELSE 0 END" in sql
+
+    def test_title_phrase_binds_between_boost_and_keywords(self):
+        sql, params = build_keyword_lateral(
+            ["mouse", "gut"], boost_study_ids=[550], title_phrase="mouse gut",
+        )
+        assert params == [[550], "%mouse gut%", ["mouse", "gut"]]
+        assert f"THEN {RELEVANCE_WEIGHTS['title_phrase']} ELSE 0 END" in sql
+        # psycopg2 interpolation must still line up with 3 placeholders.
+        formatted = sql % tuple(params)
+        assert "ILIKE ('%' || kw || '%')" in formatted
+
+    def test_no_bonus_placeholders_by_default(self):
+        sql, params = build_keyword_lateral(["mouse"])
+        assert params == [["mouse"]]
+        assert "s.study_id = ANY" not in sql
+        assert "exact" not in sql
+
+
+class TestBrowseQueryStudyIds:
+    """Digits are study-ID candidates, never text keywords — 'study id 550'
+    used to ILIKE '%550%' across every abstract and rank study 550 below
+    them (it scored 0 on its own text)."""
+
+    def test_pure_id_forms_short_circuit_to_exact_match(self):
+        for q in ["550", "study 550", "study id 550", "#550", "id: 550", "Study ID 550"]:
+            plan = browse_query_to_sql(q)
+            assert plan["keywords"] == [], q
+            assert plan["study_ids"] == [550], q
+            assert plan["id_only"] is True, q
+            assert plan["match_mode"] == "id", q
+            assert plan["where_clause"] == "s.study_id = ANY(%s)", q
+            assert plan["params"] == [[550]], q
+
+    def test_mixed_query_keeps_id_out_of_text_keywords(self):
+        plan = browse_query_to_sql("550 mouse gut")
+        assert set(plan["keywords"]) == {"mouse", "gut"}
+        assert plan["study_ids"] == [550]
+        assert plan["id_only"] is False
+        assert plan["where_clause"].endswith(" OR s.study_id = ANY(%s)")
+        assert plan["params"][-1] == [550]
+        assert "%550%" not in plan["params"]
+
+    def test_multiple_ids_deduped_in_order(self):
+        plan = browse_query_to_sql("550 1001 550")
+        assert plan["study_ids"] == [550, 1001]
+
+    def test_alphanumeric_tokens_are_not_ids(self):
+        plan = browse_query_to_sql("16S rRNA")
+        assert plan["study_ids"] == []
+        assert plan["id_only"] is False
+        assert "16s" in plan["keywords"]
+
+    def test_oversized_integers_are_dropped(self):
+        plan = browse_query_to_sql("12345678901")
+        assert plan["study_ids"] == []
+        assert plan["where_clause"] == "1=1"
+
+    def test_empty_query_is_a_no_op_plan(self):
+        plan = browse_query_to_sql("")
+        assert plan["where_clause"] == "1=1"
+        assert plan["params"] == []
+        assert plan["keywords"] == []
+        assert plan["study_ids"] == []
+        assert plan["id_only"] is False
+        assert plan["phrase"] is None
+
+    def test_phrase_is_the_full_cleaned_query(self):
+        # Taken before _pick_keywords trims narrow queries to 2 terms.
+        plan = browse_query_to_sql("american gut project")
+        assert plan["phrase"] == "american gut project"
+        assert len(plan["keywords"]) == 2
+
+    def test_single_keyword_has_no_phrase(self):
+        assert browse_query_to_sql("mouse")["phrase"] is None
+
+
+class TestFinalizeSearchResultsBonuses:
+    def _studies(self):
+        return [
+            {"study_id": 1, "study_title": "mouse", "study_abstract": "", "study_alias": "",
+             "pi_name": "", "num_samples": 5},
+            {"study_id": 550, "study_title": "Unrelated", "study_abstract": "", "study_alias": "",
+             "pi_name": "", "num_samples": 5},
+        ]
+
+    @patch("helpers.sample_search.score_studies_sample_layer", return_value={})
+    def test_exact_id_boost_wins_over_text_hit(self, _):
+        out = finalize_search_results(self._studies(), ["mouse"], boost_study_ids=[550])
+        assert [s["study_id"] for s in out] == [550, 1]
+        assert out[0]["relevance"] == RELEVANCE_WEIGHTS["exact_id"]
+
+    @patch("helpers.sample_search.score_studies_sample_layer", return_value={})
+    def test_without_boost_text_hit_wins(self, _):
+        out = finalize_search_results(self._studies(), ["mouse"])
+        assert [s["study_id"] for s in out] == [1, 550]
+
+    @patch("helpers.sample_search.score_studies_sample_layer", return_value={})
+    def test_title_phrase_bonus(self, _):
+        studies = [
+            {"study_id": 1, "study_title": "Gut of the American mouse", "study_abstract": "",
+             "study_alias": "", "pi_name": "", "num_samples": 5},
+            {"study_id": 2, "study_title": "American Gut Project", "study_abstract": "",
+             "study_alias": "", "pi_name": "", "num_samples": 5},
+        ]
+        out = finalize_search_results(studies, ["american", "gut"], title_phrase="american gut")
+        assert out[0]["study_id"] == 2
+        assert out[0]["relevance"] - out[1]["relevance"] == RELEVANCE_WEIGHTS["title_phrase"]

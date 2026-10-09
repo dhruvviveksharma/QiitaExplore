@@ -35,7 +35,9 @@ stream_agent(messages, *, system_prompt, model, study_context_text,
 
 Keeping SSE formatting out of the agent is what allows `backend/agent_harness.py` — an offline CLI driver — to consume the same generator and print to a terminal. The route is the only place that knows about the wire format.
 
-Five yield types: `agent_start`, `token`, `reasoning`, `segment_tool_call`, `segment_tool_result`.
+Seven yield types: `agent_start`, `token`, `reasoning`, `segment_tool_call`, `segment_tool_result`, `step_start`/`step_done` (retry, synthesis, overflow recovery) and `context_usage` (what each LLM request held, for the composer's context bar).
+
+A request the provider rejects as too long for the model is compacted and retried once (`helpers/context_fit.py :: OverflowGuard`, wrapped around every LLM call in both loops). See "The context limit" in [`06-streaming-and-chat.md`](06-streaming-and-chat.md).
 
 > `reasoning` **never reaches the browser.** Reasoning-capable models emit `delta.reasoning_content`, and `stream_agent` faithfully yields it as `{"type": "reasoning", ...}`. **No route translates it into an SSE event, and no browser handler exists for it.** The web path silently discards every reasoning token; only `agent_harness.py` consumes them. This is a gap, not a design choice — the plumbing exists on one end and stops halfway. Surfacing it would give users visibility into the model's deliberation at no backend cost.
 
@@ -199,6 +201,84 @@ Structured `{field, value}` filters against sample metadata, for when the user n
 ### `compute_diversity`
 
 > **Stub.** `_tool_compute_diversity` always returns a message stating that diversity computation is unavailable pending BIOM/OTU ingestion (TKT-010). **It is present in the live tool schema**, so the model can and does call it — consuming an iteration to receive an apology. Removing it from the schema until it is implemented would be strictly better. Tracked in [`11-roadmap.md`](11-roadmap.md).
+
+---
+
+
+
+## Study detail tools (added 2026-10)
+
+Both chats also get ten tools over studies and the user's aggregations: `backend/helpers/study_tools.py`, plus `backend/helpers/aggregation_tools.py` for `add_to_chat_aggregation`, `save_chat_aggregation` and `list_aggregations`. Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
+
+| Tool | What the user sees | What the model gets |
+|---|---|---|
+| `get_study_preps` | Prep table; clicking a prep shows its processing graph beside it | A data-type summary (preps and samples per type) and up to 40 prep rows |
+| `show_study_samples` | Sample list with each clicked sample's metadata on the right | Counts, the first 10 ids, the metadata column names — not values |
+| `get_sample_metadata` | One sample's metadata card | That sample's preps and `field: value` lines (values ≤ 200 chars) |
+| `get_prep_graph` | `ArtifactNetwork` for one prep; a clicked node lists its files | An indented outline of artifacts and jobs (≤ 80 nodes) |
+| `list_artifact_files` | Files with download links and full paths | Filenames, file types and ids — **never paths** |
+| `add_to_chat_aggregation` | **Writes.** What was added to this chat's aggregation, the new totals, Undo, View | What was added and the totals; "already added — the user can Undo" |
+| `save_chat_aggregation` | "Saved as …" with Open ↗ | That it is now in the Sample Aggregation tab |
+| `list_aggregations` | The user's saved aggregations and this chat's, each expandable to its studies | Each aggregation's studies, checked rows and filters (≤ 20 aggregations, ≤ 50 studies each) |
+| `propose_aggregation_add` | A confirm card for a **saved** aggregation the user named: scope, counts, picker, Add | "Proposal only — nothing was added", counts, the user's saved aggregations |
+| `resolve_study` | A "Which study?" picker, when ambiguous | Either the resolved id, or the candidates and an instruction to stop and ask |
+
+**Rules every one follows.**
+- **Project gate:** in a project chat the study must be in the project. This is checked before any Qiita read. Every study must also be public (`is_study_public`).
+- **Paths:** tool text goes to the LLM provider, so it carries filenames and ids only. Server paths appear only in the widget.
+- **Text size:** capped at 6,000 characters, key facts first. Replayed history keeps only 2,000 per tool result.
+- **Payloads:** only ids and small scalars. The widget loads its data through the study view's own endpoints and caches. Each payload also carries `result_summary`, the text fallback.
+- **Data source:** preps and graphs come from `helpers/study_detail.py`, the same assembly `/api/studies/<id>/detail` returns.
+- **`user_id`:** threaded `stream_chat_turn` → `stream_agent` → `_execute_tool_call` → `execute_tool`. Only `propose_aggregation_add` reads it, to list the user's aggregations.
+
+**`resolve_study`** (`helpers/study_resolve.py`) is deliberately cautious. A study is used without asking only when it is the chat's own and the single one that matches the text. "The chat's own" means pinned, or in a project chat any project study. A match is:
+- its id;
+- the title's acronym, or the start of it ("AGP" ↔ "American Gut Project", and "… Australia" too);
+- two or more title or alias words;
+- the PI's surname;
+- or, when the text names nothing ("show me the samples"), the only chat study.
+
+An explicit "study 10317" in the text is used as is. Everything else becomes a picker:
+- matching pins first;
+- then public studies whose title acronym the text uses (a memoized title scan; text search can't find "AGP");
+- then the Browse text search (the fast pass only).
+
+**`propose_aggregation_add` never writes.** It returns the file filter (data types, plus the per-sample artifacts of the chosen preps), the sample and row counts against the whole study, a suggested target, and why it can't be added (a prep with no per-sample files, or an empty scope). The card's **Add** posts that filter to `POST /api/aggregations/<id>/studies`, which saves it on the study in the same insert.
+
+### This chat's aggregation (added 2026-10-02)
+
+Each chat can hold one **temporary aggregation**. It is an ordinary aggregation with `aggregations.chat_id` / `chat_scope` set, so the Sample Aggregation tab's sample table, filters and export all work on it.
+
+**Lifecycle**
+- **Hidden** from the tab's list and from the Browse "+ Aggregate" picker.
+- **In the chat:** shown in a bar above the composer (`chat_aggregation_bar.js`).
+- **Deleted** with its chat, or with its chat's project, and moved with the chat between scopes.
+- **Saving:** `save_chat_aggregation` (or the bar's "Save as…") names it and clears `chat_id`, which makes it a saved one. The next add starts a new temporary one.
+
+**`add_to_chat_aggregation` writes immediately** — a scratchpad doesn't need a confirm card.
+- **Scope as artifacts:** a study, its data types or its preps are expressed as per-sample-file artifacts, so repeated adds union. The stored filter is compacted back to data types when the union covers whole types.
+- **Refusals change nothing:** an unknown data type or prep, an empty scope, an already-held scope, and the 50-study cap.
+- **Undo:** each result carries an undo record, `{was_new, added_artifacts, prev_artifacts, prev_filter}`. Its widget sends it to `POST /api/aggregations/<id>/studies/<sid>/undo-add`, which either removes a newly added study or drops the added artifacts' rows and restores the previous filter.
+- **Saved aggregations:** `propose_aggregation_add` is now only for a saved aggregation the user names. "Create an aggregation" in a chat means this chat's temporary one.
+
+## Slash commands force a tool (added 2026-10)
+
+`/preps`, `/graph`, `/files`, `/aggregate` (→ `add_to_chat_aggregation`) and `/aggregations [name]` (→ `list_aggregations`, no study) (`frontend/js/chat_slash.js`; `/samples` and `/sample` were removed 2026-10-02 — their tools remain) send `force_tool {name, args, text}` with the message. `request_utils.parse_force_tool` validates it, and `stream_agent` runs a `ForcedPlan` (`helpers/forced_tool.py`). Each forced round:
+- offers only the forced tool's schema;
+- **Anthropic:** names it in `tool_choice`;
+- **NRP:** sends `tool_choice: "required"`, per `MODEL_METADATA[…]["forced_tool_choice"]`. If a server rejects `tool_choice` with a 400, the round is retried once without it;
+- hides the model's text and keeps its call with the forced arguments merged in (forced keys win);
+- runs the call even when the server ends it with `finish_reason: "stop"`.
+
+If the model calls nothing, the loop synthesizes the call (id `force_…`, logged `force_tool_synthesized`). A slash command therefore always shows its widget. A hint naming the tool rides on the live user turn and is never saved.
+
+Without a study id the plan is `resolve_study` first:
+- **If it resolves:** the next round is forced to the target tool with that `study_id`.
+- **If not:** the next round has no tools, so the model can only ask the user to pick.
+
+After the forced rounds every tool is available again and the model comments.
+
+**NRP probe, 2026-10-01:** qwen3-small, deepseek-v4-flash, glm-5 and minimax-m2 all accept `"required"` and the named form, and all return the forced call. The named form ends with `finish_reason: "stop"`. With no `tool_choice`, the single offered tool plus the hint was still enough for all four.
 
 ---
 

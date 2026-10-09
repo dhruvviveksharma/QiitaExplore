@@ -28,8 +28,12 @@ def _app(auth_db_path):
 
     # Purge any previously-imported instance so this module gets a clean,
     # deterministic bind to db_path regardless of test execution order.
+    # helpers.* must go too: auth_middleware imports store.auth_store at
+    # import time, so a surviving copy would keep reading sessions from the
+    # previous module's SQLite file and every /api/auth/me here would 401.
     for name in list(sys.modules):
-        if name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.") or "sql_store" in name:
+        if (name == "run" or name.startswith("routes.") or name == "store" or name.startswith("store.")
+                or name.startswith("helpers.") or "sql_store" in name):
             del sys.modules[name]
 
     stub_qiita_db_and_core()

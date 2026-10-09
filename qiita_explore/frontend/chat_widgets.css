@@ -1,0 +1,122 @@
+/* Inline study widgets in chat replies (js/chat_study_widgets.js,
+   js/chat_aggregate_widget.js). Sibling of style.css (over the line cap),
+   linked after study_detail.css, whose split / selected-row rules the preps
+   and grouped-samples widgets reuse. */
+
+.cw {
+  margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-m);
+  background: var(--surface); font-size: 13px; color: var(--text); min-width: 0;
+}
+.cw-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; min-width: 0; }
+.cw-title { font-weight: 600; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cw-sub { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.cw-spacer { flex: 1; }
+.cw-open { font-size: 11.5px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.cw-open:hover { text-decoration: underline; }
+.cw-note { font-size: 12px; color: var(--text-3); margin: 4px 0; }
+.cw-error { color: var(--accent); }
+.cw-sample .sample-preview-card { max-height: 360px; }
+
+/* The Browse grid's StudyCard at the top of each display (ChatStudyCard). It
+   isn't clickable here, so no pointer and no hover accent. */
+.chat-study-card { cursor: default; margin-bottom: 10px; }
+.chat-study-card:hover { border-color: var(--border); box-shadow: none; }
+.samples-report-bubble .chat-study-card { margin-bottom: 0; }   /* the bubble's own gap spaces it */
+
+/* Preps: in a reply the graph sits below the prep table (the study page keeps
+   them side by side); both take the full width, with compact table cells. */
+.cw .study-prep-split { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.cw .study-prep-table, .cw .study-prep-graph { flex: none; width: 100%; }
+.cw .study-prep-table .prep-table { font-size: 11.5px; }
+.cw .study-prep-table .prep-table td, .cw .study-prep-table .prep-table th { padding-right: 6px; white-space: nowrap; }
+
+/* Files: one block per artifact; rows from FilePathRow (artifact_network.css). */
+.cw-files { display: flex; flex-direction: column; gap: 10px; }
+.cw-files-name { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
+.cw-files-meta { font-weight: 400; color: var(--text-3); font-size: 11.5px; }
+
+/* "Which study?" picker: home-page cards, Use in each card's action row */
+.cw-choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.cw-choice-grid .chat-study-card { margin-bottom: 0; }
+.cw-pinned-tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+  color: var(--accent-h); background: var(--accent-soft); border-radius: 999px; padding: 3px 8px;
+}
+
+/* Aggregation confirm card */
+.cw-agg { display: flex; flex-direction: column; gap: 6px; }
+.cw-agg-scope { font-size: 12.5px; color: var(--text-2); }
+.cw-agg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.cw-agg-label { font-size: 11.5px; color: var(--text-3); }
+.cw-agg-name {
+  font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--text); min-width: 180px;
+}
+.cw-agg-done { font-size: 12.5px; color: var(--text-2); }
+
+/* Aggregations list (list_aggregations): one row per aggregation, its studies below */
+.cw-agglist { border-top: 1px solid var(--border-soft); padding: 6px 0; }
+.cw-agglist:first-of-type { border-top: 0; }
+.cw-agglist-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cw-agglist-toggle {
+  display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 0;
+  font: inherit; color: var(--text); cursor: pointer;
+}
+.cw-agglist-meta { font-size: 11.5px; color: var(--text-3); }
+.cw-agglist-study { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0 5px 18px; }
+.cw-agglist-title { font-size: 12.5px; font-weight: 500; }
+.cw-agglist-empty { padding-left: 18px; }
+.agg-temp-tag {
+  font-size: 10.5px; font-weight: 600; color: var(--accent-h); background: var(--accent-soft);
+  border-radius: 999px; padding: 1px 7px;
+}
+
+/* This chat's aggregation bar, above the composer (chat_aggregation_bar.js) */
+.chat-agg-bar .chat-agg-chip { cursor: default; padding-right: 8px; }
+.chat-agg-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.chat-agg-btn {
+  font-size: 11.5px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--text-2); text-decoration: none; cursor: pointer;
+}
+.chat-agg-btn:hover:not(:disabled):not(.disabled) { border-color: var(--accent); color: var(--accent); }
+.chat-agg-btn:disabled, .chat-agg-btn.disabled { opacity: .5; cursor: default; }
+
+/* Context bar before the model chip (js/context_bar.js): one segment per part
+   of the chat's last request; click for the breakdown panel (a .cr-menu). */
+:root {
+  --ctx-system: #8A897F; --ctx-tools: #6B8CAE; --ctx-studies: #C2522D;
+  --ctx-summary: #9C7FBF; --ctx-conversation: #3F8F7F; --ctx-turn: #D29A2E;
+}
+.app.dark {
+  --ctx-system: #8F8E86; --ctx-tools: #7FA2C6; --ctx-studies: #E0714A;
+  --ctx-summary: #B49AD6; --ctx-conversation: #5DB09E; --ctx-turn: #E3B04B;
+}
+.cbar-root { display: flex; align-items: center; min-width: 0; }
+.cbar {
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 10px;
+  border: 1px solid transparent; color: var(--text-3); font-size: 11px; user-select: none;
+}
+.cbar:hover { border-color: var(--border); color: var(--text-2); }
+.cbar-track {
+  display: flex; width: 70px; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--border-soft);
+}
+.cbar-seg { height: 100%; min-width: 1px; }
+.cbar-pct { font-variant-numeric: tabular-nums; min-width: 26px; text-align: right; }
+.cbar-full .cbar-pct { color: var(--accent); font-weight: 600; }
+.cbar-system { background: var(--ctx-system); }
+.cbar-tools { background: var(--ctx-tools); }
+.cbar-studies { background: var(--ctx-studies); }
+.cbar-summary { background: var(--ctx-summary); }
+.cbar-conversation { background: var(--ctx-conversation); }
+.cbar-turn { background: var(--ctx-turn); }
+.cbar-free { background: var(--border-soft); border: 1px solid var(--border); }
+.cr-menu.cbar-panel { width: 270px; padding: 8px 10px; font-size: 12px; color: var(--text); }
+.cbar-head { display: flex; flex-wrap: wrap; gap: 2px 8px; font-weight: 600; margin-bottom: 6px; }
+.cbar-head-num { font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.cbar-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.cbar-dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+.cbar-label { flex: 1; min-width: 0; color: var(--text-2); }
+.cbar-num { font-variant-numeric: tabular-nums; text-align: right; min-width: 38px; }
+.cbar-num-pct { color: var(--text-3); min-width: 32px; }
+.cbar-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); color: var(--text-3); font-size: 11px; }

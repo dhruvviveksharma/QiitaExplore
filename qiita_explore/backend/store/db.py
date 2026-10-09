@@ -1,5 +1,6 @@
 """SQLite schema creation, migration helpers, and core connection utilities."""
 
+import json
 import os
 import sqlite3
 from datetime import datetime
@@ -225,11 +226,70 @@ def _create_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_ws ON merge_jobs(workspace_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_merge_jobs_user ON merge_jobs(user_id, created_at DESC);
 
+        CREATE TABLE IF NOT EXISTS aggregations (
+            aggregation_id TEXT PRIMARY KEY,
+            user_id        TEXT NOT NULL,
+            name           TEXT NOT NULL,
+            created_at     TEXT,
+            updated_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_aggregations_user ON aggregations(user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS aggregation_studies (
+            aggregation_id       TEXT NOT NULL,
+            study_id             INTEGER NOT NULL,
+            study_title          TEXT,
+            data_types           TEXT,
+            num_samples          INTEGER,
+            num_preps            INTEGER,
+            fastq_artifact_count INTEGER,
+            added_at             TEXT,
+            PRIMARY KEY (aggregation_id, study_id),
+            FOREIGN KEY (aggregation_id) REFERENCES aggregations(aggregation_id) ON DELETE CASCADE
+        );
+
+        -- Legacy per-sample membership (pre-2026-09-30). Only read by
+        -- store.aggregation_crud.migrate_study_rows, which turns a study's checked
+        -- samples into aggregation_files rows the first time it is opened.
+        CREATE TABLE IF NOT EXISTS aggregation_samples (
+            aggregation_id TEXT    NOT NULL,
+            study_id       INTEGER NOT NULL,
+            sample_id      TEXT    NOT NULL,
+            added_at       TEXT,
+            PRIMARY KEY (aggregation_id, study_id, sample_id),
+            FOREIGN KEY (aggregation_id, study_id)
+                REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
+        );
+
+        -- Per-row selection: one row per checked (sample, artifact) file row; the
+        -- artifact fixes its prep. The composite FK cascades in a chain
+        -- (aggregation -> studies -> rows); the PK autoindex serves every lookup
+        -- (per-study count, page IN (...), per-study delete).
+        CREATE TABLE IF NOT EXISTS aggregation_files (
+            aggregation_id TEXT    NOT NULL,
+            study_id       INTEGER NOT NULL,
+            sample_id      TEXT    NOT NULL,
+            artifact_id    INTEGER NOT NULL,
+            added_at       TEXT,
+            PRIMARY KEY (aggregation_id, study_id, sample_id, artifact_id),
+            FOREIGN KEY (aggregation_id, study_id)
+                REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS biom_sample_cache (
             artifact_id     INTEGER PRIMARY KEY,
             num_samples     INTEGER,
             sample_ids_json TEXT,
             cached_at       TEXT
+        );
+
+        -- Per-sample sequence-file availability of one study (helpers/sample_files.py).
+        -- Own table + own cached_at: it used to be study_detail_cache.sample_files_json,
+        -- whose partial writes poisoned the preps/artifacts reads (TKT-086).
+        CREATE TABLE IF NOT EXISTS study_sample_files_cache (
+            study_id          INTEGER PRIMARY KEY,
+            sample_files_json TEXT,
+            cached_at         TEXT
         );
 
         CREATE TABLE IF NOT EXISTS users (
@@ -296,17 +356,76 @@ def _create_schema(conn):
         ("project_chats", "compacted_through_id", "INTEGER"),
         ("global_chats", "compaction_summary", "TEXT"),
         ("global_chats", "compacted_through_id", "INTEGER"),
+        # The last request's size by part, for the composer's context bar
+        # (helpers/context_usage.py); NULL until the chat's first agent turn.
+        ("project_chats", "context_usage", "TEXT"),
+        ("global_chats", "context_usage", "TEXT"),
+        # Study-header snapshot so the Sample Aggregation tab can render
+        # Browse-style cards without a Qiita round-trip.
+        ("aggregation_studies", "study_abstract", "TEXT"),
+        ("aggregation_studies", "pi_name", "TEXT"),
+        ("aggregation_studies", "pi_affiliation", "TEXT"),
+        ("aggregation_studies", "year", "INTEGER"),
+        ("aggregation_studies", "is_gold", "INTEGER"),
+        # Unused since 2026-09-30: the data-type / processing / artifact filter
+        # moved to aggregation_studies.file_filter_json (one per study; see
+        # _move_aggregation_filters_to_studies). Kept so old DBs migrate alike.
+        ("aggregations", "file_filter_json", "TEXT"),
+        # One study's saved filter ({"data_types": [...], "processing": [...],
+        # "artifacts": [...]}; empty = any). Drives that study's sample table
+        # and its rows in the export (routes/aggregation_routes.py).
+        ("aggregation_studies", "file_filter_json", "TEXT"),
+        # rows_v = 1: this study's selection lives in aggregation_files (0 = still the
+        # legacy aggregation_samples, migrated lazily). file_rows: how many (sample,
+        # artifact) rows the study had when snapshotted — the "K / N rows" denominator.
+        ("aggregation_studies", "rows_v", "INTEGER DEFAULT 0"),
+        ("aggregation_studies", "file_rows", "INTEGER"),
+        # A chat's temporary aggregation (helpers/aggregation_tools.py): set while it
+        # belongs to that chat, NULL once saved. Hidden from the Sample Aggregation
+        # tab, deleted with its chat.
+        ("aggregations", "chat_id", "TEXT"),
+        ("aggregations", "chat_scope", "TEXT"),
+        # Unused since 2026-09-24: the availability map moved to its own
+        # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
+        ("study_detail_cache", "sample_files_json", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")
         except Exception:
             pass
 
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aggregations_chat ON aggregations(chat_id, chat_scope)")
+    _move_aggregation_filters_to_studies(conn)
+
     # PATs are verified once at login and never stored. Scrub any legacy
     # ciphertext left from earlier builds (idempotent).
     conn.execute(
         "UPDATE auth_sessions SET pat_encrypted = '' WHERE pat_encrypted != ''"
     )
+
+
+def _move_aggregation_filters_to_studies(conn):
+    """One-time move (idempotent): a filter saved on an aggregation (the
+    pre-2026-09-30 shape) is copied to each of its studies that has none yet,
+    then cleared. Artifact picks are dropped: an aggregation-wide artifact pick
+    is exactly what emptied the other studies' tables and exports, and which
+    study owns an artifact would need Qiita Postgres. Once cleared, later
+    boots (and studies added later) find nothing to copy."""
+    rows = conn.execute(
+        "SELECT aggregation_id, file_filter_json FROM aggregations WHERE file_filter_json IS NOT NULL"
+    ).fetchall()
+    for aggregation_id, raw in rows:
+        try:
+            f = json.loads(raw) or {}
+        except ValueError:
+            f = {}
+        moved = json.dumps({"data_types": list(f.get("data_types") or []),
+                            "processing": list(f.get("processing") or []), "artifacts": []})
+        conn.execute(
+            "UPDATE aggregation_studies SET file_filter_json=? WHERE aggregation_id=? AND file_filter_json IS NULL",
+            (moved, aggregation_id),
+        )
+        conn.execute("UPDATE aggregations SET file_filter_json=NULL WHERE aggregation_id=?", (aggregation_id,))
 
 
 def _bootstrap():

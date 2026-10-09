@@ -37,12 +37,13 @@ const FIELD_GROUPS = [
 ];
 
 // ─── SamplesBrowser: shared two-pane / stacked sample viewer ──────────────────
-function SamplesBrowser({ samples, layout, fetchFields }) {
+// With onPick the caller owns the selection (activeId) and shows the sample's
+// metadata itself (PrepGroupedSamples); the browser then renders only the list.
+function SamplesBrowser({ samples, layout, fetchFields, bare, activeId: pickedId, onPick }) {
   const [activeId,     setActiveId]     = useState(null);
   const [activeFields, setActiveFields] = useState(null);
   const [loading,      setLoading]      = useState(false);
   const [filterText,   setFilterText]   = useState('');
-  const [showVaryingOnly, setShowVaryingOnly] = useState(false);
   const [leftPct, setLeftPct] = useState(55);
   const dragging = React.useRef(false);
   const containerRef = React.useRef(null);
@@ -62,7 +63,7 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
   const haystacks = useMemo(() => {
     return (samples || []).map(s => {
       const f     = s.fields || {};
-      const parts = [s.sample_id, s.anonymized_name, s.env_package, s.collection_timestamp, ...Object.values(f)];
+      const parts = [s.sample_id, s.anonymized_name, s.env_package, s.collection_timestamp, ...(s.prep_ids || []), ...Object.values(f)];
       return parts.map(v => v == null ? '' : String(v).toLowerCase()).join(' ');
     });
   }, [samples]);
@@ -110,44 +111,14 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
     return uniform;
   }, [samples]);
 
-  const groupedActiveFields = useMemo(() => {
-    if (!activeFields) return [];
-    const remaining = new Map(Object.entries(activeFields).filter(([, v]) => v != null && v !== ''));
-    const result = [];
-    for (const [groupName, keys] of FIELD_GROUPS) {
-      const entries = [];
-      for (const target of keys) {
-        for (const k of [...remaining.keys()]) {
-          if (k.toLowerCase() === target.toLowerCase()) { entries.push([k, remaining.get(k)]); remaining.delete(k); }
-        }
-      }
-      if (entries.length) result.push([groupName, entries]);
-    }
-    if (remaining.size) result.push(['Other', [...remaining.entries()].sort(([a], [b]) => a.localeCompare(b))]);
-    return result;
-  }, [activeFields]);
-
-  const visibleGroups = useMemo(() => {
-    if (!showVaryingOnly || uniformFields.size === 0) return groupedActiveFields;
-    return groupedActiveFields
-      .map(([g, entries]) => [g, entries.filter(([k]) => !uniformFields.has(k))])
-      .filter(([, entries]) => entries.length);
-  }, [groupedActiveFields, uniformFields, showVaryingOnly]);
-
-  const hiddenUniformCount = useMemo(() => {
-    if (!showVaryingOnly || !activeFields) return 0;
-    let n = 0;
-    for (const k of Object.keys(activeFields)) if (uniformFields.has(k)) n++;
-    return n;
-  }, [activeFields, uniformFields, showVaryingOnly]);
-
   if (!samples || samples.length === 0) {
     return <p style={{color:'var(--text-3)', fontSize:'0.85rem'}}>No samples found.</p>;
   }
 
   const isStacked = layout === 'stacked';
 
-  const toolbarEl = (
+  const showPrep = samples.some(s => s.prep_ids);   // Prep ID column only when the list carries it
+  const toolbarEl = bare ? null : (
     <>
       <div className="samples-toolbar">
         <input className="samples-search" placeholder="Filter samples…" value={filterText}
@@ -175,17 +146,18 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
   const tableEl = (
     <div className="samples-table-wrap" style={isStacked ? null : {flex:`0 0 ${leftPct}%`, minWidth:'20%', maxWidth:'80%', overflowX:'hidden'}}>
       <table className="prep-table">
-        <thead><tr><th>Sample ID</th><th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
+        <thead><tr><th>Sample ID</th>{showPrep && <th>Prep ID</th>}<th>Anonymized Name</th><th>Env Package</th><th>Collection Date</th></tr></thead>
         <tbody>
           {filteredSamples.length === 0 ? (
-            <tr><td colSpan={4} style={{color:'var(--text-3)', fontSize:'11.5px', padding:'10px 8px'}}>No matches.</td></tr>
+            <tr><td colSpan={showPrep ? 5 : 4} style={{color:'var(--text-3)', fontSize:'11.5px', padding:'10px 8px'}}>No matches.</td></tr>
           ) : filteredSamples.map(s => {
             const f = s.fields || {};
             const collectionDate = s.collection_timestamp || f.collection_timestamp || f.collection_date || '';
             return (
-              <tr key={s.sample_id} onClick={() => onRowClick(s)}
-                style={{cursor:'pointer', background: activeId === s.sample_id ? 'var(--accent-bg,#f0f4ff)' : ''}}>
+              <tr key={s.sample_id} onClick={() => (onPick ? onPick(s) : onRowClick(s))}
+                style={{cursor:'pointer', background: (onPick ? pickedId : activeId) === s.sample_id ? 'var(--accent-bg,#f0f4ff)' : ''}}>
                 <td>{s.sample_id}</td>
+                {showPrep && <td>{(s.prep_ids || []).join(', ') || '—'}</td>}
                 <td>{s.anonymized_name || f.anonymized_name || '—'}</td>
                 <td>{s.env_package || f.env_package || '—'}</td>
                 <td>{collectionDate ? String(collectionDate).slice(0, 10) : '—'}</td>
@@ -197,43 +169,10 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
     </div>
   );
 
-  const canVaryToggle = uniformFields.size > 0;
-  const detailEl = loading ? (
-    <div style={{flex:1, color:'var(--text-3)', fontSize:'0.85rem', paddingTop:'0.5rem'}}>Loading…</div>
-  ) : activeFields ? (
-    <div className="sample-preview-card">
-      <div className="sample-preview-header">
-        <span>{activeId}</span>
-        <div style={{display:'flex', alignItems:'center', gap:8}}>
-          {canVaryToggle && (
-            <label className="sample-preview-toggle">
-              <input type="checkbox" checked={showVaryingOnly} onChange={e => setShowVaryingOnly(e.target.checked)} />
-              Show only varying
-            </label>
-          )}
-          <button className="sample-preview-close" onClick={() => { setActiveId(null); setActiveFields(null); }}>✕</button>
-        </div>
-      </div>
-      <div className="sample-preview-body">
-        {visibleGroups.map(([groupName, entries]) => (
-          <div key={groupName} className="sample-preview-group">
-            <h5 className="sample-preview-group-title">{groupName}</h5>
-            {entries.map(([k, v]) => (
-              <div key={k} className="sample-preview-row">
-                <span className="sample-preview-key">{k}</span>
-                <span className="sample-preview-val">{String(v)}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-        {showVaryingOnly && hiddenUniformCount > 0 && (
-          <div className="sample-preview-hidden-note">
-            {hiddenUniformCount} uniform field{hiddenUniformCount === 1 ? '' : 's'} hidden
-          </div>
-        )}
-      </div>
-    </div>
-  ) : null;
+  const detailEl = onPick ? null : (
+    <SampleFieldsCard sampleId={activeId} fields={activeFields} loading={loading} uniformFields={uniformFields}
+      onClose={() => { setActiveId(null); setActiveFields(null); }} />
+  );
 
   if (isStacked) {
     return <div className="samples-browser-stacked">{toolbarEl}{tableEl}{detailEl}</div>;
@@ -261,8 +200,86 @@ function SamplesBrowser({ samples, layout, fetchFields }) {
   );
 }
 
+// ─── SampleFieldsCard: one sample's metadata, grouped by FIELD_GROUPS ────────
+// SamplesBrowser's detail pane, also shown on its own beside PrepGroupedSamples.
+// uniformFields: keys with a single value across the list, which "Show only
+// varying" hides (empty when the list carries no per-sample fields).
+const _NO_UNIFORM = new Set();
+function SampleFieldsCard({ sampleId, fields, loading, uniformFields = _NO_UNIFORM, onClose }) {
+  const [showVaryingOnly, setShowVaryingOnly] = useState(false);
+  const groupedActiveFields = useMemo(() => {
+    if (!fields) return [];
+    const remaining = new Map(Object.entries(fields).filter(([, v]) => v != null && v !== ''));
+    const result = [];
+    for (const [groupName, keys] of FIELD_GROUPS) {
+      const entries = [];
+      for (const target of keys) {
+        for (const k of [...remaining.keys()]) {
+          if (k.toLowerCase() === target.toLowerCase()) { entries.push([k, remaining.get(k)]); remaining.delete(k); }
+        }
+      }
+      if (entries.length) result.push([groupName, entries]);
+    }
+    if (remaining.size) result.push(['Other', [...remaining.entries()].sort(([a], [b]) => a.localeCompare(b))]);
+    return result;
+  }, [fields]);
+
+  const visibleGroups = useMemo(() => {
+    if (!showVaryingOnly || uniformFields.size === 0) return groupedActiveFields;
+    return groupedActiveFields
+      .map(([g, entries]) => [g, entries.filter(([k]) => !uniformFields.has(k))])
+      .filter(([, entries]) => entries.length);
+  }, [groupedActiveFields, uniformFields, showVaryingOnly]);
+
+  const hiddenUniformCount = useMemo(() => {
+    if (!showVaryingOnly || !fields) return 0;
+    let n = 0;
+    for (const k of Object.keys(fields)) if (uniformFields.has(k)) n++;
+    return n;
+  }, [fields, uniformFields, showVaryingOnly]);
+
+  if (loading) return <div style={{flex:1, color:'var(--text-3)', fontSize:'0.85rem', paddingTop:'0.5rem'}}>Loading…</div>;
+  if (!fields) return null;
+  const canVaryToggle = uniformFields.size > 0;
+  return (
+    <div className="sample-preview-card">
+      <div className="sample-preview-header">
+        <span>{sampleId}</span>
+        <div style={{display:'flex', alignItems:'center', gap:8}}>
+          {canVaryToggle && (
+            <label className="sample-preview-toggle">
+              <input type="checkbox" checked={showVaryingOnly} onChange={e => setShowVaryingOnly(e.target.checked)} />
+              Show only varying
+            </label>
+          )}
+          {onClose && <button className="sample-preview-close" onClick={onClose}>✕</button>}
+        </div>
+      </div>
+      <div className="sample-preview-body">
+        {visibleGroups.map(([groupName, entries]) => (
+          <div key={groupName} className="sample-preview-group">
+            <h5 className="sample-preview-group-title">{groupName}</h5>
+            {entries.map(([k, v]) => (
+              <div key={k} className="sample-preview-row">
+                <span className="sample-preview-key">{k}</span>
+                <span className="sample-preview-val">{String(v)}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+        {showVaryingOnly && hiddenUniformCount > 0 && (
+          <div className="sample-preview-hidden-note">
+            {hiddenUniformCount} uniform field{hiddenUniformCount === 1 ? '' : 's'} hidden
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── PrepsTable ───────────────────────────────────────────────────────────────
-function PrepsTable({ detail, loading, onMount }) {
+// With onSelect, rows are clickable and the selectedId row is highlighted.
+function PrepsTable({ detail, loading, onMount, selectedId, onSelect }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
   if (loading && !detail) return <div style={{margin:'20px auto'}}><InfinityLoader w={80} h={50} /></div>;
@@ -276,7 +293,8 @@ function PrepsTable({ detail, loading, onMount }) {
         <thead><tr><th>Prep ID</th><th>Data Type</th><th>Investigation</th><th>Platform</th><th>Target Gene</th><th>Status</th></tr></thead>
         <tbody>
           {shown.map(p => (
-            <tr key={p.prep_template_id}>
+            <tr key={p.prep_template_id} onClick={onSelect ? () => onSelect(p.prep_template_id) : undefined}
+              className={onSelect ? `prep-row-pick${p.prep_template_id === selectedId ? ' on' : ''}` : undefined}>
               <td>{p.prep_template_id}</td>
               <td>{p.data_type || '—'}</td>
               <td>{p.investigation_type || '—'}</td>
@@ -401,16 +419,7 @@ function SamplesReportBubble({ ui, messageKey }) {
   const keyBase = messageKey || `study-${study_id}`;
   return (
     <div className="samples-report-bubble">
-      <div className="samples-report-header">
-        <div className="samples-report-title">Study {study_id}: {header.study_title || 'Untitled study'}</div>
-        <div className="samples-report-meta">
-          {header.pi_name ? <span>PI: {header.pi_name}{header.pi_affiliation ? ` (${header.pi_affiliation})` : ''}</span> : null}
-          {numSamples != null ? <span>{numSamples} samples</span> : null}
-          {header.data_types ? <span>{header.data_types}</span> : null}
-          {header.num_preps != null ? <span>{header.num_preps} preps</span> : null}
-        </div>
-        {header.study_abstract && <div className="samples-report-abstract">{header.study_abstract}</div>}
-      </div>
+      <ChatStudyCard studyId={study_id} seed={header} />   {/* the home-page card (chat_study_widgets.js) */}
       <CollapsibleSection id={`${keyBase}-samples`} title="Samples"
         subtitle={`${numSamples} total${samples.length < numSamples ? `, showing ${samples.length}` : ''}`}
         defaultOpen={true}>
@@ -470,8 +479,9 @@ function PiFilterLine({ pi }) {
 }
 
 // ─── ToolResultWidget ─────────────────────────────────────────────────────────
-function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned }) {
+function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned, widgetCtx }) {
   if (!payload) return null;
+  if (STUDY_WIDGET_KINDS.has(payload.kind)) return <ChatStudyWidget payload={payload} ctx={widgetCtx} />;   // chat_study_widgets.js
   if (payload.kind === 'samples_report')
     return <SamplesReportBubble ui={payload} messageKey={msgKey || `tr-${payload.study_id}`} />;
   const studies = payload.result_studies || [];
@@ -512,16 +522,20 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned })
 // flush, and its callback props are recreated each time (they're only read
 // inside click handlers, never render-branch conditions), so a default
 // shallow compare would never skip. Only seg / msgKey / pinnedStudyIds
-// (by value — pin toggles must re-render the card) determine the output.
+// (by value — pin toggles must re-render the card) determine the output, plus
+// the study widgets' live inputs: the aggregations list and whether a reply is
+// streaming (widgetCtx is rebuilt every render, so compare its parts).
 function toolCardPropsEqual(prev, next) {
   if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
+  const pw = prev.widgetCtx || {}, nw = next.widgetCtx || {};
+  if (pw.agg?.aggregations !== nw.agg?.aggregations || pw.sending !== nw.sending) return false;
   const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
   if (a === b) return true;
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
 }
 
-const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies }) {
+const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMerge, onOpen, pinnedStudyIds, onViewAllStudies, widgetCtx }) {
   const isPinned = sid => (pinnedStudyIds || []).includes(sid);
   const [showArgs, setShowArgs] = useState(false);
   const done   = seg.done;
@@ -570,7 +584,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMe
         </div>
       )}
       {done && <ToolResultWidget payload={seg.result?.ui_payload} msgKey={`${msgKey}-res`}
-                 onPin={onPin} onMerge={onMerge} onOpen={onOpen} isPinned={isPinned} />}
+                 onPin={onPin} onMerge={onMerge} onOpen={onOpen} isPinned={isPinned} widgetCtx={widgetCtx} />}
       {done && !seg.result?.ui_payload && seg.result?.label && (
         <p className="tool-call-text-result">{seg.result.label}</p>)}
     </div>
@@ -603,7 +617,7 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
 }
 
 // ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep }) {
+function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep, widgetCtx }) {
   const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
   return (
     <div className="agent-msg">
@@ -632,7 +646,7 @@ function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMerge
           <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
             onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
             onViewAllStudies={onViewAllStudies}
-            pinnedStudyIds={pinnedStudyIds} />
+            pinnedStudyIds={pinnedStudyIds} widgetCtx={widgetCtx} />
         ) : null
       )}
       {isStreaming && !(segments || []).length && !steps?.length && !pendingStep && (
@@ -780,6 +794,7 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
   const [apiKeyInput,  setApiKeyInput]  = React.useState('');
   const [pendingClaude, setPendingClaude] = React.useState(null);
   const [saving,       setSaving]       = React.useState(false);
+  const rootRef = useOutsideClose(onClose, '.composer-model-chip');   // the chip toggles it itself
 
   const pick = (id) => {
     if (id.startsWith('claude-') && !anthropicKeySet) { setPendingClaude(id); return; }
@@ -801,7 +816,7 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
   );
 
   return (
-    <div className="model-picker-card">
+    <div className="model-picker-card" ref={rootRef}>
       <div className="model-picker-header">
         <span>Choose model</span>
         <button className="model-picker-close" onClick={onClose}>×</button>

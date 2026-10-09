@@ -75,6 +75,18 @@ Neither provider hands `stream_agent` a complete tool call in one piece — both
 | `pin_study` | `study_ids` | yes (explicit, surfaced) | no |
 | `search_by_sample` | none (but needs ≥1 of `field_filters`/`keywords`) | no | no |
 | `compute_diversity` | `study_ids` | no | no — but always a stub response regardless |
+| `get_study_preps` | `study_id` | no | no |
+| `show_study_samples` | `study_id` | no | no |
+| `get_sample_metadata` | `study_id`, `sample_id` | no | no |
+| `get_prep_graph` | `study_id` | no | no |
+| `list_artifact_files` | `study_id` | no | no |
+| `add_to_chat_aggregation` | `study_id` | no | no — **writes** to this chat's aggregation |
+| `save_chat_aggregation` | `name` | no | no |
+| `list_aggregations` | none | no | no |
+| `propose_aggregation_add` | `study_id` | no | no — and it never writes |
+| `resolve_study` | `text` | no | no |
+
+The last ten are the study and aggregation tools (`helpers/study_tools.py`), in both chats. Their arguments, rules and payloads are in [`05-agent.md`](05-agent.md#study-detail-tools-added-2026-10).
 
 ### search_studies
 
@@ -303,6 +315,7 @@ The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site a
 | `token` | Agent turns, pin/report refusal | One chunk of streamed assistant text. |
 | `step_start` | Context prep, pin/report flows | A named non-tool step began. |
 | `step_done` | Context prep, pin/report flows | A named step finished. |
+| `context_usage` | Agent turns | After each LLM call: what the request held, by part (the composer's context bar). |
 | `ui` | `/report` member flow | A structured payload to render inline (samples report). |
 | `done` | All successful turns | Terminal event. |
 | `error` | All failed turns | Terminal event. |
@@ -353,8 +366,11 @@ Terminal event for a failed turn, on both paths, from the single `except Excepti
 
 | Match | Resulting message |
 |---|---|
+| A context-length rejection from either provider (`is_context_overflow`: 400/413 saying "maximum context length", "prompt is too long", "maximum model length", …) | `"This conversation is too long for {model}, even after compacting. Start a new chat (pin the studies you need), or switch to a model with a larger context window."` |
 | `anthropic.RateLimitError` | `"{model} rate limit reached. Please wait a moment and try again."` |
-| `anthropic.APIConnectionError` / `APIStatusError` | `"{model} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."` |
+| `anthropic.AuthenticationError` / `PermissionDeniedError` | `"{model} rejected the API key. Check your ANTHROPIC_API_KEY and try again."` |
+| `anthropic.APIConnectionError`, or an `APIStatusError` ≥ 500 | `"{model} is currently unavailable. Please try again in a moment."` |
+| Any other `anthropic.APIStatusError` | The error's own message (`body.error.message`) |
 | Substring match on `"upstream connect error"`, `"connection refused"`, `"remote connection failure"`, `"delayed connect error"`, `"connection reset"`, `"service unavailable"`, `"502"`, `"503"`, `"504"` (case-insensitive) | `"{model} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."` |
 | Anything else | `str(exc)` or `exc.__class__.__name__`, verbatim |
 
@@ -374,6 +390,8 @@ Client: `onError` sets the global `compErr` state and patches the last message t
 | `token` | `token` | `global_chat_routes.py` |
 | `segment_tool_call` | `segment_tool_call` | `global_chat_routes.py` |
 | `segment_tool_result` | `segment_tool_result` | `global_chat_routes.py` |
+| `step_start` / `step_done` | same | `helpers/chat_turn.py` |
+| `context_usage` | `context_usage` (payload: the usage dict itself) | `helpers/chat_turn.py`, which also saves the turn's last one on the chat |
 | `reasoning` | **none** | not translated by any route |
 
 **The gap.** `reasoning` is yielded whenever an OpenAI-compatible reasoning model (e.g. `minimax-m2`) returns a non-empty `delta.reasoning_content` chunk — visible in `stream_agent`'s main loop. No route — not `global_chat_routes.py`, not any other — has a branch that forwards `"reasoning"` events onto the SSE wire, and `parseSSE` has no `onReasoning` handler to receive one even if it did. The **only** consumer of this yield type in the entire codebase is `backend/agent_harness.py`, the CLI debugging tool, which patches `agent_mod.execute_tool` and prints reasoning tokens dimmed to the terminal. In the web product, a reasoning model's thinking is silently dropped — the user sees only the tool-call segments and the final synthesized answer, with no indication that reasoning happened at all. Note also that `_stream_anthropic_agent` has no equivalent branch — it never yields `"reasoning"` in the first place, since Claude's streaming API does not expose a comparable field through this integration.
@@ -405,6 +423,18 @@ On `done`, an agent turn's accumulated segments are frozen into one JSON structu
 | `pin_study` | `"tool_call"` | no — `null` on no valid IDs |
 | `search_by_sample` | `"tool_call"` (reduced fields if no criteria) | yes — reduced shape, not `null` |
 | `compute_diversity` | — | always `null`, every call |
+| `get_study_preps` | `"study_preps"` `{study_id, study_title, data_type}` | no — `null` on a refusal or unknown data type |
+| `show_study_samples` | `"study_samples"` `{study_id, study_title, prep_id, data_type, total}` | no |
+| `get_sample_metadata` | `"sample_metadata"` `{study_id, sample_id}` | no |
+| `get_prep_graph` | `"prep_graph"` `{study_id, study_title, prep_id, data_type}` | no |
+| `list_artifact_files` | `"artifact_files"` `{study_id, study_title, prep_id, artifact_ids}` | no |
+| `propose_aggregation_add` | `"aggregation_proposal"` `{study_id, study_title, scope, file_filter, counts, suggest, blocked, warnings}` | no — `null` on unknown data type / prep |
+| `add_to_chat_aggregation` | `"chat_aggregation_update"` `{aggregation_id, study_id, study_title, added_rows, scope, totals, undo, notes, updated_at}` | no — `null` on every refusal (nothing changed) |
+| `save_chat_aggregation` | `"aggregation_saved"` `{aggregation_id, name, updated_at}` | no |
+| `list_aggregations` | `"aggregation_list"` `{aggregation_ids, chat_aggregation_id, name}` | no — `null` for an unknown name |
+| `resolve_study` | `"study_resolved"` `{study_id, study_title}` or `"study_choice"` `{for_tool, text, candidates}` | no — `null` when nothing matched |
+
+Every study-tool payload also carries `result_summary`. The frontend (`chat_study_widgets.js :: STUDY_WIDGET_KINDS`) renders all of these except `study_resolved`, which falls back to its summary line.
 
 A frontend renderer switching on `result.ui_payload.kind` must therefore handle `"tool_call"`, `"samples_report"`, and `null`/absent as three genuinely distinct cases per tool, not just success vs. failure.
 

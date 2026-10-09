@@ -64,6 +64,25 @@ from .merge_crud import (  # noqa: F401
     update_merge_job_status,
 )
 
+from .aggregation_crud import (  # noqa: F401
+    AGGREGATION_STUDIES_CAP,
+    list_aggregations,
+    create_aggregation,
+    get_chat_aggregation,
+    save_chat_aggregation,
+    remove_rows_by_artifacts,
+    get_aggregation,
+    rename_aggregation,
+    set_study_file_filter,
+    delete_aggregation,
+    add_study_to_aggregation,
+    remove_study_from_aggregation,
+    set_aggregation_rows,
+    migrate_study_rows,
+    selected_rows_in,
+    selected_by_study,
+)
+
 from .cache import (  # noqa: F401
     SCOPE_PROJECT,
     SCOPE_GLOBAL,
@@ -73,6 +92,8 @@ from .cache import (  # noqa: F401
     upsert_study_detail_cache,
     get_biom_sample_cache,
     upsert_biom_sample_cache,
+    get_study_sample_files_cache,
+    upsert_study_sample_files_cache,
     pin_study_to_chat,
     unpin_study_from_chat,
     list_pinned_studies,

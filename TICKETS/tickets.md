@@ -616,6 +616,18 @@ migration rather than an app-code change
 - `qiita_explore/backend/services/llm.py` (`_keyword_clause_sql`)
 - New: a `patches/*.sql` migration (see `patches/93.sql` for the precedent)
 
+**Related (2026-09-12):** pure study-ID browse queries (`550`, `study id 550`) no
+longer touch the `ILIKE` path at all — `browse_query_to_sql` short-circuits them to
+`s.study_id = ANY(%s)` and the route skips the deep probe. Text queries are
+unchanged; TKT-080 is the in-repo alternative to the upstream index.
+
+**Related (2026-10-01):** the browse grid no longer waits for the deep pass. It sends a
+`deep_search: false` request (measured 0.08–0.18 s on barnacle) and renders, while a
+concurrent `deep_search: true` request (2–15 s: soil 15.1 s, infant gut 5.9 s) appends
+the studies it adds. The top 5 results' `/detail` is preloaded one at a time. This
+hides the latency from first paint; the server-side cost is unchanged, so this ticket
+and TKT-080 stand.
+
 ---
 
 
@@ -684,6 +696,9 @@ Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_
 ### Resolution (verified 2026-07-14)
 
 Deleted (along with other stale `ezredbiom/` leftovers from the directory rename: `DNA Loaders.html`, `logo.png`, `qiita-mark-nobg.png`, `qiita-mark.png` — confirmed unreferenced).
+
+Re-added as an empty file on 2026-10-08 (`51ff3ef0`), which broke CI's ruff step (an empty
+`.ipynb` is invalid JSON); deleted again 2026-10-09.
 
 ### Files
 
@@ -884,6 +899,9 @@ consolidated 6 duplicated `.slice(0, 60)` sites into a `truncateTitle()`
 helper, netting a few added lines for the fix's own guard logic). The split
 below is still unstarted and now more overdue.
 
+**2026-10-01:** 1022 lines, against a cap now raised to 750. This session's chat
+slash commands added only ~10 lines (new code went to `chat_slash.js`).
+
 ### Plan
 
 
@@ -920,6 +938,9 @@ below is still unstarted and now more overdue.
 
 Now **646 lines** — still over cap, number stale, conclusion unchanged.
 
+**2026-10-01:** 854 lines (cap now 750); the study page and chat widgets added
+only call sites here.
+
 ### Plan
 
 
@@ -955,6 +976,9 @@ Now **646 lines** — still over cap, number stale, conclusion unchanged.
 ### Update (verified 2026-08-17)
 
 Now **738 lines** — still over cap, number stale, conclusion unchanged.
+
+**2026-10-01:** 875 lines (cap now 750); the chat widgets live in
+`chat_study_widgets.js`, and only their dispatch and memo lines were added here.
 
 ### Plan
 
@@ -2408,6 +2432,706 @@ Either persist completed steps as a `{type: "step"}` segment in `ui_payload`
 
 ---
 
-*Generated: 2026-09-03 | Updated: 2026-09-03*
+## TKT-080: Local Search Index (FTS) for Browse + Agent Text Search
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Browse and agent text search are leading-wildcard `ILIKE` scans over `qiita.study`
+(TKT-024: 86 ms – 13.5 s). The indicated Postgres fix — `pg_trgm` GIN indexes — is an
+upstream ask, because QiitaExplore's access to classic Qiita is read-only, and it has
+not happened. The alternative this codebase *can* ship is a local search index: sync
+study headers (title, alias, abstract, PI, affiliation, data types, year added, sample
+count) into SQLite FTS5 (or a `search_documents` table in a Postgres we own), rank with
+BM25 plus the existing field weights, and hydrate hits from Qiita by id. Sample-metadata
+search stays on the bounded JSONB probes; a per-sample document index is a later step.
+`docs/11-roadmap.md` already lists "maintain a local index" as the option that removes
+the dependency at the cost of a second source of truth.
+
+### Plan
+
+1. `store/search_index.py`: FTS5 table + a sync job (full rebuild, hourly or on demand)
+   fed by `_build_study_header_query()` rows.
+2. `search_studies_with_sql` gains an index-backed path for `relevance_keywords` /
+   `match_keywords` while the index is fresh; falls back to SQL when it is stale.
+3. Re-run `tests/benchmarks/search_latency.py` / `concurrent_bench.py` before/after.
+
+**Note (2026-10-01):** the browse UI now renders the text pass first and appends deep
+matches later (see TKT-024), so the 2–15 s deep sample-metadata probe is off the path to
+first paint. It still runs on the server for every browse search; an index remains the
+real fix.
+
+### Files
+
+- `qiita_explore/backend/services/study_service.py`
+- `qiita_explore/backend/store/` (new module)
+- `qiita_explore/backend/routes/study_routes.py`, `helpers/agent_tools.py`
 
 ---
+
+## TKT-081: Browse Search Follow-ups (ID-Boost Edge Cases, Filter-Only Paging)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Loose ends from the 2026-09-12 browse relevance + facet-filter work:
+
+- **Year-like integers in mixed queries.** `2019 cohort` now boosts public study 2019
+  (+1000) to the top, because every bare integer is a study-ID candidate. A 1900–2100
+  exemption *when other keywords are present* is the one-line fix if it bites; pure-ID
+  queries should keep matching study 2019 exactly.
+- **Filter-only browsing is capped.** Empty query + filters returns LIMIT 120 by sample
+  count with no "show more" — the Browse grid has no pagination at all.
+- **Each filter click with a text query re-runs the deep probe** (up to 500 studies).
+  Filter-only clicks skip it (no terms to probe). The frontend drops stale responses
+  behind a sequence counter but cannot cancel the server-side work.
+- `app_state.js` (+17) and `app_render.js` (+4) grew again; both remain over the
+  500-line cap (TKT-011 / TKT-036 / TKT-037). `qiita_fetch.py` sits at 485/500.
+
+### Files
+
+- `qiita_explore/backend/services/llm.py` (`browse_query_to_sql`)
+- `qiita_explore/backend/routes/study_routes.py`
+- `qiita_explore/frontend/js/app_state.js`, `qiita_explore/frontend/js/app_render.js`
+
+---
+
+## TKT-082: Artifact Path SQL Ignores `data_directory.subdirectory`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Found 2026-09-04 while adding the per-sample FASTQ manifest. `helpers/artifact_graph.py:109`
+and `helpers/qiita_fetch.py:440` both hardcode
+`dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath`, unconditionally inserting the
+artifact_id segment. Canonical Qiita (`qiita_db/util.py:706 _path_builder`) only does so
+when `data_directory.subdirectory = true`. Live DB: 13 legacy `raw_data` per_sample_FASTQ
+artifacts (+241 legacy `FASTQ`) have `subdirectory = false`, so the built path is wrong, e.g.
+`/qmounts/qiita_data/raw_data/2214/360_SRR1561443.fastq.gz` (absent) vs
+`/qmounts/qiita_data/raw_data/360_SRR1561443.fastq.gz` (exists). Four of these are in public
+studies (artifacts 2516/study 1939, 2512/1998, 2451 and 2561/10251), so their per-file
+download links 403 ("File not found on disk") today.
+
+Related residue: `_abs()` / `QIITA_BASE_DATA_DIR` prefixing is copied four times
+(`artifact_graph.py:18`, `qiita_fetch.py:457`, `biom_samples.py:12`, `merge_executor.py:83`).
+
+### Plan
+
+Select `dd.subdirectory` in both queries and branch in Python the way
+`helpers/fastq_manifest.build_manifest_rows` does; collapse the four `_abs` copies onto
+`artifact_graph._abs`.
+
+### Files
+
+- `qiita_explore/backend/helpers/artifact_graph.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`
+- `qiita_explore/backend/helpers/biom_samples.py`
+- `qiita_explore/backend/helpers/merge_executor.py`
+
+---
+
+## TKT-083: Aggregated FASTQ Manifest — Duplicate Sample-IDs and Mixed Read Layouts
+
+**Severity:** Low
+**Status:** Superseded (2026-09-12)
+
+Superseded by the sample-level CSV export (`GET /api/aggregations/<id>/export.csv`):
+rows are per file and per data type (a sample in two preps is two legitimate rows)
+and there is no QIIME2 header to get wrong, so neither problem below exists any more.
+
+### Description
+
+Added 2026-09-04 with the Sample Aggregation tab. `helpers/fastq_manifest.fetch_aggregate_manifest`
+folds every `per_sample_FASTQ` artifact across every prep of every study in an aggregation into one
+QIIME2 V2 manifest, with two deliberate simplifications:
+
+1. A sample-id present in more than one artifact (the same sample in a 16S and a shotgun prep, or
+   two raw artifacts on one prep) is emitted once — the first occurrence in ascending
+   `(study_id, prep_template_id, artifact_id)` order wins; the rest are dropped with a
+   `logging.warning` count. There is no per-prep/artifact selection in the UI.
+2. If any artifact is paired-end the header is the paired one, so single-end rows carry an empty
+   `reverse-absolute-filepath` cell. QIIME2's `PairedEndFastqManifestPhred33V2` import will reject
+   those rows without hand-editing.
+
+### Plan
+
+If users hit either case: add an optional per-study prep/artifact picker to the aggregation detail
+(mirroring `merge_workspace_studies.chosen_artifact_ids`), or emit one manifest per read layout.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregations.js`
+
+---
+
+## TKT-085: Per-Sample `FASTA_preprocessed` Artifacts Are Not Exported
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The aggregation CSV covers `per_sample_FASTQ` (raw_forward_seqs / raw_reverse_seqs) and
+`FASTA` (raw_fasta) artifacts, matched to samples by `run_prefix`. Qiita also has 32
+`FASTA_preprocessed` artifacts across 4 studies (SPAdes / cloudSPAdes assemblies, one
+`preprocessed_fasta` per sample). None is public today, and their filenames are
+`sample_id` stems in most artifacts but `run_prefix` in some, so the existing matcher
+would miss them.
+
+### Plan
+
+When one goes public: add a sample_id-stem matcher alongside `build_manifest_rows`'
+run_prefix matcher, widen `_WHERE_SEQ` to `FASTA_preprocessed` / `preprocessed_fasta`,
+and emit `file_type = preprocessed_fasta`.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+
+---
+
+## TKT-084: Aggregate CSV — O(samples × files) run_prefix Matching, No "Resolvable" Count
+
+**Severity:** Medium
+**Status:** Resolved (2026-09-13)
+
+### Description
+
+`helpers/fastq_manifest.build_manifest_rows` links samples to files by scanning the
+artifact's file list for each sample's `run_prefix` (longest prefix first, each file
+claimed once). That is O(samples × files) substring tests per artifact: a 41,600-sample prep
+(study 10317) with ~83k FASTQ files is on the order of 10⁹ comparisons, so
+`GET /api/aggregations/<id>/export.csv` on a fully selected AGP-sized study takes minutes
+and holds a gthread worker for the duration. The sample-level UI makes such studies far
+easier to add than the old study-level tab did. Two related gaps:
+
+- `_STUDIES_FILES_SQL` loads every file row of up to 50 studies into memory before
+  grouping (FASTA artifact 3220 alone is 5,090 rows).
+- The tab shows "K selected samples" but cannot say how many will actually resolve to a
+  file: preps with null/empty `run_prefix`, or more samples than distinct prefixes (prep
+  1445: 6,346 samples, 5,090 distinct prefixes → ~1,250 can never resolve), silently
+  produce fewer CSV rows than the badge suggests.
+
+### Resolution (2026-09-13)
+
+The premise was measured, not estimated, and turned out wrong: `build_manifest_rows`
+matches within one *prep* — its own samples against its own files — never the whole
+study at once. AGP's 41,600 samples are spread across 192 preps, and the largest single
+prep has only 756 samples, so the quadratic term is bounded by prep size, not study
+size. Measured live on barnacle: the files query for all of AGP returns 132,948 rows in
+0.6 s, the 192 per-prep sample-list queries take 0.3 s, and the matcher over all 293
+artifacts takes 0.7 s total. A fully selected AGP resolves 7,354 of 41,600 samples to a
+file in under two seconds — no bucketing or pre-sorting was needed.
+
+The "no resolvable count" gap is fixed directly: every sample-page row now carries
+`fastq`/`fasta` availability (`helpers/fastq_manifest.summarize_sample_files`, cached in
+`study_detail_cache.sample_files_json` — `helpers/fastq_manifest.get_sample_files`), the
+sample table sorts files-first with an all/with-files/without-files filter and a
+"K with files" count, and "Select all with files" checks exactly what the CSV export
+can contain. See `docs/appendix-a-api-reference.md` (`api_aggregation_study_samples`,
+`api_set_aggregation_samples`) and `docs/appendix-b-sqlite-schema.md`
+(`table-study_detail_cache`).
+
+**Residual, not worth fixing at today's scale:** `_STUDIES_FILES_SQL` still loads every
+file row of up to 50 studies into memory before grouping. The measurements above show
+this is fine for AGP-sized studies; revisit only if a study far larger is ever
+aggregated.
+
+**Caveat added by code review (2026-09-13):** the measurements above are all from AGP
+(largest prep 756 samples); this ticket's own worst case, prep 1445 (6,346 samples ×
+5,090 files, cited in the Description), was never separately measured before closing.
+The "no resolvable count" fix also isn't complete end to end: the sample table's counts
+mix a q-filtered `with_files` with an unfiltered `selected` total (no single number says
+how many *checked* samples are exportable), so a selection of only file-less samples
+still shows both download links enabled and opens a 404 JSON error on click rather than
+disabling the buttons. See TKT-089 and TKT-090.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-086: Sample-Availability Cache Poisons `study_detail_cache` for Other Readers
+
+**Severity:** High
+**Status:** Resolved (2026-09-24)
+
+### Description
+
+`helpers/fastq_manifest.py :: get_sample_files` (2026-09-13) caches its per-study
+FASTQ/FASTA availability map in `study_detail_cache.sample_files_json`, using the same
+COALESCE upsert as every other writer of that table. Two problems fall out of that
+choice, both confirmed by code review:
+
+1. **False cache hits.** `routes/study_routes.py:51-56` and `routes/project_routes.py:37-41`
+   both branch on `if cached:` (row truthiness), not on whether the specific column they
+   need is populated. `get_sample_files` can be the first writer ever for a study —
+   inserting a row with `preps_json`/`artifacts_json` still `NULL`. Opening that study's
+   modal, or adding it to a project, within the next 6 hours then reads `preps=[]`,
+   `artifacts=[]` as a genuine cache hit; `study_routes.py` even persists `"[]"` back via
+   COALESCE, making the empty result durable for the rest of the window.
+2. **No real TTL for the new column.** `cached_at` is row-wide (`cached_at =
+   excluded.cached_at`, unconditional). Any other writer touching the row (modal open,
+   project enrichment, LLM context build) renews `cached_at` without recomputing
+   `sample_files_json`, so a per-sample artifact that finishes processing after the map
+   was first cached can show `—`/`—` indefinitely, well past the 6h the code's own
+   docstring claims. Conversely, the aggregation route's own recompute on an expired row
+   resurrects hours-old `preps_json`/`artifacts_json`/`artifact_graph_json` under a fresh
+   `cached_at`.
+
+See `docs/appendix-b-sqlite-schema.md` § "The COALESCE upsert pattern" (third limit) for
+the general mechanism this exploits.
+
+### Plan
+
+Give the availability map its own table (e.g. `study_sample_files_cache(study_id,
+sample_files_json, cached_at)`, same shape as `biom_sample_cache`) instead of a column on
+`study_detail_cache`, so it has an independent TTL and cannot be mistaken for a
+preps/artifacts hit. At minimum, `study_routes.py` and `project_routes.py` must key on
+the specific column (`cached.get("preps_json") is not None`) rather than row truthiness.
+
+### Resolution (2026-09-24)
+
+Both parts of the plan, in commit `b256b69c`:
+
+- The map lives in its own `study_sample_files_cache(study_id, sample_files_json,
+  cached_at)` table with its own 6 h TTL (`store/cache.py :: _fresh`, shared with
+  `study_detail_cache`), read and written only by `helpers/sample_files.get_sample_files`.
+  It no longer creates or touches `study_detail_cache` rows; that table's
+  `sample_files_json` column is unused.
+- `study_routes.api_study_detail` and `project_routes._enrich_study_in_project` key on the
+  `preps_json` column and treat `NULL` **and** `"[]"` as a miss. The second part heals
+  rows already poisoned before the fix, since the modal had persisted `"[]"` into them; a
+  public study always has a prep, so a real empty list costs at most one refetch.
+- Pinned by `tests/test_aggregations.py :: test_study_detail_refetches_when_cached_row_has_no_preps`
+  (both cases fail with the reader fix reverted) and
+  `tests/test_sample_files.py :: test_computes_then_persists_to_own_table`.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/store/cache.py`
+- `qiita_explore/backend/routes/study_routes.py`
+- `qiita_explore/backend/routes/project_routes.py`
+
+---
+
+## TKT-087: "Select All With Files" Silently Clears the Rest of the Selection When Filtered
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`PATCH .../samples` with `{"select": "with_files"}` always does `clear: True` (replace
+semantics), and the frontend's "Select all with files" button (`aggregation_detail.js`)
+always sends the current filter as `q`. Combined, checking the box while a filter is
+typed replaces the *entire* selection with just the filtered with-files subset, silently
+dropping every previously-checked sample outside the filter — with no confirmation, and
+a tooltip ("Check exactly the samples the CSV can contain") that doesn't warn of this.
+
+A related, smaller mismatch: the "Select matching (N)" button's `N` is the `show`-filtered
+`total` from the last page response, but the action it triggers (`select: "matching"`)
+adds every `q` match regardless of `show` — so with `show=without_files` set, the button
+can read "Select matching (30)" and actually add 130.
+
+### Failure scenario
+
+5,000 AGP samples checked. User types "stool" (200 matches, 150 with files), clicks
+"Select all with files" → selection replaced with those 150; the other 4,850 previously
+checked samples are gone.
+
+### Plan
+
+Make `with_files` additive like `matching` (or require an explicit "replace" confirmation
+before combining `clear` with a `q`-narrowed id list), and compute the "Select matching"
+button's displayed count from the same `q`-only total that `matching` actually adds
+(independent of `show`), or clearly label it as a `show`-scoped count if that's the
+intended behavior.
+
+### Files
+
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-088: Bulk-Action Reload Can Overwrite a Concurrent Show/Filter Change
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`AggregationSampleTable.bulk()` awaits the PATCH, then reloads with the `q`/`show`
+values captured in its own closure at click time. If the user changes `show` (or the
+filter) while that PATCH is still in flight, the `[q, show]` effect fires its own
+`load()` with a newer sequence number, but `bulk()`'s reload — issued after the effect's,
+since it was waiting on the PATCH — can still resolve second and win, leaving the table
+showing rows for the *old* `show` value while the newly-clicked segment button stays
+highlighted as active.
+
+### Plan
+
+Have `bulk()` skip its own reload when its captured `(q, show)` no longer matches the
+current state (or drop the reload entirely and rely on the `[q, show]` effect / a
+patch-from-response-body update instead, consistent with the no-refresh pattern used
+elsewhere).
+
+### Files
+
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-089: Samples Page Always Loads and Sorts the Full Sample-ID List in Python
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`GET .../samples` fetches every sample id of the study (up to 41,600 for AGP) on every
+request — first page, each debounced filter keystroke, each Show toggle, each "Load
+more" — builds a `files` membership check per id, and stable-sorts the whole list in
+Python, on the premise (stated in the route's docstring) that SQL `LIMIT`/`OFFSET`
+cannot express files-first ordering. That premise doesn't hold: a `LEFT JOIN
+unnest(%s::text[]) ... ORDER BY (wf.sample_id IS NOT NULL) DESC, sample_id LIMIT %s
+OFFSET %s`, with the with-files id list bound as a parameter, does the ordering,
+filtering, and `with_files` count in one round trip. The current approach is fine at
+today's sizes (~50 ms) but re-does full-study work on the hottest interactive path in the
+tab, inside a gthread worker shared with SSE chat.
+
+### Plan
+
+If this becomes a bottleneck (larger studies, more concurrent tab users), push the
+ordering into the SQL query instead of Python, keeping `fetch_samples_by_ids`'s shape for
+the metadata columns.
+
+### Files
+
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/backend/helpers/study_samples.py`
+
+---
+
+## TKT-090: Sample-Table Toolbar Mixes Filtered/Unfiltered Scopes; No "Exportable Selected" Count
+
+**Severity:** Low
+**Status:** Partially resolved (2026-09-24)
+
+### Description
+
+The sample table's toolbar count line concatenates the unfiltered "`selected` of
+`num_samples`" with the `q`-filtered `with_files` count, so the two halves of the same
+sentence describe different scopes (e.g. "5,000 of 41,600 selected · 120 with files"
+when the 120 is only among the current filter's matches, not the 5,000 selected).
+Separately, nothing in the tab — toolbar, header, or the two download buttons — shows how
+many of the *checked* samples actually resolve to a file, so a selection of only
+file-less samples still renders both download links enabled; clicking one opens a new
+tab with the 404 JSON error instead of a disabled control or a "0 exportable" hint.
+
+A few smaller, lower-priority items surfaced by the same review, bundled here rather
+than filed separately:
+
+- `helpers/fastq_manifest.py :: compute_sample_files` is a one-line wrapper with exactly
+  one caller (`get_sample_files`); could be inlined.
+- `helpers/study_samples.py :: fetch_samples_by_ids` sorts rows into input order, but its
+  only caller (`aggregation_routes.py`) immediately builds a `by_id` dict and iterates the
+  page itself — the sort is dead work.
+- The per-worker TTL-memo pattern is now hand-rolled three times (`_sample_files_memo`
+  here, `_columns_cache` in `study_samples.py`, `_fetch_study_header_cached` in
+  `qiita_fetch.py`) with no shared helper.
+- Test coverage gaps: `select: "with_files"` combined with `q` (TKT-087's replace
+  behavior) has no test; the samples route's `fields = {c: None}` fallback for an id
+  Qiita returns no metadata row for is never exercised; nothing pins `with_files` staying
+  constant across `show` values.
+
+### Progress (2026-09-24)
+
+The "exportable selected" half is done: `GET /api/aggregations/<id>/file-facets` returns
+`exportable`, the number of checked samples with a file under the aggregation's saved
+Data type / Processing filter. The tab's subtitle shows it, and both download links are
+disabled with an explanation when it is `0`, so an empty selection no longer opens a 404
+page. Still open: the toolbar's count line mixing the unfiltered `selected of
+num_samples` with the `q`-filtered `with_files`, a per-card exportable count, and the
+bundled cleanups below (the `compute_sample_files` wrapper is gone).
+
+### Plan
+
+Compute `with_files` (or a `selected_with_files` count) server-side per study, alongside
+the existing `selected_by_study`/`get_sample_files`, so cards, header, toolbar, and the
+download buttons can all derive from one number instead of the page-scoped, filter-scoped
+one currently used only by the toolbar. Address the bundled minor items opportunistically
+when next touching this file.
+
+### Files
+
+- `qiita_explore/frontend/js/aggregation_detail.js`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/helpers/study_samples.py`
+
+---
+
+## TKT-091: `run_prefix` Substring Matching May Over-Match on AGP
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Measured on barnacle (2026-09-24) while building the Data type / Processing filter:
+through `helpers/fastq_manifest.build_manifest_rows`, some AGP (10317) samples resolve to
+files in **50–73 different metagenomic preps** (e.g. 7 samples in 57 preps, 7 in 73),
+while most resolve to 1–13. Re-sequencing across a few lanes is expected; dozens of preps
+for one sample is not. The matcher links a sample to a file when the sample's
+`run_prefix` is a **substring** of the filename (longest prefix first, each file claimed
+once, per artifact). A short or generic `run_prefix` can therefore claim an unrelated
+sample's file in any prep where the true owner is absent, and those wrong paths would go
+straight into the aggregation export.
+
+### Plan
+
+- For the handful of samples with >20 preps, list the matched filenames and their preps'
+  `run_prefix` values and check by hand whether they are really the same sample.
+- If they over-match, tighten the rule to a prefix match on the filename's basename
+  followed by a separator (`_`, `.`), mirroring how Qiita builds per-sample filenames, and
+  re-measure the with-files counts.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py` (`build_manifest_rows`, `_claim`)
+
+---
+
+## TKT-092: Export Per-Prep Demultiplexed Files for Studies With No Per-Sample File
+
+**Severity:** Low
+**Status:** Open (study 1889 is now covered through its raw `FASTQ` artifact, TKT-098; this ticket remains for studies with only `Demultiplexed`)
+
+### Description
+
+Decided with the user (2026-09-24, alongside the Data type scope-filtering work): the
+aggregation export stays per-sample-file only for now, but a study can have samples that
+are in scope for a data type (via `helpers/study_samples.prep_data_types`) yet resolve to
+**no** file in either export. Measured on barnacle: studies 101, 1070 (16S) and 1889
+(18S) have no `per_sample_FASTQ`/`FASTA` artifact at all — only `Demultiplexed` (one
+`seqs.fna`/`seqs.fastq` per prep, all of that prep's samples concatenated together) and
+`BIOM`. Checking such a study's samples currently just produces an empty export
+(`exportable: 0`); the outline data-type chip (added in the same pass) tells the user why,
+but there is no way to actually get their reads out through this tab.
+
+### Plan
+
+- Add a `Demultiplexed` branch to `helpers/fastq_manifest._study_groups` /
+  `build_csv_rows` (or a separate path): for a checked sample with no per-sample file
+  under the filter, emit one row pointing at its prep's `Demultiplexed` file, with a
+  `file_type` like `demultiplexed` that makes clear every sample in that prep shares the
+  same path.
+- The CSV/xlsx `file_path_in_qmounts` column would then have **duplicate paths across
+  many `sample_id` rows** for the same prep — document this loudly, since a naive
+  pipeline that treats the export as "one file per sample" will silently process the
+  same multiplexed file N times instead of splitting it.
+- Decide whether this needs its own opt-in toggle (some users may not want multiplexed
+  paths mixed into an otherwise one-row-per-sample export) or is implied by picking a
+  prep-only data type in the filter.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py`
+- `qiita_explore/backend/routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/aggregation_detail.js`
+
+---
+
+## TKT-093: A Failed Artifact-Graph Fetch Is Cached as an Empty Graph for 6 h
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`helpers/artifact_graph.fetch_artifact_graph` returns `[]` on any exception, and
+`helpers/study_detail._load` caches that as `artifact_graph_json = "[]"`. The staleness
+check only looks at the first artifact/job node's keys, so an empty list passes. One
+transient Postgres error therefore leaves the study with no processing graph in the
+study view, the modal and the chat widgets until the 6 h cache expires. Found while
+extracting the `/detail` assembly (2026-10-01); not fixed there, which was a pure move.
+
+### Plan
+
+- Treat a cached `"[]"` graph as a miss (a public study always has artifacts), and skip
+  the write when the fetch returns `[]`.
+- Test: a cached empty graph is re-fetched; an empty fetch result isn't stored.
+
+### Files
+
+- `qiita_explore/backend/helpers/study_detail.py`
+- `qiita_explore/backend/helpers/artifact_graph.py`
+
+---
+
+## TKT-094: `show_study_samples` Can't Pre-Filter the List
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The chat's samples widget shows a prep's, a data type's, or the whole study's samples.
+"Show me the stool samples of AGP" can't narrow the list itself: the tool has no `query`
+argument, and the widget's filter box starts empty. The model can only point at the box.
+
+### Plan
+
+- Add `query` to `show_study_samples` (matched with `study_samples.matching_sample_ids`),
+  carry it in the payload, and give `SamplesBrowser` an initial filter (or fetch the
+  matching ids for the widget).
+
+### Files
+
+- `qiita_explore/backend/helpers/study_tools.py`, `helpers/agent_tool_schemas.py`
+- `qiita_explore/frontend/js/chat_study_widgets.js`, `js/components.js`
+
+---
+
+## TKT-095: Chat Study Widgets Load Eagerly When a Long Chat Opens
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Every study widget in a chat fetches its data on mount, so opening a chat with many of
+them fires one `/detail` (or samples) request per distinct study at once. That is cheap
+when cached, but cold `/detail` costs seconds for big studies (AGP ~5 s).
+
+### Plan
+
+- Mount widget bodies when they scroll into view (IntersectionObserver), with a fixed
+  placeholder height.
+
+### Files
+
+- `qiita_explore/frontend/js/chat_study_widgets.js`
+
+---
+
+## TKT-096: A Chat Aggregation's Undo Is Approximate After Hand Edits
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+Each `add_to_chat_aggregation` result carries an undo record (was the study new; which
+artifacts it added; the previous artifacts and filter). Undo replays that record: it removes
+a new study, or drops the added artifacts' rows and restores the previous filter. The
+record is a snapshot. If the user then edits the same study by hand in the tab (re-checks
+rows, changes its filter) or adds to it again, an older Undo no longer reverses exactly
+one step. The widget also forgets that it was undone after a reload, so Undo can be pressed
+again (harmless: a removed study 404s, an extension removes nothing new).
+
+### Plan
+
+- Store undo records server-side with a sequence number per aggregation, and only allow
+  undoing the latest unchanged step; persist "undone" so a reloaded widget shows it.
+
+### Files
+
+- `qiita_explore/backend/helpers/aggregation_tools.py`, `routes/aggregation_routes.py`
+- `qiita_explore/frontend/js/chat_aggregate_widget.js`
+
+---
+
+---
+
+## TKT-098: Raw Multiplexed `FASTQ` Artifacts Are Invisible to the Manifest and Aggregate Export
+
+**Severity:** Medium (1136 studies, 460 public, have only a raw `FASTQ` artifact)
+**Status:** Resolved 2026-09-29 — `FASTQ` artifacts join the availability map and exports via `fastq_manifest._resolve` / `build_multiplexed_rows` (files zipped into lanes by sorted name; one lane serves the whole prep, several lanes route by `run_prefix`). New `export.tsv` (Study id, Sample id, Prep type, Processing, R1, R2, barcodes file, barcode); CSV/xlsx gain `raw_barcodes` rows.
+
+### Description
+
+Found on barnacle (2026-09-29) while tracing AGP's
+`758_Knight_AFG_16s_w_phiX_NoIndex_L001_R{1,2,3}_001.fastq.gz`. Study 10317, prep 1115 →
+artifact 2947 has type **`FASTQ`**: a raw multiplexed upload with `raw_forward_seqs` (R1),
+`raw_barcodes` (R2) and `raw_reverse_seqs` (R3) in `raw_data/` (subdirectory=false). All
+449 of the prep's samples share `run_prefix = Knight_AFG_16s_w_phiX_NoIndex_L001`.
+`helpers/fastq_manifest._WHERE_FASTQ` / `_WHERE_SEQ` accept only `per_sample_FASTQ` and
+`FASTA`, so this artifact never reaches `build_manifest_rows`. Even if the filter allowed it,
+`_claim` pops each file once, so only one of the 449 samples would get the path, and the
+barcodes file would be dropped.
+
+This is the raw-upload counterpart of TKT-092, which covers the post-split `Demultiplexed`
+artifacts. Both hit the same problem: one file holds many samples.
+
+### Plan
+
+- Measure first. Count the studies whose only sequence artifact is `FASTQ` (and no
+  `per_sample_FASTQ`/`FASTA`/`Demultiplexed`) to see whether this is worth handling apart
+  from TKT-092.
+- If it is, add it to the TKT-092 design as a prep-level row type (e.g. `file_type =
+  multiplexed_fastq`). List R1/R2/R3 including `raw_barcodes`, and repeat the path for every
+  sample in the prep. Do not claim-once.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py` (`_WHERE_FASTQ`, `_WHERE_SEQ`, `_claim`)
+
+---
+
+*Generated: 2026-09-03 | Updated: 2026-10-02*
+
+---
+
+---
+
+## TKT-097: Follow-ups to Group by prep / per-row selection
+
+Status 2026-09-30: the first two follow-ups originally listed here — a row's file paths / Processing / Artifact filters not scoped to its prep, and grouped `?sort=artifact` ranking by all of a sample's preps — are **done**: a row is now one `(sample, artifact)` pair and the artifact fixes its prep (`helpers/aggregation_rows.py`, `study_samples.artifact_preps`).
+
+Still open:
+- "Select whole prep" checkbox on the group header rows (per-row selection already lets a single prep + artifact be isolated, one row at a time).
+- A saved per-study **Prep** picker next to Artifact (narrows the table, counts and export by prep), now cheap because `artifact_preps` maps artifact → prep.
+- Artifacts that appear in Qiita after a study is added are not auto-checked (selection rows are written when the study is added); "Select all" picks them up. Consider flagging a study whose `file_rows` snapshot is stale.
+
+---
+
+## TKT-099: Between-Turn Compaction Estimates Tokens Too Optimistically
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`prepare_history` decides when to compact by estimating tokens as characters ÷ 3.5
+(`config.CHARS_PER_TOKEN`). Sample-metadata text (IDs, numbers, short field values) takes
+more tokens per character than prose, so a chat with pinned reports can pass the window
+while the estimate still says it fits. The turn then relies on the in-turn overflow retry
+(`helpers/context_fit.py`: compact, then retry once), which costs one rejected request and
+one extra summarization call.
+
+### Plan
+
+- The context bar now records the provider's real input-token count for each request
+  (`context_usage.measured`, saved on the chat). Use that request's chars-per-token ratio,
+  or a running per-chat ratio, in `_history_budget_chars` instead of the fixed 3.5.
+- Or count tokens with the provider's tokenizer for the study-context block only.
+
+### Files
+
+- `qiita_explore/backend/helpers/chat_history.py` (`_history_budget_chars`)
+- `qiita_explore/backend/helpers/context_usage.py`, `config.py` (`CHARS_PER_TOKEN`)

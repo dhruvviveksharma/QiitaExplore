@@ -127,6 +127,23 @@ def persist_compaction_state(chat_id, scope, *, summary, through_id):
         conn.commit()
 
 
+def persist_context_usage(chat_id, scope, usage):
+    """Save a turn's last context_usage (helpers/context_usage.py) on the chat."""
+    chats_tbl, _ = _tables(scope)
+    with _conn() as conn:
+        conn.execute(f"UPDATE {chats_tbl} SET context_usage = ? WHERE chat_id = ?",
+                     (json.dumps(usage), chat_id))
+        conn.commit()
+
+
+def parse_context_usage(raw):
+    """The saved context_usage column as a dict (None when unset or unreadable)."""
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def load_turn_rows(chat_id, scope, since_id=None, until_id=None):
     """Rows for model replay: role/content plus the decoded model_transcript.
     Never touches ui_payload. since_id (exclusive) supports compaction

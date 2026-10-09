@@ -43,6 +43,7 @@ import routes.chat_routes         # noqa: F401, E402
 import routes.global_chat_routes  # noqa: F401, E402
 import routes.merge_routes        # noqa: F401, E402
 import routes.artifact_routes     # noqa: F401, E402
+import routes.aggregation_routes  # noqa: F401, E402
 
 if __name__ == '__main__':
     print("QIITA SEARCH API -- http://localhost:5001 (DEBUG MODE)")

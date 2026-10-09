@@ -5,6 +5,8 @@ import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 from .crud import _decode_ui, _insert_chat_message_pair
+from .aggregation_crud import delete_chat_aggregations
+from .chat_turn_persist import parse_context_usage
 
 
 def list_global_chats(user_id: str, limit: int = 200, include_archived: bool = False):
@@ -54,7 +56,7 @@ def get_global_chat(user_id: str, chat_id: str, include_messages: bool = True):
         row = conn.execute(
             """
             SELECT chat_id, title, created_at, updated_at,
-                   is_pinned, pinned_at, is_archived, archived_at
+                   is_pinned, pinned_at, is_archived, archived_at, context_usage
             FROM global_chats WHERE user_id = ? AND chat_id = ?
             """,
             (resolved_user, chat_id),
@@ -62,6 +64,7 @@ def get_global_chat(user_id: str, chat_id: str, include_messages: bool = True):
         if row is None:
             return None
         chat = _as_dict(row)
+        chat["context_usage"] = parse_context_usage(chat["context_usage"])
         # include_messages=False skips the full transcript load + per-message
         # ui_payload JSON decode — the stream routes only need ownership/meta.
         if include_messages:
@@ -172,9 +175,11 @@ def set_global_chat_archived(user_id: str, chat_id: str, archived: bool):
 def delete_global_chat(user_id: str, chat_id: str):
     resolved_user = _resolve_user(user_id)
     with _conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "DELETE FROM global_chats WHERE user_id = ? AND chat_id = ?",
             (resolved_user, chat_id),
         )
+        if cur.rowcount:
+            delete_chat_aggregations(conn, chat_id, "global")
         conn.commit()
     return {"ok": True}

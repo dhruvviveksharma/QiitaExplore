@@ -8,7 +8,12 @@
 // ancestor. A dropdown inside any scrolling container (the sidebar,
 // eventually a scrolling modal body, etc.) would otherwise get clipped by
 // that container's overflow for any trigger near its edge.
-function useDropdown(computePos) {
+//
+// Options: { hoverClose: false } keeps the panel open when the cursor
+// leaves it — for multi-select pickers with a search box, where the user
+// types with the mouse resting elsewhere. Outside-click and Escape still
+// close it.
+function useDropdown(computePos, { hoverClose = true } = {}) {
   const [open,    setOpen]    = useState(false);
   const [pos,     setPos]     = useState(null);
   // While true the panel is still mounted but fading out (.cr-menu-closing);
@@ -45,8 +50,10 @@ function useDropdown(computePos) {
     const onEnter = () => { clearTimers(); setClosing(false); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    el?.addEventListener('mouseleave', onLeave);
-    el?.addEventListener('mouseenter', onEnter);
+    if (hoverClose) {
+      el?.addEventListener('mouseleave', onLeave);
+      el?.addEventListener('mouseenter', onEnter);
+    }
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
@@ -56,14 +63,18 @@ function useDropdown(computePos) {
     };
   }, [open]);
 
-  // Default: left-aligned, directly below the trigger (matches a <select>).
-  // Pass computePos(rect) to override — e.g. ChatRowMenu right-aligns its
-  // "..." menu to a fixed width instead.
+  // Default: left-aligned, directly below the trigger (matches a <select>),
+  // shifted left when that would run past the window's right edge (a trigger
+  // at the end of a toolbar). Pass computePos(rect) to override — e.g.
+  // ChatRowMenu right-aligns its "..." menu to a fixed width instead.
   const toggle = e => {
     e && e.stopPropagation();
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos(computePos ? computePos(r) : { top: r.bottom + 4, left: r.left });
+      setPos(computePos ? computePos(r) : {
+        top: r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 200 - 8)),   // 200 = .cr-menu width
+      });
     }
     clearTimers();
     setClosing(false);

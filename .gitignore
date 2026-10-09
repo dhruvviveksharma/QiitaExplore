@@ -75,6 +75,8 @@ qiita_pet/*.conf
 qiita_db/support_files/patches/test_db_sql/91.sql
 
 *.env
+# Backups of .env (they hold the same secrets)
+.env.bak*
 
 # Archives
 *.tar.gz
@@ -99,3 +101,5 @@ qiita_db/support_files/patches/test_db_sql/91.sql
 test_data_studies/
 qiita_config.cfg
 src/qiita-spots
+# Study metadata exports (Qiita PI emails etc.) — local analysis only, never committed
+/qiita_study_*.csv

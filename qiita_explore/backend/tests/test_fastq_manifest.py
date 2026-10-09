@@ -1,0 +1,412 @@
+"""Tests for the per-sample FASTQ manifest (helpers/fastq_manifest.py + its route).
+
+The matcher/serializer are pure Python and take base_dir explicitly, so they
+run without Postgres. The route test reuses the test_stream_routes app
+pattern and fakes the two helper boundaries.
+"""
+import os
+import sys
+from unittest.mock import patch
+
+import pytest
+
+from .conftest import stub_qiita_db_and_core
+
+BASE = "/qmounts/qiita_data"
+
+
+@pytest.fixture
+def fm():
+    import helpers.fastq_manifest as mod
+    return mod
+
+
+# ── build_manifest_rows ──────────────────────────────────────────────────────
+
+def test_paired_modern_subdirectory(fm):
+    prefix = "1E7F1CF_A_FW2_F17_S33_L001"
+    files = [
+        ("raw_forward_seqs", "per_sample_FASTQ", True, 233553, f"{prefix}_R1_001.trimmed.fastq.gz"),
+        ("raw_reverse_seqs", "per_sample_FASTQ", True, 233553, f"{prefix}_R2_001.trimmed.fastq.gz"),
+    ]
+    rows, paired = fm.build_manifest_rows([("s1", prefix)], files, BASE)
+    assert paired is True
+    assert rows == [(
+        "s1",
+        f"{BASE}/per_sample_FASTQ/233553/{prefix}_R1_001.trimmed.fastq.gz",
+        f"{BASE}/per_sample_FASTQ/233553/{prefix}_R2_001.trimmed.fastq.gz",
+    )]
+
+
+def test_legacy_single_end_substring_match(fm):
+    # subdirectory=False → no artifact_id segment; file renamed "{obj_id}_{basename}"
+    files = [("raw_forward_seqs", "raw_data", False, 2214, "360_SRR1561443.fastq.gz")]
+    rows, paired = fm.build_manifest_rows([("10219.SRR1561443", "SRR1561443")], files, BASE)
+    assert paired is False
+    assert rows == [("10219.SRR1561443", f"{BASE}/raw_data/360_SRR1561443.fastq.gz", None)]
+
+
+@pytest.mark.parametrize("order", [("100", "1002"), ("1002", "100")])
+def test_prefix_collision_longest_first(fm, order):
+    samples = [(f"s{p}", p) for p in order]
+    files = [
+        ("raw_forward_seqs", "per_sample_FASTQ", True, 7, "100_R1.fastq.gz"),
+        ("raw_forward_seqs", "per_sample_FASTQ", True, 7, "1002_R1.fastq.gz"),
+    ]
+    rows, _ = fm.build_manifest_rows(samples, files, BASE)
+    assert dict((sid, os.path.basename(f)) for sid, f, _ in rows) == {
+        "s100": "100_R1.fastq.gz", "s1002": "1002_R1.fastq.gz",
+    }
+
+
+def test_unmatched_and_null_prefix_skipped(fm):
+    files = [("raw_forward_seqs", "per_sample_FASTQ", True, 7, "ABC_R1.fastq.gz")]
+    rows, _ = fm.build_manifest_rows([("s_zzz", "ZZZ"), ("s_null", None), ("s_ok", "ABC")], files, BASE)
+    assert [r[0] for r in rows] == ["s_ok"]
+
+
+def test_rows_sorted_by_sample_id(fm):
+    files = [
+        ("raw_forward_seqs", "per_sample_FASTQ", True, 7, "bbb_R1.fastq.gz"),
+        ("raw_forward_seqs", "per_sample_FASTQ", True, 7, "aaa_R1.fastq.gz"),
+    ]
+    rows, _ = fm.build_manifest_rows([("z", "bbb"), ("a", "aaa")], files, BASE)
+    assert [r[0] for r in rows] == ["a", "z"]
+
+
+def test_raw_fasta_is_the_forward_file(fm):
+    files = [("raw_fasta", "FASTA", True, 3220, "SRR040501.fna")]
+    rows, paired = fm.build_manifest_rows([("1928.SRR040501", "SRR040501")], files, BASE)
+    assert paired is False
+    assert rows == [("1928.SRR040501", f"{BASE}/FASTA/3220/SRR040501.fna", None)]
+
+
+# ── build_export_rows / to_csv ───────────────────────────────────────────────
+
+def _fastq_group(study_id, data_type, artifact_id, samples, allow, paired=True, processing="Raw upload"):
+    files = []
+    for _, prefix in samples:
+        files.append(("raw_forward_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R1.fastq.gz"))
+        if paired:
+            files.append(("raw_reverse_seqs", "per_sample_FASTQ", True, artifact_id, f"{prefix}_R2.fastq.gz"))
+    return (study_id, data_type, "per_sample_FASTQ", processing, artifact_id, samples, files, {(s, artifact_id) for s in allow})
+
+
+def test_export_paired_sample_is_one_row_with_r1_r2(fm):
+    rows = fm.build_export_rows([_fastq_group(16326, "16S", 10, [("s1", "P1")], ["s1"])], BASE)
+    assert rows == [(16326, "s1", 10, "16S", "Raw upload", f"{BASE}/per_sample_FASTQ/10/P1_R1.fastq.gz",
+                     f"{BASE}/per_sample_FASTQ/10/P1_R2.fastq.gz", "")]
+
+
+def test_export_single_end_has_blank_r2_and_barcodes(fm):
+    (row,) = fm.build_export_rows([_fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)], BASE)
+    assert row[5].endswith("/P1_R1.fastq.gz") and row[6:] == ("", "")
+
+
+def test_export_fasta_group_puts_raw_fasta_in_r1(fm):
+    files = [("raw_fasta", "FASTA", True, 3220, "SRR1.fna")]
+    rows = fm.build_export_rows([(1928, "16S", "FASTA", "Raw upload", 3220, [("s1", "SRR1")], files, {("s1", 3220)})], BASE)
+    assert rows == [(1928, "s1", 3220, "16S", "Raw upload", f"{BASE}/FASTA/3220/SRR1.fna", "", "")]
+
+
+def test_export_allowlist_filters_after_matching(fm):
+    # 's8B4' is selected, 's8B4ABX' is not. If unselected samples were dropped
+    # before matching, '8B4' would claim '8B4ABX_R1.fastq.gz' (longest first
+    # needs the whole prep present).
+    samples = [("s8B4", "8B4"), ("s8B4ABX", "8B4ABX")]
+    rows = fm.build_export_rows([_fastq_group(1, "16S", 7, samples, ["s8B4"], paired=False)], BASE)
+    assert [r[1] for r in rows] == ["s8B4"]
+    assert rows[0][5].endswith("/8B4_R1.fastq.gz")
+
+
+def test_export_sample_in_two_preps_yields_both_data_types(fm):
+    g1 = _fastq_group(5, "16S", 10, [("s1", "P1")], ["s1"], paired=False)
+    g2 = _fastq_group(5, "Metagenomic", 20, [("s1", "P1")], ["s1"], paired=False)
+    rows = fm.build_export_rows([g1, g2], BASE)
+    assert [(r[2], r[3]) for r in rows] == [(10, "16S"), (20, "Metagenomic")]
+    assert len({r[5] for r in rows}) == 2
+
+
+def test_export_only_the_checked_rows_of_a_sample(fm):
+    # Two artifacts hold the same sample; only artifact 11's row is checked, so
+    # artifact 10's row (its own prep's file) is left out of the export.
+    g10 = _fastq_group(5, "16S", 10, [("s1", "P1")], [], paired=False)        # nothing checked in 10
+    g11 = _fastq_group(5, "16S", 11, [("s1", "P1")], ["s1"], paired=False)    # (s1, 11) checked
+    assert [r[2] for r in fm.build_export_rows([g10, g11], BASE)] == [11]
+
+
+def test_export_dedupes_identical_rows_and_sorts(fm):
+    g = _fastq_group(5, "16S", 10, [("s2", "P2"), ("s1", "P1")], ["s1", "s2"], paired=False)
+    rows = fm.build_export_rows([g, g], BASE)
+    assert [r[1] for r in rows] == ["s1", "s2"]
+
+
+def test_export_unselected_and_unmatched_omitted(fm):
+    g = _fastq_group(5, "16S", 10, [("s1", "P1"), ("s2", None)], ["s1", "s2", "ghost"], paired=False)
+    assert [r[1] for r in fm.build_export_rows([g], BASE)] == ["s1"]
+    assert fm.build_export_rows([], BASE) == []
+
+
+def test_export_processing_copies_are_separate_rows(fm):
+    # One metagenomic prep often holds raw, adapter-trimmed and host-filtered
+    # per_sample_FASTQ artifacts of the same reads; `processing` tells them apart.
+    raw = _fastq_group(5, "Metagenomic", 10, [("s1", "P1")], ["s1"], paired=False)
+    filt = _fastq_group(5, "Metagenomic", 11, [("s1", "P1")], ["s1"], paired=False,
+                        processing="Adapter and host filtering v2023.12")
+    rows = fm.build_export_rows([raw, filt], BASE)
+    assert [r[4] for r in rows] == ["Raw upload", "Adapter and host filtering v2023.12"]
+
+
+def test_group_matches(fm):
+    assert fm.group_matches(None, "16S", "Raw upload")
+    assert fm.group_matches({"data_types": [], "processing": []}, "16S", "Raw upload")
+    f = {"data_types": ["Metagenomic"], "processing": ["Atropos v1.1.24"]}
+    assert fm.group_matches(f, "Metagenomic", "Atropos v1.1.24")
+    assert not fm.group_matches(f, "16S", "Atropos v1.1.24")
+    assert not fm.group_matches(f, "Metagenomic", "Raw upload")
+    assert fm.group_matches({"data_types": ["16S"]}, "16S", "anything")
+    a = {"artifacts": ["140751"]}
+    assert fm.group_matches(a, "16S", "Raw upload", 140751)        # int id matches the string pick
+    assert not fm.group_matches(a, "16S", "Raw upload", 140713)
+    assert fm.group_matches({"artifacts": []}, "16S", "Raw upload", 1)
+
+
+def test_to_csv_and_tsv(fm):
+    rows = [(5, "s1", 10, "16S", "Raw upload", "/p/a_R1.fq.gz", "/p/a_R2.fq.gz", "")]
+    assert fm.to_csv(rows) == ("study_id,sample_id,artifact_id,data_type,processing,R1,R2,barcodes\n"
+                               "5,s1,10,16S,Raw upload,/p/a_R1.fq.gz,/p/a_R2.fq.gz,\n")
+    assert fm.to_csv(rows, "\t").splitlines()[1] == "5\ts1\t10\t16S\tRaw upload\t/p/a_R1.fq.gz\t/p/a_R2.fq.gz\t"
+
+
+def test_to_xlsx_keeps_sample_id_as_text(fm):
+    # In a CSV, Excel / Numbers parse "10317.000001062" as a number and show
+    # 10317 — indistinguishable from study_id. The xlsx types it as text.
+    import io
+    import openpyxl
+    out = fm.to_xlsx([(10317, "10317.000001062", 140751, "Metagenomic", "Raw upload",
+                       "/p/a_R1.fq.gz", "/p/a_R2.fq.gz", "")])
+    ws = openpyxl.load_workbook(io.BytesIO(out)).active
+    assert [c.value for c in ws[1]] == fm.EXPORT_HEADER
+    study, sample, artifact, *_ = ws[2]
+    assert (study.value, study.data_type) == (10317, "n")
+    assert (sample.value, sample.data_type, sample.number_format) == ("10317.000001062", "s", "@")
+    assert (artifact.value, artifact.data_type) == ("140751", "s")
+    assert ws.freeze_panes == "A2"
+
+
+# ── _study_groups ──────────────────────────────────────────────────────────────
+
+def _file_row(study_id=5, artifact_id=10, prep_id=100, filepath_type="raw_forward_seqs",
+              mountpoint="per_sample_FASTQ", subdirectory=True, filepath="P1_R1.fastq.gz",
+              data_type="16S", artifact_type="per_sample_FASTQ", command=None):
+    return (study_id, artifact_id, prep_id, filepath_type, mountpoint, subdirectory, filepath,
+            data_type, artifact_type, command)
+
+
+def test_study_groups_shape(fm):
+    calls = []
+
+    def fake(sql, params=None):
+        calls.append((sql, params))
+        return [_file_row()] if "study_artifact" in sql else [("s1", "P1")]
+
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        groups = fm._study_groups([5], {5: {("s1", 10)}})
+    assert len(groups) == 1
+    study_id, data_type, artifact_type, processing, artifact_id, samples, files, allow = groups[0]
+    assert (study_id, data_type, artifact_type, processing, artifact_id, allow) == \
+        (5, "16S", "per_sample_FASTQ", "Raw upload", 10, {("s1", 10)})  # no command -> an upload
+    assert samples == [("s1", "P1")]
+    assert files == [("raw_forward_seqs", "per_sample_FASTQ", True, 10, "P1_R1.fastq.gz")]
+    # the files query (over study_artifact) runs before the per-prep sample query
+    assert "study_artifact" in calls[0][0]
+    assert calls[0][1] == [[5]]
+
+
+def test_study_groups_processing_is_the_command_name(fm):
+    rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
+    with patch.object(fm, "pooled_fetchall",
+                      side_effect=lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]):
+        groups = fm._study_groups([5], {})
+    assert [g[3] for g in groups] == ["Raw upload", "Atropos v1.1.24"]
+
+
+def test_study_groups_artifact_ids_narrow_the_query(fm):
+    calls = []
+
+    def fake(sql, params=None):
+        calls.append((sql, params))
+        return [_file_row(artifact_id=11)] if "study_artifact" in sql else [("s1", "P1")]
+
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        groups = fm._study_groups([5], {}, [11])
+    assert [g[4] for g in groups] == [11]
+    assert "a.artifact_id = ANY(%s)" in calls[0][0] and calls[0][1] == [[5], [11]]
+
+
+def test_fetch_export_rows_applies_file_filter(fm, monkeypatch):
+    monkeypatch.setattr(fm, "_BASE", BASE)
+    rows = [_file_row(artifact_id=10), _file_row(artifact_id=11, command="Atropos v1.1.24")]
+    fake = lambda sql, params=None: rows if "study_artifact" in sql else [("s1", "P1")]  # noqa: E731
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": [], "processing": ["Atropos v1.1.24"]}})
+        assert [(r[2], r[4]) for r in out] == [(11, "Atropos v1.1.24")]
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": [], "processing": [], "artifacts": ["10"]}})
+        assert [(r[2], r[4]) for r in out] == [(10, "Raw upload")]
+    with patch.object(fm, "pooled_fetchall", side_effect=fake), pytest.raises(ValueError):
+        fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}}, {5: {"data_types": ["ITS"], "processing": []}})
+
+
+def test_fetch_export_rows_applies_each_studys_own_filter(fm, monkeypatch):
+    # Study 5 picks its artifact 11; study 6 has no filter. 5's pick must not
+    # touch 6's rows (an artifact belongs to one study), and vice versa.
+    monkeypatch.setattr(fm, "_BASE", BASE)
+    rows = [_file_row(study_id=5, artifact_id=10), _file_row(study_id=5, artifact_id=11, prep_id=101),
+            _file_row(study_id=6, artifact_id=20, prep_id=200, filepath="Q1_R1.fastq.gz")]
+    samples = {"100": [("s1", "P1")], "101": [("s1", "P1")], "200": [("t1", "Q1")]}
+    fake = lambda sql, params=None: rows if "study_artifact" in sql else samples[sql.split("prep_")[1].split()[0]]  # noqa: E731
+    with patch.object(fm, "pooled_fetchall", side_effect=fake):
+        out = fm.fetch_export_rows({5: {("s1", 10), ("s1", 11)}, 6: {("t1", 20)}}, {5: {"artifacts": ["11"]}, 6: {}})
+    assert sorted((r[0], r[1], r[2]) for r in out) == [(5, "s1", 11), (6, "t1", 20)]
+
+
+def test_study_groups_empty_when_no_study_ids_or_no_artifacts(fm):
+    assert fm._study_groups([], {}) == []
+    with patch.object(fm, "pooled_fetchall", return_value=[]):
+        assert fm._study_groups([5], {}) == []
+
+
+# ── to_tsv ───────────────────────────────────────────────────────────────────
+
+def test_to_tsv_paired(fm):
+    out = fm.to_tsv([("s1", "/f_R1.gz", "/f_R2.gz"), ("s2", "/g_R1.gz", None)], paired=True)
+    lines = out.split("\n")
+    assert lines[0] == "sample-id\tforward-absolute-filepath\treverse-absolute-filepath"
+    assert lines[1] == "s1\t/f_R1.gz\t/f_R2.gz"
+    assert lines[2] == "s2\t/g_R1.gz\t"          # missing reverse → empty field
+    assert out.endswith("\n")
+
+
+def test_to_tsv_single(fm):
+    out = fm.to_tsv([("s1", "/f.gz", None)], paired=False)
+    assert out == "sample-id\tabsolute-filepath\ns1\t/f.gz\n"
+
+
+# ── route ────────────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def _app(tmp_path_factory):
+    db_path = str(tmp_path_factory.mktemp("fastq_manifest") / "test.db")
+    os.environ["QIITA_EXPERIMENT_DB_PATH"] = db_path
+    for name in list(sys.modules):
+        if (name == "run" or name.startswith("routes.") or name == "store"
+                or name.startswith("store.") or name.startswith("helpers.")
+                or "sql_store" in name):
+            del sys.modules[name]
+    stub_qiita_db_and_core()
+    import run
+    import config
+    config.ALLOWED_ORIGINS = []
+    config.SESSION_COOKIE_SECURE = False
+    return run.app
+
+
+@pytest.fixture
+def client(_app):
+    return _app.test_client()
+
+
+@pytest.fixture
+def logged_in(client, monkeypatch):
+    import routes.auth_routes as auth_routes
+    from helpers.qiita_client import WhoAmIResult
+
+    monkeypatch.setattr(auth_routes, "whoami", lambda pat: WhoAmIResult(ok=True, identity={
+        "principal_idx": 90002, "email": "fastq@test.local",
+        "system_role": "user", "scopes": [], "profile_complete": True,
+    }))
+    resp = client.post("/api/auth/connect", json={"token": "qk_test"})
+    assert resp.status_code == 200, resp.get_json()
+
+
+@pytest.fixture
+def fake_manifest(monkeypatch):
+    import routes.artifact_routes as ar
+    monkeypatch.setattr(ar, "is_study_public", lambda sid: sid != 99999)
+    monkeypatch.setattr(ar, "fetch_manifest",
+                        lambda sid, aid: (19685, [("s1", "/a/f_R1.fq.gz", "/a/f_R2.fq.gz")], True))
+
+
+def test_route_returns_tsv_attachment(client, logged_in, fake_manifest):
+    resp = client.get("/api/artifacts/233553/fastq-manifest?study_id=16326")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/tab-separated-values"
+    assert resp.headers["Content-Disposition"] == "attachment; filename=manifest_prep19685_artifact233553.tsv"
+    body = resp.get_data(as_text=True).split("\n")
+    assert body[0] == "sample-id\tforward-absolute-filepath\treverse-absolute-filepath"
+    assert body[1] == "s1\t/a/f_R1.fq.gz\t/a/f_R2.fq.gz"
+
+
+def test_route_requires_study_id(client, logged_in, fake_manifest):
+    assert client.get("/api/artifacts/233553/fastq-manifest").status_code == 400
+
+
+def test_route_404_for_non_public_study(client, logged_in, fake_manifest):
+    assert client.get("/api/artifacts/233553/fastq-manifest?study_id=99999").status_code == 404
+
+
+def test_route_404_when_not_fastq_artifact(client, logged_in, monkeypatch):
+    import routes.artifact_routes as ar
+    monkeypatch.setattr(ar, "is_study_public", lambda sid: True)
+
+    def _raise(sid, aid):
+        raise ValueError("nope")
+    monkeypatch.setattr(ar, "fetch_manifest", _raise)
+    resp = client.get("/api/artifacts/1/fastq-manifest?study_id=1")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "nope"
+
+
+def test_route_401_without_session(_app, fake_manifest):
+    assert _app.test_client().get("/api/artifacts/233553/fastq-manifest?study_id=16326").status_code == 401
+
+
+# ── pooled (multiplexed) FASTQ artifacts ─────────────────────────────────────
+
+_P = "Metcalf18S_L007_R1_001"
+_POOLED = [
+    ("raw_barcodes", "raw_data", False, 2318, f"834_{_P}_barcodes.fastq.gz"),
+    ("raw_forward_seqs", "raw_data", False, 2318, f"834_{_P}_sequences.fastq.gz"),
+    ("raw_reverse_seqs", "raw_data", False, 2318, "834_Metcalf18S_L007_R3_001.fastq.gz"),
+]
+
+
+def test_multiplexed_single_lane_serves_every_sample_even_if_r3_lacks_prefix(fm):
+    rows = fm.build_multiplexed_rows([("s2", _P), ("s1", _P)], _POOLED, BASE)
+    fwd = f"{BASE}/raw_data/834_{_P}_sequences.fastq.gz"
+    rev = f"{BASE}/raw_data/834_Metcalf18S_L007_R3_001.fastq.gz"
+    bc = f"{BASE}/raw_data/834_{_P}_barcodes.fastq.gz"
+    assert rows == [("s1", fwd, rev, bc), ("s2", fwd, rev, bc)]
+
+
+def test_multiplexed_two_lanes_route_by_run_prefix(fm):
+    files = [
+        ("raw_forward_seqs", "raw_data", False, 1, "A_L007_sequences.fastq.gz"),
+        ("raw_forward_seqs", "raw_data", False, 1, "s_4_1_sequences.fastq.gz"),
+        ("raw_barcodes", "raw_data", False, 1, "A_L007_sequences_barcodes.fastq.gz"),
+        ("raw_barcodes", "raw_data", False, 1, "s_4_1_sequences_barcodes.fastq.gz"),
+    ]
+    rows = fm.build_multiplexed_rows([("a", "A_L007"), ("b", "s_4_1_sequences"), ("c", "nope")],
+                                     files, BASE)
+    assert [(r[0], r[1].rsplit("/", 1)[1], r[2], r[3].rsplit("/", 1)[1]) for r in rows] == [
+        ("a", "A_L007_sequences.fastq.gz", None, "A_L007_sequences_barcodes.fastq.gz"),
+        ("b", "s_4_1_sequences.fastq.gz", None, "s_4_1_sequences_barcodes.fastq.gz"),
+    ]
+
+
+def test_export_rows_for_pooled_group(fm):
+    g = (1889, "18S", "FASTQ", "Raw upload", 2318, [("s1", _P), ("s2", _P)], _POOLED, {("s1", 2318)})
+    (row,) = fm.build_export_rows([g], BASE)
+    assert row[:5] == (1889, "s1", 2318, "18S", "Raw upload")
+    assert row[5].endswith("_sequences.fastq.gz") and row[6].endswith("R3_001.fastq.gz")
+    assert row[7].endswith("_barcodes.fastq.gz")

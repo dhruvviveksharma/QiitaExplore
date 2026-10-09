@@ -12,6 +12,40 @@ function useTreeView() {
   return [view, choose];
 }
 
+// {node_id: value} telling apart sibling jobs that run the same command: the
+// first parameter (by name) whose value differs within that group, file paths cut
+// to their basename — "150" for Trimming, "97_otus.fasta" vs a Silva reference for
+// Pick closed-reference OTUs. Jobs that are unique, or identical re-runs, are absent.
+// Shared by the tree / list views here and the study modal's chart (artifact_network.js).
+function jobVariants(nodes) {
+  const groups = {};
+  for (const n of nodes) {
+    if (n.kind === 'job') (groups[n.command_name] = groups[n.command_name] || []).push(n);
+  }
+  const out = {};
+  for (const group of Object.values(groups)) {
+    if (group.length < 2) continue;
+    const params = n => n.command_params || {};
+    const keys = [...new Set(group.flatMap(n => Object.keys(params(n))))].sort();
+    const key = keys.find(k => new Set(group.map(n => String(params(n)[k]))).size > 1);
+    if (key == null) continue;
+    for (const n of group) {
+      const v = params(n)[key];
+      if (v != null && v !== '') out[n.node_id] = String(v).split('/').pop();
+    }
+  }
+  return out;
+}
+
+// {node_id: label}: "<command> · <variant>" for jobs jobVariants tells apart,
+// null otherwise (show the plain command name).
+function jobLabels(nodes) {
+  const variants = jobVariants(nodes);
+  const out = {};
+  for (const n of nodes) out[n.node_id] = variants[n.node_id] != null ? `${n.command_name} · ${variants[n.node_id]}` : null;
+  return out;
+}
+
 function provenanceForest(filtered, rootedBioms) {
   const byId = {};
   for (const n of filtered) byId[n.node_id] = n;
@@ -42,25 +76,13 @@ function provenanceForest(filtered, rootedBioms) {
 
 function TreeChildren({ nodes, byId, childrenMap, selProps }) {
   if (!nodes.length) return null;
-  const nameCount = {};
-  for (const n of nodes) {
-    if (n.kind === 'job') nameCount[n.command_name] = (nameCount[n.command_name] || 0) + 1;
-  }
+  const labels = jobLabels(nodes);
   return (
     <div className="ao-tree-children">
-      {nodes.map(n => {
-        let label = null;
-        if (n.kind === 'job' && nameCount[n.command_name] > 1) {
-          const numVal = Object.values(n.command_params || {}).find(
-            v => typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))
-          );
-          if (numVal != null) label = `${n.command_name} · ${numVal}`;
-        }
-        return (
-          <TreeNode key={n.node_id} node={n} byId={byId} childrenMap={childrenMap}
-            selProps={selProps} label={label} />
-        );
-      })}
+      {nodes.map(n => (
+        <TreeNode key={n.node_id} node={n} byId={byId} childrenMap={childrenMap}
+          selProps={selProps} label={labels[n.node_id]} />
+      ))}
     </div>
   );
 }
@@ -152,25 +174,13 @@ function TreeNode({ node, byId, childrenMap, selProps, label, isRoot }) {
 
 function IndentChildren({ nodes, byId, childrenMap, selProps }) {
   if (!nodes.length) return null;
-  const nameCount = {};
-  for (const n of nodes) {
-    if (n.kind === 'job') nameCount[n.command_name] = (nameCount[n.command_name] || 0) + 1;
-  }
+  const labels = jobLabels(nodes);
   return (
     <div className="ao-indent-children">
-      {nodes.map(n => {
-        let label = null;
-        if (n.kind === 'job' && nameCount[n.command_name] > 1) {
-          const numVal = Object.values(n.command_params || {}).find(
-            v => typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))
-          );
-          if (numVal != null) label = `${n.command_name} · ${numVal}`;
-        }
-        return (
-          <IndentNode key={n.node_id} node={n} byId={byId} childrenMap={childrenMap}
-            selProps={selProps} label={label} />
-        );
-      })}
+      {nodes.map(n => (
+        <IndentNode key={n.node_id} node={n} byId={byId} childrenMap={childrenMap}
+          selProps={selProps} label={labels[n.node_id]} />
+      ))}
     </div>
   );
 }

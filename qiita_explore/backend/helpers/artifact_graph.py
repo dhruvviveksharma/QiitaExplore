@@ -107,9 +107,10 @@ def _build(study_id: int) -> list:
                 """
                 SELECT a.artifact_id, at.artifact_type, a.name,
                        dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath AS full_path,
-                       f.filepath_id, ft.filepath_type, f.filepath AS filename
+                       f.filepath_id, ft.filepath_type, f.filepath AS filename, v.visibility
                 FROM qiita.artifact a
                 JOIN qiita.artifact_type at          ON a.artifact_type_id = at.artifact_type_id
+                JOIN qiita.visibility v              ON a.visibility_id = v.visibility_id
                 LEFT JOIN qiita.artifact_filepath af ON a.artifact_id = af.artifact_id
                 LEFT JOIN qiita.filepath f           ON af.filepath_id = f.filepath_id
                 LEFT JOIN qiita.filepath_type ft     ON f.filepath_type_id = ft.filepath_type_id
@@ -126,7 +127,8 @@ def _build(study_id: int) -> list:
                 fp = _abs(r[3]) if r[3] else None
                 fpid, ftype, fname = r[4], r[5], r[6]
                 if aid not in meta or (fp and fp.lower().endswith(".biom")):
-                    meta[aid] = {"artifact_type": atype, "name": aname, "full_path": fp}
+                    meta[aid] = {"artifact_type": atype, "name": aname, "full_path": fp,
+                                 "visibility": r[7]}
                 if fpid is not None:
                     files_by_aid.setdefault(aid, []).append({
                         "filepath_id": fpid,
@@ -191,6 +193,9 @@ def _build(study_id: int) -> list:
             "artifact_type":    m.get("artifact_type"),
             "data_type":        node_dt.get(f"a{aid}"),
             "name":             m.get("name"),
+            # public / private / sandbox / archived. Qiita archives old outputs and
+            # drops their parent links; the study modal's chart hides them.
+            "visibility":       m.get("visibility"),
             "full_path":        m.get("full_path"),
             "filepaths":        files_by_aid.get(aid, []),
         })

@@ -34,11 +34,47 @@ _TRANSIENT_MARKERS = (
 )
 
 
+# How providers word a request longer than the model's window: vLLM / OpenAI
+# "maximum context length is N tokens" (newer vLLM: "longer than the maximum
+# model length"), Anthropic "prompt is too long: M tokens > N maximum".
+# (No bare "too many tokens" / "exceeds … tokens": rate limits say that too.)
+_OVERFLOW_MARKERS = (
+    "maximum context length", "context_length_exceeded", "context length", "context window",
+    "maximum model length", "prompt is too long", "input is too long",
+)
+
+
+def is_context_overflow(exc):
+    """True when the provider rejected the request as too long for the model."""
+    if getattr(exc, "status_code", None) not in (None, 400, 413):
+        return False
+    text = str(exc).lower()
+    return any(m in text for m in _OVERFLOW_MARKERS)
+
+
+def too_long_message(model):
+    return (f"This conversation is too long for {model or 'the selected model'}, even after "
+            "compacting. Start a new chat (pin the studies you need), or switch to a model "
+            "with a larger context window.")
+
+
+def _anthropic_error_text(exc):
+    err = exc.body.get("error") if isinstance(getattr(exc, "body", None), dict) else None
+    return (err.get("message") if isinstance(err, dict) else None) or str(exc)
+
+
 def friendly_llm_error(exc, model=None):
+    if is_context_overflow(exc):
+        return too_long_message(model)
     if isinstance(exc, _anthropic.RateLimitError):
         return f"{model or 'Claude'} rate limit reached. Please wait a moment and try again."
-    if isinstance(exc, (_anthropic.APIConnectionError, _anthropic.APIStatusError)):
-        return f"{model or 'Claude'} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."
+    if isinstance(exc, (_anthropic.AuthenticationError, _anthropic.PermissionDeniedError)):
+        return f"{model or 'Claude'} rejected the API key. Check your ANTHROPIC_API_KEY and try again."
+    if isinstance(exc, _anthropic.APIConnectionError) or (
+            isinstance(exc, _anthropic.APIStatusError) and (exc.status_code or 0) >= 500):
+        return f"{model or 'Claude'} is currently unavailable. Please try again in a moment."
+    if isinstance(exc, _anthropic.APIStatusError):
+        return _anthropic_error_text(exc)
     raw = str(exc) or exc.__class__.__name__
     lowered = raw.lower()
     if any(m in lowered for m in _TRANSIENT_MARKERS):

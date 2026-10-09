@@ -1,0 +1,64 @@
+/* Study modal processing chart (js/artifact_network.js): Qiita-style left-to-right
+   network — triangles are artifacts, circles are processing jobs.
+   Sibling of style.css (over the 500-line cap), linked right after it. Colours are
+   theme tokens, plus one local token for the job green Qiita uses. */
+
+.an-root { --an-job: #74d382; --an-job-edge: #3f9a4d; }
+.app.dark .an-root { --an-job: #4fae5f; --an-job-edge: #8fe09b; }
+
+.an-chart { position: relative; border: 1px solid var(--border-soft); border-radius: var(--radius-m); background: var(--surface); }
+.an-scroll { overflow: auto; max-height: 460px; padding: 4px 4px 4px 40px; }
+.an-scroll.an-pan { cursor: grab; }
+.an-scroll.an-pan:active { cursor: grabbing; }
+.an-svg { display: block; user-select: none; }
+
+.an-zoom { position: absolute; top: 8px; left: 8px; z-index: 1; display: flex; flex-direction: column; gap: 4px; }
+.an-zoom button {
+  width: 26px; height: 24px; font-size: 13px; line-height: 1; border: 1px solid var(--border);
+  border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); cursor: pointer;
+}
+.an-zoom button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.an-zoom button:disabled { opacity: .4; cursor: default; }
+.an-zoom .an-fit { font-size: 10.5px; }
+
+.an-edge { fill: none; stroke: var(--text-3); stroke-width: 1.6; }
+.an-arrowhead { fill: var(--text-3); }
+.an-node { cursor: pointer; outline: none; }
+.an-label { font-size: 12px; fill: var(--text-2); text-anchor: middle; pointer-events: none; }
+.an-artifact .an-shape { fill: var(--surface); stroke: var(--text); stroke-width: 2.4; stroke-linejoin: round; }
+.an-job .an-shape { fill: var(--an-job); stroke: var(--an-job-edge); stroke-width: 2; }
+.an-node:hover .an-shape, .an-node:focus-visible .an-shape { stroke: var(--accent); }
+.an-node.an-on .an-shape { stroke: var(--accent); stroke-width: 3.4; }
+.an-node.an-on .an-label { fill: var(--accent-h); font-weight: 600; }
+
+.an-empty, .an-hint { font-size: 0.82rem; color: var(--text-3); margin: 8px 2px 0; }
+.an-archived { font-size: 0.78rem; color: var(--text-3); margin-top: 8px; }
+.an-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.an-link:hover { text-decoration: underline; }
+.an-archived-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.an-chip {
+  font-size: 0.76rem; padding: 2px 8px; border: 1px dashed var(--border); border-radius: 5px;
+  background: var(--surface-2); color: var(--text-2); cursor: pointer;
+}
+.an-chip:hover, .an-chip.an-on { border-color: var(--accent); color: var(--accent); }
+.an-chip-id { color: var(--text-3); margin-left: 4px; }
+
+.an-detail {
+  margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m); background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.an-detail-title { font-size: 0.92rem; font-weight: 600; color: var(--text); }
+.an-detail-id { font-weight: 400; color: var(--text-3); }
+.an-detail-sub { font-size: 0.78rem; color: var(--text-3); }
+
+/* FilePathRow: download link, file type, full server path + copy (the
+   chat's graph and files widgets). */
+.an-file-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; }
+.an-file-row .ao-file-btn { flex-shrink: 0; }
+.an-file-type { font-size: 0.74rem; color: var(--text-3); white-space: nowrap; }
+.an-file-path {
+  flex: 1; min-width: 0; font-size: 0.74rem; color: var(--text-2); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.an-file-row .msg-copy-btn { flex-shrink: 0; }

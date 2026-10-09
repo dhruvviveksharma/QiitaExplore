@@ -8,6 +8,11 @@ RELEVANCE_WEIGHTS = {
     "alias": 15,
     "pi": 20,
     "sample_per_kw": 1,
+    # A pasted study ID must outrank every incidental text hit; added once per
+    # study (outside the per-keyword sum) in SQL and in finalize_search_results.
+    "exact_id": 1000,
+    # The whole cleaned query appearing verbatim in the title.
+    "title_phrase": 25,
 }
 
 
@@ -142,8 +147,14 @@ def apply_pi_veto(studies: list, resolved_pis: list, veto_applied: bool) -> list
 
 
 def finalize_search_results(studies, keywords, resolved_pis=None, veto_applied=False,
-                            limit=None, pool_size=16):
-    """Score sample metadata layer, sort by relevance, apply PI veto, optional trim."""
+                            limit=None, pool_size=16,
+                            boost_study_ids=None, title_phrase=None):
+    """Score sample metadata layer, sort by relevance, apply PI veto, optional trim.
+
+    Recomputes relevance from scratch (the SQL score is discarded), so the
+    exact-ID and title-phrase bonuses build_keyword_lateral adds in SQL are
+    mirrored here — otherwise the re-rank would undo them.
+    """
     if not studies or not keywords:
         ranked = apply_pi_veto(list(studies or []), resolved_pis or [], veto_applied)
         return ranked[:limit] if limit else ranked
@@ -151,10 +162,16 @@ def finalize_search_results(studies, keywords, resolved_pis=None, veto_applied=F
     sample_scores = score_studies_sample_layer(
         [s["study_id"] for s in studies], keywords, pool_size=pool_size,
     )
+    boost  = set(boost_study_ids or [])
+    phrase = (title_phrase or "").lower()
     for s in studies:
         s["relevance"] = compute_total_relevance(
             s, keywords, sample_scores.get(s["study_id"], 0),
         )
+        if s.get("study_id") in boost:
+            s["relevance"] += RELEVANCE_WEIGHTS["exact_id"]
+        if phrase and phrase in (s.get("study_title") or "").lower():
+            s["relevance"] += RELEVANCE_WEIGHTS["title_phrase"]
     studies.sort(
         key=lambda s: (s.get("relevance", 0), s.get("num_samples") or 0),
         reverse=True,

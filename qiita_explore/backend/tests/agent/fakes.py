@@ -177,7 +177,7 @@ def make_fake_execute_tool(*results):
     An Exception entry raises on that call. `.calls` records (name, args)."""
     it = iter(results)
 
-    def _fake(name, args, *, scope, chat_id, deep_search=False):
+    def _fake(name, args, *, scope, chat_id, deep_search=False, user_id=None):
         _fake.calls.append((name, args))
         nxt = next(it)
         if isinstance(nxt, Exception):

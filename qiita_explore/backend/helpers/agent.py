@@ -5,10 +5,17 @@ import logging
 import time
 from typing import Generator, Optional
 
-from config import get_client, SEARCH_CALLS_PER_MESSAGE
-from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
+import openai
+
+from config import get_client, MODEL_METADATA, SEARCH_CALLS_PER_MESSAGE
+from helpers.llm_helpers import (
+    _build_api_messages, _extract_system_and_messages, _resolve_model, is_context_overflow,
+)
 from helpers.agent_tools import execute_tool
+from helpers.forced_tool import ForcedPlan, add_hint, anthropic_tool_choice, openai_tool_choice
 from helpers.chat_transcript import rows_to_provider_messages
+from helpers.context_fit import Layout, OverflowGuard, system_message
+from helpers.context_usage import measure
 from helpers.llm_retry import run_with_retry
 from helpers.turn_log import log_turn_event
 
@@ -75,7 +82,36 @@ def _tools_within_search_budget(tools, search_calls_used: int):
     return [t for t in tools if t.get("function", t)["name"] not in blocked]
 
 
-def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used):
+def _capturing(gen, box):
+    """Pass a tool call's events through, keeping its ui_payload in `box`
+    (a forced plan advances on it — resolve_study says which study)."""
+    while True:
+        try:
+            ev = next(gen)
+        except StopIteration as stop:
+            return stop.value
+        if ev.get("type") == "segment_tool_result":
+            box["ui_payload"] = ev.get("ui_payload")
+        yield ev
+
+
+def _open_stream(client, model, msgs, kw):
+    """An OpenAI-compatible stream. A server that rejects tool_choice or
+    stream_options gets the call again without them (a forced round still
+    holds — see forced_tool.py; the context bar falls back to an estimate)."""
+    try:
+        return client.chat.completions.create(model=model, messages=msgs, stream=True, timeout=300.0, **kw)
+    except openai.BadRequestError as exc:
+        extras = {"tool_choice", "stream_options"} & set(kw)
+        if not extras or is_context_overflow(exc):
+            raise
+        logger.warning("[agent] %s rejected %s; retrying without", model, ", ".join(sorted(extras)))
+        kw = {k: v for k, v in kw.items() if k not in extras}
+        return client.chat.completions.create(model=model, messages=msgs, stream=True, timeout=300.0, **kw)
+
+
+def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used,
+                       user_id=None):
     """Yield segment events for one tool call; return (result_text,
     consumed_search_slot, failed) — `failed` is the structured fact of a raise."""
     step_name = f"tool_{name}_{call_id}"
@@ -91,7 +127,8 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
         return (msg, False, False)
     t0 = time.perf_counter()
     try:
-        result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search)
+        result = execute_tool(name, args, scope=scope, chat_id=chat_id, deep_search=deep_search,
+                              user_id=user_id)
     except Exception as exc:
         dt = time.perf_counter() - t0
         logger.exception("tool %s raised after %.3fs", name, dt)
@@ -113,30 +150,40 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
     return (result.text, _is_budgeted_search_tool(name) and getattr(result, "executed", True), False)
 
 
-def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools):
+def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
+                            layout, user_id=None, plan=None):
     anth_tools = _openai_tools_to_anthropic(tools)
     msgs = list(api_msgs)
+    guard = OverflowGuard(msgs, layout, model=resolved, chat_id=chat_id, scope=scope)
     search_calls_used = 0
     final_had_synthesis = False
     turn_had_text = False
     last_tool_failure = None
 
     for iteration in range(max_iters):
+        forcing = plan.current() if plan else None
         curr_tools = _tools_within_search_budget(anth_tools, search_calls_used)
-        system_text, messages = _extract_system_and_messages(msgs)
+        if plan:
+            curr_tools = plan.tools(anth_tools if forcing else curr_tools, lambda t: t["name"])
+        round_kw = {"tools": curr_tools} if curr_tools else {}
+        if forcing:
+            round_kw["tool_choice"] = anthropic_tool_choice(forcing)
         t_llm = time.perf_counter()
         ttft = None
         content_parts = []
         tool_uses = []
         stop_reason = None
+        reported = None
 
         def _attempt():
-            nonlocal ttft, stop_reason, t_llm
+            nonlocal ttft, stop_reason, t_llm, reported
             content_parts.clear()
             tool_uses.clear()
             ttft = None
             stop_reason = None
+            reported = None
             t_llm = time.perf_counter()
+            system_text, messages = _extract_system_and_messages(msgs)   # read live: the overflow retry rewrites msgs
             current_block = None
             current_json = ""
             with anth_client.messages.stream(
@@ -144,13 +191,16 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                 max_tokens=4096,
                 system=system_text,
                 messages=messages,
-                tools=curr_tools,
+                **round_kw,
             ) as stream:
                 for event in stream:
                     if ttft is None:
                         ttft = time.perf_counter() - t_llm
                     etype = getattr(event, "type", None)
-                    if etype == "content_block_start":
+                    if etype == "message_start":
+                        usage = getattr(getattr(event, "message", None), "usage", None)
+                        reported = getattr(usage, "input_tokens", None)
+                    elif etype == "content_block_start":
                         cb = event.content_block
                         if cb.type == "tool_use":
                             current_block = {"id": cb.id, "name": cb.name}
@@ -162,7 +212,8 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                         dtype = getattr(d, "type", None)
                         if dtype == "text_delta" and d.text:
                             content_parts.append(d.text)
-                            yield {"type": "token", "token": d.text}
+                            if not forcing:      # a forced round answers with its widget
+                                yield {"type": "token", "token": d.text}
                         elif dtype == "input_json_delta":
                             current_json += d.partial_json or ""
                     elif etype == "content_block_stop":
@@ -180,18 +231,25 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                     elif etype == "message_delta":
                         stop_reason = getattr(event.delta, "stop_reason", None)
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _attempt, model=resolved,
-            has_partial_output=lambda: bool(content_parts))
+            has_partial_output=lambda: bool(content_parts) and not forcing), tools=curr_tools)
+        yield {"type": "context_usage", "usage": measure(msgs, layout, curr_tools, resolved, reported)}
 
         elapsed = time.perf_counter() - t_llm
-        turn_had_text = turn_had_text or bool(content_parts)
+        turn_had_text = turn_had_text or (bool(content_parts) and not forcing)
         logger.info(
             "[anthropic round %d] ttft=%.3fs total=%.3fs content=%d stop=%s tools=%d",
             iteration, ttft or -1, elapsed, len("".join(content_parts)), stop_reason, len(tool_uses),
         )
 
-        if stop_reason != "tool_use" or not tool_uses:
+        if forcing:
+            cid, name, args, synthesized = plan.pick([(tu["id"], tu["name"], tu["args"]) for tu in tool_uses])
+            if synthesized:
+                log_turn_event(chat_id, "force_tool_synthesized", tool=name, model=resolved)
+            tool_uses[:] = [{"id": cid, "name": name, "args": args}]
+            content_parts.clear()
+        elif stop_reason != "tool_use" or not tool_uses:
             final_had_synthesis = bool(content_parts)
             break
 
@@ -208,11 +266,14 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
 
         tool_results = []
         for tu in tool_uses:
-            result_text, consumed_search_slot, failed = yield from _execute_tool_call(
+            box = {}
+            result_text, consumed_search_slot, failed = yield from _capturing(_execute_tool_call(
                 tu["name"], tu["args"], tu["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_calls_used=search_calls_used,
-            )
+                search_calls_used=search_calls_used, user_id=user_id,
+            ), box)
+            if plan:
+                plan.done(tu["name"], box.get("ui_payload"), failed)
             if consumed_search_slot:
                 search_calls_used += 1
             if failed:
@@ -229,11 +290,11 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
     if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
             any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
         logger.info("[anthropic agent] forcing synthesis — loop ended on tool results")
-        sys_txt, anth_msgs = _extract_system_and_messages(msgs)
         synth_parts = []
 
         def _synth_attempt():
             synth_parts.clear()
+            sys_txt, anth_msgs = _extract_system_and_messages(msgs)
             with anth_client.messages.stream(
                 model=resolved, max_tokens=4096, system=sys_txt, messages=anth_msgs,
             ) as stream:
@@ -244,9 +305,10 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                             synth_parts.append(d.text)
                             yield {"type": "token", "token": d.text}
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _synth_attempt, model=resolved,
-            has_partial_output=lambda: bool(synth_parts))
+            has_partial_output=lambda: bool(synth_parts)))
+        yield {"type": "context_usage", "usage": measure(msgs, layout, None, resolved)}
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
             yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
@@ -273,6 +335,8 @@ def stream_agent(
     turn_rows: Optional[list] = None,
     user_content: Optional[str] = None,
     history_summary: Optional[str] = None,
+    user_id=None,
+    force_tool: Optional[dict] = None,
 ) -> Generator[dict, None, None]:
     """
     Streaming agentic loop. Yields typed dicts for the route to forward as SSE:
@@ -286,11 +350,17 @@ def stream_agent(
       {"type": "step_done",         "name": str, "label": str}   — retry finished
       {"type": "transcript_append", "entry": dict}                 — normalized tool
                                      exchange for the caller to persist
+      {"type": "context_usage",     "usage": dict}                 — after each LLM call:
+                                     what the request held (helpers/context_usage.py)
     When `turn_rows` is given (rows from store.chat_turn_persist.load_turn_rows
     plus the new `user_content`), history is replayed with each prior turn's
     persisted tool exchange in the current provider's wire shape — the model
     remembers earlier tool results. Without it, `messages` ({role, content}
     dicts) build the history exactly as before (harness/tests path).
+    `force_tool` ({name, args, text} from a study slash command) makes the
+    first round(s) call that tool — see helpers/forced_tool.py.
+    A request the provider rejects as too long is compacted and retried once
+    (helpers/context_fit.py).
     Raises on unrecoverable errors; callers should catch and emit an SSE error.
     """
     resolved = _resolve_model(model)
@@ -302,18 +372,25 @@ def stream_agent(
 
     llm_client, provider = get_client(resolved)
     if turn_rows is not None:
-        system_msg = _build_api_messages([], study_context_text, system_prompt)[0]
-        if history_summary:
-            system_msg = {**system_msg, "content": system_msg["content"] +
-                          f"\n\nEARLIER CONVERSATION (compacted summary):\n{history_summary}"}
-        api_msgs = ([system_msg] + rows_to_provider_messages(turn_rows, provider)
+        layout = Layout(system_prompt, study_context_text, history_summary, list(turn_rows), provider)
+        api_msgs = ([system_message(layout)] + rows_to_provider_messages(turn_rows, provider)
                     + [{"role": "user", "content": user_content or ""}])
     else:
+        layout = Layout(system_prompt, study_context_text, None, None, provider)
         api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    layout.history_end = max(1, len(api_msgs) - 1)   # this turn's user message
+    plan = ForcedPlan(force_tool) if force_tool else None
+    if plan:
+        add_hint(api_msgs, plan.hint())
     if provider == "anthropic":
         yield from _stream_anthropic_agent(
-            llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools)
+            llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
+            layout, user_id=user_id, plan=plan)
         return
+    choice_flag = (MODEL_METADATA.get(model) or {}).get("forced_tool_choice")
+    usage_kw = ({"stream_options": {"include_usage": True}}
+                if (MODEL_METADATA.get(model) or {}).get("stream_usage", True) else {})
+    guard = OverflowGuard(api_msgs, layout, model=resolved, chat_id=chat_id, scope=scope)
 
     search_calls_used = 0
     final_had_synthesis = False
@@ -321,7 +398,12 @@ def stream_agent(
     last_tool_failure = None
 
     for iteration in range(max_iters):
+        forcing = plan.current() if plan else None
         active_tools = _tools_within_search_budget(tools, search_calls_used)
+        if plan:
+            active_tools = plan.tools(tools if forcing else active_tools, lambda t: t["function"]["name"])
+        round_kw = {"tools": active_tools} if active_tools else {}
+        forced_choice = openai_tool_choice(forcing, choice_flag) if forcing else None
 
         t_llm           = time.perf_counter()
         content_parts   = []
@@ -329,25 +411,24 @@ def stream_agent(
         tool_call_map   = {}
         finish_reason   = None
         ttft            = None
+        reported        = None
 
         def _attempt():
             # Fresh slate per attempt — a retry only ever runs when nothing
             # reached the client, so clearing internal fragments is safe.
-            nonlocal finish_reason, ttft, t_llm
+            nonlocal finish_reason, ttft, t_llm, reported
             content_parts.clear()
             reasoning_parts.clear()
             tool_call_map.clear()
             finish_reason = None
             ttft = None
+            reported = None
             t_llm = time.perf_counter()
-            stream = llm_client.chat.completions.create(
-                model=resolved,
-                messages=api_msgs,
-                tools=active_tools,
-                stream=True,
-                timeout=300.0,
-            )
-            for chunk in stream:
+            kw = dict(round_kw, **usage_kw, **({"tool_choice": forced_choice} if forced_choice else {}))
+            for chunk in _open_stream(llm_client, resolved, api_msgs, kw):
+                usage = getattr(chunk, "usage", None)   # the include_usage chunk has no choices
+                if usage is not None:
+                    reported = getattr(usage, "prompt_tokens", None) or reported
                 if not chunk.choices:
                     continue
                 if ttft is None:
@@ -363,7 +444,8 @@ def stream_agent(
 
                 if delta.content:
                     content_parts.append(delta.content)
-                    yield {"type": "token", "token": delta.content}
+                    if not forcing:      # a forced round answers with its widget
+                        yield {"type": "token", "token": delta.content}
 
                 for tc in (delta.tool_calls or []):
                     idx = tc.index
@@ -378,12 +460,14 @@ def stream_agent(
                         if fn.arguments:
                             tool_call_map[idx]["arguments"] += fn.arguments
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _attempt, model=resolved,
-            has_partial_output=lambda: bool(content_parts or reasoning_parts))
+            has_partial_output=lambda: bool((content_parts and not forcing) or reasoning_parts)),
+            tools=round_kw.get("tools"))
+        yield {"type": "context_usage", "usage": measure(api_msgs, layout, round_kw.get("tools"), resolved, reported)}
 
         elapsed = time.perf_counter() - t_llm
-        assistant_content   = "".join(content_parts)
+        assistant_content   = "" if forcing else "".join(content_parts)
         assistant_reasoning = "".join(reasoning_parts)
         turn_had_text = turn_had_text or bool(assistant_content)
 
@@ -395,7 +479,15 @@ def stream_agent(
             finish_reason, len(tool_call_map),
         )
 
-        if finish_reason != "tool_calls" or not tool_call_map:
+        if forcing:
+            # Some servers finish a tool call with "stop"; a forced round runs it anyway.
+            cid, name, args, synthesized = plan.pick([(tc["id"], tc["name"], _json_args(tc["arguments"]))
+                                                      for _i, tc in sorted(tool_call_map.items())])
+            if synthesized:
+                log_turn_event(chat_id, "force_tool_synthesized", tool=name, model=resolved)
+            tool_call_map.clear()
+            tool_call_map[0] = {"id": cid, "name": name, "arguments": json.dumps(args)}
+        elif finish_reason != "tool_calls" or not tool_call_map:
             final_had_synthesis = bool(content_parts)
             break
 
@@ -410,13 +502,7 @@ def stream_agent(
             ],
         })
 
-        parsed_calls = []
-        for tc in ordered_calls:
-            try:
-                args = json.loads(tc["arguments"] or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            parsed_calls.append((tc, args))
+        parsed_calls = [(tc, _json_args(tc["arguments"])) for tc in ordered_calls]
         yield {"type": "transcript_append", "entry": {
             "role": "assistant", "text": assistant_content,
             "tool_calls": [{"id": tc["id"], "name": tc["name"], "args": args}
@@ -424,11 +510,14 @@ def stream_agent(
 
         for tc, args in parsed_calls:
             name = tc["name"]
-            result_text, consumed_search_slot, failed = yield from _execute_tool_call(
+            box = {}
+            result_text, consumed_search_slot, failed = yield from _capturing(_execute_tool_call(
                 name, args, tc["id"],
                 scope=scope, chat_id=chat_id, deep_search=deep_search,
-                search_calls_used=search_calls_used,
-            )
+                search_calls_used=search_calls_used, user_id=user_id,
+            ), box)
+            if plan:
+                plan.done(name, box.get("ui_payload"), failed)
             if consumed_search_slot:
                 search_calls_used += 1
             if failed:
@@ -445,12 +534,15 @@ def stream_agent(
         logger.info("[agent] forcing synthesis — loop ended on tool results")
         synth_parts = []
 
+        synth_reported = None
+
         def _synth_attempt():
+            nonlocal synth_reported
             synth_parts.clear()
-            synth = llm_client.chat.completions.create(
-                model=resolved, messages=api_msgs, stream=True, timeout=300.0,
-            )
-            for chunk in synth:
+            for chunk in _open_stream(llm_client, resolved, api_msgs, dict(usage_kw)):
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    synth_reported = getattr(usage, "prompt_tokens", None) or synth_reported
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -458,9 +550,10 @@ def stream_agent(
                     synth_parts.append(delta.content)
                     yield {"type": "token", "token": delta.content}
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _synth_attempt, model=resolved,
-            has_partial_output=lambda: bool(synth_parts))
+            has_partial_output=lambda: bool(synth_parts)))
+        yield {"type": "context_usage", "usage": measure(api_msgs, layout, None, resolved, synth_reported)}
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
             yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
@@ -471,6 +564,14 @@ def stream_agent(
     if not turn_had_text:
         yield from _emit_silent_end(chat_id, resolved, "turn_ended_without_text", "empty",
                                     max_iters, last_tool_failure, finish=finish_reason)
+
+
+def _json_args(raw):
+    try:
+        args = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return args if isinstance(args, dict) else {}
 
 
 def _tool_label(name: str, args: dict) -> str:
@@ -494,4 +595,37 @@ def _tool_label(name: str, args: dict) -> str:
         kws = args.get("keywords") or []
         parts = [f"{f['field']}={f['value']}" for f in ff[:2]] + kws[:2]
         return f"Sample search: {', '.join(parts)}…" if parts else "Searching sample metadata…"
+    return _study_tool_label(name, args)
+
+
+def _study_tool_label(name: str, args: dict) -> str:
+    """Running labels for helpers/study_tools.py — the user always sees which
+    study tool is working."""
+    sid = args.get("study_id", "?")
+    if name == "resolve_study":
+        text = str(args.get("text") or "")
+        return f'Finding the study for "{text[:40]}{"…" if len(text) > 40 else ""}"…'
+    if name == "get_study_preps":
+        return f"Loading preps for study {sid}" + (f" · {args['data_type']}" if args.get("data_type") else "") + "…"
+    if name == "show_study_samples":
+        part = (f" · prep {args['prep_id']}" if args.get("prep_id") else
+                f" · {args['data_type']}" if args.get("data_type") else "")
+        return f"Loading samples for study {sid}{part}…"
+    if name == "get_sample_metadata":
+        return f"Loading metadata for sample {args.get('sample_id', '?')}…"
+    if name == "get_prep_graph":
+        return f"Loading processing graph for study {sid}" + (
+            f" · prep {args['prep_id']}" if args.get("prep_id") else "") + "…"
+    if name == "list_artifact_files":
+        part = (f" · artifact {args['artifact_id']}" if args.get("artifact_id") else
+                f" · prep {args['prep_id']}" if args.get("prep_id") else "")
+        return f"Listing files for study {sid}{part}…"
+    if name == "propose_aggregation_add":
+        return f"Preparing aggregation proposal for study {sid}…"
+    if name == "add_to_chat_aggregation":
+        return f"Adding study {sid} to this chat's aggregation…"
+    if name == "save_chat_aggregation":
+        return "Saving this chat's aggregation…"
+    if name == "list_aggregations":
+        return "Loading your aggregations…"
     return f"Running {name}…"

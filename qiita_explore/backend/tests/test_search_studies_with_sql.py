@@ -107,8 +107,37 @@ class TestKeywordLateralAssembly:
     def test_no_lateral_without_keywords(self):
         sql, params = _capture_call()
         assert "LATERAL" not in sql
-        assert "ORDER BY s.study_id" in sql
+        # Nothing to rank by → biggest studies first inside the LIMIT
+        # (filter-only browse), study_id as the deterministic tiebreak.
+        assert "ORDER BY num_samples DESC NULLS LAST, s.study_id" in sql
         assert params == []
+
+    def test_boost_and_phrase_stay_inside_the_kw_slot(self):
+        # Every %s inside the LATERAL is kw_params — the first slot. Adding
+        # the exact-ID boost and title-phrase bonus there leaves the WHERE-side
+        # order (topic → data-type → tag → PI) untouched.
+        sql, params = _capture_call(
+            relevance_keywords=["mouse"],
+            boost_study_ids=[550],
+            title_phrase="mouse gut",
+            custom_sql_where="(s.study_title ILIKE %s) OR s.study_id = ANY(%s)",
+            params=["%mouse%", [550]],
+            data_types=["16S"],
+        )
+        assert params == [[550], "%mouse gut%", ["mouse"], "%mouse%", [550], "16S"]
+        lateral = sql[sql.index("CROSS JOIN LATERAL"):sql.index(") rel")]
+        assert lateral.index("s.study_id = ANY(%s)") < lateral.index("s.study_title ILIKE %s")
+        assert lateral.index("s.study_title ILIKE %s") < lateral.index("unnest(%s::text[])")
+        assert sql.index(") rel") < sql.index("dt.data_type IN")
+
+    def test_boost_ignored_without_keywords(self):
+        # No keywords → no LATERAL → nothing to attach the boost to; a
+        # pure-ID browse query is isolated by its own WHERE instead.
+        sql, params = _capture_call(
+            boost_study_ids=[550], custom_sql_where="s.study_id = ANY(%s)", params=[[550]],
+        )
+        assert "LATERAL" not in sql
+        assert params == [[550]]
 
     def test_no_distinct_visibility_via_exists(self):
         # The artifact LEFT JOIN chain fanned rows out per artifact and forced
@@ -259,3 +288,15 @@ class TestSearchStudiesToolPassesTagsThrough:
             agent_tools_mod._tool_search_by_sample({"keywords": "mouse"})
         keywords = mock_search.call_args.kwargs["keywords"]
         assert keywords == ["mouse"]
+
+
+class TestYearColumn:
+    def test_year_selected_and_is_gold_reads_the_next_column(self):
+        # _STUDY_COUNT_COLUMNS gained `year` at row[12]; is_gold moved to row[13].
+        row = (550, "T", "A", "al", True, "PI", "e", "aff", None, 10, "16S", 1, 2015, True)
+        with patch("services.study_service.pooled_fetchall", return_value=[row]) as mock_fetch:
+            out = search_studies_with_sql(custom_sql_where="s.study_id = ANY(%s)", params=[[550]])
+        sql = mock_fetch.call_args[0][0]
+        assert "EXTRACT(YEAR FROM s.first_contact)::int AS year" in sql
+        assert out[0]["year"] == 2015
+        assert out[0]["is_gold"] is True

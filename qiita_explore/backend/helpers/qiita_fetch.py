@@ -62,7 +62,11 @@ _STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
             WHERE spt2.study_id = s.study_id) AS data_types,
            (SELECT COUNT(DISTINCT spt3.prep_template_id)
             FROM qiita.study_prep_template spt3
-            WHERE spt3.study_id = s.study_id) AS num_preps"""
+            WHERE spt3.study_id = s.study_id) AS num_preps,
+           EXTRACT(YEAR FROM s.first_contact)::int AS year"""
+# `year` is not a count, but it lives in this shared block so every header
+# shape (browse, search, pins, deep-search hydration) carries it. It is the
+# year the study was created in Qiita — Qiita has no publication date.
 
 # Public-visibility gate shared by _build_study_header_query,
 # services.study_service.search_studies_with_sql, and
@@ -108,6 +112,7 @@ def _row_to_study_header(row):
         "num_samples":     row[9],
         "data_types":      row[10],
         "num_preps":       row[11],
+        "year":            row[12],
     }
 
 
@@ -160,6 +165,13 @@ def is_study_public(study_id: int) -> bool:
     return bool(rows)
 
 
+# Sample lists read qiita.sample_{study_id} on its own, in primary-key order:
+# that table holds exactly the study's samples plus one sentinel row. Joining
+# qiita.study_sample first made Postgres hash-join and extract JSON for every
+# sample before LIMIT (AGP, 41,600 samples: 12.4 s cold vs 0.1 s; same ids).
+_SENTINEL = "qiita_sample_column_names"
+
+
 def _fetch_study_samples(study_id: int, limit: int = 200):
     """Return sample list for a study using dynamic sample_{study_id} table."""
     study_id = int(study_id)
@@ -171,17 +183,16 @@ def _fetch_study_samples(study_id: int, limit: int = 200):
 
     rows = _qiita_fetch(
         f"""
-        SELECT ss.sample_id,
-               sm.sample_values->>'anonymized_name'      AS anonymized_name,
-               sm.sample_values->>'collection_timestamp' AS collection_timestamp,
-               sm.sample_values->>'env_package'          AS env_package
-        FROM qiita.study_sample ss
-        JOIN qiita.sample_{study_id} sm ON ss.sample_id = sm.sample_id
-        WHERE ss.study_id = %s
-        ORDER BY ss.sample_id
+        SELECT sample_id,
+               sample_values->>'anonymized_name'      AS anonymized_name,
+               sample_values->>'collection_timestamp' AS collection_timestamp,
+               sample_values->>'env_package'          AS env_package
+        FROM qiita.sample_{study_id}
+        WHERE sample_id <> %s
+        ORDER BY sample_id
         LIMIT %s
         """,
-        [study_id, limit],
+        [_SENTINEL, limit],
     )
     samples = [
         {
@@ -228,15 +239,13 @@ def _fetch_full_sample_metadata(study_id: int, limit: int = REPORT_SAMPLE_LIMIT)
     limit    = max(1, int(limit))
     rows     = _qiita_fetch(
         f"""
-        SELECT ss.sample_id, sm.sample_values
-        FROM qiita.study_sample ss
-        JOIN qiita.sample_{study_id} sm ON ss.sample_id = sm.sample_id
-        WHERE ss.study_id = %s
-          AND ss.sample_id <> 'qiita_sample_column_names'
-        ORDER BY ss.sample_id
+        SELECT sample_id, sample_values
+        FROM qiita.sample_{study_id}
+        WHERE sample_id <> %s
+        ORDER BY sample_id
         LIMIT %s
         """,
-        [study_id, limit],
+        [_SENTINEL, limit],
     )
     return [{"sample_id": r[0], "fields": dict(r[1])} for r in rows]
 

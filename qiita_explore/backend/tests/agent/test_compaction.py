@@ -47,6 +47,19 @@ class TestUnits:
         assert [len(t) for t in turns] == [2, 3]
         assert turns[1][0]["content"] == "u2"
 
+    def test_split_turns_is_contiguous(self, chat_history_mod, monkeypatch):
+        """A small turn older than one that didn't fit is summarized, not kept:
+        the anchor after `older` would otherwise skip it on the next turn."""
+        monkeypatch.setattr(chat_history_mod.config, "CHARS_PER_TOKEN", 1)
+        rows = [{"role": "user", "content": "x" * 10}, {"role": "assistant", "content": "small"},
+                {"role": "user", "content": "x" * 500}, {"role": "assistant", "content": "big"},
+                {"role": "user", "content": "x" * 10}, {"role": "assistant", "content": "newest"}]
+        older, kept = chat_history_mod.split_turns(rows, keep_tokens=100)
+        assert [t[1]["content"] for t in older] == ["small", "big"]
+        assert [t[1]["content"] for t in kept] == ["newest"]
+        older, kept = chat_history_mod.split_turns(rows[-2:], keep_tokens=1, min_keep=0)
+        assert len(older) == 1 and kept == []
+
     def test_serialize_includes_tool_exchange(self, chat_history_mod):
         turns = [[{"role": "user", "content": "find x"},
                   {"role": "assistant", "content": "done",

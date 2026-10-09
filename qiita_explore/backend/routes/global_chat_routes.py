@@ -22,7 +22,7 @@ from store import (
 from helpers.llm_helpers import _sse
 from helpers.pinned_context import _build_pinned_reports_context
 from helpers.request_utils import (
-    parse_chat_stream_body, load_history_for, sse_response,
+    parse_chat_stream_body, parse_force_tool, load_history_for, sse_response,
     pin_response, unpin_response,
 )
 
@@ -107,6 +107,9 @@ def api_global_chat_message_stream(chat_id):
     user_content, model, report_study_id, pin_study_ids, err_response = parse_chat_stream_body(data)
     if err_response is not None:
         return err_response
+    force_tool, err_response = parse_force_tool(data, TOOL_SCHEMAS)
+    if err_response is not None:
+        return err_response
 
     chat = get_global_chat(user_id, chat_id, include_messages=False)
     if not chat:
@@ -128,7 +131,7 @@ def api_global_chat_message_stream(chat_id):
     return sse_response(lambda: stream_chat_turn(
         scope=SCOPE_GLOBAL, chat_id=chat_id, user_id=user_id,
         model=model, user_content=user_content,
-        report_study_id=report_study_id, pin_study_ids=pin_study_ids,
+        report_study_id=report_study_id, pin_study_ids=pin_study_ids, force_tool=force_tool,
         system_prompt=GLOBAL_CHAT_SYSTEM_PROMPT, tools=TOOL_SCHEMAS,
         full_msgs=full_msgs, build_context=build_context, deep_search=deep_search,
         persist=lambda ac, up=None: append_global_chat_messages(

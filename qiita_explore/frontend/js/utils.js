@@ -118,6 +118,17 @@ function renderMarkdown(text) {
   );
 }
 
+// Warm fetchStudyDetail for a search's top results, one at a time (most relevant
+// first) so background loading never piles up on the server; stops as soon as
+// isCurrent() reports a newer search. Each load also fills the backend's 6 h
+// study_detail_cache. Errors are ignored: opening the card simply retries.
+async function prefetchStudyDetails(ids, isCurrent) {
+  for (const id of ids) {
+    if (!isCurrent()) return;
+    try { await fetchStudyDetail(id); } catch (_) {}
+  }
+}
+
 // Module-scope coalescing for /studies/<id>/detail. All callers (modal + every
 // SamplesReportBubble) share one in-flight promise + one cached result per study,
 // so we don't slam the (slow, single-transaction) Qiita DB with parallel duplicates.
@@ -138,8 +149,29 @@ async function fetchStudyDetail(studyId, { signal } = {}) {
   return p;
 }
 
+// The same coalescing for a study's header (GET /studies/<id> — what a Browse card
+// shows, incl. year and GOLD), used by the chat's study cards: several displays of
+// one study cost one request. null when it can't be read (not cached, so a later
+// render retries).
+const _studyHeaderCache    = new Map();
+const _studyHeaderInflight = new Map();
+async function fetchStudyHeader(studyId) {
+  if (_studyHeaderCache.has(studyId)) return _studyHeaderCache.get(studyId);
+  if (_studyHeaderInflight.has(studyId)) return _studyHeaderInflight.get(studyId);
+  const p = (async () => {
+    const res = await apiFetch(`/studies/${studyId}`);
+    if (!res.ok) return null;
+    const h = await res.json();
+    _studyHeaderCache.set(studyId, h);
+    return h;
+  })().catch(() => null).finally(() => { _studyHeaderInflight.delete(studyId); });
+  _studyHeaderInflight.set(studyId, p);
+  return p;
+}
+
 async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart, onStepDone,
-                                    onAgentStart, onSegmentToolCall, onSegmentToolResult }, signal) {
+                                    onAgentStart, onSegmentToolCall, onSegmentToolResult,
+                                    onContextUsage }, signal) {
   const reader = response.body.getReader();
   const dec    = new TextDecoder();
   let buf      = '';
@@ -167,6 +199,7 @@ async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart,
       if (type === 'agent_start'         && onAgentStart)         onAgentStart(payload);
       if (type === 'segment_tool_call'   && onSegmentToolCall)    onSegmentToolCall(payload);
       if (type === 'segment_tool_result' && onSegmentToolResult)  onSegmentToolResult(payload);
+      if (type === 'context_usage'       && onContextUsage)       onContextUsage(payload);
     }
   }
 }
