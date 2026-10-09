@@ -78,8 +78,7 @@ function useAppState() {
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
   const scrollCollapse = useScrollCollapse(view.chatId);
-  // ↑ / ↓ recall of what was sent from each box (hooks/useInputHistory.js).
-  const composerHistory = useInputHistory('composer');
+  // ↑ / ↓ recall in the Browse bar (hooks/useInputHistory.js); the composer's is below activeMsgs.
   const browseHistory   = useInputHistory('browse');
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
@@ -107,6 +106,10 @@ function useAppState() {
   // Derived — must be computed before effects that reference them
   const activeMsgs  = view.chatId ? (chatCache[view.chatId]?.messages || []) : [];
   const lastContent = activeMsgs[activeMsgs.length - 1]?.content;
+  // In a chat, ↑ / ↓ walk its own messages as typed (`sent`; a reload's content already is).
+  const chatSent = useMemo(() => view.chatId
+    ? activeMsgs.filter(m => m.role === 'user').map(m => m.sent || m.content) : null, [view.chatId, activeMsgs]);
+  const composerHistory = useInputHistory('composer', { transcript: chatSent, resetKey: view.chatId });
 
   useEffect(() => {
     if (!taRef.current) return;
@@ -194,6 +197,7 @@ function useAppState() {
         title: d.title,
         pinnedStudyMeta: d.pinned_study_meta || [],
         totalStudiesInProject: d.total_studies_in_project,
+        contextUsage: d.context_usage || null,
       },
     }));
   };
@@ -486,7 +490,7 @@ function useAppState() {
       return !patch || patch === cur ? prev : { ...prev, [chatId]: { ...cur, ...patch } };
     });
 
-  const optimisticAppend = (chatId, userMsg) =>
+  const optimisticAppend = (chatId, userMsg, sent = userMsg) =>
     setChatCache(prev => {
       const c = prev[chatId] || { messages: [], title: truncateTitle(userMsg) };
       return {
@@ -495,7 +499,7 @@ function useAppState() {
           ...c,
           messages: [
             ...c.messages,
-            { role: 'user',      content: userMsg },
+            { role: 'user',      content: userMsg, sent },
             { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null },
           ],
         },
@@ -541,6 +545,7 @@ function useAppState() {
     await parseSSE(res, {
       onUi:        (payload) => patchLast(chatId, m => ({ ...m, ui: payload, content: '' })),
       onStepStart: ({ name, label }) => patchLast(chatId, m => ({ ...m, pendingStep: { name, label } })),
+      onContextUsage: (usage) => patchChat(chatId, () => ({ contextUsage: usage })),   // the composer's ContextBar
       onStepDone:  ({ name, label, detail }) => patchLast(chatId, m => ({
         ...m, pendingStep: null, steps: [...(m.steps || []), { name, label, detail }],
       })),
@@ -760,7 +765,7 @@ function useAppState() {
           ? await ensureChatId(workView, '/systems')
           : null;
         if (!chatId) return;
-        optimisticAppend(chatId, '/systems — Model status');
+        optimisticAppend(chatId, '/systems — Model status', msg);
         patchLast(chatId, m => ({ ...m, pendingStep: { name: 'probe', label: 'Probing all models…' } }));
         const res = await apiFetch('/systems');
         if (!res.ok) throw new Error('Systems check failed');
@@ -772,7 +777,7 @@ function useAppState() {
       // ── /report + regular messages ──────────────────────────────────────────
       if (workView.type === 'project-chat') {
         chatId = await ensureChatId(workView, truncateTitle(displayMsg));
-        optimisticAppend(chatId, displayMsg);
+        optimisticAppend(chatId, displayMsg, msg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
           {
@@ -801,7 +806,7 @@ function useAppState() {
 
       } else if (workView.type === 'global-chat') {
         chatId = await ensureChatId(workView, truncateTitle(displayMsg));
-        optimisticAppend(chatId, displayMsg);
+        optimisticAppend(chatId, displayMsg, msg);
         await streamChat(
           `${chatScopeUrl(workView, chatId)}/message/stream`,
           {
@@ -1016,6 +1021,7 @@ function useAppState() {
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches, composerHistory, browseHistory,
+    contextUsage: view.chatId ? chatCache[view.chatId]?.contextUsage : null,
     agg,
   };
 }

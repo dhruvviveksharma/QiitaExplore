@@ -5,6 +5,7 @@ import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 from .aggregation_crud import delete_chat_aggregations
+from .chat_turn_persist import parse_context_usage
 
 PROJECT_STUDIES_CAP = 20
 
@@ -332,7 +333,7 @@ def get_chat(project_id: str, user_id: str, chat_id: str, include_messages: bool
         row = conn.execute(
             """
             SELECT chat_id, title, created_at, updated_at,
-                   is_pinned, pinned_at, is_archived, archived_at
+                   is_pinned, pinned_at, is_archived, archived_at, context_usage
             FROM project_chats
             WHERE project_id = ? AND user_id = ? AND chat_id = ?
             """,
@@ -341,6 +342,7 @@ def get_chat(project_id: str, user_id: str, chat_id: str, include_messages: bool
         if row is None:
             return None
         chat = _as_dict(row)
+        chat["context_usage"] = parse_context_usage(chat["context_usage"])
         # include_messages=False skips the full transcript load + per-message
         # ui_payload JSON decode — the stream routes only need ownership/meta.
         if include_messages:

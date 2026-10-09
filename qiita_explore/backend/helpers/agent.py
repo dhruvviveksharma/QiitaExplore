@@ -8,10 +8,14 @@ from typing import Generator, Optional
 import openai
 
 from config import get_client, MODEL_METADATA, SEARCH_CALLS_PER_MESSAGE
-from helpers.llm_helpers import _build_api_messages, _extract_system_and_messages, _resolve_model
+from helpers.llm_helpers import (
+    _build_api_messages, _extract_system_and_messages, _resolve_model, is_context_overflow,
+)
 from helpers.agent_tools import execute_tool
 from helpers.forced_tool import ForcedPlan, add_hint, anthropic_tool_choice, openai_tool_choice
 from helpers.chat_transcript import rows_to_provider_messages
+from helpers.context_fit import Layout, OverflowGuard, system_message
+from helpers.context_usage import measure
 from helpers.llm_retry import run_with_retry
 from helpers.turn_log import log_turn_event
 
@@ -91,6 +95,21 @@ def _capturing(gen, box):
         yield ev
 
 
+def _open_stream(client, model, msgs, kw):
+    """An OpenAI-compatible stream. A server that rejects tool_choice or
+    stream_options gets the call again without them (a forced round still
+    holds — see forced_tool.py; the context bar falls back to an estimate)."""
+    try:
+        return client.chat.completions.create(model=model, messages=msgs, stream=True, timeout=300.0, **kw)
+    except openai.BadRequestError as exc:
+        extras = {"tool_choice", "stream_options"} & set(kw)
+        if not extras or is_context_overflow(exc):
+            raise
+        logger.warning("[agent] %s rejected %s; retrying without", model, ", ".join(sorted(extras)))
+        kw = {k: v for k, v in kw.items() if k not in extras}
+        return client.chat.completions.create(model=model, messages=msgs, stream=True, timeout=300.0, **kw)
+
+
 def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, search_calls_used,
                        user_id=None):
     """Yield segment events for one tool call; return (result_text,
@@ -132,9 +151,10 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
 
 
 def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
-                            user_id=None, plan=None):
+                            layout, user_id=None, plan=None):
     anth_tools = _openai_tools_to_anthropic(tools)
     msgs = list(api_msgs)
+    guard = OverflowGuard(msgs, layout, model=resolved, chat_id=chat_id, scope=scope)
     search_calls_used = 0
     final_had_synthesis = False
     turn_had_text = False
@@ -148,20 +168,22 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
         round_kw = {"tools": curr_tools} if curr_tools else {}
         if forcing:
             round_kw["tool_choice"] = anthropic_tool_choice(forcing)
-        system_text, messages = _extract_system_and_messages(msgs)
         t_llm = time.perf_counter()
         ttft = None
         content_parts = []
         tool_uses = []
         stop_reason = None
+        reported = None
 
         def _attempt():
-            nonlocal ttft, stop_reason, t_llm
+            nonlocal ttft, stop_reason, t_llm, reported
             content_parts.clear()
             tool_uses.clear()
             ttft = None
             stop_reason = None
+            reported = None
             t_llm = time.perf_counter()
+            system_text, messages = _extract_system_and_messages(msgs)   # read live: the overflow retry rewrites msgs
             current_block = None
             current_json = ""
             with anth_client.messages.stream(
@@ -175,7 +197,10 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                     if ttft is None:
                         ttft = time.perf_counter() - t_llm
                     etype = getattr(event, "type", None)
-                    if etype == "content_block_start":
+                    if etype == "message_start":
+                        usage = getattr(getattr(event, "message", None), "usage", None)
+                        reported = getattr(usage, "input_tokens", None)
+                    elif etype == "content_block_start":
                         cb = event.content_block
                         if cb.type == "tool_use":
                             current_block = {"id": cb.id, "name": cb.name}
@@ -206,9 +231,10 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                     elif etype == "message_delta":
                         stop_reason = getattr(event.delta, "stop_reason", None)
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _attempt, model=resolved,
-            has_partial_output=lambda: bool(content_parts) and not forcing)
+            has_partial_output=lambda: bool(content_parts) and not forcing), tools=curr_tools)
+        yield {"type": "context_usage", "usage": measure(msgs, layout, curr_tools, resolved, reported)}
 
         elapsed = time.perf_counter() - t_llm
         turn_had_text = turn_had_text or (bool(content_parts) and not forcing)
@@ -264,11 +290,11 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
     if not final_had_synthesis and msgs and isinstance(msgs[-1].get("content"), list) and \
             any(c.get("type") == "tool_result" for c in msgs[-1]["content"]):
         logger.info("[anthropic agent] forcing synthesis — loop ended on tool results")
-        sys_txt, anth_msgs = _extract_system_and_messages(msgs)
         synth_parts = []
 
         def _synth_attempt():
             synth_parts.clear()
+            sys_txt, anth_msgs = _extract_system_and_messages(msgs)
             with anth_client.messages.stream(
                 model=resolved, max_tokens=4096, system=sys_txt, messages=anth_msgs,
             ) as stream:
@@ -279,9 +305,10 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                             synth_parts.append(d.text)
                             yield {"type": "token", "token": d.text}
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _synth_attempt, model=resolved,
-            has_partial_output=lambda: bool(synth_parts))
+            has_partial_output=lambda: bool(synth_parts)))
+        yield {"type": "context_usage", "usage": measure(msgs, layout, None, resolved)}
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
             yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
@@ -323,6 +350,8 @@ def stream_agent(
       {"type": "step_done",         "name": str, "label": str}   — retry finished
       {"type": "transcript_append", "entry": dict}                 — normalized tool
                                      exchange for the caller to persist
+      {"type": "context_usage",     "usage": dict}                 — after each LLM call:
+                                     what the request held (helpers/context_usage.py)
     When `turn_rows` is given (rows from store.chat_turn_persist.load_turn_rows
     plus the new `user_content`), history is replayed with each prior turn's
     persisted tool exchange in the current provider's wire shape — the model
@@ -330,6 +359,8 @@ def stream_agent(
     dicts) build the history exactly as before (harness/tests path).
     `force_tool` ({name, args, text} from a study slash command) makes the
     first round(s) call that tool — see helpers/forced_tool.py.
+    A request the provider rejects as too long is compacted and retried once
+    (helpers/context_fit.py).
     Raises on unrecoverable errors; callers should catch and emit an SSE error.
     """
     resolved = _resolve_model(model)
@@ -341,23 +372,25 @@ def stream_agent(
 
     llm_client, provider = get_client(resolved)
     if turn_rows is not None:
-        system_msg = _build_api_messages([], study_context_text, system_prompt)[0]
-        if history_summary:
-            system_msg = {**system_msg, "content": system_msg["content"] +
-                          f"\n\nEARLIER CONVERSATION (compacted summary):\n{history_summary}"}
-        api_msgs = ([system_msg] + rows_to_provider_messages(turn_rows, provider)
+        layout = Layout(system_prompt, study_context_text, history_summary, list(turn_rows), provider)
+        api_msgs = ([system_message(layout)] + rows_to_provider_messages(turn_rows, provider)
                     + [{"role": "user", "content": user_content or ""}])
     else:
+        layout = Layout(system_prompt, study_context_text, None, None, provider)
         api_msgs = _build_api_messages(messages, study_context_text, system_prompt)
+    layout.history_end = max(1, len(api_msgs) - 1)   # this turn's user message
     plan = ForcedPlan(force_tool) if force_tool else None
     if plan:
         add_hint(api_msgs, plan.hint())
     if provider == "anthropic":
         yield from _stream_anthropic_agent(
             llm_client, api_msgs, resolved, scope, chat_id, deep_search, max_iters, tools,
-            user_id=user_id, plan=plan)
+            layout, user_id=user_id, plan=plan)
         return
     choice_flag = (MODEL_METADATA.get(model) or {}).get("forced_tool_choice")
+    usage_kw = ({"stream_options": {"include_usage": True}}
+                if (MODEL_METADATA.get(model) or {}).get("stream_usage", True) else {})
+    guard = OverflowGuard(api_msgs, layout, model=resolved, chat_id=chat_id, scope=scope)
 
     search_calls_used = 0
     final_had_synthesis = False
@@ -378,29 +411,24 @@ def stream_agent(
         tool_call_map   = {}
         finish_reason   = None
         ttft            = None
+        reported        = None
 
         def _attempt():
             # Fresh slate per attempt — a retry only ever runs when nothing
             # reached the client, so clearing internal fragments is safe.
-            nonlocal finish_reason, ttft, t_llm
+            nonlocal finish_reason, ttft, t_llm, reported
             content_parts.clear()
             reasoning_parts.clear()
             tool_call_map.clear()
             finish_reason = None
             ttft = None
+            reported = None
             t_llm = time.perf_counter()
-            kw = dict(round_kw, **({"tool_choice": forced_choice} if forced_choice else {}))
-            try:
-                stream = llm_client.chat.completions.create(
-                    model=resolved, messages=api_msgs, stream=True, timeout=300.0, **kw)
-            except openai.BadRequestError:
-                if "tool_choice" not in kw:     # a server that rejects tool_choice: the
-                    raise                       # forced round still holds (see forced_tool.py)
-                logger.warning("[agent] %s rejected tool_choice=%r; retrying without it", resolved, forced_choice)
-                kw.pop("tool_choice")
-                stream = llm_client.chat.completions.create(
-                    model=resolved, messages=api_msgs, stream=True, timeout=300.0, **kw)
-            for chunk in stream:
+            kw = dict(round_kw, **usage_kw, **({"tool_choice": forced_choice} if forced_choice else {}))
+            for chunk in _open_stream(llm_client, resolved, api_msgs, kw):
+                usage = getattr(chunk, "usage", None)   # the include_usage chunk has no choices
+                if usage is not None:
+                    reported = getattr(usage, "prompt_tokens", None) or reported
                 if not chunk.choices:
                     continue
                 if ttft is None:
@@ -432,9 +460,11 @@ def stream_agent(
                         if fn.arguments:
                             tool_call_map[idx]["arguments"] += fn.arguments
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _attempt, model=resolved,
-            has_partial_output=lambda: bool((content_parts and not forcing) or reasoning_parts))
+            has_partial_output=lambda: bool((content_parts and not forcing) or reasoning_parts)),
+            tools=round_kw.get("tools"))
+        yield {"type": "context_usage", "usage": measure(api_msgs, layout, round_kw.get("tools"), resolved, reported)}
 
         elapsed = time.perf_counter() - t_llm
         assistant_content   = "" if forcing else "".join(content_parts)
@@ -504,12 +534,15 @@ def stream_agent(
         logger.info("[agent] forcing synthesis — loop ended on tool results")
         synth_parts = []
 
+        synth_reported = None
+
         def _synth_attempt():
+            nonlocal synth_reported
             synth_parts.clear()
-            synth = llm_client.chat.completions.create(
-                model=resolved, messages=api_msgs, stream=True, timeout=300.0,
-            )
-            for chunk in synth:
+            for chunk in _open_stream(llm_client, resolved, api_msgs, dict(usage_kw)):
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    synth_reported = getattr(usage, "prompt_tokens", None) or synth_reported
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -517,9 +550,10 @@ def stream_agent(
                     synth_parts.append(delta.content)
                     yield {"type": "token", "token": delta.content}
 
-        yield from run_with_retry(
+        yield from guard.run(lambda: run_with_retry(
             _synth_attempt, model=resolved,
-            has_partial_output=lambda: bool(synth_parts))
+            has_partial_output=lambda: bool(synth_parts)))
+        yield {"type": "context_usage", "usage": measure(api_msgs, layout, None, resolved, synth_reported)}
         turn_had_text = turn_had_text or bool(synth_parts)
         if not synth_parts:
             yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",

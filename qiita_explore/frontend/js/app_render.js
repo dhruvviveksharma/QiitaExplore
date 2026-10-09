@@ -55,7 +55,7 @@ function renderApp(s, account) {
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
-    activeMsgs, slashMatches, composerHistory, browseHistory,
+    activeMsgs, slashMatches, composerHistory, browseHistory, contextUsage,
     agg,
   } = s;
 
@@ -808,6 +808,7 @@ function renderApp(s, account) {
                 )}
               </div>
               <span style={{flex:1}} />
+              {isChat && view.chatId && <ContextBar usage={contextUsage} model={selectedModel} />}
               <span className="composer-model-chip"
                     onClick={() => setShowModelPicker(v => !v)}
                     title="Click or type /model to change">

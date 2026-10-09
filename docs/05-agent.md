@@ -35,7 +35,9 @@ stream_agent(messages, *, system_prompt, model, study_context_text,
 
 Keeping SSE formatting out of the agent is what allows `backend/agent_harness.py` — an offline CLI driver — to consume the same generator and print to a terminal. The route is the only place that knows about the wire format.
 
-Five yield types: `agent_start`, `token`, `reasoning`, `segment_tool_call`, `segment_tool_result`.
+Seven yield types: `agent_start`, `token`, `reasoning`, `segment_tool_call`, `segment_tool_result`, `step_start`/`step_done` (retry, synthesis, overflow recovery) and `context_usage` (what each LLM request held, for the composer's context bar).
+
+A request the provider rejects as too long for the model is compacted and retried once (`helpers/context_fit.py :: OverflowGuard`, wrapped around every LLM call in both loops). See "The context limit" in [`06-streaming-and-chat.md`](06-streaming-and-chat.md).
 
 > `reasoning` **never reaches the browser.** Reasoning-capable models emit `delta.reasoning_content`, and `stream_agent` faithfully yields it as `{"type": "reasoning", ...}`. **No route translates it into an SSE event, and no browser handler exists for it.** The web path silently discards every reasoning token; only `agent_harness.py` consumes them. This is a gap, not a design choice — the plumbing exists on one end and stops halfway. Surfacing it would give users visibility into the model's deliberation at no backend cost.
 

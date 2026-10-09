@@ -356,6 +356,10 @@ def _create_schema(conn):
         ("project_chats", "compacted_through_id", "INTEGER"),
         ("global_chats", "compaction_summary", "TEXT"),
         ("global_chats", "compacted_through_id", "INTEGER"),
+        # The last request's size by part, for the composer's context bar
+        # (helpers/context_usage.py); NULL until the chat's first agent turn.
+        ("project_chats", "context_usage", "TEXT"),
+        ("global_chats", "context_usage", "TEXT"),
         # Study-header snapshot so the Sample Aggregation tab can render
         # Browse-style cards without a Qiita round-trip.
         ("aggregation_studies", "study_abstract", "TEXT"),

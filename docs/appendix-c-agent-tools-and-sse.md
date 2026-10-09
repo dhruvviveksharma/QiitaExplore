@@ -315,6 +315,7 @@ The complete SSE vocabulary, confirmed by grepping every `_sse(...)` call site a
 | `token` | Agent turns, pin/report refusal | One chunk of streamed assistant text. |
 | `step_start` | Context prep, pin/report flows | A named non-tool step began. |
 | `step_done` | Context prep, pin/report flows | A named step finished. |
+| `context_usage` | Agent turns | After each LLM call: what the request held, by part (the composer's context bar). |
 | `ui` | `/report` member flow | A structured payload to render inline (samples report). |
 | `done` | All successful turns | Terminal event. |
 | `error` | All failed turns | Terminal event. |
@@ -365,8 +366,11 @@ Terminal event for a failed turn, on both paths, from the single `except Excepti
 
 | Match | Resulting message |
 |---|---|
+| A context-length rejection from either provider (`is_context_overflow`: 400/413 saying "maximum context length", "prompt is too long", "maximum model length", …) | `"This conversation is too long for {model}, even after compacting. Start a new chat (pin the studies you need), or switch to a model with a larger context window."` |
 | `anthropic.RateLimitError` | `"{model} rate limit reached. Please wait a moment and try again."` |
-| `anthropic.APIConnectionError` / `APIStatusError` | `"{model} is currently unavailable. Check your ANTHROPIC_API_KEY and try again."` |
+| `anthropic.AuthenticationError` / `PermissionDeniedError` | `"{model} rejected the API key. Check your ANTHROPIC_API_KEY and try again."` |
+| `anthropic.APIConnectionError`, or an `APIStatusError` ≥ 500 | `"{model} is currently unavailable. Please try again in a moment."` |
+| Any other `anthropic.APIStatusError` | The error's own message (`body.error.message`) |
 | Substring match on `"upstream connect error"`, `"connection refused"`, `"remote connection failure"`, `"delayed connect error"`, `"connection reset"`, `"service unavailable"`, `"502"`, `"503"`, `"504"` (case-insensitive) | `"{model} is currently unavailable on NRP-Nautilus. Try selecting a different model from the dropdown below the chat box."` |
 | Anything else | `str(exc)` or `exc.__class__.__name__`, verbatim |
 
@@ -386,6 +390,8 @@ Client: `onError` sets the global `compErr` state and patches the last message t
 | `token` | `token` | `global_chat_routes.py` |
 | `segment_tool_call` | `segment_tool_call` | `global_chat_routes.py` |
 | `segment_tool_result` | `segment_tool_result` | `global_chat_routes.py` |
+| `step_start` / `step_done` | same | `helpers/chat_turn.py` |
+| `context_usage` | `context_usage` (payload: the usage dict itself) | `helpers/chat_turn.py`, which also saves the turn's last one on the chat |
 | `reasoning` | **none** | not translated by any route |
 
 **The gap.** `reasoning` is yielded whenever an OpenAI-compatible reasoning model (e.g. `minimax-m2`) returns a non-empty `delta.reasoning_content` chunk — visible in `stream_agent`'s main loop. No route — not `global_chat_routes.py`, not any other — has a branch that forwards `"reasoning"` events onto the SSE wire, and `parseSSE` has no `onReasoning` handler to receive one even if it did. The **only** consumer of this yield type in the entire codebase is `backend/agent_harness.py`, the CLI debugging tool, which patches `agent_mod.execute_tool` and prints reasoning tokens dimmed to the terminal. In the web product, a reasoning model's thinking is silently dropped — the user sees only the tool-call segments and the final synthesized answer, with no indication that reasoning happened at all. Note also that `_stream_anthropic_agent` has no equivalent branch — it never yields `"reasoning"` in the first place, since Claude's streaming API does not expose a comparable field through this integration.

@@ -27,7 +27,7 @@ from helpers.chat_title import start_title_job, finish_title_job
 from helpers.turn_log import log_turn_event
 from store.chat_turn_persist import (
     append_user_message, append_assistant_message,
-    get_chat_title, set_auto_title, UNTITLED,
+    get_chat_title, set_auto_title, persist_context_usage, UNTITLED,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
     segments_list   = []
     current_text    = []
     transcript      = []
+    usage           = None    # the last request's context_usage (helpers/context_usage.py)
     user_row_saved  = False
     assistant_persisted = False
     title_job       = None
@@ -173,6 +174,9 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
                                                    "ui_payload": event.get("ui_payload")})
             elif etype in ("step_start", "step_done"):
                 yield _sse(etype, {k: v for k, v in event.items() if k != "type"})
+            elif etype == "context_usage":
+                usage = event["usage"]
+                yield _sse("context_usage", usage)
         if current_text:
             segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
             current_text = []
@@ -181,6 +185,8 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload,
                                  model_transcript=truncate_for_persist(transcript) or None)
         assistant_persisted = True
+        if usage:
+            persist_context_usage(chat_id, scope, usage)
         log_turn_event(chat_id, "turn_done",
                        chars=len("".join(assistant_parts).strip()),
                        segments=len(segments_list))
@@ -216,4 +222,9 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
             except Exception:
                 logger.exception("failed to persist partial turn on error for %s chat %s",
                                  scope, chat_id)
+        if usage:   # e.g. a request still too long after compacting: the bar shows how full
+            try:
+                persist_context_usage(chat_id, scope, usage)
+            except Exception:
+                logger.exception("failed to persist context usage for %s chat %s", scope, chat_id)
         yield _sse("error", {"error": friendly_llm_error(e, model)})

@@ -80,3 +80,43 @@
 }
 .chat-agg-btn:hover:not(:disabled):not(.disabled) { border-color: var(--accent); color: var(--accent); }
 .chat-agg-btn:disabled, .chat-agg-btn.disabled { opacity: .5; cursor: default; }
+
+/* Context bar before the model chip (js/context_bar.js): one segment per part
+   of the chat's last request; click for the breakdown panel (a .cr-menu). */
+:root {
+  --ctx-system: #8A897F; --ctx-tools: #6B8CAE; --ctx-studies: #C2522D;
+  --ctx-summary: #9C7FBF; --ctx-conversation: #3F8F7F; --ctx-turn: #D29A2E;
+}
+.app.dark {
+  --ctx-system: #8F8E86; --ctx-tools: #7FA2C6; --ctx-studies: #E0714A;
+  --ctx-summary: #B49AD6; --ctx-conversation: #5DB09E; --ctx-turn: #E3B04B;
+}
+.cbar-root { display: flex; align-items: center; min-width: 0; }
+.cbar {
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 10px;
+  border: 1px solid transparent; color: var(--text-3); font-size: 11px; user-select: none;
+}
+.cbar:hover { border-color: var(--border); color: var(--text-2); }
+.cbar-track {
+  display: flex; width: 70px; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--border-soft);
+}
+.cbar-seg { height: 100%; min-width: 1px; }
+.cbar-pct { font-variant-numeric: tabular-nums; min-width: 26px; text-align: right; }
+.cbar-full .cbar-pct { color: var(--accent); font-weight: 600; }
+.cbar-system { background: var(--ctx-system); }
+.cbar-tools { background: var(--ctx-tools); }
+.cbar-studies { background: var(--ctx-studies); }
+.cbar-summary { background: var(--ctx-summary); }
+.cbar-conversation { background: var(--ctx-conversation); }
+.cbar-turn { background: var(--ctx-turn); }
+.cbar-free { background: var(--border-soft); border: 1px solid var(--border); }
+.cr-menu.cbar-panel { width: 270px; padding: 8px 10px; font-size: 12px; color: var(--text); }
+.cbar-head { display: flex; flex-wrap: wrap; gap: 2px 8px; font-weight: 600; margin-bottom: 6px; }
+.cbar-head-num { font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.cbar-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.cbar-dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+.cbar-label { flex: 1; min-width: 0; color: var(--text-2); }
+.cbar-num { font-variant-numeric: tabular-nums; text-align: right; min-width: 38px; }
+.cbar-num-pct { color: var(--text-3); min-width: 32px; }
+.cbar-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); color: var(--text-3); font-size: 11px; }

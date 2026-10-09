@@ -45,14 +45,15 @@ The buffer-and-split-on-blank-line detail matters: a frame can arrive across two
 | `segment_tool_call`   | agentic    | A tool invocation began                                  |
 | `segment_tool_result` | agentic    | That invocation returned                                 |
 | `token`               | both       | One chunk of assistant text                              |
-| `step_start`          | pin/report/context prep, agent loop (`synthesis`), `llm_retry` (`retry`) | A named phase began (`build_context`, `load_samples`, `synthesis`, …) |
-| `step_done`           | pin/report/context prep, `llm_retry` | That phase finished (`synthesis` has no `step_done`; `done` closes it) |
+| `step_start`          | pin/report/context prep, history compaction (`compaction`), agent loop (`synthesis`, `context_fit`), `llm_retry` (`retry`) | A named phase began (`build_context`, `load_samples`, `synthesis`, …) |
+| `step_done`           | pin/report/context prep, `compaction`, `context_fit`, `llm_retry` | That phase finished (`synthesis` has no `step_done`; `done` closes it) |
+| `context_usage`       | agentic    | What the last LLM request held, by part — the composer's context bar |
 | `ui`                  | both       | A structured render payload replaces the text body       |
 | `done`                | both       | Turn complete; carries title and pinned studies          |
 | `error`               | both       | Turn failed; carries a user-facing message               |
 
 
-Exactly nine event types are wired end-to-end: every event `_sse` emits has a handler in `parseSSE`, and every handler corresponds to an emitted event.
+Exactly ten event types are wired end-to-end: every event `_sse` emits has a handler in `parseSSE`, and every handler corresponds to an emitted event.
 
 With one exception, in the other direction. `stream_agent` yields a `reasoning` type for reasoning-capable models. No route translates it, and `parseSSE` has no handler for it. Reasoning tokens are generated and dropped; only `backend/agent_harness.py` sees them. See [`05-agent.md`](05-agent.md).
 
@@ -298,6 +299,47 @@ Two other `ui.kind` values round-trip through the same mechanism: `samples_repor
 ---
 
 
+
+## The context limit (added 2026-10-08)
+
+A chat can outgrow its model's context window three ways, and each has its own answer.
+
+**Between turns: compaction.** Before each agent turn, `helpers/chat_history.py :: prepare_history` estimates what the replayed history costs (characters ÷ `CHARS_PER_TOKEN`, 3.5). It compacts when history plus the system prompt and study context pass `context_budget_chars(model)` minus a reserve of `HISTORY_COMPACTION_RESERVE_TOKENS` (16,384) for the turn's own growth.
+- **What compaction does:** older turns are summarized by the chat's own model (`summarize_turns`), while the newest `HISTORY_KEEP_VERBATIM_TOKENS` (20,000) stay verbatim.
+- **Where the summary goes:** it is saved on the chat (`compaction_summary`, `compacted_through_id`) and rides in the system message as `EARLIER CONVERSATION (compacted summary)`.
+- **On the wire:** a paired `compaction` step.
+
+**Within a turn: compact and retry once.** Nothing above shrinks a turn while it runs, so one request can still be rejected as too long. Typical causes are pinned reports in the system message, this turn's own large tool results, or sample metadata that takes more tokens than the estimate. The provider rejects such a request before anything streams.
+- **Retry:** `helpers/context_fit.py :: OverflowGuard` (around every LLM call in both agent loops) recognizes the rejection (`llm_helpers.is_context_overflow`), runs `recover()` once, and calls again. A paired `context_fit` step ("Context full for {model} — compacting the conversation…") shows it.
+- **Stages,** each running only while the request is still over target:
+  1. **Autocompact:** the replayed turns are summarized as above, keeping a quarter of the usual verbatim window, and the result is persisted, so the next turn starts from it too. If the summarizer itself fails, the earlier conversation is left out with a note instead.
+  2. **This turn's tool results** are cut to `TRANSCRIPT_TOOL_RESULT_CHARS` (2,000).
+  3. **The study context** in the system message is cut to fit.
+- **The target:** the window minus room for the reply, in real tokens. The rejection usually states the counts, which give that request's own chars-per-token ratio (2.5 is assumed when it doesn't).
+- **When it still fails:** a second rejection propagates, and `friendly_llm_error` says: "This conversation is too long for {model}, even after compacting. Start a new chat (pin the studies you need), or switch to a model with a larger context window." Before this change, Claude reported a too-long request as "currently unavailable — check your ANTHROPIC_API_KEY".
+
+**Seeing it: the context bar.** After every LLM call, the agent yields `context_usage` (`helpers/context_usage.py :: measure`) with the request's tokens split by part:
+
+| Part | What it counts |
+|---|---|
+| `system` | the system prompt |
+| `tools` | the tool schemas offered on that call |
+| `studies` | the study context: pinned reports, project studies |
+| `summary` | the compacted earlier conversation |
+| `conversation` | earlier turns replayed verbatim, with their tool exchanges |
+| `turn` | this message (with any slash hint) and this turn's tool calls and results |
+
+- **How it is counted:** parts are estimated from characters, then scaled to the provider's own input-token count when the stream reports one (`measured`).
+  - Anthropic: `message_start` usage.
+  - NRP: `stream_options.include_usage`. A model that rejects it can be flagged `"stream_usage": False` in `MODEL_METADATA`.
+- **The payload also carries:**
+  - the model's `window`;
+  - `compact_at`, where between-turn compaction roughly begins;
+  - every allowed model's window (`windows`).
+- **Where it is kept:** `chat_turn.py` forwards each event and saves the turn's last one on the chat (`context_usage` column), on success or error. The chat GETs return it, so a reopened chat shows it.
+- **In the browser:** `js/context_bar.js` renders it before the model chip. See [`08-frontend.md`](08-frontend.md).
+
+---
 
 ## Cancellation
 

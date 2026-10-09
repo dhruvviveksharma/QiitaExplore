@@ -3,11 +3,17 @@
 // typed. Used by the chat composer and the Browse search bar (app_state.js
 // records each send / search; app_render.js passes their keydown here).
 //
+// Inside a chat the composer walks that chat's own saved messages (the
+// `transcript` option, oldest first), so recall follows the chat across
+// browsers; `resetKey` (the chat id) starts browsing over on a switch. Without
+// a transcript — the Browse bar, the composer before a chat exists — it walks
+// the last 50 entries kept in localStorage: a per-browser convenience, so a
+// blocked or cleared storage just starts empty. record() always keeps that list.
+//
 // Only from the edge of the text: ↑ when the caret is on the first line, ↓ on
 // the last, so moving within a multi-line message still works. Modifier keys
-// are left alone. The last 50 entries per box are kept in localStorage — a
-// per-browser convenience, so a blocked or cleared storage just starts empty.
-// Globals in scope: useState, useRef (utils.js)
+// are left alone.
+// Globals in scope: useState, useEffect, useRef (utils.js)
 
 const _HISTORY_MAX = 50;
 
@@ -18,18 +24,30 @@ function _readHistory(key) {
   } catch (_) { return []; }
 }
 
-function useInputHistory(name) {
+// A transcript's entries, with a message sent twice in a row kept once.
+function _collapseRepeats(list) {
+  const out = [];
+  for (const x of list) {
+    const t = (x || '').trim();
+    if (t && t !== out[out.length - 1]) out.push(t);
+  }
+  return out;
+}
+
+function useInputHistory(name, { transcript = null, resetKey = null } = {}) {
   const key = `qe-history:${name}`;
-  const [items, setItems] = useState(() => _readHistory(key));   // oldest first
+  const [stored, setStored] = useState(() => _readHistory(key));   // oldest first
+  const items = transcript ? _collapseRepeats(transcript) : stored;
   const pos   = useRef(null);   // index while browsing; null = not browsing
   const draft = useRef('');     // what was typed before the first ↑
   const shown = useRef(null);   // the entry last put in the box
+  useEffect(() => { pos.current = null; }, [resetKey]);
 
   const record = (text) => {
     const t = (text || '').trim();
     pos.current = null;
     if (!t) return;
-    setItems(prev => {
+    setStored(prev => {
       const next = [...prev.filter(x => x !== t), t].slice(-_HISTORY_MAX);
       try { localStorage.setItem(key, JSON.stringify(next)); } catch (_) {}
       return next;

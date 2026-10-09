@@ -3104,3 +3104,31 @@ Still open:
 - "Select whole prep" checkbox on the group header rows (per-row selection already lets a single prep + artifact be isolated, one row at a time).
 - A saved per-study **Prep** picker next to Artifact (narrows the table, counts and export by prep), now cheap because `artifact_preps` maps artifact → prep.
 - Artifacts that appear in Qiita after a study is added are not auto-checked (selection rows are written when the study is added); "Select all" picks them up. Consider flagging a study whose `file_rows` snapshot is stale.
+
+---
+
+## TKT-099: Between-Turn Compaction Estimates Tokens Too Optimistically
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+`prepare_history` decides when to compact by estimating tokens as characters ÷ 3.5
+(`config.CHARS_PER_TOKEN`). Sample-metadata text (IDs, numbers, short field values) takes
+more tokens per character than prose, so a chat with pinned reports can pass the window
+while the estimate still says it fits. The turn then relies on the in-turn overflow retry
+(`helpers/context_fit.py`: compact, then retry once), which costs one rejected request and
+one extra summarization call.
+
+### Plan
+
+- The context bar now records the provider's real input-token count for each request
+  (`context_usage.measured`, saved on the chat). Use that request's chars-per-token ratio,
+  or a running per-chat ratio, in `_history_budget_chars` instead of the fixed 3.5.
+- Or count tokens with the provider's tokenizer for the study-context block only.
+
+### Files
+
+- `qiita_explore/backend/helpers/chat_history.py` (`_history_budget_chars`)
+- `qiita_explore/backend/helpers/context_usage.py`, `config.py` (`CHARS_PER_TOKEN`)

@@ -92,6 +92,42 @@ def _history_budget_chars(model, system_prompt, context_block):
     return max(8_000, context_budget_chars(model) - fixed_chars - reserve_chars)
 
 
+def split_turns(rows, keep_tokens, min_keep=1):
+    """(older, kept) lists of turns: the newest turns that fit in keep_tokens
+    stay verbatim (always at least min_keep of them); everything before the
+    first one that doesn't fit is older. Contiguous, so the anchor after
+    `older` never skips a kept turn."""
+    keep_budget = int(keep_tokens * config.CHARS_PER_TOKEN)
+    turns = _pair_rows_into_turns(rows)
+    kept, running = [], 0
+    for turn in reversed(turns):
+        turn_chars = sum(_row_chars(r) for r in turn)
+        if running + turn_chars > keep_budget and len(kept) >= min_keep:
+            break
+        kept.append(turn)
+        running += turn_chars
+    kept.reverse()
+    return turns[:len(turns) - len(kept)], kept
+
+
+def summarize_turns(chat_id, scope, model, older, summary):
+    """Summarize `older` turns (folding in the previous summary) with the
+    chat's own model and persist the new anchor; returns the new summary."""
+    serialized = _serialize_turns(older)
+    if summary:
+        serialized = f"[Summary of even earlier conversation]:\n{summary}\n\n{serialized}"
+    new_summary = llm_chat(
+        [{"role": "user", "content": serialized},
+         {"role": "user", "content": _COMPACTION_REQUEST}],
+        study_context_text=None, system_prompt=_COMPACTION_SYSTEM_PROMPT, model=model,
+    )
+    new_through_id = older[-1][-1]["id"]
+    persist_compaction_state(chat_id, scope, summary=new_summary, through_id=new_through_id)
+    logger.info("[compaction] %s chat %s: %d turns summarized through row %d",
+                scope, chat_id, len(older), new_through_id)
+    return new_summary
+
+
 def prepare_history(chat_id, scope, model, system_prompt, context_block, until_id=None):
     """Generator — yields step events while compacting; returns
     (turn_rows, summary) via StopIteration for `yield from` callers.
@@ -105,40 +141,18 @@ def prepare_history(chat_id, scope, model, system_prompt, context_block, until_i
     if total <= budget:
         return rows, summary
 
-    turns = _pair_rows_into_turns(rows)
-    keep_budget = int(config.HISTORY_KEEP_VERBATIM_TOKENS * config.CHARS_PER_TOKEN)
-    kept, older, running = [], [], 0
-    for turn in reversed(turns):
-        turn_chars = sum(_row_chars(r) for r in turn)
-        if running + turn_chars > keep_budget and kept:
-            older.append(turn)
-        else:
-            kept.append(turn)
-            running += turn_chars
-    kept.reverse()
-    older.reverse()
-
+    older, kept = split_turns(rows, config.HISTORY_KEEP_VERBATIM_TOKENS)
     if not older:
         # Pathological: the keep window alone exceeds budget (one giant turn).
-        # Ship it and let the provider's own limit surface if truly too big.
+        # Ship it; if the provider rejects it, agent.py's overflow retry
+        # (helpers/context_fit.py) compacts with a smaller window.
         logger.warning("[compaction] %s chat %s over budget but nothing to compact",
                        scope, chat_id)
         return rows, summary
 
     yield {"type": "step_start", "name": "compaction",
            "label": "Compacting conversation history…"}
-    serialized = _serialize_turns(older)
-    if summary:
-        serialized = f"[Summary of even earlier conversation]:\n{summary}\n\n{serialized}"
-    new_summary = llm_chat(
-        [{"role": "user", "content": serialized},
-         {"role": "user", "content": _COMPACTION_REQUEST}],
-        study_context_text=None, system_prompt=_COMPACTION_SYSTEM_PROMPT, model=model,
-    )
-    new_through_id = older[-1][-1]["id"]
-    persist_compaction_state(chat_id, scope, summary=new_summary, through_id=new_through_id)
-    logger.info("[compaction] %s chat %s: %d turns summarized through row %d",
-                scope, chat_id, len(older), new_through_id)
+    new_summary = summarize_turns(chat_id, scope, model, older, summary)
     yield {"type": "step_done", "name": "compaction", "label": "History compacted",
            "detail": f"{len(older)} earlier turns summarized"}
 

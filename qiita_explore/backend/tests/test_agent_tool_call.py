@@ -50,6 +50,15 @@ def stub_agent_imports():
     llm_stub._extract_system_and_messages = MagicMock(return_value=("", []))
     llm_stub._resolve_model = MagicMock(side_effect=lambda m: m or "gemma")
     llm_stub.friendly_llm_error = MagicMock(return_value="error")
+    llm_stub.is_context_overflow = MagicMock(return_value=False)
+
+    # The overflow retry and the context bar's measurement (not under test here)
+    fit_stub = types.ModuleType("helpers.context_fit")
+    fit_stub.Layout = MagicMock()
+    fit_stub.OverflowGuard = MagicMock()
+    fit_stub.system_message = MagicMock()
+    usage_stub = types.ModuleType("helpers.context_usage")
+    usage_stub.measure = MagicMock()
 
     # Build minimal agent_tools stub (execute_tool will be patched per-test)
     tools_stub = types.ModuleType("helpers.agent_tools")
@@ -59,7 +68,9 @@ def stub_agent_imports():
     old = {}
     for name, stub in [("config", config_stub),
                        ("helpers.llm_helpers", llm_stub),
-                       ("helpers.agent_tools", tools_stub)]:
+                       ("helpers.agent_tools", tools_stub),
+                       ("helpers.context_fit", fit_stub),
+                       ("helpers.context_usage", usage_stub)]:
         old[name] = sys.modules.get(name)
         sys.modules[name] = stub
 

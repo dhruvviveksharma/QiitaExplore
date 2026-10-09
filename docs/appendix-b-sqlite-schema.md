@@ -227,6 +227,8 @@ A conversation thread scoped to one project.
 | `title` | TEXT | yes | — | `"New chat"` until the first message; then the first 60 chars of that message immediately; then replaced by an LLM-generated title (`helpers/chat_title.py`) once the first turn finishes. |
 | `created_at` | TEXT | yes | — | Creation timestamp. |
 | `updated_at` | TEXT | yes | — | Last message append; the sidebar sort key. |
+| `compaction_summary` / `compacted_through_id` | TEXT / INTEGER | yes | — | History compaction: the rolling summary of earlier turns, and the message row id it covers through (`helpers/chat_history.py`). |
+| `context_usage` | TEXT | yes | — | JSON: the last agent request's size by part, for the composer's context bar (`helpers/context_usage.py`; written by `chat_turn_persist.persist_context_usage`). NULL until the chat's first agent turn. |
 
 **Keys/constraints:** PK on `chat_id`. FK `project_id → projects(project_id) ON DELETE CASCADE`. `user_id` is redundant with `projects.user_id` but is stored so chat queries filter on both without a join — the CRUD layer consistently uses `WHERE project_id = ? AND user_id = ?`.
 
@@ -288,6 +290,8 @@ A conversation thread not scoped to any project — the entry point for the agen
 | `title` | TEXT | yes | — | `"New chat"` until the first message; then the first 60 chars of that message immediately; then replaced by an LLM-generated title (`helpers/chat_title.py`) once the first turn finishes. |
 | `created_at` | TEXT | yes | — | Creation timestamp. |
 | `updated_at` | TEXT | yes | — | Last message append; the sidebar sort key. |
+| `compaction_summary` / `compacted_through_id` | TEXT / INTEGER | yes | — | History compaction: the rolling summary of earlier turns, and the message row id it covers through (`helpers/chat_history.py`). |
+| `context_usage` | TEXT | yes | — | JSON: the last agent request's size by part, for the composer's context bar (`helpers/context_usage.py`; written by `chat_turn_persist.persist_context_usage`). NULL until the chat's first agent turn. |
 
 **Keys/constraints:** PK on `chat_id`. No FK at all — global chats have no parent row in this database.
 

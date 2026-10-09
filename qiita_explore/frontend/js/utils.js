@@ -170,7 +170,8 @@ async function fetchStudyHeader(studyId) {
 }
 
 async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart, onStepDone,
-                                    onAgentStart, onSegmentToolCall, onSegmentToolResult }, signal) {
+                                    onAgentStart, onSegmentToolCall, onSegmentToolResult,
+                                    onContextUsage }, signal) {
   const reader = response.body.getReader();
   const dec    = new TextDecoder();
   let buf      = '';
@@ -198,6 +199,7 @@ async function parseSSE(response, { onToken, onUi, onDone, onError, onStepStart,
       if (type === 'agent_start'         && onAgentStart)         onAgentStart(payload);
       if (type === 'segment_tool_call'   && onSegmentToolCall)    onSegmentToolCall(payload);
       if (type === 'segment_tool_result' && onSegmentToolResult)  onSegmentToolResult(payload);
+      if (type === 'context_usage'       && onContextUsage)       onContextUsage(payload);
     }
   }
 }
