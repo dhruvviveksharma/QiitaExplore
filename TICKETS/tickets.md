@@ -697,6 +697,9 @@ Rely solely on `store/cache.py` (`get_study_detail_cache`, `upsert_study_detail_
 
 Deleted (along with other stale `ezredbiom/` leftovers from the directory rename: `DNA Loaders.html`, `logo.png`, `qiita-mark-nobg.png`, `qiita-mark.png` — confirmed unreferenced).
 
+Re-added as an empty file on 2026-10-08 (`51ff3ef0`), which broke CI's ruff step (an empty
+`.ipynb` is invalid JSON); deleted again 2026-10-09.
+
 ### Files
 
 - `qiita_explore/test.ipynb`
