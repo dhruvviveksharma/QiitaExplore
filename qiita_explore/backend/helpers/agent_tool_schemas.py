@@ -351,8 +351,9 @@ STUDY_TOOL_SCHEMAS = [
         "Add a study - or only some of its data types or preps - to THIS CHAT's temporary sample aggregation "
         "(created on first use; it exports per-sample FASTQ file lists). It is added immediately: the user "
         "sees what was added with an Undo button, and can export it or save it as a named aggregation. Use it "
-        "whenever the user wants to collect, gather, add or aggregate studies, preps or samples in this chat, "
-        "or to create an aggregation.",
+        "when the user asks to add studies, preps or samples to an aggregation, to aggregate them, or to create "
+        "an aggregation. If they only ask to get, collect, gather or download samples or files without saying "
+        "aggregation or file, call no tool: ask whether they want a CSV/TSV file or the aggregation.",
         {"study_id": _STUDY_ID,
          "data_types": {"type": "array", "items": {"type": "string"},
                         "description": "Only these data types, e.g. ['16S']."},
