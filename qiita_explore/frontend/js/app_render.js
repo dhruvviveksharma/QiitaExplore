@@ -55,7 +55,7 @@ function renderApp(s, account) {
     moveProjChatToProject, moveGlobalChatToProject, removeChatFromProject, createProjectAndMoveChat,
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
-    activeMsgs, slashMatches,
+    activeMsgs, slashMatches, composerHistory, browseHistory,
     agg,
   } = s;
 
@@ -559,7 +559,7 @@ function renderApp(s, account) {
                   placeholder="Search by keyword, author, or topic…"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && doSearch()}
+                  onKeyDown={e => { if (browseHistory.onKey(e, query, setQuery)) return; if (e.key === 'Enter') doSearch(); }}
                 />
                 <button className="btn-search" onClick={() => doSearch()}
                   disabled={searching || (!query.trim() && !hasBrowseFilters(bf.filters))}>
@@ -777,7 +777,8 @@ function renderApp(s, account) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => {
-                const menuOpen = slashMatches.length > 0 && !slashDismissed;
+                // While ↑ / ↓ steps through history, the arrows stay with it, not the slash menu.
+                const menuOpen = slashMatches.length > 0 && !slashDismissed && !composerHistory.browsing(input);
                 if (menuOpen) {
                   if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, slashMatches.length - 1)); return; }
                   if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
@@ -788,6 +789,7 @@ function renderApp(s, account) {
                   }
                   if (e.key === 'Escape')    { e.preventDefault(); setSlashDismissed(true); return; }
                 }
+                if (composerHistory.onKey(e, input, setInput)) return;
                 if (e.key === 'Enter' && !e.shiftKey && (isChat || view.type === 'browse')) { e.preventDefault(); sendMessage(); }
               }}
               disabled={!(isChat || view.type === 'browse') || sending}

@@ -111,6 +111,7 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/icons.js`                   | 60    | Five inline stroke SVG components (`ChevronIcon`, `MergeIcon`, `SunIcon`, `MoonIcon`, `BoltIcon`)                    |
 | `frontend/js/loaders.js`                 | 168   | Canvas-drawn loading animations (`InfinityLoader`, `WreathLoader`)                                                    |
 | `frontend/js/auth.js`                    | 179   | `useAuth`, `ConnectQiita`, `LegacyClaimBanner`, `AccountBar`                                                         |
+| `frontend/js/hooks/useInputHistory.js`   | 66    | `useInputHistory(name)` — ↑ / ↓ recall in the chat composer and the Browse search bar, like a shell; the last 50 entries per box in `localStorage` (`qe-history:<name>`) |
 | `frontend/js/hooks/useOutsideClose.js`   | 25    | `useOutsideClose(onClose, ignoreSelector)` — closes an always-open panel (the model picker) on a mousedown outside it |
 | `frontend/js/components.js`              | 875   | Shared components — samples browser, `SampleFieldsCard`, prep/artifact tables, agent bubbles, model picker, slash menu |
 | `frontend/js/hooks/useModelSelection.js` | 30    | Model choice with per-chat and global `localStorage` persistence                                                     |

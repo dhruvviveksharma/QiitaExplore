@@ -78,6 +78,9 @@ function useAppState() {
   const [slashDismissed, setSlashDismissed] = useState(false);
   const { selectedModel, setSelectedModel, showModelPicker, setShowModelPicker } = useModelSelection(view.chatId);
   const scrollCollapse = useScrollCollapse(view.chatId);
+  // ↑ / ↓ recall of what was sent from each box (hooks/useInputHistory.js).
+  const composerHistory = useInputHistory('composer');
+  const browseHistory   = useInputHistory('browse');
   const [showPlusMenu,    setShowPlusMenu]    = useState(false);
   const [anthropicKeySet, setAnthropicKeySet] = useState(false);
   const [theme, setThemeState] = useState(() => {
@@ -708,6 +711,7 @@ function useAppState() {
   const sendMessage = async (msgOverride) => {
     const msg = (typeof msgOverride === 'string' ? msgOverride : input).trim();
     if (!msg || sending) return;
+    composerHistory.record(msg);
     setSending(true); setCompErr('');
     if (typeof msgOverride !== 'string') setInput('');
 
@@ -904,6 +908,7 @@ function useAppState() {
       setResults([]); setSearched(false); setSqlQuery(null); setAppliedFilters(null);
       return;
     }
+    if (q) browseHistory.record(q);
     if (override) setQuery(override);
     setSearching(true); setSearched(false); setDeepSearching(false); setDeepIds(new Set());
     // Filter clicks fire back-to-back; a slow earlier response must not
@@ -1010,7 +1015,7 @@ function useAppState() {
     toggleShowArchivedProj, toggleShowArchivedGlobal, unarchiveProjChat, unarchiveGlobalChat,
     // derived
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
-    activeMsgs, slashMatches,
+    activeMsgs, slashMatches, composerHistory, browseHistory,
     agg,
   };
 }
