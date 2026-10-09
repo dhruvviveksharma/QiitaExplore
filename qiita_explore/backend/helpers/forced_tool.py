@@ -61,11 +61,17 @@ class ForcedPlan:
                 return cid, name, {**(cargs if isinstance(cargs, dict) else {}), **self.forced_args(name)}, False
         return f"force_{uuid.uuid4().hex[:12]}", name, self.forced_args(name), True
 
-    def done(self, name, ui_payload):
-        """Advance after a call to `name` finished with `ui_payload`."""
+    def done(self, name, ui_payload, failed=False):
+        """Advance after a call to `name` finished with `ui_payload`. A call
+        that raised ends the plan: the model gets an ordinary round with the
+        error and every tool, rather than an ask round about candidates that
+        were never shown."""
         if not self.queue or name != self.queue[0]:
             return
         self.queue.pop(0)
+        if failed:
+            self.queue = []
+            return
         if name == RESOLVE:
             if (ui_payload or {}).get("kind") == "study_resolved":
                 self.args["study_id"] = ui_payload["study_id"]

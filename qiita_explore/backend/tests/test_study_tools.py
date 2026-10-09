@@ -237,7 +237,7 @@ def test_acronym_candidates_find_studies_text_search_misses(st, monkeypatch):
 @pytest.fixture
 def chat_pins(st, monkeypatch):
     def set_pins(*studies):
-        monkeypatch.setattr(st, "list_pinned_studies", lambda chat, scope: [{"study_id": s["study_id"]} for s in studies])
+        monkeypatch.setattr(st, "list_pinned_studies", lambda chat, scope: [s["study_id"] for s in studies])   # ids, as the store returns
         monkeypatch.setattr(st, "_fetch_study_headers",
                             lambda ids: [s for s in (AGP, AGP_AU, HADZA) if s["study_id"] in ids])
     return set_pins
@@ -269,6 +269,19 @@ def test_resolve_tool_no_pin_match_asks_even_for_a_single_search_hit(st, chat_pi
     r = run(st, "resolve_study", text="the AGP preps", for_tool="get_study_preps")
     assert r.ui_payload["kind"] == "study_choice"
     assert [(c["study_id"], c["pinned"]) for c in r.ui_payload["candidates"]] == [(10317, False)]
+
+
+def test_resolve_tool_reads_real_pins(st, monkeypatch):
+    """Regression: the store returns pinned study ids as plain ints; reading them
+    as dicts crashed every resolve in a chat with pins."""
+    from store import pin_study_to_chat
+    pin_study_to_chat("c1", "global", 10317, "American Gut Project")
+    pin_study_to_chat("c1", "global", 1064, "Hadza")
+    monkeypatch.setattr(st, "_fetch_study_headers", lambda ids: [s for s in (AGP, HADZA) if s["study_id"] in ids])
+    r = run(st, "resolve_study", text="for study 16326", for_tool="get_study_preps")     # the reported case
+    assert r.ui_payload["kind"] == "study_resolved" and r.ui_payload["study_id"] == 16326
+    r = run(st, "resolve_study", text="the AGP preps", for_tool="get_study_preps")
+    assert r.ui_payload["study_id"] == 10317 and "pinned study" in r.text
 
 
 def test_resolve_tool_explicit_id_must_be_public(st, chat_pins):

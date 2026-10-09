@@ -514,7 +514,7 @@ def _tool_propose_aggregation(sid, header, args, user_id):
 def _chat_studies(scope, chat_id):
     """The chat's own studies, pinned ones first: [{study_id, study_title,
     study_alias, pi_name, num_samples, data_types, pinned}]."""
-    pinned = [p["study_id"] for p in list_pinned_studies(chat_id, scope)] if chat_id else []
+    pinned = [int(sid) for sid in list_pinned_studies(chat_id, scope)] if chat_id else []   # plain ids
     if scope == SCOPE_PROJECT:
         project = get_project_studies_only(get_project_id_for_chat(chat_id) or "") or {}
         rows = project.get("studies") or []

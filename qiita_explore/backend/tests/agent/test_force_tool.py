@@ -126,6 +126,17 @@ class TestOpenAIForced:
         assert tool.calls[1][1] == {"data_types": ["16S"], "study_id": 10317}
 
 
+    def test_a_failed_forced_call_ends_the_plan_with_all_tools(self, run_turn):
+        """Regression (2026-10-09): resolve_study raised, the plan treated it as
+        ambiguous and offered no tools, and the model wrote nothing."""
+        force = {"name": "get_study_preps", "args": {}, "text": "for study 16326"}
+        script = [openai_tool_call_round("c1", "resolve_study", "{}"),
+                  openai_text_round("Sorry — I couldn't look that study up; try /preps 16326.")]
+        events, client, tool = run_turn(script, make_fake_execute_tool(RuntimeError("boom")), tools=TOOLS, force_tool=force)
+        assert len(_names(client.calls[1])) == len(TOOLS) and "tool_choice" not in client.calls[1]
+        assert tokens_of(events).startswith("Sorry")
+
+
 class TestAnthropicForced:
 
     def test_tool_choice_names_the_tool_and_text_is_hidden(self, run_turn):

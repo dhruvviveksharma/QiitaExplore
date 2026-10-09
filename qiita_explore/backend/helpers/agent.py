@@ -247,7 +247,7 @@ def _stream_anthropic_agent(anth_client, api_msgs, resolved, scope, chat_id, dee
                 search_calls_used=search_calls_used, user_id=user_id,
             ), box)
             if plan:
-                plan.done(tu["name"], box.get("ui_payload"))
+                plan.done(tu["name"], box.get("ui_payload"), failed)
             if consumed_search_slot:
                 search_calls_used += 1
             if failed:
@@ -487,7 +487,7 @@ def stream_agent(
                 search_calls_used=search_calls_used, user_id=user_id,
             ), box)
             if plan:
-                plan.done(name, box.get("ui_payload"))
+                plan.done(name, box.get("ui_payload"), failed)
             if consumed_search_slot:
                 search_calls_used += 1
             if failed:
