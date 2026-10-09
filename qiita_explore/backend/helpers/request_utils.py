@@ -130,7 +130,7 @@ def pin_response(chat_id: str, scope: str, study_id: int):
         return jsonify(body)
     if study_id in invalid and scope == SCOPE_PROJECT:
         body['error'] = (
-            f"Study {study_id} is not part of this project, is private, not found, "
+            f"Study {study_id} is not part of this workspace, is private, not found, "
             f"or has no accessible data"
         )
     elif study_id in invalid:

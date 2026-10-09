@@ -20,7 +20,8 @@ import json
 import uuid
 
 RESOLVE = "resolve_study"
-NO_STUDY_TOOLS = frozenset({"list_aggregations", "save_chat_aggregation"})   # no resolve round
+NO_STUDY_TOOLS = frozenset({"list_aggregations", "save_chat_aggregation",   # no resolve round
+                            "add_to_workspace", "create_workspace"})
 
 
 class ForcedPlan:

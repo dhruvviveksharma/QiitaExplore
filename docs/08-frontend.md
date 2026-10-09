@@ -119,6 +119,8 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
 | `frontend/js/browse_filters.js`          | 173   | Browse facet filters — `useBrowseFilters`, `FacetMultiSelect` (multi-select `useDropdown`), `YearRangeSlider`, `BrowseFilterBar` |
 | `frontend/browse_filters.css`            | 75    | Styles for the above (kept out of `style.css`, which is over the line cap)                                          |
+| `frontend/js/search_results_panel.js`    | 141   | `SearchResultsPanel` — the right-hand drawer a search tool's **View all →** opens, studies in relevance order (100 at a time). Resizable from its left edge (drag, or ← / → on the focused edge; 320px up to what leaves the chat 360px; remembered in `localStorage` `qe-results-panel-width`). Publishes `--drawer-space`, which `style.css` uses for `.main.merge-open`'s padding and the study modal's `.with-drawer` offset (both default to 430px for the merge panel) |
+| `frontend/search_results.css`            | 41    | The drawer's card grid — `auto-fill` columns of at least 260px (rank + the 220px `InlineStudyCard`): a column is added as soon as one more fits; in between, cards grow with the drawer up to +25% (275px) and stay centered, extra width shared around them — and its resize handle |
 | `frontend/aggregations.css`              | 109   | Sample Aggregation tab styles (sibling of `style.css`, same reason)                                                 |
 | `frontend/js/study_card.js`              | 41    | `StudyCard` — the study card shared by the Browse grid and the Sample Aggregation tab                               |
 | `frontend/js/app_state.js`               | 1022  | `useAppState()` — the whole application state and every action                                                       |
@@ -133,11 +135,14 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/aggregations.js`            | 198   | `useAggregations` (incl. `setStudyFileFilter`; `addStudy` takes an optional `file_filter`), `AggregateCardButton` (Browse "+ Aggregate"), `AggregationsTab` shell |
 | `frontend/js/study_actions.js`           | 31    | `StudyActions` — the study action row (Pin / Add to Project, + Aggregate, + Merge) shared by Browse cards and the study modal header |
 | `frontend/js/study_modal.js`             | 279   | `StudyModal` — the overlay shell (scroll-to-expand, expand button opens the study page) plus the add-to-project / add-to-merge bars |
-| `frontend/js/study_detail.js`            | 220   | `StudyHeader`, `StudyDetailBody`, `StudySamplesSection`, `PrepTemplatesSection`, `StudyOutputs`, `StudyPage`, `sampleFieldsFetcher` — the study view shared by the modal, `#/studies/<id>` and the chat widgets. Styles in `frontend/study_detail.css` |
+| `frontend/js/prep_search.js`             | 81    | `PrepSearch` — the prep search above Prep Templates and in Prep tree: digits list the preps whose ID starts with them; ↓ / ↑ highlight, Tab or Enter complete and select (the first match when none is highlighted), Escape closes. A `useDropdown` panel, rows pick on mousedown. Styles in `frontend/study_detail.css` |
+| `frontend/js/study_detail.js`            | 218   | `StudyHeader`, `StudyDetailBody`, `StudySamplesSection`, `PrepTemplatesSection`, `StudyOutputs` (the "Prep tree" section), `StudyPage`, `sampleFieldsFetcher` — the study view shared by the modal, `#/studies/<id>` and the chat widgets. Styles in `frontend/study_detail.css` |
 | `frontend/js/chat_slash.js`              | 53    | `STUDY_SLASH_COMMANDS` (`/preps /graph /files /aggregate /aggregations`) and `parseStudySlash` → `force_tool` |
 | `frontend/js/chat_study_widgets.js`      | 251   | `ChatStudyWidget` and one widget per study-tool payload kind (`STUDY_WIDGET_KINDS`), `chatWidgetCtx(s)`, the "Which study?" picker. Styles in `frontend/chat_widgets.css` |
 | `frontend/js/chat_aggregate_widget.js`   | 224   | `AggregationProposalCard` (confirm card for a saved aggregation), `ChatAggregationUpdate` (an add to this chat's aggregation, with Undo), `AggregationSavedWidget`, `AggregationListWidget` |
 | `frontend/js/chat_aggregation_bar.js`    | 47    | `ChatAggregationBar` — this chat's temporary aggregation above the composer: study chips, View, CSV / xlsx, Save as…, Clear |
+| `frontend/js/chat_workspace_widget.js`   | 81    | `WorkspaceUpdateCard` — `add_to_workspace` / `create_workspace`: added and skipped studies, Undo (removes them, and a just-created empty workspace), Open workspace. Syncs the sidebar once on mount through `ctx.workspaces` (`app_state.js`) |
+| `frontend/js/chat_export_widget.js`      | 56    | `TableExportCard` — `export_table`: a five-row preview and CSV / TSV links to `/api/chat-exports/<id>.<ext>`; an aggregation export links that aggregation's own export route |
 | `frontend/js/app.js`                     | 38    | `App` (auth gate), `AuthenticatedApp`, `ReactDOM.createRoot`                                                         |
 
 
@@ -459,8 +464,8 @@ Four tiers, distinguished by what they know about.
 |---|---|
 | Abstract | The abstract, then the PI (name — affiliation) and contact lines. |
 | Samples | `SamplesBrowser`, or with **Group by prep** `PrepGroupedSamples`, whose clicked sample's metadata (`SampleFieldsCard`) stays in a pane to the right. |
-| Prep Templates | `PrepTemplatesSection`: `PrepsTable` with clickable rows (first prep selected) and that prep's `ArtifactNetwork` to the right, or below in the compact modal. |
-| Outputs | `StudyOutputs`: the processing network one prep at a time behind a picker, plus `StudyActionBar`. |
+| Prep Templates | `PrepTemplatesSection`: a `PrepSearch` (2+ preps), then `PrepsTable` with clickable rows (first prep selected) and that prep's `ArtifactNetwork` to the right, or below in the compact modal. A searched prep past row 20 opens the full table. |
+| Prep tree | `StudyOutputs` (titled "Outputs" before 2026-10-09; its collapse id is still `study-modal-outputs`): the processing network one prep at a time, picked with `PrepSearch` (plus "Other" for unlinked artifacts), then `StudyActionBar`. |
 
 The Per-sample FASTQ section is not rendered for now. `ArtifactNetwork` draws every artifact, including intermediate ones such as Demultiplexed, and nothing but the chart shows until a node is clicked. Archived artifacts (Qiita drops their parent links) are hidden behind a "N archived artifacts hidden · Show" note. The chart opens scaled to fit the whole graph (never above 1×); the wheel zooms at the cursor up to 2.5× and is not passed on, so the modal neither scrolls nor auto-expands under it; dragging pans. Only a study whose cached detail has no graph falls back to `ArtifactOutputsView`'s flat table; the Merge panel keeps `ArtifactOutputsView` and its selectable BIOM cards.
 

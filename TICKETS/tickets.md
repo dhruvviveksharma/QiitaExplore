@@ -2503,7 +2503,14 @@ Loose ends from the 2026-09-12 browse relevance + facet-filter work:
 ## TKT-082: Artifact Path SQL Ignores `data_directory.subdirectory`
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Resolved (2026-10-09) for the path SQL; the `_abs` de-duplication below is still open
+
+**Resolution:** both queries now build `mountpoint/artifact_id/filename` only when
+`dd.subdirectory` is true (a SQL `CASE`), else `mountpoint/filename`. Graphs cached before
+the fix carry no `paths_v` and are rebuilt (`helpers/study_detail.py`). Checked on barnacle
+against the live DB and disk: 30 random public `subdirectory = false` files (the `raw_data`
+mount) — old path exists 0/30, new 30/30; 30 `subdirectory = true` files unchanged (30/30).
+Done now because the chat's `list_artifact_files` hands these paths to the model.
 
 ### Description
 

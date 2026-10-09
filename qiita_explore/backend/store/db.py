@@ -276,6 +276,23 @@ def _create_schema(conn):
                 REFERENCES aggregation_studies(aggregation_id, study_id) ON DELETE CASCADE
         );
 
+        -- CSV / TSV files made from a chat (helpers/export_tools.py). spec_json holds
+        -- the parameters of a samples / files export (rebuilt at download, so always
+        -- current); rows_json the table of a model-written "rows" export. Deleted
+        -- with the chat (store/export_crud.delete_chat_exports).
+        CREATE TABLE IF NOT EXISTS chat_exports (
+            export_id  TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            chat_id    TEXT NOT NULL,
+            chat_scope TEXT NOT NULL,
+            name       TEXT NOT NULL,
+            source     TEXT NOT NULL,
+            spec_json  TEXT,
+            rows_json  TEXT,
+            created_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_exports_chat ON chat_exports(chat_id, chat_scope);
+
         CREATE TABLE IF NOT EXISTS biom_sample_cache (
             artifact_id     INTEGER PRIMARY KEY,
             num_samples     INTEGER,

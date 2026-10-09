@@ -5,6 +5,7 @@ import uuid
 
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 from .aggregation_crud import delete_chat_aggregations
+from .export_crud import delete_chat_exports
 from .chat_turn_persist import parse_context_usage
 
 PROJECT_STUDIES_CAP = 20
@@ -187,6 +188,7 @@ def delete_project(project_id: str, user_id: str):
         if cur.rowcount:
             for chat_id in chat_ids:            # the project's chats go by cascade; their
                 delete_chat_aggregations(conn, chat_id, "project")   # temporary aggregations here
+                delete_chat_exports(conn, chat_id, "project")
         conn.commit()
     return True
 
@@ -490,6 +492,7 @@ def delete_chat(project_id: str, user_id: str, chat_id: str):
         )
         if cur.rowcount:
             delete_chat_aggregations(conn, chat_id, "project")
+            delete_chat_exports(conn, chat_id, "project")
         conn.execute(
             "UPDATE projects SET updated_at = ? WHERE project_id = ? AND user_id = ?",
             (_now(), project_id, resolved_user),

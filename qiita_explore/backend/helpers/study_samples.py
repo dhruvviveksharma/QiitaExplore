@@ -197,6 +197,19 @@ def matching_sample_ids(study_id, q):
     return [r[0] for r in rows]
 
 
+def fetch_sample_table(study_id, columns, sample_ids=None, limit=None):
+    """[(sample_id, value, ...)] in sample-id order: the given metadata columns
+    (text) for every sample of the study, or only `sample_ids` when given — the
+    chat's samples export (helpers/export_tools.py)."""
+    select = ", ".join(["sample_id"] + ["sample_values->>%s"] * len(columns))
+    sql, params = f"SELECT {select} FROM {_table(study_id)} WHERE sample_id <> %s", [*columns, SENTINEL]
+    if sample_ids is not None:
+        sql += " AND sample_id = ANY(%s)"
+        params.append(list(sample_ids))
+    sql += " ORDER BY sample_id" + (f" LIMIT {int(limit)}" if limit else "")
+    return pooled_fetchall(sql, params)
+
+
 def fetch_samples_by_ids(study_id, sample_ids):
     """rows = [(sample_id, value, ...)] in display-column order, for exactly
     the given sample_ids, re-ordered to match the input order — availability-

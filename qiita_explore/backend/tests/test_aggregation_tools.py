@@ -99,7 +99,7 @@ def test_cap_and_project_gate(at, monkeypatch):
     monkeypatch.setattr(at.st, "get_project_id_for_chat", lambda chat: "p1")
     monkeypatch.setattr(at.st, "allowed_project_study_ids", lambda pid: {1070})
     r = call(at, "add_to_chat_aggregation", scope="project", study_id=SID)
-    assert "not in this project" in r.text and crud is not None
+    assert "not in this workspace" in r.text and crud is not None
 
 
 def test_chats_and_users_are_separate(at):

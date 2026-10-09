@@ -582,11 +582,11 @@ def _tool_label(name: str, args: dict) -> str:
         return f"Searching: {', '.join(kws)}…" if kws else "Searching Qiita…"
     if name == "search_project_studies":
         kws = args.get("keywords") or []
-        return f"Searching project: {', '.join(kws[:3])}…" if kws else "Listing project studies…"
+        return f"Searching workspace: {', '.join(kws[:3])}…" if kws else "Listing workspace studies…"
     if name == "get_study_report":
         return f"Loading report for study {args.get('study_id', '?')}…"
     if name == "get_project_study_report":
-        return f"Loading project report for study {args.get('study_id', '?')}…"
+        return f"Loading workspace report for study {args.get('study_id', '?')}…"
     if name == "pin_study":
         ids = args.get("study_ids") or []
         return f"Pinning {len(ids)} {'study' if len(ids) == 1 else 'studies'}…"
@@ -628,4 +628,12 @@ def _study_tool_label(name: str, args: dict) -> str:
         return "Saving this chat's aggregation…"
     if name == "list_aggregations":
         return "Loading your aggregations…"
+    if name in ("add_to_workspace", "create_workspace"):
+        n = len(args.get("study_ids") or [])
+        where = args.get("workspace") or args.get("name") or "the workspace"
+        if name == "create_workspace" and not n:
+            return f"Creating workspace {where}…"
+        return f"Adding {n} stud{'y' if n == 1 else 'ies'} to {where}…"
+    if name == "export_table":
+        return f"Preparing {(args.get('format') or 'csv').upper()} file…"
     return f"Running {name}…"

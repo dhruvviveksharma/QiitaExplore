@@ -242,10 +242,10 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "search_project_studies",
             "description": (
-                "Search studies saved in this project only. "
+                "Search studies saved in this workspace only. "
                 "Up to 5 calls per user message — only search again with different keywords. "
-                "Empty keywords lists all project studies. "
-                "You cannot search the public Qiita database from project chat."
+                "Empty keywords lists all workspace studies. "
+                "You cannot search the public Qiita database from a workspace chat."
             ),
             "parameters": {
                 "type": "object",
@@ -269,15 +269,15 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "get_project_study_report",
             "description": (
-                "Load full sample-level metadata for a study in this project. "
-                "Rejects study IDs not currently saved in the project."
+                "Load full sample-level metadata for a study in this workspace. "
+                "Rejects study IDs not currently saved in the workspace."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "study_id": {
                         "type": "integer",
-                        "description": "The Qiita study ID (must be in this project).",
+                        "description": "The Qiita study ID (must be in this workspace).",
                     },
                 },
                 "required": ["study_id"],
@@ -289,8 +289,8 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "pin_study",
             "description": (
-                "Attach one or more studies from this project to the chat for persistent deep context. "
-                "Only studies currently saved in the project can be pinned. Cap: 10 studies."
+                "Attach one or more studies from this workspace to the chat for persistent deep context. "
+                "Only studies currently saved in the workspace can be pinned. Cap: 10 studies."
             ),
             "parameters": _PIN_STUDY_PARAMETERS,
         },
@@ -339,8 +339,10 @@ STUDY_TOOL_SCHEMAS = [
                                                        "An artifact id shows that artifact's prep."}},
         ["study_id"]),
     _fn("list_artifact_files",
-        "List the files of one artifact, or of every artifact of a prep. You get filenames, file types "
-        "and ids only — never server paths; the user sees full paths and download links in the widget.",
+        "List the files of one artifact, or of every artifact of a prep: BIOM tables, QZA/QZV, logs, HTML, "
+        "FASTQ, folders. For public artifacts you get each file's FULL server path; give paths exactly as "
+        "returned, never edit or build one (a private artifact's paths are not shared). No file is opened. "
+        "The user also sees the paths and download links in the widget.",
         {"study_id": _STUDY_ID,
          "artifact_id": {"type": "integer", "description": "One artifact."},
          "prep_id": {"type": "integer", "description": "Every artifact of this prep (default: the first prep)."}},
@@ -349,8 +351,9 @@ STUDY_TOOL_SCHEMAS = [
         "Add a study - or only some of its data types or preps - to THIS CHAT's temporary sample aggregation "
         "(created on first use; it exports per-sample FASTQ file lists). It is added immediately: the user "
         "sees what was added with an Undo button, and can export it or save it as a named aggregation. Use it "
-        "whenever the user wants to collect, gather, add or aggregate studies, preps or samples in this chat, "
-        "or to create an aggregation.",
+        "when the user asks to add studies, preps or samples to an aggregation, to aggregate them, or to create "
+        "an aggregation. If they only ask to get, collect, gather or download samples or files without saying "
+        "aggregation or file, call no tool: ask whether they want a CSV/TSV file or the aggregation.",
         {"study_id": _STUDY_ID,
          "data_types": {"type": "array", "items": {"type": "string"},
                         "description": "Only these data types, e.g. ['16S']."},
@@ -379,6 +382,47 @@ STUDY_TOOL_SCHEMAS = [
          "aggregation_name": {"type": "string",
                               "description": "The aggregation the user named, if any (a new one if none has this name)."}},
         ["study_id"]),
+    _fn("add_to_workspace",
+        "Add one or more studies to one of the user's workspaces (the sidebar's saved study sets). It is "
+        "added immediately; the user sees a card with Undo. Name the workspace as the user did: a name that "
+        "matches no workspace creates it. In a workspace chat with no workspace named, the current one is "
+        "used. Use this - never an aggregation - when the user wants studies in a workspace.",
+        {"study_ids": {"type": "array", "items": {"type": "integer"},
+                       "description": "The Qiita study ids (at most 10)."},
+         "workspace": {"type": "string", "description": "The workspace name the user gave."}},
+        ["study_ids"]),
+    _fn("create_workspace",
+        "Create a new workspace with this exact name, optionally with studies in it. An existing workspace "
+        "with that name is reused, never duplicated. The user sees a card with Undo.",
+        {"name": {"type": "string", "description": "The new workspace's name."},
+         "study_ids": {"type": "array", "items": {"type": "integer"},
+                       "description": "Studies to put in it (at most 10)."}},
+        ["name"]),
+    _fn("export_table",
+        "Make a CSV or TSV file the user downloads from a card in the chat. Sources: 'samples' (a study's "
+        "sample metadata: all columns or `columns`, optionally one prep or data type), 'files' (a study's "
+        "public artifact files with full paths, filterable by prep, data type, artifact type such as BIOM, "
+        "or file type such as biom or qza), 'aggregation' (the export of this chat's aggregation, or a "
+        "saved one named in `aggregation`), or 'rows' (a table you write from tool results: `columns` and "
+        "`rows`). Only when the user clearly wants a file; if they might mean adding to an aggregation, "
+        "ask first.",
+        {"source": {"type": "string", "enum": ["samples", "files", "aggregation", "rows"]},
+         "format": {"type": "string", "enum": ["csv", "tsv"], "description": "Default csv."},
+         "name": {"type": "string", "description": "A short file name, without extension."},
+         "study_id": _STUDY_ID,
+         "prep_id": {"type": "integer", "description": "samples / files: only this prep."},
+         "data_type": {"type": "string", "description": "samples / files: only this data type, e.g. '16S'."},
+         "columns": {"type": "array", "items": {"type": "string"},
+                     "description": "samples: the metadata columns to include (default all). "
+                                    "rows: the column names."},
+         "artifact_type": {"type": "string", "description": "files: only this artifact type, e.g. 'BIOM'."},
+         "file_type": {"type": "string", "description": "files: only this file type, e.g. 'biom', 'qza'."},
+         "aggregation": {"type": "string", "description": "aggregation: a saved aggregation's name "
+                                                          "(default this chat's)."},
+         "rows": {"type": "array", "items": {"type": "array", "items": {}},
+                  "description": "rows: the table's rows, each a list of cells in column order "
+                                 "(at most 2,000)."}},
+        ["source"]),
     _fn("resolve_study",
         "Find which study the user means when they name it in words (title, acronym such as 'AGP', PI) "
         "rather than by id. Call it before the study tools when the id isn't already settled in this "
@@ -387,7 +431,7 @@ STUDY_TOOL_SCHEMAS = [
          "for_tool": {"type": "string", "description": "The study tool you will call next.",
                       "enum": ["get_study_preps", "show_study_samples", "get_sample_metadata",
                                "get_prep_graph", "list_artifact_files", "add_to_chat_aggregation",
-                               "propose_aggregation_add"]}},
+                               "propose_aggregation_add", "add_to_workspace", "export_table"]}},
         ["text"]),
 ]
 

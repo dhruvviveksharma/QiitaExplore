@@ -129,18 +129,18 @@ def _execute_project_tool(name: str, args: dict, *, chat_id: str) -> ToolResult:
     project_id = get_project_id_for_chat(chat_id)
     if not project_id:
         return ToolResult(
-            text="This chat is not attached to a project.",
+            text="This chat is not attached to a workspace.",
             label="Tool error",
-            detail="no project for chat",
+            detail="no workspace for chat",
         )
     if name == "search_project_studies":
         return _tool_search_project_studies(args, project_id=project_id)
     if name == "get_project_study_report":
         return _tool_get_project_study_report(args, project_id=project_id)
     return ToolResult(
-        text=f"Tool {name} is not available in project chat.",
+        text=f"Tool {name} is not available in a workspace chat.",
         label=f"Tool error ({name})",
-        detail="not permitted in project scope",
+        detail="not permitted in a workspace chat",
     )
 
 
@@ -167,15 +167,15 @@ def _tool_search_project_studies(args: dict, *, project_id: str) -> ToolResult:
     merged = [s for s, _ in scored[:limit]]
 
     if not merged:
-        text = "No matching studies found in this project for those keywords."
+        text = "No matching studies found in this workspace for those keywords."
     else:
-        header = f"search_project_studies returned {len(merged)} studies from this project:"
+        header = f"search_project_studies returned {len(merged)} studies from this workspace:"
         text = _format_discovery_study_list(
             merged, header, 24_000, report_tool_name="get_project_study_report")
 
     return ToolResult(
         text=text,
-        label="Searched project studies",
+        label="Searched workspace studies",
         detail=f"{len(merged)} results" if merged else "no matches",
         ui_payload={
             "kind":           "tool_call",
@@ -192,9 +192,9 @@ def _tool_get_project_study_report(args: dict, *, project_id: str) -> ToolResult
     allowed = _allowed_project_study_ids(project_id)
     if study_id not in allowed:
         return ToolResult(
-            text=f"Study {study_id} is not part of this project.",
+            text=f"Study {study_id} is not part of this workspace.",
             label=f"Study {study_id}",
-            detail="not in project",
+            detail="not in workspace",
         )
     try:
         ui_payload  = _build_samples_report_payload(study_id)

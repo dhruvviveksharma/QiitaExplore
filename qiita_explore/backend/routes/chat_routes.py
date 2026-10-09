@@ -43,7 +43,7 @@ def api_create_chat(project_id):
     user_id       = g.user_id
     proj          = get_project(project_id, user_id)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
     first_message = (data.get('message') or data.get('first_message') or '').strip()
     model         = data.get('model')
     chat          = create_chat(project_id, user_id, first_message or data.get('title'))
@@ -106,7 +106,7 @@ def api_move_chat_to_project(project_id, chat_id):
         return jsonify({'error': 'project_id is required'}), 400
     chat = move_chat_to_project(g.user_id, chat_id, project_id, target_project_id)
     if not chat:
-        return jsonify({'error': 'Chat or target project not found'}), 404
+        return jsonify({'error': 'Chat or target workspace not found'}), 404
     return jsonify(chat)
 
 
@@ -165,7 +165,7 @@ def api_chat_message_stream(project_id, chat_id):
 
     def report_guard(study_id):
         if study_id not in member_ids:
-            return (f"Study {study_id} is not part of this project. "
+            return (f"Study {study_id} is not part of this workspace. "
                     f"Add it via Browse first if you want its report here.")
         return None
 

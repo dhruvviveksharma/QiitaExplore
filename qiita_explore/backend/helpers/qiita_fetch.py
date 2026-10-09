@@ -447,7 +447,9 @@ def _fetch_study_detail_from_qiita(study_id: int):
         """
         SELECT pt.prep_template_id, pt.name AS prep_name,
                a.artifact_id, at.artifact_type, dt.data_type,
-               dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath AS full_path,
+               CASE WHEN dd.subdirectory
+                    THEN dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath
+                    ELSE dd.mountpoint || '/' || f.filepath END AS full_path,   -- TKT-082
                a.generated_timestamp
         FROM qiita.study_prep_template spt
         JOIN qiita.prep_template pt ON spt.prep_template_id = pt.prep_template_id

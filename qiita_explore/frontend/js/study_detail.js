@@ -1,14 +1,15 @@
 // A study's header and body, shared by the study modal (study_modal.js) and the
 // full study page at #/studies/<id> (StudyPage below). Body sections, in order:
 // Abstract (with the PI and contact), Samples, Prep Templates (table + the
-// selected prep's processing graph), Outputs.
+// selected prep's processing graph), Prep tree. Both prep sections pick a prep
+// through PrepSearch (prep_search.js) when the study has more than one.
 // The Per-sample FASTQ section (FastqManifestSection, fastq_manifest.js) is
 // hidden for now.
 // Globals in scope: React, useState, useEffect (utils.js), apiFetch, fetchStudyDetail (utils.js),
 //   CollapsibleSection, PrepsTable, SamplesBrowser, CopyResponseButton (components.js),
 //   PrepGroupedSamples (prep_samples.js), ArtifactOutputsView, prepReachableSet,
 //   filterGraphByPrep (merge_artifacts.js), ArtifactNetwork (artifact_network.js),
-//   StudyActionBar (study_modal.js), splitTypes (utils.js)
+//   StudyActionBar (study_modal.js), splitTypes (utils.js), PrepSearch (prep_search.js)
 
 // The sticky bar: ID, copy-link, the caller's buttons on the right, title, stats.
 function StudyHeader({ study, detail, loading, shareUrl, leading, right }) {
@@ -69,7 +70,7 @@ function StudySamplesSection({ studyId, samples }) {
 }
 
 // Callers key this by study id, so per-study state (Group by prep, the selected
-// prep, the Outputs picker) starts fresh for each study.
+// prep, the Prep tree's prep) starts fresh for each study.
 function StudyDetailBody({ study, detail, loading }) {
   if (!loading && detail?.isPrivate) {
     return (
@@ -111,7 +112,8 @@ function StudyDetailBody({ study, detail, loading }) {
         <PrepTemplatesSection study={study} detail={detail} loading={loading} />
       </CollapsibleSection>
 
-      <CollapsibleSection id="study-modal-outputs" title="Outputs" defaultOpen>
+      {/* id kept from its "Outputs" days, so saved open/closed states carry over */}
+      <CollapsibleSection id="study-modal-outputs" title="Prep tree" defaultOpen>
         <StudyOutputs study={study} detail={detail} loading={loading} />
       </CollapsibleSection>
     </>
@@ -120,7 +122,8 @@ function StudyDetailBody({ study, detail, loading }) {
 
 // The prep table, and beside it (below it when the modal is too narrow for
 // both) the selected prep's processing graph. The first prep is selected until
-// a row is clicked. graphProps go to ArtifactNetwork (the chat's options).
+// a row is clicked or a prep is searched. graphProps go to ArtifactNetwork (the
+// chat's options).
 function PrepTemplatesSection({ study, detail, loading, graphProps }) {
   const [picked, setPicked] = useState(null);
   const preps = detail?.preps || [];
@@ -128,6 +131,8 @@ function PrepTemplatesSection({ study, detail, loading, graphProps }) {
   const prep  = picked ?? preps[0]?.prep_template_id ?? null;
   const dt    = preps.find(p => p.prep_template_id === prep)?.data_type;
   return (
+    <>
+    {preps.length > 1 && <PrepSearch preps={preps} value={prep} onPick={setPicked} />}
     <div className="study-prep-split">
       <div className="study-prep-table">
         <PrepsTable detail={detail} loading={loading} selectedId={prep} onSelect={setPicked} />
@@ -139,13 +144,15 @@ function PrepTemplatesSection({ study, detail, loading, graphProps }) {
         </div>
       )}
     </div>
+    </>
   );
 }
 
-// The study's processing network (ArtifactNetwork), one prep at a time like
-// Qiita's own chart: the picker defaults to the first prep (AGP has 308) and is
-// hidden for a single-prep study. "Other" holds non-archived artifacts that no
-// prep reaches. A study whose cached detail has no graph keeps the flat table.
+// The "Prep tree" section: the study's processing network (ArtifactNetwork), one
+// prep at a time like Qiita's own chart. PrepSearch picks the prep (default the
+// first; AGP has 308) and is hidden for a single-prep study. "Other" holds
+// non-archived artifacts that no prep reaches. A study whose cached detail has no
+// graph keeps the flat table.
 function StudyOutputs({ study, detail, loading }) {
   const [prepFilter, setPrepFilter] = useState('');   // '' = the study's first prep
   const graph = detail?.artifact_graph || [];
@@ -168,17 +175,8 @@ function StudyOutputs({ study, detail, loading }) {
   return (
     <div>
       {(preps.length > 1 || (hasOrphans && preps.length > 0)) && (
-        <div style={{ marginBottom: 8 }}>
-          <select className="merge-dt-select" value={prep}
-            onChange={e => setPrepFilter(e.target.value === 'other' ? 'other' : +e.target.value)}>
-            {preps.map(p => (
-              <option key={p.prep_template_id} value={p.prep_template_id}>
-                Prep {p.prep_template_id} · {p.data_type || '?'}
-              </option>
-            ))}
-            {hasOrphans && <option value="other">Other</option>}
-          </select>
-        </div>
+        <PrepSearch preps={preps} value={prep} onPick={setPrepFilter}
+          extra={hasOrphans ? { id: 'other', label: 'Other', sub: 'artifacts no prep reaches' } : null} />
       )}
       <ArtifactNetwork key={String(prep)} graph={shown} studyId={study.study_id} />
       <StudyActionBar study={study} />

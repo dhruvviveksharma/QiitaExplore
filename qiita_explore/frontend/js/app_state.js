@@ -215,7 +215,7 @@ function useAppState() {
   };
 
   const deleteProject = async (pid) => {
-    if (!confirm('Delete this project and all its chats?')) return;
+    if (!confirm('Delete this workspace and all its chats?')) return;
     await apiDel(`/projects/${pid}`);
     if (openProjId === pid) { setOpenProjId(null); setOpenProject(null); }
     if (view.projId === pid) setView({ type: 'browse' });
@@ -361,14 +361,14 @@ function useAppState() {
       dropChat(chatId);
       setOpenProject(prev => prev && { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) });
       if (view.chatId === chatId) setView({ type: 'project-chat', projId, chatId: null });
-    } catch (e) { setCompErr(e.message || 'Could not remove chat from project'); }
+    } catch (e) { setCompErr(e.message || 'Could not remove chat from workspace'); }
   };
 
   // "+ New project" inside the Move-to-project submenu — create, then
   // immediately move the chat into it.
   const createProjectAndMoveChat = async (name, fromProjId, chatId) => {
     const res = await apiPost('/projects', { name: (name || '').trim() || 'Untitled' });
-    if (!res.ok) { setCompErr('Failed to create project'); return; }
+    if (!res.ok) { setCompErr('Failed to create workspace'); return; }
     const proj = await res.json();
     await loadProjects();
     if (fromProjId) await moveProjChatToProject(fromProjId, chatId, proj.project_id);
@@ -973,7 +973,7 @@ function useAppState() {
   const topTitle = useMemo(() => {
     if (view.type === 'project-chat') {
       const proj = projects.find(p => p.project_id === view.projId);
-      return chatCache[view.chatId]?.title || proj?.name || 'Project Chat';
+      return chatCache[view.chatId]?.title || proj?.name || 'Workspace chat';
     }
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
     if (view.type === 'aggregations') return 'Sample Aggregation';
@@ -984,6 +984,28 @@ function useAppState() {
   // Placed last so it postdates every const (openChat, openStudyById,
   // closeModal) it closes over, regardless of their declaration order above.
   useUrlSync({ view, setView, setOpenProjId, openChat, modalStudy, openStudyById, closeModal });
+
+  // The chat's workspace tools (chat_workspace_widget.js) patch the sidebar from
+  // the full project the server returns — the same no-refresh rule as the rest.
+  const workspaces = {
+    list: projects,
+    openId: openProjId,
+    apply: (proj) => {
+      if (!proj?.project_id) return;
+      if (openProjId === proj.project_id) setOpenProject(proj);
+      const row = { project_id: proj.project_id, name: proj.name, created_at: proj.created_at,
+                    updated_at: proj.updated_at, studies_count: (proj.studies || []).length,
+                    chats_count: (proj.chats || []).length };
+      setProjects(prev => prev.some(p => p.project_id === row.project_id)
+        ? prev.map(p => p.project_id === row.project_id ? { ...p, ...row } : p)
+        : [row, ...prev]);
+    },
+    forget: (id) => {
+      setProjects(prev => prev.filter(p => p.project_id !== id));
+      if (openProjId === id) setOpenProjId(null);
+    },
+    open: (id) => { setOpenProjId(id); setProjInnerTab('sources'); setSidebarCollapsed(false); },
+  };
 
   return {
     // state setters needed in render
@@ -1022,6 +1044,6 @@ function useAppState() {
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches, composerHistory, browseHistory,
     contextUsage: view.chatId ? chatCache[view.chatId]?.contextUsage : null,
-    agg,
+    agg, workspaces,
   };
 }

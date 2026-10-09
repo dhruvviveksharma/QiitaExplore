@@ -85,8 +85,11 @@ Neither provider hands `stream_agent` a complete tool call in one piece — both
 | `list_aggregations` | none | no | no |
 | `propose_aggregation_add` | `study_id` | no | no — and it never writes |
 | `resolve_study` | `text` | no | no |
+| `add_to_workspace` | `study_ids` | no | no — **writes** to a workspace (creates it for a new name) |
+| `create_workspace` | `name` | no | no — **writes**; reuses an existing exact name |
+| `export_table` | `source` | no | no — stores a `chat_exports` row (except `aggregation`) |
 
-The last ten are the study and aggregation tools (`helpers/study_tools.py`), in both chats. Their arguments, rules and payloads are in [`05-agent.md`](05-agent.md#study-detail-tools-added-2026-10).
+The last thirteen are the study, aggregation, workspace and export tools (`helpers/study_tools.py`, `aggregation_tools.py`, `workspace_tools.py`, `export_tools.py`), in both chats. Their arguments, rules and payloads are in [`05-agent.md`](05-agent.md#study-detail-tools-added-2026-10).
 
 ### search_studies
 
@@ -433,6 +436,8 @@ On `done`, an agent turn's accumulated segments are frozen into one JSON structu
 | `save_chat_aggregation` | `"aggregation_saved"` `{aggregation_id, name, updated_at}` | no |
 | `list_aggregations` | `"aggregation_list"` `{aggregation_ids, chat_aggregation_id, name}` | no — `null` for an unknown name |
 | `resolve_study` | `"study_resolved"` `{study_id, study_title}` or `"study_choice"` `{for_tool, text, candidates}` | no — `null` when nothing matched |
+| `add_to_workspace`, `create_workspace` | `"workspace_update"` `{project_id, name, created, added: [{study_id, study_title}], skipped: [{study_id, reason}], study_count, updated_at}` | no — `null` on every refusal (no user, bad ids, ambiguous name) |
+| `export_table` | `"table_export"` `{source, export_id, name, format, study_id, n_rows, n_columns, columns, preview}`; for `aggregation`: `{source, aggregation_id, name, format, n_studies}` | no — `null` on a refusal or when nothing matches |
 
 Every study-tool payload also carries `result_summary`. The frontend (`chat_study_widgets.js :: STUDY_WIDGET_KINDS`) renders all of these except `study_resolved`, which falls back to its summary line.
 

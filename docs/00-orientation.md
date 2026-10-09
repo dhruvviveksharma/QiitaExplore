@@ -119,7 +119,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 
 | Term | Meaning |
 |---|---|
-| **Project** | A user-owned collection of studies, with its own chats. Local to QiitaExplore; never written back to Qiita. Sometimes called a "workspace" in the UI. |
+| **Project** | A user-owned collection of studies, with its own chats. Local to QiitaExplore; never written back to Qiita. **Called a "workspace" everywhere users see it** (since 2026-10-09: menus, buttons, errors, chat refusals, and the workspace chat's system prompt and tool descriptions, so the model says "workspace" too). Code, routes (`/api/projects`, `move-to-project`), tool names (`search_project_studies`) and the SQLite tables keep `project`. Not to be confused with a research project ("American Gut Project"), which the search tool's `project` entity type means. |
 | **Project chat** | A conversation scoped to one project. Uses the agentic path with `PROJECT_TOOL_SCHEMAS` — search/report/pin only against studies currently in that project. |
 | **Global chat** | A conversation not scoped to any project, searching all of Qiita via `TOOL_SCHEMAS`. |
 | **Pin** | Attaching a study to a chat so its full sample-level detail enters the LLM's context. Capped at 10 per chat. |

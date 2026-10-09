@@ -120,3 +120,18 @@
 .cbar-num { font-variant-numeric: tabular-nums; text-align: right; min-width: 38px; }
 .cbar-num-pct { color: var(--text-3); min-width: 32px; }
 .cbar-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); color: var(--text-3); font-size: 11px; }
+
+/* Workspace card (chat_workspace_widget.js): added / skipped studies, Undo, Open. */
+.cw-ws { display: flex; flex-direction: column; gap: 6px; }
+.cw-ws-study { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px; }
+.cw-ws-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cw-ws-skipped { color: var(--text-3); }
+
+/* CSV / TSV card (chat_export_widget.js): a five-row preview, then the downloads. */
+.cw-export-preview { overflow-x: auto; margin-bottom: 8px; }
+.cw-export-table { border-collapse: collapse; font-size: 11.5px; }
+.cw-export-table th, .cw-export-table td {
+  padding: 3px 8px; border-bottom: 1px solid var(--border-soft); text-align: left;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cw-export-table th { color: var(--text-3); font-weight: 600; }

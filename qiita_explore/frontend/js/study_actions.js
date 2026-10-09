@@ -17,7 +17,7 @@ function StudyActions({ study, ctx }) {
     <>
       {openProjId ? (
         <button className="btn-card-add" disabled={inProj} onClick={() => addStudyToProject(study)}>
-          {inProj ? '✓ Saved' : '+ Add to Project'}
+          {inProj ? '✓ Saved' : '+ Add to Workspace'}
         </button>
       ) : pin && (
         <button className={`btn-card-ctx ${pinned ? 'on' : ''}`} onClick={() => pin.toggle(study)}>
