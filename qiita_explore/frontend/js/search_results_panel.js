@@ -2,8 +2,8 @@
 // Deep searches can carry hundreds of matches, so rows render in windows of
 // _PANEL_PAGE with a show-more button — no virtualization machinery needed.
 // Drag its left edge (or focus the edge and use ← / →) to resize it. The cards
-// keep their size: a wider drawer only spreads them apart until another column
-// fits (search_results.css). The width is remembered in this browser, and the
+// stay centered and grow with it by at most 25% before another column fits
+// (search_results.css). The width is remembered in this browser, and the
 // page makes room for it through --drawer-space (style.css: .main.merge-open and
 // the study modal's .with-drawer offset).
 const _PANEL_PAGE = 100;

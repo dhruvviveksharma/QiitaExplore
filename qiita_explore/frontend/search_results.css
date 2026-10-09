@@ -1,20 +1,25 @@
 /* Search results drawer (js/search_results_panel.js): resizable from its left
-   edge; the study cards keep their 220px. Each item (rank + card) is a fixed
-   260px grid track, and space-between turns any extra width into spacing until
-   another column fits. Sibling of style.css (over the line cap), which keeps the
-   drawer's frame and --drawer-space users. */
+   edge. Each item is the rank + an InlineStudyCard, 260px at the card's own
+   220px. A column is added as soon as one more 260px item fits; between those
+   points the items grow with the drawer, up to 315px (the card up to 275px,
+   +25%), and any width beyond that is shared out around them, so the grid stays
+   centered. Sibling of style.css (over the line cap), which keeps the drawer's
+   frame and --drawer-space users. */
 .search-results-list {
-  display: grid; grid-template-columns: repeat(auto-fill, 260px);
-  justify-content: space-between; column-gap: 16px; row-gap: 10px; align-items: start;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  column-gap: 16px; row-gap: 10px; align-items: start;
 }
 .search-results-list .show-more-btn { grid-column: 1 / -1; }
-.search-results-row { display: flex; gap: 8px; align-items: flex-start; }
+.search-results-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  width: 100%; max-width: 315px; justify-self: center;
+}
 .search-results-rank {
   flex: none; width: 32px; margin-top: 10px;
   font-size: 0.72rem; font-weight: 600; color: var(--text-3);
 }
-.search-results-card-wrap { flex: none; }
-.search-results-card-wrap .inline-study-card { margin: 0; }
+.search-results-card-wrap { flex: 1; min-width: 0; }
+.search-results-card-wrap .inline-study-card { margin: 0; width: 100%; }
 
 /* The left-edge handle: an 8px strip, a grip that shows on hover / focus / drag. */
 .search-results-resize {
