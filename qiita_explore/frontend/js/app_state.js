@@ -985,6 +985,28 @@ function useAppState() {
   // closeModal) it closes over, regardless of their declaration order above.
   useUrlSync({ view, setView, setOpenProjId, openChat, modalStudy, openStudyById, closeModal });
 
+  // The chat's workspace tools (chat_workspace_widget.js) patch the sidebar from
+  // the full project the server returns — the same no-refresh rule as the rest.
+  const workspaces = {
+    list: projects,
+    openId: openProjId,
+    apply: (proj) => {
+      if (!proj?.project_id) return;
+      if (openProjId === proj.project_id) setOpenProject(proj);
+      const row = { project_id: proj.project_id, name: proj.name, created_at: proj.created_at,
+                    updated_at: proj.updated_at, studies_count: (proj.studies || []).length,
+                    chats_count: (proj.chats || []).length };
+      setProjects(prev => prev.some(p => p.project_id === row.project_id)
+        ? prev.map(p => p.project_id === row.project_id ? { ...p, ...row } : p)
+        : [row, ...prev]);
+    },
+    forget: (id) => {
+      setProjects(prev => prev.filter(p => p.project_id !== id));
+      if (openProjId === id) setOpenProjId(null);
+    },
+    open: (id) => { setOpenProjId(id); setProjInnerTab('sources'); setSidebarCollapsed(false); },
+  };
+
   return {
     // state setters needed in render
     setView, setOpenProjId, setProjInnerTab, setShowNewProj, setNewProjName,
@@ -1022,6 +1044,6 @@ function useAppState() {
     projStudyIds, ctxStudyIds, displayStudies, isChat, canSend, topTitle, scrollCollapse,
     activeMsgs, slashMatches, composerHistory, browseHistory,
     contextUsage: view.chatId ? chatCache[view.chatId]?.contextUsage : null,
-    agg,
+    agg, workspaces,
   };
 }

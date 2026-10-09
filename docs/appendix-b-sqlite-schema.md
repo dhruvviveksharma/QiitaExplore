@@ -443,6 +443,27 @@ One asynchronous merge execution: its status, its result path, and a frozen snap
 
 ---
 
+### table-chat_exports
+
+A CSV / TSV made from a chat by the `export_table` tool (`helpers/export_tools.py`, added 2026-10-09), downloaded from `GET /api/chat-exports/<export_id>.<csv|tsv>`.
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `export_id` | TEXT | no (PK) | — | 12-char UUID prefix. |
+| `user_id` | TEXT | no | — | Owner; the download route serves only them. |
+| `chat_id` / `chat_scope` | TEXT | no | — | The chat that made it (`global` or `project`). |
+| `name` | TEXT | no | — | The file name, sanitized, without extension. |
+| `source` | TEXT | no | — | `samples`, `files` or `rows` (an `aggregation` export stores nothing). |
+| `spec_json` | TEXT | yes | — | The parameters of a `samples` / `files` export (study, prep, data type, columns, artifact / file type), rebuilt at each download. |
+| `rows_json` | TEXT | yes | — | `{columns, rows}` of a model-written `rows` export (≤ 2,000 × 50). |
+| `created_at` | TEXT | yes | — | Creation timestamp. |
+
+**Keys/constraints:** PK on `export_id`; index on `(chat_id, chat_scope)`.
+
+**Writes owned by:** `backend/store/export_crud.py` (`create_export`). `delete_chat_exports` runs inside the chat-delete transactions (`crud.delete_chat`, `crud.delete_project`, `global_chat_crud.delete_global_chat`), next to `delete_chat_aggregations`; `chat_move.py` moves its `chat_scope` with the chat.
+
+---
+
 ### table-biom_sample_cache
 
 Sample IDs extracted from a BIOM artifact file. Caches an expensive file parse, not a database query.

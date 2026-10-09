@@ -106,7 +106,11 @@ def _build(study_id: int) -> list:
             cur.execute(
                 """
                 SELECT a.artifact_id, at.artifact_type, a.name,
-                       dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath AS full_path,
+                       -- Qiita's _path_builder: only subdirectory mounts nest files
+                       -- under the artifact id (TKT-082; fastq_manifest.py does the same)
+                       CASE WHEN dd.subdirectory
+                            THEN dd.mountpoint || '/' || a.artifact_id || '/' || f.filepath
+                            ELSE dd.mountpoint || '/' || f.filepath END AS full_path,
                        f.filepath_id, ft.filepath_type, f.filepath AS filename, v.visibility
                 FROM qiita.artifact a
                 JOIN qiita.artifact_type at          ON a.artifact_type_id = at.artifact_type_id
@@ -196,6 +200,9 @@ def _build(study_id: int) -> list:
             # public / private / sandbox / archived. Qiita archives old outputs and
             # drops their parent links; the study modal's chart hides them.
             "visibility":       m.get("visibility"),
+            # Marks graphs built with the subdirectory-aware paths, so
+            # study_detail re-fetches ones cached before the fix.
+            "paths_v":          2,
             "full_path":        m.get("full_path"),
             "filepaths":        files_by_aid.get(aid, []),
         })

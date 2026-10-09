@@ -628,4 +628,12 @@ def _study_tool_label(name: str, args: dict) -> str:
         return "Saving this chat's aggregation…"
     if name == "list_aggregations":
         return "Loading your aggregations…"
+    if name in ("add_to_workspace", "create_workspace"):
+        n = len(args.get("study_ids") or [])
+        where = args.get("workspace") or args.get("name") or "the workspace"
+        if name == "create_workspace" and not n:
+            return f"Creating workspace {where}…"
+        return f"Adding {n} stud{'y' if n == 1 else 'ies'} to {where}…"
+    if name == "export_table":
+        return f"Preparing {(args.get('format') or 'csv').upper()} file…"
     return f"Running {name}…"

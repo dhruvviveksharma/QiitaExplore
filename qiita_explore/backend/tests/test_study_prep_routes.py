@@ -82,13 +82,15 @@ def test_detail_samples_carry_prep_ids(client, sr, monkeypatch):
 
 @pytest.mark.parametrize("node, refetched", [
     ({"kind": "artifact", "node_id": "a1", "filepaths": []}, True),                              # pre-visibility cache
-    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public"}, False),
+    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public"}, True),     # pre-paths_v cache
+    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public", "paths_v": 2}, False),
 ])
 def test_detail_refetches_graph_cached_before_visibility(client, sr, monkeypatch, node, refetched):
-    """The study modal's chart hides archived artifacts by `visibility`, so a
-    graph cached before that field existed is treated as stale and rebuilt."""
+    """The study modal's chart hides archived artifacts by `visibility`, and file
+    paths honour data_directory.subdirectory since `paths_v` (TKT-082), so a graph
+    cached before either field existed is treated as stale and rebuilt."""
     import json
-    sid = 71002 if refetched else 71003
+    sid = 71002 + len(node) if refetched else 71000
     sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
                                  samples_context="ctx", artifact_graph_json=json.dumps([node]),
                                  prep_metadata_json="{}", samples_json="[]", total_samples=0)

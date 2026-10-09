@@ -208,7 +208,7 @@ Structured `{field, value}` filters against sample metadata, for when the user n
 
 ## Study detail tools (added 2026-10)
 
-Both chats also get ten tools over studies and the user's aggregations: `backend/helpers/study_tools.py`, plus `backend/helpers/aggregation_tools.py` for `add_to_chat_aggregation`, `save_chat_aggregation` and `list_aggregations`. Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
+Both chats also get thirteen tools over studies, the user's aggregations and workspaces, and CSV/TSV exports: `backend/helpers/study_tools.py`, plus `backend/helpers/aggregation_tools.py` (`add_to_chat_aggregation`, `save_chat_aggregation`, `list_aggregations`), `backend/helpers/workspace_tools.py` (`add_to_workspace`, `create_workspace`) and `backend/helpers/export_tools.py` (`export_table`). Schemas are `STUDY_TOOL_SCHEMAS` in `agent_tool_schemas.py`, appended to both `TOOL_SCHEMAS` and `PROJECT_TOOL_SCHEMAS`. `execute_tool` routes any name in `STUDY_TOOL_NAMES` to `execute_study_tool` before its scope dispatch. Each tool's result renders as an inline widget in the reply (see [`08-frontend.md`](08-frontend.md)).
 
 | Tool | What the user sees | What the model gets |
 |---|---|---|
@@ -216,20 +216,23 @@ Both chats also get ten tools over studies and the user's aggregations: `backend
 | `show_study_samples` | Sample list with each clicked sample's metadata on the right | Counts, the first 10 ids, the metadata column names — not values |
 | `get_sample_metadata` | One sample's metadata card | That sample's preps and `field: value` lines (values ≤ 200 chars) |
 | `get_prep_graph` | `ArtifactNetwork` for one prep; a clicked node lists its files | An indented outline of artifacts and jobs (≤ 80 nodes) |
-| `list_artifact_files` | Files with download links and full paths | Filenames, file types and ids — **never paths** |
+| `list_artifact_files` | Files with download links and full paths | Filenames, file types, ids and — for **public** artifacts — each file's **full path** (since 2026-10-09). Nothing is opened |
 | `add_to_chat_aggregation` | **Writes.** What was added to this chat's aggregation, the new totals, Undo, View | What was added and the totals; "already added — the user can Undo" |
 | `save_chat_aggregation` | "Saved as …" with Open ↗ | That it is now in the Sample Aggregation tab |
 | `list_aggregations` | The user's saved aggregations and this chat's, each expandable to its studies | Each aggregation's studies, checked rows and filters (≤ 20 aggregations, ≤ 50 studies each) |
 | `propose_aggregation_add` | A confirm card for a **saved** aggregation the user named: scope, counts, picker, Add | "Proposal only — nothing was added", counts, the user's saved aggregations |
 | `resolve_study` | A "Which study?" picker, when ambiguous | Either the resolved id, or the candidates and an instruction to stop and ask |
+| `add_to_workspace` | **Writes.** The studies added to a workspace (and any skipped, with why), Undo, Open workspace | What was added, skipped and created; "already done — the user can Undo" |
+| `create_workspace` | **Writes.** The new (or reused) workspace and any studies put in it, Undo | Whether it was created or already existed, and what was added |
+| `export_table` | A CSV / TSV card: a five-row preview and download links | The file name, row and column counts; "don't paste its contents" |
 
 **Rules every one follows.**
 - **Project gate:** in a project chat the study must be in the project. This is checked before any Qiita read. Every study must also be public (`is_study_public`).
-- **Paths:** tool text goes to the LLM provider, so it carries filenames and ids only. Server paths appear only in the widget.
+- **Paths:** full server paths reach the model only through `list_artifact_files`, only for public artifacts, and the model must quote them exactly, never edit or build one. No tool opens or reads a file. Paths follow Qiita's `data_directory.subdirectory` rule (`artifact_graph.py`, `qiita_fetch.py`; TKT-082). Before 2026-10-09 the model saw filenames only.
 - **Text size:** capped at 6,000 characters, key facts first. Replayed history keeps only 2,000 per tool result.
 - **Payloads:** only ids and small scalars. The widget loads its data through the study view's own endpoints and caches. Each payload also carries `result_summary`, the text fallback.
 - **Data source:** preps and graphs come from `helpers/study_detail.py`, the same assembly `/api/studies/<id>/detail` returns.
-- **`user_id`:** threaded `stream_chat_turn` → `stream_agent` → `_execute_tool_call` → `execute_tool`. Only `propose_aggregation_add` reads it, to list the user's aggregations.
+- **`user_id`:** threaded `stream_chat_turn` → `stream_agent` → `_execute_tool_call` → `execute_tool`. The aggregation, workspace and export tools read it, and refuse without one (the store would otherwise write to the shared "default" user).
 
 **`resolve_study`** (`helpers/study_resolve.py`) is deliberately cautious. A study is used without asking only when it is the chat's own and the single one that matches the text. "The chat's own" means pinned, or in a project chat any project study. A match is:
 - its id;
@@ -260,6 +263,27 @@ Each chat can hold one **temporary aggregation**. It is an ordinary aggregation 
 - **Refusals change nothing:** an unknown data type or prep, an empty scope, an already-held scope, and the 50-study cap.
 - **Undo:** each result carries an undo record, `{was_new, added_artifacts, prev_artifacts, prev_filter}`. Its widget sends it to `POST /api/aggregations/<id>/studies/<sid>/undo-add`, which either removes a newly added study or drops the added artifacts' rows and restores the previous filter.
 - **Saved aggregations:** `propose_aggregation_add` is now only for a saved aggregation the user names. "Create an aggregation" in a chat means this chat's temporary one.
+
+### Workspaces and CSV / TSV exports from the chat (added 2026-10-09)
+
+**`add_to_workspace` / `create_workspace` write immediately**, with Undo, like this chat's aggregation.
+- **Dispatch:** before `execute_study_tool`'s membership gate (adding a study the workspace doesn't hold yet is the point), and in `forced_tool.NO_STUDY_TOOLS`.
+- **Which workspace** (case-insensitive, among `list_projects(user_id)`): an exact name; else the single one whose name contains it; several matches are an error the model asks about; no match creates it. `create_workspace` matches exact names only and reuses an existing one, never duplicating. With no name in a workspace chat, the current workspace is the target.
+- **Per study:** public check, "already there", the 20-study cap, then `add_study_to_project` and `enrich_study_in_project` (`helpers/workspace_studies.py`, shared with `POST /api/projects/<id>/studies`, which still runs it in the background).
+- **Undo** (`WorkspaceUpdateCard`): `DELETE /api/projects/<id>/studies/<sid>` for each added study; then, if this call created the workspace and it is empty with no chats, `DELETE /api/projects/<id>`. The card patches the sidebar through `ctx.workspaces` (app_state.js), never a reload.
+
+**`export_table`** makes a CSV / TSV the user downloads from the card (`GET /api/chat-exports/<id>.<csv|tsv>`, owner only, `routes/export_routes.py`):
+
+| `source` | Contents | Stored |
+|---|---|---|
+| `samples` | A study's sample metadata: every column or `columns`; optionally one prep or data type | The parameters; rebuilt from Qiita at each download |
+| `files` | One row per file of the study's **public** artifacts: study, prep, data type, artifact id/type/name, file type, filename, path; filters prep / data type / artifact type / file type | The parameters; rebuilt at each download |
+| `aggregation` | The aggregation's existing export (this chat's, or a saved one by name) | Nothing: the card links `/api/aggregations/<id>/export.<ext>` |
+| `rows` | A table the model writes from tool results (≤ 2,000 rows × 50 columns) | The rows, as JSON |
+
+- `samples` and `files` pass the same study gate as the other study tools (`check_study`).
+- Exports live in `chat_exports` (`store/export_crud.py`), are deleted with their chat or its workspace, and move with the chat.
+- **Ask when unsure:** the prompt tells the model that when a request to export / download / collect samples or files doesn't say whether the user wants a file or an aggregation, it asks which in one short question first.
 
 ## Slash commands force a tool (added 2026-10)
 

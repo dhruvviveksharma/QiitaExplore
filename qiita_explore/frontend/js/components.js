@@ -282,6 +282,10 @@ function SampleFieldsCard({ sampleId, fields, loading, uniformFields = _NO_UNIFO
 function PrepsTable({ detail, loading, onMount, selectedId, onSelect }) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { onMount && onMount(); }, []);
+  // A selected prep past row 20 (picked through PrepSearch) opens the full list.
+  useEffect(() => {
+    if ((detail?.preps || []).findIndex(p => p.prep_template_id === selectedId) >= 20) setExpanded(true);
+  }, [selectedId]);
   if (loading && !detail) return <div style={{margin:'20px auto'}}><InfinityLoader w={80} h={50} /></div>;
   if (!detail) return null;
   const preps = detail.preps || [];
@@ -523,12 +527,13 @@ function ToolResultWidget({ payload, msgKey, onPin, onMerge, onOpen, isPinned, w
 // inside click handlers, never render-branch conditions), so a default
 // shallow compare would never skip. Only seg / msgKey / pinnedStudyIds
 // (by value — pin toggles must re-render the card) determine the output, plus
-// the study widgets' live inputs: the aggregations list and whether a reply is
-// streaming (widgetCtx is rebuilt every render, so compare its parts).
+// the study widgets' live inputs: the aggregations list, the workspaces list and
+// whether a reply is streaming (widgetCtx is rebuilt every render, so compare its parts).
 function toolCardPropsEqual(prev, next) {
   if (prev.seg !== next.seg || prev.msgKey !== next.msgKey) return false;
   const pw = prev.widgetCtx || {}, nw = next.widgetCtx || {};
   if (pw.agg?.aggregations !== nw.agg?.aggregations || pw.sending !== nw.sending) return false;
+  if (pw.workspaces?.list !== nw.workspaces?.list) return false;
   const a = prev.pinnedStudyIds || [], b = next.pinnedStudyIds || [];
   if (a === b) return true;
   if (a.length !== b.length) return false;

@@ -6,6 +6,7 @@ import uuid
 from .db import _conn, _as_dict, _now, _resolve_user, _chat_title, UNTITLED
 from .crud import _decode_ui, _insert_chat_message_pair
 from .aggregation_crud import delete_chat_aggregations
+from .export_crud import delete_chat_exports
 from .chat_turn_persist import parse_context_usage
 
 
@@ -181,5 +182,6 @@ def delete_global_chat(user_id: str, chat_id: str):
         )
         if cur.rowcount:
             delete_chat_aggregations(conn, chat_id, "global")
+            delete_chat_exports(conn, chat_id, "global")
         conn.commit()
     return {"ok": True}

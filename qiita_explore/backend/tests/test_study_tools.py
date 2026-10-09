@@ -152,17 +152,35 @@ def test_graph_text_is_capped(st, monkeypatch):
 
 # ── list_artifact_files ─────────────────────────────────────────────────────
 
-def test_files_of_one_artifact_are_filenames_only(st):
+def no_payload_paths(result):
+    import json
+    assert "full_path" not in json.dumps(result.ui_payload or {})
+
+
+def test_files_of_one_artifact_give_full_paths(st):
+    """Public artifacts: each file's full path goes to the model (it quotes them;
+    nothing is opened). The widget still fetches its own data — ids only."""
     r = run(st, "list_artifact_files", study_id=SID, artifact_id=2)
-    assert "f2_0.gz (raw_forward_seqs, file id 20)" in r.text and r.ui_payload["artifact_ids"] == [2]
-    no_paths(r)
+    assert f"f2_0.gz (raw_forward_seqs, file id 20): {PATH}2/f2_0.gz" in r.text
+    assert "quote them exactly" in r.text and r.ui_payload["artifact_ids"] == [2]
+    no_payload_paths(r)
 
 
 def test_files_of_a_prep_skip_archived(st):
     r = run(st, "list_artifact_files", study_id=SID, prep_id=7)
     assert r.ui_payload["artifact_ids"] == [1, 2, 3] and r.ui_payload["prep_id"] == 7
     assert r.detail == "6 files · 3 artifacts"
-    no_paths(r)
+    assert f"{PATH}3/f3_0.gz" in r.text and f"{PATH}4/" not in r.text          # archived artifact 4 hidden
+    no_payload_paths(r)
+
+
+def test_private_artifact_paths_are_not_shared(st, monkeypatch):
+    graph = [_art(1, prep=7, name="raw"), _art(2, parent="a1", vis="private", name="hidden")]
+    monkeypatch.setattr(st, "load_preps_and_graph", lambda sid: ([dict(p) for p in PREPS], graph))
+    r = run(st, "list_artifact_files", study_id=SID, prep_id=7)
+    assert f"{PATH}1/f1_0.gz" in r.text
+    assert "(private artifact: paths not shared)" in r.text and f"{PATH}2/" not in r.text
+    assert "f2_0.gz (raw_forward_seqs, file id 20)\n" in r.text + "\n"
 
 
 def test_files_artifact_id_that_is_a_prep_id(st):

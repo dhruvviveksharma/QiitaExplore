@@ -178,6 +178,12 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | PATCH | `/api/aggregations/<aggregation_id>/studies/<int:study_id>/samples` | `api_set_aggregation_rows` | session | Check / uncheck rows (`add` / `remove` of `{sample_id, artifact_id}`, or `select`) |
 | GET | `/api/aggregations/<aggregation_id>/export.<ext>` | `download_aggregation_export` | session | The checked rows' sequence files, each study under its own `file_filter`, as `csv` / `tsv` / `xlsx` |
 
+### Chat exports — `backend/routes/export_routes.py` (1, added 2026-10-09)
+
+| Method | Path | Flask endpoint | Auth | Purpose |
+|---|---|---|---|---|
+| GET | `/api/chat-exports/<export_id>.<ext>` | `download_chat_export` | session (owner only) | A CSV / TSV made by the chat's `export_table` tool (`ext` is `csv` or `tsv`; either works for any export). `samples` / `files` exports are rebuilt from Qiita at each download; **404** for an unknown export, another user's, or a study no longer public |
+
 ---
 
 ## Auth

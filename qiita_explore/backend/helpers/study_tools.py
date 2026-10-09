@@ -9,10 +9,13 @@ which fetches its data through the same REST endpoints as the study view.
 
 Rules every tool follows:
   - In a project chat the study must be in the project — checked before any
-    Qiita read. Every study must be public.
-  - The model sees filenames and file ids, never server paths: tool text goes
-    to the LLM provider, and paths stay in the widget.
+    Qiita read (check_study). Every study must be public.
+  - Full file paths reach the model only through list_artifact_files, and only
+    for public artifacts; the model quotes them and never builds one. No tool
+    opens a file.
   - Text is capped at _TEXT_MAX, key facts first (history keeps only 2,000).
+Workspace adds (helpers/workspace_tools.py) and CSV/TSV exports
+(helpers/export_tools.py) live in their own modules and are dispatched here.
 """
 import logging
 import time
@@ -40,6 +43,7 @@ from helpers.tool_result import ToolResult
 logger = logging.getLogger(__name__)
 
 _TEXT_MAX = 6000
+_FILES_TEXT_MAX = 9000   # list_artifact_files: full paths are long
 _PREP_ROWS = 40
 _GRAPH_NODES = 80
 _FILES_PER_ARTIFACT = 15
@@ -66,26 +70,44 @@ def _int(value):
         return None
 
 
-def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
-    """Dispatch one of STUDY_TOOL_NAMES (helpers/agent_tool_schemas.py).
-    `user_id` is only read by the aggregation tools (the user's aggregations)."""
-    args = args or {}
-    if name == "resolve_study":
-        return _tool_resolve_study(args, scope=scope, chat_id=chat_id)
-    if name in ("list_aggregations", "save_chat_aggregation"):
-        from helpers import aggregation_tools   # imported here: it reuses this module's helpers
-        return aggregation_tools.execute(name, args, scope=scope, chat_id=chat_id, user_id=user_id)
-    sid = _int(args.get("study_id"))
+def check_study(name, study_id, *, scope, chat_id):
+    """(sid, header, None) when a study tool may read this study here, else
+    (None, None, an error ToolResult): an integer id, in the workspace when this
+    is a workspace chat, and public."""
+    sid = _int(study_id)
     if sid is None:
-        return _err(name, "study_id must be an integer Qiita study id.", "bad study_id")
+        return None, None, _err(name, "study_id must be an integer Qiita study id.", "bad study_id")
     if scope == SCOPE_PROJECT:
         project_id = get_project_id_for_chat(chat_id)
         if not project_id or sid not in allowed_project_study_ids(project_id):
-            return _err(name, f"Study {sid} is not in this workspace. Only studies saved in the "
-                              "workspace can be shown here; suggest adding it via Browse.", "not in workspace")
+            return None, None, _err(
+                name, f"Study {sid} is not in this workspace. Only studies saved in the workspace "
+                      "can be shown here; add it with add_to_workspace if the user asks.", "not in workspace")
     if not is_study_public(sid):
-        return _err(name, f"Study {sid} is private or does not exist.", "private or not found")
-    header = _fetch_study_header_cached(sid) or {}
+        return None, None, _err(name, f"Study {sid} is private or does not exist.", "private or not found")
+    return sid, _fetch_study_header_cached(sid) or {}, None
+
+
+def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
+    """Dispatch one of STUDY_TOOL_NAMES (helpers/agent_tool_schemas.py).
+    `user_id` is read by the tools that touch the user's own data
+    (aggregations, workspaces, exports)."""
+    args = args or {}
+    if name == "resolve_study":
+        return _tool_resolve_study(args, scope=scope, chat_id=chat_id)
+    # Imported here: these modules reuse this one's helpers.
+    if name in ("list_aggregations", "save_chat_aggregation"):
+        from helpers import aggregation_tools
+        return aggregation_tools.execute(name, args, scope=scope, chat_id=chat_id, user_id=user_id)
+    if name in ("add_to_workspace", "create_workspace"):   # before the gate: they add studies
+        from helpers import workspace_tools
+        return workspace_tools.execute(name, args, scope=scope, chat_id=chat_id, user_id=user_id)
+    if name == "export_table":                             # gates its own study sources
+        from helpers import export_tools
+        return export_tools.execute(args, scope=scope, chat_id=chat_id, user_id=user_id)
+    sid, header, err = check_study(name, args.get("study_id"), scope=scope, chat_id=chat_id)
+    if err:
+        return err
     if name == "propose_aggregation_add":
         return _tool_propose_aggregation(sid, header, args, user_id)
     if name == "add_to_chat_aggregation":
@@ -378,24 +400,30 @@ def _tool_files(sid, header, args):
                  and per_node.get(n["node_id"]) == prep_id]
     lines = [f"{note}Files of {_title(sid, header)}" + (f", prep {prep_id}" if prep_id is not None else "")
              + f" — {len(nodes)} artifact{'s' if len(nodes) != 1 else ''}. "
-             "Filenames only; the user sees full paths and download links in the widget."]
+             "Full paths of public artifacts follow; quote them exactly, never edit or build one. "
+             "The user also has the paths and download links in the widget."]
     total = 0
     for n in nodes:
         fps = n.get("filepaths") or []
         total += len(fps)
         if len(lines) >= _FILE_LINES:
             continue
+        public = n.get("visibility") == "public"
         lines.append(f'artifact {n.get("artifact_id")} "{n.get("name") or ""}" '
-                     f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {len(fps)} files')
+                     f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {len(fps)} files'
+                     + ("" if public else " (private artifact: paths not shared)"))
         for fp in fps[:_FILES_PER_ARTIFACT]:
-            lines.append(f"  {fp.get('filename')} ({fp.get('filepath_type') or '?'}, file id {fp.get('filepath_id')})")
+            path = fp.get("full_path") if public else None
+            lines.append(f"  {fp.get('filename')} ({fp.get('filepath_type') or '?'}, file id "
+                         f"{fp.get('filepath_id')})" + (f": {path}" if path else ""))
         if len(fps) > _FILES_PER_ARTIFACT:
             lines.append(f"  … +{len(fps) - _FILES_PER_ARTIFACT} more files")
     if len(lines) >= _FILE_LINES:
-        lines = lines[:_FILE_LINES] + ["… (more artifacts in the widget)"]
+        lines = lines[:_FILE_LINES] + ["… (more artifacts in the widget; export_table with source "
+                                       "\"files\" gives every path as a CSV/TSV)"]
     summary = f"{total} files · {len(nodes)} artifact{'s' if len(nodes) != 1 else ''}"
     return ToolResult(
-        text=_clip("\n".join(lines)), label=f"Files of study {sid}", detail=summary,
+        text=_clip("\n".join(lines), _FILES_TEXT_MAX), label=f"Files of study {sid}", detail=summary,
         ui_payload={"kind": "artifact_files", "study_id": sid, "study_title": header.get("study_title"),
                     "prep_id": prep_id, "artifact_ids": [n.get("artifact_id") for n in nodes],
                     "result_summary": summary})
