@@ -296,7 +296,7 @@ function renderApp(s, account) {
             <div className="new-proj-form">
               <input
                 className="new-proj-input"
-                placeholder="Project name…"
+                placeholder="Workspace name…"
                 value={newProjName}
                 onChange={e => setNewProjName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') createProject(); if (e.key === 'Escape') { setShowNewProj(false); setNewProjName(''); } }}
@@ -630,7 +630,7 @@ function renderApp(s, account) {
                   <div className="chat-empty">
                     <div className="chat-empty-title">
                       {view.type === 'project-chat'
-                        ? `Chat with ${s.projects.find(p => p.project_id === view.projId)?.name || 'Project'}`
+                        ? `Chat with ${s.projects.find(p => p.project_id === view.projId)?.name || 'Workspace'}`
                         : 'Global Chat'}
                     </div>
                     <p className="chat-empty-sub">

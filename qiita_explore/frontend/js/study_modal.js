@@ -14,7 +14,7 @@
 function ProjectPickerDropdown({ projects, selectedId, onSelect }) {
   const dd = useDropdown();
   const selectedProj = (projects || []).find(p => p.project_id === selectedId);
-  const label = selectedId === '' ? '+ New project…' : (selectedProj?.name || 'Select a project');
+  const label = selectedId === '' ? '+ New workspace…' : (selectedProj?.name || 'Select a workspace');
 
   return (
     <div className="dd-root" ref={dd.rootRef}>
@@ -32,7 +32,7 @@ function ProjectPickerDropdown({ projects, selectedId, onSelect }) {
           ))}
           <div className="cr-menu-sep" />
           <button className="cr-menu-item" onClick={() => { onSelect(''); dd.setOpen(false); }}>
-            + New project…
+            + New workspace…
           </button>
         </div>
       )}
@@ -87,9 +87,9 @@ function AddToProjectBar({ study }) {
       let projId = selected;
       let projName = '';
       if (!projId) {
-        const name = newName.trim() || 'New Project';
+        const name = newName.trim() || 'New Workspace';
         const res = await apiPost('/projects', { name });
-        if (!res.ok) { setMsg('Failed to create project.'); setAdding(false); return; }
+        if (!res.ok) { setMsg('Failed to create workspace.'); setAdding(false); return; }
         const p = await res.json();
         projId = p.project_id;
         projName = p.name;
@@ -119,7 +119,7 @@ function AddToProjectBar({ study }) {
   if (projects === null) return null;
   return (
     <div className="modal-ws-row" ref={rowRef}>
-      <span className="modal-ws-label">Add to project</span>
+      <span className="modal-ws-label">Add to workspace</span>
       <ProjectPickerDropdown projects={projects} selectedId={selected}
         onSelect={id => {
           setSelected(id);
@@ -127,7 +127,7 @@ function AddToProjectBar({ study }) {
           setMsg('');
         }} />
       {isNew && (
-        <input className="merge-name-filter" placeholder="Project name"
+        <input className="merge-name-filter" placeholder="Workspace name"
           value={newName} onChange={e => setNewName(e.target.value)} />
       )}
       <button className="merge-btn-primary" style={{ padding: '4px 10px', fontSize: '0.8rem' }}

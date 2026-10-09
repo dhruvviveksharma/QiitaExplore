@@ -85,7 +85,7 @@ def test_project_chat_refuses_out_of_project_study_before_qiita(st, monkeypatch)
     monkeypatch.setattr(st, "allowed_project_study_ids", lambda pid: {1070})
     monkeypatch.setattr(st, "is_study_public", lambda sid: pytest.fail("touched Qiita"))
     r = run(st, "get_prep_graph", scope="project", study_id=SID)
-    assert "not in this project" in r.text and r.ui_payload is None
+    assert "not in this workspace" in r.text and r.ui_payload is None
 
 
 def test_project_chat_allows_member_study(st, monkeypatch):
@@ -309,7 +309,7 @@ def test_resolve_tool_project_chat_offers_only_project_studies(st, monkeypatch):
     r = run(st, "resolve_study", scope="project", text="hadza", for_tool="get_study_preps")
     assert [c["study_id"] for c in r.ui_payload["candidates"]] == [10317, 11358]   # nothing matched: offer the project
     r = run(st, "resolve_study", scope="project", text="study 1064")
-    assert r.ui_payload is None and "not in this project" in r.text
+    assert r.ui_payload is None and "not in this workspace" in r.text
 
 
 # ── dispatch through agent_tools ────────────────────────────────────────────

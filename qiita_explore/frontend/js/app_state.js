@@ -215,7 +215,7 @@ function useAppState() {
   };
 
   const deleteProject = async (pid) => {
-    if (!confirm('Delete this project and all its chats?')) return;
+    if (!confirm('Delete this workspace and all its chats?')) return;
     await apiDel(`/projects/${pid}`);
     if (openProjId === pid) { setOpenProjId(null); setOpenProject(null); }
     if (view.projId === pid) setView({ type: 'browse' });
@@ -361,14 +361,14 @@ function useAppState() {
       dropChat(chatId);
       setOpenProject(prev => prev && { ...prev, chats: (prev.chats || []).filter(c => c.chat_id !== chatId) });
       if (view.chatId === chatId) setView({ type: 'project-chat', projId, chatId: null });
-    } catch (e) { setCompErr(e.message || 'Could not remove chat from project'); }
+    } catch (e) { setCompErr(e.message || 'Could not remove chat from workspace'); }
   };
 
   // "+ New project" inside the Move-to-project submenu — create, then
   // immediately move the chat into it.
   const createProjectAndMoveChat = async (name, fromProjId, chatId) => {
     const res = await apiPost('/projects', { name: (name || '').trim() || 'Untitled' });
-    if (!res.ok) { setCompErr('Failed to create project'); return; }
+    if (!res.ok) { setCompErr('Failed to create workspace'); return; }
     const proj = await res.json();
     await loadProjects();
     if (fromProjId) await moveProjChatToProject(fromProjId, chatId, proj.project_id);
@@ -973,7 +973,7 @@ function useAppState() {
   const topTitle = useMemo(() => {
     if (view.type === 'project-chat') {
       const proj = projects.find(p => p.project_id === view.projId);
-      return chatCache[view.chatId]?.title || proj?.name || 'Project Chat';
+      return chatCache[view.chatId]?.title || proj?.name || 'Workspace chat';
     }
     if (view.type === 'global-chat') return chatCache[view.chatId]?.title || 'Global Chat';
     if (view.type === 'aggregations') return 'Sample Aggregation';

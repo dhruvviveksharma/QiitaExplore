@@ -83,7 +83,7 @@ def api_create_project():
     name = (data.get('name') or 'Untitled').strip() or 'Untitled'
     proj = create_project(g.user_id, name)
     if not proj:
-        return jsonify({'error': 'Failed to create project'}), 500
+        return jsonify({'error': 'Failed to create workspace'}), 500
     return jsonify(proj)
 
 
@@ -92,7 +92,7 @@ def api_get_project(project_id):
     include_archived = request.args.get('include_archived') in ('1', 'true', 'True')
     proj = get_project(project_id, g.user_id, include_archived=include_archived)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
     return jsonify(proj)
 
 
@@ -115,13 +115,13 @@ def api_add_study(project_id):
 
     proj = get_project(project_id, user_id)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
     if len(proj.get('studies') or []) >= PROJECT_STUDIES_CAP:
-        return jsonify({'error': f'Project has reached the maximum of {PROJECT_STUDIES_CAP} studies'}), 400
+        return jsonify({'error': f'Workspace has reached the maximum of {PROJECT_STUDIES_CAP} studies'}), 400
 
     proj = add_study_to_project(project_id, user_id, study)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
 
     study_id = study.get('study_id')
     _bg_executor.submit(_enrich_study_in_project, project_id, int(study_id))
@@ -133,7 +133,7 @@ def api_enrich_all_studies(project_id):
     """Re-fetch enriched data for all studies in a project."""
     proj = get_project(project_id, g.user_id)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
 
     studies = proj.get('studies') or []
     futures = []
@@ -156,7 +156,7 @@ def api_enrich_all_studies(project_id):
 def api_remove_study(project_id, study_id):
     proj = remove_study_from_project(project_id, g.user_id, study_id)
     if proj is None:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
     return jsonify(proj)
 
 
@@ -165,7 +165,7 @@ def api_project_preload(project_id):
     """Warm study_detail_cache.full_samples_json for every study in the project."""
     proj = get_project(project_id, g.user_id)
     if not proj:
-        return jsonify({'error': 'Project not found'}), 404
+        return jsonify({'error': 'Workspace not found'}), 404
     queued = []
     for s in (proj.get('studies') or []):
         sid = s.get('study_id')

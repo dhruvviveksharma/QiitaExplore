@@ -582,11 +582,11 @@ def _tool_label(name: str, args: dict) -> str:
         return f"Searching: {', '.join(kws)}…" if kws else "Searching Qiita…"
     if name == "search_project_studies":
         kws = args.get("keywords") or []
-        return f"Searching project: {', '.join(kws[:3])}…" if kws else "Listing project studies…"
+        return f"Searching workspace: {', '.join(kws[:3])}…" if kws else "Listing workspace studies…"
     if name == "get_study_report":
         return f"Loading report for study {args.get('study_id', '?')}…"
     if name == "get_project_study_report":
-        return f"Loading project report for study {args.get('study_id', '?')}…"
+        return f"Loading workspace report for study {args.get('study_id', '?')}…"
     if name == "pin_study":
         ids = args.get("study_ids") or []
         return f"Pinning {len(ids)} {'study' if len(ids) == 1 else 'studies'}…"

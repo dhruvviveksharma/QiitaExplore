@@ -285,7 +285,7 @@ def _build_project_study_context(project: dict, budget: int = 12_000):
                     upsert_study_detail_cache(sid, None, None, samples_context=ctx)
 
     header         = (
-        "You have access to the following saved Qiita studies in this project. "
+        "You have access to the following saved Qiita studies in this workspace. "
         "When referencing specific studies, ONLY use these IDs and titles:\n"
     )
     detailed_blocks = [_study_detail_block(s, include_samples_context=True) for s in studies]

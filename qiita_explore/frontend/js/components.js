@@ -706,14 +706,14 @@ function ChatRowMenu({
           <div className="cr-menu-item cr-menu-parent"
             onMouseEnter={() => setMoveOpen(true)}
             onClick={e => { e.stopPropagation(); setMoveOpen(v => !v); }}>
-            <span>Move to project</span>
+            <span>Move to workspace</span>
             <ChevronIcon dir="right" size={11} />
             {moveOpen && (
               <div className="cr-submenu" onClick={e => e.stopPropagation()}>
                 <button className="cr-menu-item" onClick={() => {
-                  const name = prompt('New project name:', 'Untitled');
+                  const name = prompt('New workspace name:', 'Untitled');
                   if (name && name.trim()) { onCreateProjectAndMove(name.trim()); close(); }
-                }}>+ New project</button>
+                }}>+ New workspace</button>
                 {otherProjects.length > 0 && <div className="cr-menu-sep" />}
                 {otherProjects.map(p => (
                   <button key={p.project_id} className="cr-menu-item"
@@ -726,7 +726,7 @@ function ChatRowMenu({
           </div>
           {currentProjectId && (
             <button className="cr-menu-item" onClick={() => { onRemoveFromProject(); close(); }}>
-              Remove from project
+              Remove from workspace
             </button>
           )}
         </div>

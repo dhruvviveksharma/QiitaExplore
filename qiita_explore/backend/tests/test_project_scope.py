@@ -110,7 +110,7 @@ class TestProjectTools:
             result = agent_tools._tool_get_project_study_report(
                 {"study_id": 12345}, project_id=proj["project_id"])
             mock_payload.assert_not_called()
-        assert result.detail == "not in project"
+        assert result.detail == "not in workspace"
 
     def test_execute_tool_rejects_global_search_in_project(self, agent_tools, crud, sample_user_id):
         proj = crud.create_project(sample_user_id, "Reject Global Tool")

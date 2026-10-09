@@ -242,10 +242,10 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "search_project_studies",
             "description": (
-                "Search studies saved in this project only. "
+                "Search studies saved in this workspace only. "
                 "Up to 5 calls per user message — only search again with different keywords. "
-                "Empty keywords lists all project studies. "
-                "You cannot search the public Qiita database from project chat."
+                "Empty keywords lists all workspace studies. "
+                "You cannot search the public Qiita database from a workspace chat."
             ),
             "parameters": {
                 "type": "object",
@@ -269,15 +269,15 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "get_project_study_report",
             "description": (
-                "Load full sample-level metadata for a study in this project. "
-                "Rejects study IDs not currently saved in the project."
+                "Load full sample-level metadata for a study in this workspace. "
+                "Rejects study IDs not currently saved in the workspace."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "study_id": {
                         "type": "integer",
-                        "description": "The Qiita study ID (must be in this project).",
+                        "description": "The Qiita study ID (must be in this workspace).",
                     },
                 },
                 "required": ["study_id"],
@@ -289,8 +289,8 @@ PROJECT_TOOL_SCHEMAS = [
         "function": {
             "name": "pin_study",
             "description": (
-                "Attach one or more studies from this project to the chat for persistent deep context. "
-                "Only studies currently saved in the project can be pinned. Cap: 10 studies."
+                "Attach one or more studies from this workspace to the chat for persistent deep context. "
+                "Only studies currently saved in the workspace can be pinned. Cap: 10 studies."
             ),
             "parameters": _PIN_STUDY_PARAMETERS,
         },

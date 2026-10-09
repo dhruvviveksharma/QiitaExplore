@@ -278,7 +278,7 @@ class TestProjectStream:
                            headers=logged_in)
         events = parse_sse(resp.get_data(as_text=True))
         text = "".join(d["token"] for e, d in events if e == "token")
-        assert "not part of this project" in text
+        assert "not part of this workspace" in text
         assert [e for e, _ in events][-1] == "done"
         assert fake_turn.calls == []  # never reached the LLM
 

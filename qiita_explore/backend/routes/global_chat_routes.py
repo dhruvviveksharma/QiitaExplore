@@ -95,7 +95,7 @@ def api_move_global_chat_to_project(chat_id):
         return jsonify({'error': 'project_id is required'}), 400
     chat = move_global_chat_to_project(g.user_id, chat_id, project_id)
     if not chat:
-        return jsonify({'error': 'Chat or project not found'}), 404
+        return jsonify({'error': 'Chat or workspace not found'}), 404
     return jsonify(chat)
 
 

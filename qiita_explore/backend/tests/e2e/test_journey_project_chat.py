@@ -44,7 +44,7 @@ class TestProjectChatReportGate:
         assert result["error"] is None
         assert result["ui_payload"] is None
         assert result["persisted"]
-        assert "not part of this project" in result["assistant_text"].lower()
+        assert "not part of this workspace" in result["assistant_text"].lower()
 
 
 @pytest.mark.e2e

@@ -96,7 +96,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
                 yield _sse("step_start", {"name": "load_samples",
                                           "label": f"Loading sample data for study {report_study_id}…"})
                 yield _sse("step_done", {"name": "load_samples",
-                                         "label": f"Study {report_study_id} is not part of this project"})
+                                         "label": f"Study {report_study_id} is not part of this workspace"})
                 yield _sse("token", {"token": refusal})
                 assistant_parts = [refusal]
             else:

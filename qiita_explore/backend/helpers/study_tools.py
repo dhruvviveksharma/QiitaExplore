@@ -81,8 +81,8 @@ def execute_study_tool(name, args, *, scope, chat_id, user_id=None):
     if scope == SCOPE_PROJECT:
         project_id = get_project_id_for_chat(chat_id)
         if not project_id or sid not in allowed_project_study_ids(project_id):
-            return _err(name, f"Study {sid} is not in this project. Only studies saved in the "
-                              "project can be shown here; suggest adding it via Browse.", "not in project")
+            return _err(name, f"Study {sid} is not in this workspace. Only studies saved in the "
+                              "workspace can be shown here; suggest adding it via Browse.", "not in workspace")
     if not is_study_public(sid):
         return _err(name, f"Study {sid} is private or does not exist.", "private or not found")
     header = _fetch_study_header_cached(sid) or {}
@@ -592,7 +592,7 @@ def _tool_resolve_study(args, *, scope, chat_id):
     if sid is not None and r["how"] == "explicit":
         allowed = ({s["study_id"] for s in chat} if scope == SCOPE_PROJECT else None)
         if (allowed is not None and sid not in allowed) or not is_study_public(sid):
-            where = "in this project" if allowed is not None else "public"
+            where = "in this workspace" if allowed is not None else "public"
             return ToolResult(text=f"Study {sid} is not {where}. Tell the user.", label="Study not found",
                               detail=f"study {sid} not {where}")
     if sid is not None:
@@ -600,7 +600,7 @@ def _tool_resolve_study(args, *, scope, chat_id):
             (_fetch_study_headers([sid]) or [{"study_id": sid}])[0]
         title = hit.get("study_title") or ""
         why = "the study id in the request" if r["how"] == "explicit" else (
-            "the chat's pinned study" if hit.get("pinned") else "the project's study")
+            "the chat's pinned study" if hit.get("pinned") else "the workspace's study")
         nxt = f" Now call {for_tool} with study_id={sid}." if for_tool else ""
         summary = f"Using study {sid} · {title}"
         return ToolResult(
