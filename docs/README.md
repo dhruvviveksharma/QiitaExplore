@@ -32,7 +32,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 |---|---|
 | [`00-orientation.md`](00-orientation.md) | What the system is · **the two Qiitas** · glossary |
 | [`01-architecture.md`](01-architecture.md) | Topology · request lifecycle · per-worker state · the three PostgreSQL paths |
-| [`02-authentication.md`](02-authentication.md) | Classic-Qiita login · brute-force limits · sessions · CSRF · tenancy · threat model |
+| [`02-authentication.md`](02-authentication.md) | Two logins (classic Qiita, qiita-miint) · one account per email · brute-force limits · sessions · CSRF · tenancy · threat model |
 | [`03-data-access-and-caching.md`](03-data-access-and-caching.md) | Reading classic Qiita · three cache layers · context budgeting |
 | [`04-search.md`](04-search.md) | Three search paths · the SQL builder · per-study JSONB probes |
 | [`05-agent.md`](05-agent.md) | The tool loop · the search budget · the five tools |

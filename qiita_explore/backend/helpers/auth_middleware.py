@@ -2,9 +2,11 @@
 rejects unauthenticated or CSRF-missing requests to every non-public endpoint.
 
 Two before_request hooks, registered together via register_auth_middleware():
-  1. _load_session — cookie -> session row -> g.user_id / g.session_row, and
-     every RECHECK_SECONDS a re-read of the classic-Qiita account, so a password
-     changed (or an account deleted or unverified) on Qiita ends the session.
+  1. _load_session — cookie -> session row -> g.user_id / g.session_row. A
+     classic-Qiita session also re-reads its account every RECHECK_SECONDS, so a
+     password changed (or an account deleted or unverified) on Qiita ends it. A
+     qiita-miint session was proved once by whoami and keeps no token to re-check
+     with; it lasts to its absolute expiry.
   2. _require_auth — default-deny + CSRF check on state-changing requests.
 """
 
@@ -16,7 +18,8 @@ from flask import g, jsonify, request
 
 import config
 from helpers import qiita_accounts as accounts
-from store.auth_store import get_session_by_token, mark_session_verified, revoke_session, touch_session
+from store.auth_store import (get_session_by_token, mark_session_verified, revoke_session, revoke_user_sessions,
+                              touch_session)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,8 @@ logger = logging.getLogger(__name__)
 # to close.
 PUBLIC_ENDPOINTS = {
     "api_auth_login",
+    "api_auth_connect",
+    "api_auth_login_url",
     "api_auth_me",
 }
 
@@ -35,6 +40,10 @@ RECHECK_SECONDS = 5 * 60
 # Qiita's user table unreachable: keep serving a session this long after its
 # last good check, then answer 503 (not revoke) until Qiita is back.
 RECHECK_GRACE_SECONDS = 3600
+
+# The login method behind each session source; "paste" is production's
+# qiita-miint sessions from before the source was named.
+_SOURCE_METHOD = {"qiita-classic": "classic", "qiita-miint": "miint", "paste": "miint"}
 
 
 def _age_seconds(iso_value) -> float:
@@ -47,7 +56,7 @@ def _age_seconds(iso_value) -> float:
 def _still_valid(row) -> bool:
     """Re-read the account behind a session. False ends the session; raises
     AccountsUnavailable when Qiita can't be asked."""
-    email, fp = row.get("qiita_email"), row.get("password_fp")
+    email, fp = row.get("email"), row.get("password_fp")
     if not email or not fp:
         return False
     acct = accounts.fetch_account(email)
@@ -71,9 +80,14 @@ def register_auth_middleware(app):
         row = get_session_by_token(raw_token)
         if row is None:
             return None
+        if _SOURCE_METHOD.get(row.get("source")) not in config.LOGIN_METHODS:
+            # Its login method is switched off (likely after trouble with it):
+            # ended for good, not just hidden until it's switched back on.
+            revoke_session(row["session_hash"])
+            return None
 
         age = _age_seconds(row.get("last_verified_at"))
-        if age > RECHECK_SECONDS:
+        if row.get("source") == "qiita-classic" and age > RECHECK_SECONDS:
             try:
                 valid = _still_valid(row)
             except accounts.AccountsUnavailable:
@@ -83,7 +97,9 @@ def register_auth_middleware(app):
                     return None
             else:
                 if not valid:
-                    revoke_session(row["session_hash"])
+                    # The account changed on Qiita: end all of its sessions,
+                    # qiita-miint ones included, not just this one.
+                    revoke_user_sessions(row["user_id"])
                     return None
                 mark_session_verified(row["session_hash"])
 

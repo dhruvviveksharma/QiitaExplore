@@ -82,7 +82,7 @@ def _age_verification(db_path, seconds):
 class TestAuthStore:
     def _session(self, **kw):
         from store.auth_store import create_session, resolve_user
-        uid = resolve_user("a@b.edu", "user")
+        uid = resolve_user("a@b.edu", level="user")
         return uid, create_session(user_id=uid, source="qiita-classic", password_fp="fp", **kw)
 
     def test_session_create_and_lookup(self, fresh_db):
@@ -90,7 +90,7 @@ class TestAuthStore:
         uid, (raw, csrf) = self._session()
         sess = get_session_by_token(raw)
         assert sess["user_id"] == uid and sess["csrf_token"] == csrf
-        assert sess["qiita_email"] == "a@b.edu" and sess["password_fp"] == "fp"
+        assert sess["email"] == "a@b.edu" and sess["password_fp"] == "fp"
         assert sess["last_verified_at"] and sess["pat_encrypted"] == ""
 
     def test_unknown_token_returns_none(self, fresh_db):
@@ -129,11 +129,42 @@ class TestAuthStore:
 
     def test_resolve_user_is_stable_and_opaque(self, fresh_db):
         from store.auth_store import get_user, resolve_user
-        uid = resolve_user("x@y.edu", "user")
+        uid = resolve_user("x@y.edu", level="user")
         assert uid.startswith("q") and len(uid) == 17
-        assert resolve_user("x@y.edu", "admin") == uid
+        assert resolve_user("x@y.edu", level="admin") == uid
         assert get_user(uid)["user_level"] == "admin"
-        assert resolve_user("other@y.edu", "user") != uid
+        assert resolve_user("x@y.edu", principal_idx=7) == uid               # qiita-miint, same email
+        assert get_user(uid)["user_level"] == "admin" and get_user(uid)["principal_idx"] == 7
+        assert resolve_user("other@y.edu", level="user") != uid             # different email, different account
+
+    def test_resolve_user_matches_by_email_only(self, fresh_db):
+        """A qiita-miint principal whose email changed gets the new email's
+        account: different emails are always different accounts."""
+        from store.auth_store import get_user, resolve_user
+        old = resolve_user("old@y.edu", principal_idx=42)
+        new = resolve_user("new@y.edu", principal_idx=42)
+        assert new != old
+        assert get_user(old)["email"] == "old@y.edu" and get_user(old)["principal_idx"] == 42
+        assert get_user(new)["principal_idx"] is None                       # 42 is already recorded elsewhere
+
+    def test_resolve_user_never_moves_a_principal_onto_a_claimed_email(self, fresh_db):
+        from store.auth_store import get_user, resolve_user
+        mine = resolve_user("a@y.edu", principal_idx=1)
+        theirs = resolve_user("b@y.edu", level="user")
+        assert resolve_user("b@y.edu", principal_idx=1) == theirs
+        assert get_user(mine)["email"] == "a@y.edu" and get_user(mine)["principal_idx"] == 1
+        assert get_user(theirs)["principal_idx"] is None                    # 1 is already held
+
+    def test_resolve_user_refuses_an_email_that_moved_between_principals(self, fresh_db):
+        """qiita-miint gave the address to someone else: they must not inherit
+        the first person's data. Classic logins don't carry a principal."""
+        import pytest as _pytest
+        from store.auth_store import PrincipalMismatch, resolve_user
+        uid = resolve_user("e@y.edu", principal_idx=1)
+        with _pytest.raises(PrincipalMismatch):
+            resolve_user("e@y.edu", principal_idx=2)
+        assert resolve_user("e@y.edu", principal_idx=1) == uid
+        assert resolve_user("e@y.edu", level="user") == uid
 
     def test_resolve_user_first_login_race(self, fresh_db, monkeypatch):
         """Two first logins at once: the loser's INSERT hits UNIQUE and it
@@ -144,25 +175,11 @@ class TestAuthStore:
 
         def _winner_inserts_first(n):
             with _conn() as conn:
-                conn.execute("INSERT INTO users(user_id, qiita_email) VALUES('qwinner', 'race@y.edu')")
+                conn.execute("INSERT INTO users(user_id, email) VALUES('qwinner', 'race@y.edu')")
                 conn.commit()
             return real_hex(n)
         monkeypatch.setattr(auth_store.secrets, "token_hex", _winner_inserts_first)
-        assert auth_store.resolve_user("race@y.edu", "user") == "qwinner"
-
-    def test_bind_account_rules(self, fresh_db):
-        from store.auth_store import bind_account, get_user, resolve_user
-        from store.db import _conn
-        with _conn() as conn:
-            conn.execute("INSERT INTO users(user_id, principal_idx, miint_email) VALUES('42', 42, 'old@y.edu')")
-            conn.commit()
-        taken = resolve_user("taken@y.edu", "user")
-        assert bind_account("42", "taken@y.edu") is False          # email bound elsewhere
-        assert bind_account("nope", "free@y.edu") is False         # no such account
-        assert bind_account("42", "free@y.edu") is True
-        assert get_user("42")["qiita_email"] == "free@y.edu"
-        assert bind_account("42", "again@y.edu") is False          # already bound
-        assert taken != "42"
+        assert auth_store.resolve_user("race@y.edu", level="user") == "qwinner"
 
     def test_purge_expired_and_old_revoked(self, fresh_db):
         from store.auth_store import purge_expired_sessions
@@ -198,8 +215,8 @@ class TestLogin:
         assert me["csrf_token"] == body["csrf_token"] and me["qiita_url"]
 
     def test_me_anonymous_carries_qiita_url(self, api_client):
-        assert api_client.get("/api/auth/me").get_json() == {"anonymous": True,
-                                                            "qiita_url": "https://qiita.ucsd.edu"}
+        assert api_client.get("/api/auth/me").get_json() == {
+            "anonymous": True, "qiita_url": "https://qiita.ucsd.edu", "login_methods": ["classic", "miint"]}
 
     def test_body_too_large(self, api_client, accts):
         resp = api_client.post("/api/auth/login", data="{" + " " * 9000 + "}",
@@ -363,10 +380,9 @@ class TestLogin:
             if os.path.exists(path):
                 assert secret.encode() not in open(path, "rb").read()
 
-    def test_old_paste_token_routes_are_gone(self, api_client):
-        for path in ("/api/auth/connect", "/api/auth/claim-default"):
-            assert api_client.post(path, json={}).status_code in (404, 405)
-        assert api_client.get("/api/auth/login-url").status_code == 404
+    def test_legacy_claim_routes_are_gone(self, api_client):
+        assert api_client.post("/api/auth/claim-default", json={}).status_code == 404
+        assert api_client.get("/api/auth/legacy-default").status_code == 404
 
     def test_logout_and_default_deny(self, api_client, monkeypatch):
         assert api_client.get("/api/projects").status_code == 401

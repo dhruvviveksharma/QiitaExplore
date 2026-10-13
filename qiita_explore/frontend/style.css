@@ -1897,13 +1897,25 @@ input, textarea { font-family: var(--sans); }
   position: fixed; inset: 0;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg); padding: 20px;
+  overflow-y: auto;          /* stacked cards on a phone can be taller than the screen */
 }
+/* The two ways in, as equal cards: side by side, stacking when narrow. */
+.auth-screen { width: 100%; max-width: 820px; margin: auto; display: flex; flex-direction: column; gap: 18px; }
+.auth-options {
+  display: grid; gap: 16px; justify-content: center;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 380px));
+}
+.auth-card-title { margin: 0; font-size: 1rem; font-weight: 600; text-align: center; color: var(--text-1); }
+.auth-steps { color: var(--text-2); font-size: 0.82rem; line-height: 1.6; padding-left: 20px; margin: 0; }
+.auth-miint-link { text-align: center; text-decoration: none; padding: 8px; }
+.auth-miint-link.disabled { opacity: 0.5; pointer-events: none; }
+.auth-note { color: var(--text-3); font-size: 0.8rem; text-align: center; margin: 0; }
 .auth-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
-  max-width: 380px; width: 100%;
-  padding: 32px 28px;
+  width: 100%; box-sizing: border-box;
+  padding: 28px 24px;
   display: flex; flex-direction: column; gap: 14px;
   animation: slideUp .16s ease;
 }

@@ -11,7 +11,7 @@ Prerequisites: [`00-orientation.md`](00-orientation.md) — the two-Qiitas disti
 QiitaExplore depends entirely on the classic Qiita monolith:
 
 - **All scientific data** comes from it, over direct read-only SQL, through a vendored copy of Qiita's own database layer.
-- **Identity** comes from it too, since 2026-10-12: users log in with their classic-Qiita email and password, checked against `qiita.qiita_user` through the same read-only Postgres role ([`02-authentication.md`](02-authentication.md)). Before that, identity came from the Qiita-MIINT control plane (a pasted `qk_` token checked with `whoami`).
+- **Identity** comes from it too, since 2026-10, for one of the two logins: users can log in with their classic-Qiita email and password, checked against `qiita.qiita_user` through the same read-only Postgres role. The other login is Qiita-MIINT's, as before (a pasted `qk_` token checked once with the control plane's `whoami`); the same email reaches the same account either way ([`02-authentication.md`](02-authentication.md)).
 
 That is not a destination. The long-term target is the new platform, and the current state carries real costs: a vendored dependency (`qiita_db/`, `qiita_core/`) that must track upstream schema changes, direct coupling to a database schema that is not a published interface, and a thread-unsafe transaction singleton still in the request path.
 
@@ -81,7 +81,7 @@ That is **create-time ownership assignment**, not read-path impersonation. It se
 
 | Approach | How it works | Cost |
 |---|---|---|
-| **Login-time identity only** *(what shipped until 2026-10-12)* | Verify a PAT once at connect; authorize later requests with a local session cookie | Cannot call platform APIs as the user after login; revoked PATs remain valid locally until session ends. Today's classic-Qiita login has the same shape — and the same gap: it proves who the user is, never which studies they may see, so QiitaExplore serves public data only (TKT-043) |
+| **Login-time identity only** *(what ships today, for the qiita-miint login)* | Verify a PAT once at connect; authorize later requests with a local session cookie | Cannot call platform APIs as the user after login; revoked PATs remain valid locally until session ends. The classic-Qiita login has the same shape — and the same gap: it proves who the user is, never which studies they may see, so QiitaExplore serves public data only (TKT-043) |
 | **New platform endpoint** | Add `GET /study/{idx}/access/{principal_idx}` or an `X-On-Behalf-Of` scope | Requires an upstream change and a security review — an impersonation surface is a serious thing to add |
 | **Cached access list** | Service account periodically syncs per-user grants into local storage | Stale-permission window; duplicates the platform's authorization model |
 

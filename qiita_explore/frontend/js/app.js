@@ -6,7 +6,7 @@ function AuthenticatedApp({ identity, onLogout }) {
 }
 
 function App() {
-  const { status, identity, qiitaUrl, refresh, logout } = useAuth();
+  const { status, identity, qiitaUrl, loginMethods, refresh, logout } = useAuth();
 
   // Keep the address bar pointed at /login whenever we're anonymous — covers
   // first-load-anonymous, explicit logout, and mid-session-401 uniformly,
@@ -39,7 +39,7 @@ function App() {
     return <div className="auth-loading"><WreathLoader size={32} /></div>;
   }
   if (status === 'anonymous') {
-    return <QiitaLogin qiitaUrl={qiitaUrl} onLoggedIn={handleLoggedIn} />;
+    return <LoginScreen qiitaUrl={qiitaUrl} loginMethods={loginMethods} onLoggedIn={handleLoggedIn} />;
   }
   return <AuthenticatedApp identity={identity} onLogout={logout} />;
 }

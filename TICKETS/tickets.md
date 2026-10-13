@@ -1324,7 +1324,7 @@ overlap preview with no warning surfaced
 ## TKT-045: `barnacle_backend_env.sh` Leaks Secrets Into Unpruned `.env.bak` Files
 
 **Severity:** High
-**Status:** Open (narrowed 2026-10-12) — the Fernet/PAT parts are obsolete: qiita-miint login removed 2026-10-12. Still open: existing `.env.bak.*` files hold the LLM keys
+**Status:** Open (narrowed 2026-10-12) — the Fernet/PAT parts are obsolete: no qiita-miint token is stored (the qiita-miint login checks it once with `whoami` and drops it). Still open: the script's full-file backups, and existing `.env.bak.*` files that hold the LLM keys
 
 ### Description
 
@@ -1344,12 +1344,13 @@ file plus any one `.env.bak.*` has both halves.
 Note: `Qiita/barnacle_backend_env.sh` is tracked in git but currently **deleted from the working
 tree** ( `D` in `git status`). Read it with `git show HEAD:Qiita/barnacle_backend_env.sh`.
 
-**Update (2026-10-12):** the qiita-miint login is gone, so there is no PAT ciphertext and no
-Fernet key to protect, and the variables the script pinned (`QIITA_CONTROL_PLANE_URL`,
-`QIITA_PUBLIC_LOGIN_URL`, `QIITA_LOGINROCKET_URL`) are ignored. The script has no job left for
-QiitaExplore; don't run it. What remains: prune the `.env.bak.*` files already on barnacle (they
-still hold `API_KEY` / `OPENAI_API_KEY`, possibly `ANTHROPIC_API_KEY`). The key-rotation bullet
-below is obsolete.
+**Update (2026-10-12):** there is no PAT ciphertext and no Fernet key to protect: the qiita-miint
+login (now beside classic-Qiita login) checks a token once with `whoami` and never stores it. The
+key-rotation bullet below is obsolete. The variables the script pins (`QIITA_CONTROL_PLANE_URL`,
+`QIITA_PUBLIC_LOGIN_URL`, and deleting `QIITA_LOGINROCKET_URL`) are live again for that login, so
+the script still has a job; its full-file backups are the problem. What remains: stop the
+full-file backups before the script is run again, and prune the `.env.bak.*` files already on
+barnacle (they hold `API_KEY` / `OPENAI_API_KEY`, possibly `ANTHROPIC_API_KEY`).
 
 Found 2026-07-18 while documenting operations.
 
@@ -1415,8 +1416,8 @@ OIDC round-trip, similar to what `tests/test_auth.py` does for unit tests) or pe
 - Once re-armed, re-run the e2e suite once to confirm it actually exercises real assertions again,
 not just green-via-skip.
 
-**Update (2026-10-12):** `/auth/connect` and test PATs are gone. The e2e tier now logs in once
-through `POST /api/auth/login` as `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD`
+**Update (2026-10-12):** the e2e tier no longer needs a test PAT. It logs in once
+through classic-Qiita `POST /api/auth/login` as `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD`
 (`tests/e2e/auth_client.py :: AuthedClient`), and `run_tests.sh` / `run_full_suite.sh` preflight
 against the public `/api/auth/me`. The benchmark scripts are still unauthenticated.
 
@@ -1445,7 +1446,7 @@ against the public `/api/auth/me`. The benchmark scripts are still unauthenticat
 ## TKT-047: Unit Tests Fail Unless `QIITA_EXPLORE_ALLOWED_ORIGINS` Is Manually Cleared
 
 **Severity:** Medium
-**Status:** Resolved (2026-10-12) — `tests/auth_helpers.py :: configure` pins `ALLOWED_ORIGINS = []`, `PUBLIC_ORIGIN`, the cookie settings and `CLIENT_IP_HEADER` on each freshly imported app, and every route test logs in with a matching `Origin`. The PAT/whoami tests named below no longer exist (qiita-miint login removed 2026-10-12)
+**Status:** Resolved (2026-10-12) — `tests/auth_helpers.py :: configure` pins `ALLOWED_ORIGINS = []`, `PUBLIC_ORIGIN`, the cookie settings and `CLIENT_IP_HEADER` on each freshly imported app, and every route test logs in with a matching `Origin`. The master-era PAT/whoami test classes named below no longer exist; the restored qiita-miint connect is tested in `tests/test_miint_connect.py`, which uses the same `configure`
 
 ### Description
 
@@ -1533,7 +1534,7 @@ silently.
 legacy pre-auth bucket. It is **not** currently a live second identity path: default-deny
 (`helpers/auth_middleware.py:107`) guarantees `g.user_id` is a real principal on every
 route, and `store/legacy_claim.py:12` addresses the legacy rows by their own literal. (Update
-2026-10-12: `store/legacy_claim.py` and the claim routes were removed with the qiita-miint login;
+2026-10-12: `store/legacy_claim.py` and the claim routes were removed;
 rows still owned by `"default"` are now unreachable.)
 
 But it converts "identity was lost" from a crash into a silent write into another tenant's
@@ -1676,7 +1677,7 @@ resolution only where a real entity exists.
 ## TKT-054: Split `test_auth.py` (over 500-line cap)
 
 **Severity:** Low
-**Status:** Resolved (2026-10-12) — rewritten for the classic-Qiita login and split: `test_auth.py` (about 515 lines, under the current 750 cap), `test_login_limiter.py`, `test_users_migration.py`, `test_artifact_access.py`. The periodic-reverify class named below is obsolete (qiita-miint login removed 2026-10-12)
+**Status:** Resolved (2026-10-12) — rewritten for the two logins and split: `test_auth.py` (about 525 lines, under the current 750 cap), `test_login_limiter.py`, `test_users_migration.py`, `test_artifact_access.py`, `test_miint_connect.py`. The periodic-reverify class named below is obsolete (it re-verified stored PATs); the classic-Qiita re-check is `test_auth.py :: TestRecheck`
 
 ### Description
 

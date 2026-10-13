@@ -1,10 +1,12 @@
-"""Accounts + sessions for classic-Qiita login (routes/auth_routes.py).
+"""Accounts + sessions for both logins (routes/auth_routes.py).
 
-A QiitaExplore account is a `users` row bound to a classic-Qiita email
-(qiita_email). Sessions are looked up by SHA-256(raw token) — the plaintext
-session token never touches SQLite — and carry a fingerprint of the account's
-password hash, so a password changed on Qiita ends them
-(helpers/auth_middleware.py). No password is ever stored.
+A QiitaExplore account is a `users` row with an opaque user_id, which owns all
+its data, and the email both logins resolve through: classic Qiita and
+qiita-miint reach the same account for the same email. Sessions are looked up
+by SHA-256(raw token) — the plaintext session token never touches SQLite. A
+classic session also carries a fingerprint of the account's password hash, so
+a password changed on Qiita ends it (helpers/auth_middleware.py). No password
+or qiita-miint token is ever stored.
 """
 
 import hashlib
@@ -30,46 +32,67 @@ def _parse_iso(value: str) -> datetime:
 
 # ── Users ────────────────────────────────────────────────────────────────────
 
-def resolve_user(email: str, level: str) -> str:
-    """The user_id of the account bound to a classic-Qiita email (normalized),
-    creating an unbound-to-anything-else new one with an opaque id on first
-    login. Two concurrent first logins: the loser's INSERT hits the UNIQUE
-    constraint and re-reads the winner's row."""
+class PrincipalMismatch(Exception):
+    """The email's account belongs to a different qiita-miint principal: the
+    address moved between qiita-miint accounts. Refused, so whoever holds the
+    address now doesn't inherit someone else's data through qiita-miint."""
+
+
+def resolve_user(email: str, *, level: str = None, principal_idx: int = None) -> str:
+    """The account for a verified, normalized email — one per email, whichever
+    login proved it (classic Qiita or qiita-miint), so both reach the same data.
+    Matching is by email only: different emails are always different accounts.
+
+      - A row with this email: that account. A classic login refreshes its
+        level. A qiita-miint login records its principal on the account if it
+        has none (and no other account holds it), and raises PrincipalMismatch
+        if the account already has a different one.
+      - Otherwise a new account with an opaque id.
+
+    A concurrent login that wins a UNIQUE race (email or principal) makes this
+    one fail; the retry then finds the winner's row."""
+    try:
+        return _resolve_user(email, level, principal_idx)
+    except sqlite3.IntegrityError:
+        return _resolve_user(email, level, principal_idx)
+
+
+def _resolve_user(email, level, principal_idx) -> str:
     now = _now()
     with _conn() as conn:
-        row = conn.execute("SELECT user_id FROM users WHERE qiita_email = ?", (email,)).fetchone()
-        if row is not None:
-            conn.execute("UPDATE users SET user_level = ?, updated_at = ?, last_login_at = ? WHERE user_id = ?",
-                         (level, now, now, row["user_id"]))
-            conn.commit()
-            return row["user_id"]
-        user_id = "q" + secrets.token_hex(8)
         try:
-            conn.execute(
-                "INSERT INTO users(user_id, qiita_email, user_level, created_at, updated_at, last_login_at) "
-                "VALUES(?, ?, ?, ?, ?, ?)", (user_id, email, level, now, now, now))
+            row = conn.execute("SELECT user_id, principal_idx FROM users WHERE email = ?", (email,)).fetchone()
+            if row is None:
+                held = principal_idx is not None and conn.execute(
+                    "SELECT 1 FROM users WHERE principal_idx = ?", (principal_idx,)).fetchone() is not None
+                user_id = "q" + secrets.token_hex(8)
+                conn.execute(
+                    "INSERT INTO users(user_id, email, user_level, principal_idx, created_at, updated_at, "
+                    "last_login_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, email, level, None if held else principal_idx, now, now, now))
+            else:
+                user_id = row["user_id"]
+                if principal_idx is not None and row["principal_idx"] not in (None, principal_idx):
+                    raise PrincipalMismatch(user_id)
+                conn.execute("UPDATE users SET user_level = COALESCE(?, user_level), updated_at = ?, "
+                             "last_login_at = ? WHERE user_id = ?", (level, now, now, user_id))
+                if principal_idx is not None and row["principal_idx"] is None:
+                    held = conn.execute("SELECT 1 FROM users WHERE principal_idx = ?", (principal_idx,)).fetchone()
+                    if held is None:
+                        conn.execute("UPDATE users SET principal_idx = ? WHERE user_id = ?", (principal_idx, user_id))
             conn.commit()
             return user_id
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, PrincipalMismatch):
             conn.rollback()
-            row = conn.execute("SELECT user_id FROM users WHERE qiita_email = ?", (email,)).fetchone()
-            if row is None:
-                raise
-            return row["user_id"]
+            raise
 
 
-def bind_account(user_id: str, email: str) -> bool:
-    """Bind an existing (qiita-miint era) account to a classic-Qiita email —
-    only for scripts/bind_classic_accounts.py, after the operator confirmed it.
-    False when the account is missing or already bound, or the email is taken."""
+def revoke_user_sessions(user_id: str):
+    """End every live session of an account — whichever login made it."""
     with _conn() as conn:
-        taken = conn.execute("SELECT 1 FROM users WHERE qiita_email = ?", (email,)).fetchone()
-        if taken is not None:
-            return False
-        cur = conn.execute("UPDATE users SET qiita_email = ?, updated_at = ? WHERE user_id = ? AND qiita_email IS NULL",
-                           (email, _now(), user_id))
+        conn.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                     (_now(), user_id))
         conn.commit()
-        return cur.rowcount == 1
 
 
 def get_user(user_id: str):
@@ -130,7 +153,7 @@ def get_session_by_token(raw_token: str):
     session_hash = _hash_token(raw_token)
     with _conn() as conn:
         row = conn.execute(
-            "SELECT s.*, u.qiita_email FROM auth_sessions s LEFT JOIN users u USING (user_id) "
+            "SELECT s.*, u.email FROM auth_sessions s LEFT JOIN users u USING (user_id) "
             "WHERE s.session_hash = ?", (session_hash,)
         ).fetchone()
     if row is None:

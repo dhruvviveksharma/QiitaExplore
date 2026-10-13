@@ -49,9 +49,10 @@ One line each, in the order a newcomer should read them.
 | `backend/tests/test_pin_command.py` | Store-level pinning: idempotent re-pin, the per-chat cap read from `PINNED_STUDIES_PER_CHAT_CAP`, unpin, and project/global scope isolation in both directions |
 | `backend/tests/test_agent_tool_call.py` | `helpers/agent.py :: _execute_tool_call` driven as a raw generator — the two yielded events, the synthetic `tool_{name}_{call_id}` name (full id, see TKT-055-era fix), the timing suffix on `detail`, the `(result_text, consumed_search_slot, failed)` return triple, and that a raising tool yields a failure result with `failed=True` instead of propagating |
 | `backend/tests/test_merge.py` | Artifact dedup preferring `.biom`, `_write_merged_sample_metadata` sample filtering and column union, and post-merge TSV trimming to BIOM sample IDs |
-| `backend/tests/test_auth.py` | Classic-Qiita login (rewritten 2026-10-12): the session store, every `POST /api/auth/login` check in order, the per-request re-check against Qiita, CSRF and default-deny, cross-user isolation, and the TKT-042 settings lock. Classic Qiita's account table is faked (`tests/auth_helpers.py`); bcrypt is real |
+| `backend/tests/test_auth.py` | Classic-Qiita login (rewritten 2026-10-12): the session store, `resolve_user` (matching by email only, a principal never moved onto a claimed email, 409 for an email that moved between principals, the first-login race), every `POST /api/auth/login` check in order, the per-request re-check against Qiita, CSRF and default-deny, cross-user isolation, and the TKT-042 settings lock. Classic Qiita's account table is faked (`tests/auth_helpers.py`); bcrypt is real |
 | `backend/tests/test_login_limiter.py` | The login limits (progressive delay, known device and its 10-failure cap, per-client block counting failures only, parallel reservations, hashed keys, private and fail-closed storage), email and password rules, the bcrypt compare and its 72-byte boundary, the per-worker bcrypt slot, and the account-read circuit breaker |
-| `backend/tests/test_users_migration.py` | The qiita-miint → classic `users` migration (rebuilt in place, second boot a no-op, crash before `COMMIT`, two workers migrating once, the pre-auth table still moved aside) and `scripts/bind_classic_accounts.py` (dry run, `--apply` binding only verified pairs, Qiita unreachable) |
+| `backend/tests/test_miint_connect.py` | The qiita-miint login beside classic: the `whoami` client with httpx faked (human accepted, non-human and 401 definitive, everything else transient, the circuit breaker, the per-worker busy slot); `POST /api/auth/connect` (token shape checked before `whoami`, the front checks shared with login, 401/503/502, unusable and padded emails refused, 409 for an email that moved to another principal, busy 503, a failed connect keeps the session, the token never stored); `GET /api/auth/login-url` with and without LoginRocket; one account per email across both logins and different emails kept apart; `QIITA_EXPLORE_LOGIN_METHODS` (each method off, its sessions signed out, a bad value or a missing / plain-HTTP `QIITA_CONTROL_PLANE_URL` failing at import); and sessions per method (qiita-miint and legacy `paste` never re-checked, classic still re-checked, a password change ending the account's qiita-miint sessions too). `whoami` is faked (`tests/auth_helpers.py`) |
+| `backend/tests/test_users_migration.py` | The `users` migration to one account per email (`_migrate_users_to_email_v1`) from both earlier shapes — qiita-miint (production) and classic_v1: emails normalized and kept, a shared email kept by the classic-bound / latest-login row and the rest (and unusable emails) logged, sessions not revoked, both logins reaching migrated accounts — plus crash before `COMMIT`, two workers migrating once, a second boot changing nothing, and the pre-auth table still moved aside |
 | `backend/tests/test_artifact_access.py` | TKT-043: artifact downloads, samples and sample counts only for public artifacts of public studies; stale cached visibility isn't trusted; a private study can't be added to a merge workspace; study detail strips private artifacts' file paths |
 
 Two structural notes on how the unit tier achieves independence from the outside world.
@@ -62,7 +63,7 @@ Two structural notes on how the unit tier achieves independence from the outside
 
 > **Gap.** Two of the three merge test classes exercise *local reimplementations* of production logic, not the shipped functions. `test_merge.py :: _run_dedup` and `_filter_tsv_to_ids` are hand-copies of the dedup loop in `helpers/qiita_fetch.py` and the TSV filter in `remote_merge.main`. They will keep passing after the originals change. Only `TestWriteMergedSampleMetadata` imports and calls the real function. Rewriting the other two against the shipped code is a contained fix.
 
-Route tests that need a session sign in through the real `POST /api/auth/login` with the account table faked — `tests/auth_helpers.py :: login`, shared by the route-test fixtures — rather than writing session rows directly. A real classic-Qiita login is exercised only by the e2e tier (`tests/e2e/test_journey_auth.py`).
+Route tests that need a session sign in through the real routes — `POST /api/auth/login` with the account table faked (`tests/auth_helpers.py :: login`), or `POST /api/auth/connect` with `whoami` faked (`connect`, `fake_whoami`) — shared by the route-test fixtures, rather than writing session rows directly. `tests/conftest.py` sets a dummy `https://` `QIITA_CONTROL_PLANE_URL` so `config.py` imports with the qiita-miint login on. A real classic-Qiita login is exercised only by the e2e tier (`tests/e2e/test_journey_auth.py`); a real `whoami` is not exercised by any test.
 
 ---
 
@@ -230,7 +231,7 @@ TKT-015: the executor shipped to master in dev-only mode, running a local `conda
 
 ### Auth coverage — better than expected
 
-The classic-Qiita login (2026-10-12) was written test-first across `test_auth.py`, `test_login_limiter.py`, `test_users_migration.py` and `test_artifact_access.py`, and the paths one would guess are missing are covered:
+The two logins (2026-10) were written test-first across `test_auth.py`, `test_login_limiter.py`, `test_miint_connect.py`, `test_users_migration.py` and `test_artifact_access.py`, and the paths one would guess are missing are covered:
 
 | Path | Covered? |
 |---|---|
@@ -244,19 +245,23 @@ The classic-Qiita login (2026-10-12) was written test-first across `test_auth.py
 | Re-login replaces the prior session; failed re-login keeps the current one | Yes |
 | `__Host-` cookie names when Secure | Yes — `TestLogin::test_host_prefixed_cookies_when_secure` |
 | Password never in logs, SQLite, `-wal`/`-journal`, or the limiter file | Yes — `TestLogin::test_password_never_logged_or_stored` |
-| Old paste-token routes gone | Yes |
+| Legacy claim routes gone | Yes — `TestLogin::test_legacy_claim_routes_are_gone` |
+| qiita-miint connect — token shape before `whoami`, shared front checks, 401 / 503 / 502 / 409, unusable and padded emails, busy 503, failed connect keeps the session, token never stored | Yes — `test_miint_connect.py :: TestConnect` |
+| `whoami` client — definitive vs transient answers, circuit breaker, per-worker slot | Yes — `test_miint_connect.py :: TestWhoami` |
+| One account per email across both logins; different emails stay apart | Yes — `test_miint_connect.py :: TestOneAccountPerEmail` |
+| Login method switches — routes 404, sessions signed out, bad values and a missing or plain-HTTP control-plane URL fail at import | Yes — `test_miint_connect.py :: TestLoginMethodSwitches` |
+| qiita-miint and legacy `paste` sessions never re-checked; a failed classic re-check ends the account's qiita-miint sessions too | Yes — `test_miint_connect.py :: TestSessionsPerMethod` |
 | Re-check — password change, deletion, unverified, no fingerprint end the session; 1-hour grace, then 503, then recovery; logout still works during the outage | Yes — `TestRecheck` |
 | Email normalization (Kelvin sign, non-ASCII, length); 72-byte bcrypt boundary; malformed stored hash | Yes — `test_login_limiter.py :: TestAccountRules` |
-| `users` migration — rebuilt in place, idempotent, crash before `COMMIT`, two workers, boot twice with zero sessions | Yes — `test_users_migration.py :: TestMigration` |
-| Bind script — dry run, verified-only `--apply`, an email already bound, Qiita unreachable | Yes — `TestBindScript` |
-| First-login race on `resolve_user` | Yes — `TestAuthStore::test_resolve_user_first_login_race` |
+| `users` migration — from both earlier shapes, shared and unusable emails, sessions kept; rebuilt in place, idempotent, crash before `COMMIT`, two workers, boot twice with zero sessions | Yes — `test_users_migration.py :: TestFromQiitaMiint`, `TestFromClassicV1`, `TestMigrationSafety` |
+| `resolve_user` — first-login race, matching by email only, 409 for a moved email | Yes — `TestAuthStore::test_resolve_user_*` |
 | CSRF — missing token 403, wrong token 403, correct token 200 | Yes |
 | Session lifecycle — revoke, absolute expiry, `touch` does not extend it, purge of expired and week-old revoked rows | Yes — `TestAuthStore` |
 | Cross-user isolation — projects, global chats, merge-workspace mutations, and client-supplied `user_id` spoofing ignored | Yes |
 | TKT-042 — `POST /api/settings` is 405; `GET` reports the server key | Yes — `TestSettingsLocked` |
 | TKT-043 — public artifacts of public studies only; stale cached visibility not trusted; study detail strips private artifacts' paths | Yes — `test_artifact_access.py` |
 
-What is **not** covered: `PUBLIC_ENDPOINTS` is not asserted as an exact set, so an endpoint accidentally added to it would go unnoticed; the account table is always faked in unit tests, so the real `qiita.qiita_user` query and the account pool's connection settings are exercised only by the e2e tier and by hand; and nothing tests the page's CSP or SRI attributes.
+What is **not** covered: `PUBLIC_ENDPOINTS` is not asserted as an exact set, so an endpoint accidentally added to it would go unnoticed; the account table is always faked in unit tests, so the real `qiita.qiita_user` query and the account pool's connection settings are exercised only by the e2e tier and by hand; `whoami` is always faked too, and the e2e tier never uses the qiita-miint login, so a real control plane is exercised only by hand; and nothing tests the page's CSP or SRI attributes.
 
 ### Other holes worth naming
 

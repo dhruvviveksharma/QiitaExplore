@@ -1,17 +1,19 @@
-// Classic-Qiita email + password sign-in. Loaded before app.js — app.js's App /
-// AuthenticatedApp split (see app.js) ensures useAppState() (which fires
-// project/chat/study/settings/merge requests) never runs until useAuth()
-// has confirmed a session via GET /auth/me.
+// Sign-in, two ways side by side — classic-Qiita email + password, or a
+// qiita-miint access token — reaching the same account for the same email.
+// Loaded before app.js — app.js's App / AuthenticatedApp split (see app.js)
+// ensures useAppState() (which fires project/chat/study/settings/merge
+// requests) never runs until useAuth() has confirmed a session via GET /auth/me.
 //
-// The password lives only in the form's local state, is POSTed once as JSON,
-// then cleared (success or failure) — never a URL param, localStorage, or
-// sessionStorage, and never in input history.
+// The password and the token live only in their form's local state, are POSTed
+// once as JSON, then cleared (success or failure) — never a URL param,
+// localStorage, or sessionStorage, and never in input history.
 
 function useAuth() {
   // 'loading' | 'anonymous' | 'authenticated'
   const [status,   setStatus]   = useState('loading');
   const [identity, setIdentity] = useState(null);
   const [qiitaUrl, setQiitaUrl] = useState(null);   // sign-up / password reset live on classic Qiita
+  const [loginMethods, setLoginMethods] = useState(null);
 
   const refresh = useCallback(async () => {
     // A dead/hung connection (e.g. a stale SSH tunnel that accepts the socket
@@ -28,6 +30,7 @@ function useAuth() {
       }
       const d = await res.json();
       if (d.qiita_url) setQiitaUrl(d.qiita_url);
+      if (Array.isArray(d.login_methods)) setLoginMethods(d.login_methods);
       if (d.anonymous) {
         clearCsrfToken();
         setIdentity(null);
@@ -69,7 +72,7 @@ function useAuth() {
     setStatus('anonymous');
   }, []);
 
-  return { status, identity, qiitaUrl, refresh, logout };
+  return { status, identity, qiitaUrl, loginMethods, refresh, logout };
 }
 
 function QiitaLogin({ qiitaUrl, onLoggedIn }) {
@@ -103,26 +106,103 @@ function QiitaLogin({ qiitaUrl, onLoggedIn }) {
   };
 
   return (
+    <form className="auth-card" method="post" onSubmit={submit}>
+      <h2 className="auth-card-title">Log in with Qiita</h2>
+      <p className="auth-intro">Your classic Qiita email and password.</p>
+      <input type="email" name="username" autoComplete="username" className="auth-input"
+        placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+      <input type="password" name="password" autoComplete="current-password" className="auth-input"
+        placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+      {error && <div className="auth-error" role="alert">{error}</div>}
+      <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !email.trim() || !password}>
+        {busy ? 'Signing in…' : 'Sign in'}
+      </button>
+      <div className="auth-links">
+        <a href={`${qiita}/auth/forgot/`} target="_blank" rel="noopener noreferrer">Forgot password?</a>
+        <a href={`${qiita}/auth/create/`} target="_blank" rel="noopener noreferrer">Create a Qiita account</a>
+      </div>
+    </form>
+  );
+}
+
+function MiintLogin({ onLoggedIn }) {
+  const [loginUrl, setLoginUrl] = useState(null);
+  const [token,    setToken]    = useState('');
+  const [busy,     setBusy]     = useState(false);
+  const [error,    setError]    = useState('');
+
+  useEffect(() => {
+    apiFetch('/auth/login-url')
+      .then(r => (r.ok ? r.json() : {}))
+      .then(d => { if (/^https?:\/\//.test(d.url || '')) setLoginUrl(d.url); })
+      .catch(() => {});
+  }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const pat = token.trim();
+    if (busy || !pat) return;
+    setToken('');         // never kept past this request, success or not
+    setBusy(true); setError('');
+    try {
+      const res = await apiPost('/auth/connect', { token: pat });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(d.error || `Sign-in failed (${res.status})`);
+        return;
+      }
+      setCsrfToken(d.csrf_token);
+      onLoggedIn(d);
+    } catch (_) {
+      setError('Network error — check that the backend is reachable and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="auth-card" method="post" onSubmit={submit}>
+      <h2 className="auth-card-title">Log in with qiita-miint</h2>
+      <ol className="auth-steps">
+        <li>Log in on qiita-miint (opens in a new tab).</li>
+        <li>Copy the access token it shows you.</li>
+        <li>Paste it here.</li>
+      </ol>
+      <a className={`merge-btn-ghost auth-miint-link${loginUrl ? '' : ' disabled'}`} href={loginUrl || undefined}
+        target="_blank" rel="noopener noreferrer" onClick={e => { if (!loginUrl) e.preventDefault(); }}>
+        Open qiita-miint login ↗
+      </a>
+      {/* text, not password: a password manager would offer to save the token
+          as this site's password, or fill the classic password in here */}
+      <input type="text" name="qiita-token" autoComplete="off" spellCheck={false} className="auth-input"
+        placeholder="Access token (qk_…)" value={token} onChange={e => setToken(e.target.value)} required />
+      {error && <div className="auth-error" role="alert">{error}</div>}
+      <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !token.trim()}>
+        {busy ? 'Signing in…' : 'Sign in'}
+      </button>
+    </form>
+  );
+}
+
+// Both ways in, as equal choices. Whichever is used, the same email reaches the
+// same account. A method the server has switched off isn't shown.
+function LoginScreen({ qiitaUrl, loginMethods, onLoggedIn }) {
+  const methods = loginMethods || ['classic', 'miint'];
+  return (
     <div className="auth-gate">
-      <form className="auth-card" method="post" onSubmit={submit}>
+      <div className="auth-screen">
         <div className="app-logo app-logo-home auth-logo">
           <span className="app-logo-mark"><WreathLoader size={32} /></span>
           <span className="app-logo-text">Qiita<em>Explore</em></span>
         </div>
-        <p className="auth-intro">Sign in with your Qiita account.</p>
-        <input type="email" name="username" autoComplete="username" className="auth-input"
-          placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} autoFocus required />
-        <input type="password" name="password" autoComplete="current-password" className="auth-input"
-          placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-        {error && <div className="auth-error" role="alert">{error}</div>}
-        <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !email.trim() || !password}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
-        <div className="auth-links">
-          <a href={`${qiita}/auth/forgot/`} target="_blank" rel="noopener noreferrer">Forgot password?</a>
-          <a href={`${qiita}/auth/create/`} target="_blank" rel="noopener noreferrer">Create a Qiita account</a>
+        <div className="auth-options">
+          {methods.includes('classic') && <QiitaLogin qiitaUrl={qiitaUrl} onLoggedIn={onLoggedIn} />}
+          {methods.includes('miint') && <MiintLogin onLoggedIn={onLoggedIn} />}
         </div>
-      </form>
+        {methods.length > 1 && (
+          <p className="auth-note">Same email, same account: either way, your workspaces, chats and aggregations are there.</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 # Appendix A — API Reference
 
-Complete reference for the QiitaExplore HTTP surface: 74 routes (counted from `@app.route`, 2026-10-12), all under `/api/`.
+Complete reference for the QiitaExplore HTTP surface: 76 routes (counted from `@app.route`, 2026-10-12), all under `/api/`.
 
 > **Known gap.** Nine routes added by later PRs are not yet in the tables below: `api_get_study`, `api_study_prep_samples`, `api_study_sample_preps`, `api_update_chat`, `api_update_global_chat`, `api_move_chat_to_project`, `api_move_global_chat_to_project`, `api_remove_chat_from_project` (one function with two routes), and `download_fastq_manifest` (now listed under Artifacts). `grep -n "@app.route" backend/routes/*.py` is the authority.
 
@@ -20,13 +20,17 @@ Backend runs under Gunicorn on port 5001 (`qiita_explore/start_barnacle.sh`). CO
 
 Two `before_request` hooks are registered together by `backend/helpers/auth_middleware.py :: register_auth_middleware`:
 
-1. `_load_session` — reads the session cookie (`__Host-qe_sid`, or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off), resolves it to a session row, and sets `g.user_id` / `g.session_row`. Every 5 minutes per session it re-reads the classic-Qiita account and revokes the session if the password changed or the account is gone or unverified — see [Login-time failures and the Qiita re-check](#login-time-failures-and-the-qiita-re-check).
+1. `_load_session` — reads the session cookie (`__Host-qe_sid`, or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off), resolves it to a session row, and sets `g.user_id` / `g.session_row`. On a classic-Qiita session it re-reads the classic-Qiita account every 5 minutes and, if the password changed or the account is gone or unverified, revokes every session of that account (qiita-miint ones included); a qiita-miint session is not re-checked itself. A session whose login method is switched off is revoked (signed out for good) — see [Login-time failures and the Qiita re-check](#login-time-failures-and-the-qiita-re-check).
 2. `_require_auth` — default-deny. Any endpoint not in the public set gets **401** when `g.user_id` is `None`.
 
-**Exactly two endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
+**Exactly four endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
 
 - `api_auth_login`
+- `api_auth_connect`
+- `api_auth_login_url`
 - `api_auth_me`
+
+A login method switched off by `QIITA_EXPLORE_LOGIN_METHODS` keeps its endpoints in this set; their handlers answer **404** (`classic`: `api_auth_login`; `miint`: `api_auth_connect`, `api_auth_login_url`), and that method's existing sessions are revoked on their next request.
 
 Note that `api_auth_logout` lives under `/api/auth/` but is **not** public — it requires a session and the CSRF header like everything else. The comment in the source is explicit that prefix matching is the hole this guard exists to close.
 
@@ -36,13 +40,15 @@ Note that `api_auth_logout` lives under `/api/auth/` but is **not** public — i
 
 `POST /api/auth/login` reads `qiita.qiita_user` once. If classic Qiita's database can't be read (or the per-worker circuit breaker is open), login returns **503** `{"error": "Qiita's user database is unreachable — try again shortly."}`. A wrong password or unknown email returns **401** `{"error": "Incorrect email or password."}`.
 
-Mid-session, `_load_session` re-reads the account when the session's `last_verified_at` is more than 5 minutes old. If the database can't be read, the session keeps working for up to 1 hour after its last good check; after that **every** request on that session — public endpoints included — gets **503** with `Retry-After: 30` until Qiita answers again, except `POST /api/auth/logout`, which still revokes it. The session is not revoked by an outage. See [`02-authentication.md`](02-authentication.md#following-qiita-the-re-check).
+`POST /api/auth/connect` calls qiita-miint's `whoami` once. If qiita-miint can't be reached (timeout, connection error, 5xx or any other unexpected answer, or the per-worker circuit breaker is open), connect returns **503** `{"error": "qiita-miint is unreachable — try again shortly."}`; if this worker is already mid-`whoami`, **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`. A token qiita-miint rejects returns **401** `{"error": "invalid or unrecognized Qiita token"}`.
+
+Mid-session, on a classic-Qiita session (`source = 'qiita-classic'`) only, `_load_session` re-reads the account when the session's `last_verified_at` is more than 5 minutes old; a failed re-check revokes every session of that account. A qiita-miint session (`qiita-miint`, or production's older `paste`) is never re-checked itself and lasts to its 24-hour ceiling unless that happens. If the database can't be read, the session keeps working for up to 1 hour after its last good check; after that **every** request on that session — public endpoints included — gets **503** with `Retry-After: 30` until Qiita answers again, except `POST /api/auth/logout`, which still revokes it. The session is not revoked by an outage. See [`02-authentication.md`](02-authentication.md#following-qiita-the-re-check).
 
 ### CSRF
 
 Every `POST`, `PUT`, `PATCH`, and `DELETE` to a non-public endpoint requires an `X-CSRF-Token` header whose value matches the session's stored `csrf_token`, compared with `hmac.compare_digest`. A missing or mismatched token yields **403** `{"error": "CSRF token missing or invalid"}`. An absent stored token also fails closed.
 
-Clients get the token from `api_auth_login` (on login) or `api_auth_me` (on rehydrate).
+Clients get the token from `api_auth_login` or `api_auth_connect` (on sign-in) or `api_auth_me` (on rehydrate).
 
 ### Error envelope
 
@@ -55,6 +61,7 @@ Errors are a flat JSON object with a single `error` key holding a human-readable
 There is no error code, type, or nested detail field in the general case. A few deviations exist:
 
 - `api_auth_login` adds `retry_after` (seconds) to its **429**, and `"unverified": true` to its **403**.
+- `api_auth_connect` answers **409** for an email that moved between qiita-miint accounts; the body is the usual `{"error": …}`.
 - Several merge/validate handlers add a plural `errors` array alongside `error` — see `submit_merge_job`.
 
 Some handlers pass the raw exception text through as `str(e)` (notably `api_study_detail`, `search`, `api_first_studies`, `api_sample_detail`). Treat those strings as diagnostic, not stable.
@@ -74,15 +81,17 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 
 ## Summary table
 
-### Auth — `backend/routes/auth_routes.py` (3)
+### Auth — `backend/routes/auth_routes.py` (5)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
 | POST | `/api/auth/login` | `api_auth_login` | public | Classic-Qiita email + password → session cookie |
-| GET | `/api/auth/me` | `api_auth_me` | public | Current identity, or `{anonymous: true}`; both carry `qiita_url` |
+| GET | `/api/auth/login-url` | `api_auth_login_url` | public | The qiita-miint login page that issues a `qk_` token |
+| POST | `/api/auth/connect` | `api_auth_connect` | public | qiita-miint `qk_` token → session cookie |
+| GET | `/api/auth/me` | `api_auth_me` | public | Current identity, or `{anonymous: true}`; both carry `qiita_url` and `login_methods` |
 | POST | `/api/auth/logout` | `api_auth_logout` | session | Revoke the session and clear the cookie |
 
-Removed 2026-10-12, now **404**: `GET /api/auth/login-url`, `POST /api/auth/connect`, `GET /api/auth/legacy-default`, `POST /api/auth/claim-default`.
+Both logins reach the same account for the same email ([`02-authentication.md`](02-authentication.md#one-account-per-email)). Removed 2026-10-12, now **404**: `GET /api/auth/legacy-default`, `POST /api/auth/claim-default`.
 
 ### Studies — `backend/routes/study_routes.py` (7)
 
@@ -196,7 +205,7 @@ Every artifact route serves **public artifacts of public studies only** (TKT-043
 
 `POST /api/auth/login` — public.
 
-Signs in with a classic-Qiita email and password, checked against `qiita.qiita_user` in classic Qiita's PostgreSQL. This is the only endpoint that mints a session cookie.
+Signs in with a classic-Qiita email and password, checked against `qiita.qiita_user` in classic Qiita's PostgreSQL. It and `api_auth_connect` are the only endpoints that mint a session cookie. With `classic` not in `QIITA_EXPLORE_LOGIN_METHODS` it answers **404** before any check.
 
 Request (`Content-Type: application/json`, with an `Origin` header):
 
@@ -210,11 +219,11 @@ Behavior, in order — the first failing check answers:
 2. **JSON only.** Not `application/json` → **415** `{"error": "JSON body required"}`.
 3. **Origin.** `Origin` must equal `config.PUBLIC_ORIGIN` (`QIITA_EXPLORE_PUBLIC_ORIGIN`) or one entry of `config.ALLOWED_ORIGINS`, else **403** `{"error": "origin not allowed"}`. A `Sec-Fetch-Site` header, when sent, must be `same-origin` — or `same-site` for a dev origin from `ALLOWED_ORIGINS` only (else the same 403). With neither setting configured → **503** `{"error": "Login is not configured on this server."}`.
 4. **Bounded read.** The body is read with a hard limit of 8 KB + 1 bytes, so a chunked body (no `Content-Length` for step 1) that runs over → **413**. Not a JSON object → **415**.
-5. **Format.** An email that can't be a Qiita email (over 254 characters, non-ASCII, not exactly one `@`) or a password outside Qiita's rule (8–1024 characters, ASCII, no space or backslash) → **401** `{"error": "Incorrect email or password."}`. Not counted toward any limit.
+5. **Format.** An email that can't be a Qiita email (over 254 characters, non-ASCII, not exactly one `@`, whitespace or control characters inside) or a password outside Qiita's rule (8–1024 characters, ASCII, no space or backslash) → **401** `{"error": "Incorrect email or password."}`. Not counted toward any limit.
 6. **Limits** (`helpers/login_limiter.py`): a blocked email or client → **429** `{"error": "Too many attempts — try again in N minutes.", "retry_after": <seconds>}` with a `Retry-After` header. A valid known-device cookie for this account skips both (up to 10 attempts in a row without a success). Limiter storage unusable → **503**.
 7. **Account and password.** Unknown email or wrong password → **401** with the same text as step 5 (an unknown email still costs one bcrypt check). Qiita's database unreachable or circuit open → **503** `{"error": "Qiita's user database is unreachable — try again shortly."}`. This worker already busy with a bcrypt check → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`.
 8. **Unverified** account (level id 5), after the correct password → **403** `{"error": "Verify your email on Qiita first.", "unverified": true}`. No session.
-9. **Success.** Clears this email's attempt counter (and takes this attempt back off the client's failure count), purges expired sessions, finds or creates the QiitaExplore account bound to the email (`store/auth_store.py :: resolve_user`), and creates the session. If a valid session cookie was already present, the prior session is revoked in the same transaction.
+9. **Success.** Clears this email's attempt counter (and takes this attempt back off the client's failure count), purges expired sessions, finds or creates the account for the email and refreshes its level (`store/auth_store.py :: resolve_user(email, level=…)` — one account per email, shared with qiita-miint), and creates the session. If a valid session cookie was already present, the prior session is revoked in the same transaction.
 
 On success, sets the session cookie — `__Host-qe_sid` (or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off): `HttpOnly`, `SameSite=Lax`, `Secure` per config, `path=/`, no `Domain`, `max_age = AUTH_SESSION_ABSOLUTE_TTL_SECONDS`. Unless the browser already holds a valid known-device cookie for this account, it also sets one — `__Host-qe_dev` (or `qe_dev`), same attributes, 30 days. Returns:
 
@@ -226,11 +235,49 @@ The password is never logged, stored, or echoed back. Full treatment in [`02-aut
 
 `backend/routes/auth_routes.py :: api_auth_login`
 
+### api_auth_login_url
+
+`GET /api/auth/login-url` — public.
+
+Returns `{"url": "<QIITA_PUBLIC_LOGIN_URL>/api/v1/auth/login"}`, the qiita-miint control plane's login entry, which ends on a page showing a `qk_` access token. When `QIITA_LOGINROCKET_URL` is set, the URL is wrapped as `<QIITA_LOGINROCKET_URL>/logout?redirect_uri=<url-encoded login URL>`, so a cached AuthRocket session can't complete the login as whoever signed in last (see the trap in [appendix D](appendix-d-configuration.md#env-QIITA_LOGINROCKET_URL)). With `miint` not in `QIITA_EXPLORE_LOGIN_METHODS` → **404**. No `Origin` check: it only returns configured URLs and changes nothing. (`backend/routes/auth_routes.py :: api_auth_login_url`)
+
+### api_auth_connect
+
+`POST /api/auth/connect` — public.
+
+Signs in with a qiita-miint access token, checked once with qiita-miint's `whoami`. With `miint` not in `QIITA_EXPLORE_LOGIN_METHODS` → **404** before any check.
+
+Request (`Content-Type: application/json`, with an `Origin` header):
+
+```json
+{ "token": "qk_…" }
+```
+
+Behavior, in order — the first failing check answers:
+
+1–4. **The same front checks as `api_auth_login`** (same code): body over 8 KB → **413**; not JSON → **415**; `Origin` / `Sec-Fetch-Site` not allowed → **403**, or **503** with no origin configured; bounded read, not a JSON object → **413** / **415**.
+5. **Token shape.** Not a string matching `qk_[A-Za-z0-9_-]{30,128}` once stripped → **401** `{"error": "That isn't a qiita-miint access token (qk_…)."}`. `whoami` is not called.
+6. **`whoami`** (`helpers/qiita_client.py`, `GET <QIITA_CONTROL_PLANE_URL>/api/v1/auth/whoami`, Bearer token, `QIITA_WHOAMI_TIMEOUT_SECONDS`, default 3 s): a `401`, or a `200` for a non-human (anonymous or service) principal → **401** `{"error": "invalid or unrecognized Qiita token"}`. A timeout, connection error, 5xx, other status or non-JSON body — or the per-worker circuit breaker open (3 transient failures → 30 s without calling) → **503** `{"error": "qiita-miint is unreachable — try again shortly."}`. One call per worker at a time: waiting over 0.5 s for it → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`.
+7. **Principal.** `principal_idx` not an integer → **502** `{"error": "unexpected identity response from Qiita"}`.
+8. **Email.** The reported email must pass the same rule as classic login (`helpers/emails.py :: normalize_email`) and carry no leading or trailing whitespace, else **401** `{"error": "This qiita-miint account's email can't be used to sign in here."}`.
+9. **Principal still matches.** The email's account (`resolve_user(email, principal_idx=…)` — the same account a classic login with that email reaches) already has a *different* qiita-miint principal recorded → **409** `{"error": "This email's QiitaExplore account belongs to a different qiita-miint account. Sign in with classic Qiita instead."}`. The address moved between qiita-miint accounts; refusing stops the new holder inheriting the first person's data.
+10. **Success.** Records the principal on the account if it has none and no other account holds it (or creates the account), purges expired sessions, and creates a session with `source = 'qiita-miint'` and no `password_fp`. If a valid session cookie was already present, the prior session is revoked in the same transaction. A failed connect leaves it untouched.
+
+No login limits apply (a token can't be guessed). On success, sets the session cookie exactly as `api_auth_login` does (no known-device cookie) and returns the same shape:
+
+```json
+{ "user_id": "q3f9…", "email": "someone@ucsd.edu", "level": null, "csrf_token": "..." }
+```
+
+`level` is `null` until the account has signed in with classic Qiita. The token is never logged, stored, or echoed back. Full treatment in [`02-authentication.md`](02-authentication.md#the-qiita-miint-login).
+
+`backend/routes/auth_routes.py :: api_auth_connect`
+
 ### api_auth_me
 
 `GET /api/auth/me` — public.
 
-Returns `{"anonymous": true, "qiita_url": "https://qiita.ucsd.edu"}` when there is no session, or when the session resolves to a user row that no longer exists. Otherwise returns `{user_id, email, level, csrf_token, qiita_url}`, with `csrf_token` read from the session row. `qiita_url` is `QIITA_CLASSIC_URL`; the sign-in form links its "Forgot password?" and "Create a Qiita account" to it. This is the rehydrate path on page load. Like every endpoint except logout, it answers **503** when the caller's session is past the 1-hour Qiita-outage grace. (`backend/routes/auth_routes.py :: api_auth_me`)
+Returns `{"anonymous": true, "qiita_url": "https://qiita.ucsd.edu", "login_methods": ["classic", "miint"]}` when there is no session, or when the session resolves to a user row that no longer exists. Otherwise returns `{user_id, email, level, csrf_token, qiita_url, login_methods}`, with `csrf_token` read from the session row. `qiita_url` is `QIITA_CLASSIC_URL`; the classic sign-in card links its "Forgot password?" and "Create a Qiita account" to it. `login_methods` is `QIITA_EXPLORE_LOGIN_METHODS` as a list; the login page shows a card only for a listed method. This is the rehydrate path on page load. Like every endpoint except logout, it answers **503** when the caller's session is past the 1-hour Qiita-outage grace. (`backend/routes/auth_routes.py :: api_auth_me`)
 
 ### api_auth_logout
 
@@ -240,7 +287,7 @@ Revokes the session row if present and deletes the cookie. Returns `{"ok": true}
 
 ### Removed
 
-`GET /api/auth/login-url`, `POST /api/auth/connect` (paste a qiita-miint token), `GET /api/auth/legacy-default` and `POST /api/auth/claim-default` were removed on 2026-10-12 with the qiita-miint login and `store/legacy_claim.py`. They now return **404**.
+`GET /api/auth/legacy-default` and `POST /api/auth/claim-default` were removed on 2026-10-12 with `store/legacy_claim.py`. They now return **404**.
 
 ---
 
@@ -832,7 +879,7 @@ Behaviors that are easy to misread from the route names alone:
 
 ## See also
 
-- [`02-authentication.md`](02-authentication.md) — classic-Qiita login, brute-force limits, the session model and Qiita re-check, the CSRF contract, and the public-only data rule
+- [`02-authentication.md`](02-authentication.md) — both logins (classic Qiita and qiita-miint) and one account per email, brute-force limits, the session model and Qiita re-check, the CSRF contract, and the public-only data rule
 - [`06-streaming-and-chat.md`](06-streaming-and-chat.md) — SSE contract and the frontend segments model
 - [`07-merge-and-biom.md`](07-merge-and-biom.md) — merge workspace lifecycle, BIOM resolution, and job execution
 - [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) — agent tool definitions and full SSE event payloads

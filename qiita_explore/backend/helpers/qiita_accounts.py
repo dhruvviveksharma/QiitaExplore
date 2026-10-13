@@ -24,10 +24,11 @@ import bcrypt
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
+from helpers.emails import normalize_email  # noqa: F401 — part of this module's API (routes use accounts.normalize_email)
+
 logger = logging.getLogger(__name__)
 
 UNVERIFIED_LEVEL_ID = 5          # classic Qiita refuses this id (qiita_db/user.py "MAGIC NUMBER 5")
-_MAX_EMAIL = 254
 _MAX_PASSWORD = 1024             # QiitaExplore's own cap; classic Qiita sets none
 _BCRYPT_MAX_BYTES = 72           # bcrypt 4.x truncates here (as classic Qiita does); 5.x would raise
 _HASH_RE = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
@@ -57,18 +58,6 @@ class Account:
     @property
     def unverified(self) -> bool:
         return self.level_id == UNVERIFIED_LEVEL_ID or self.level == "unverified"
-
-
-def normalize_email(raw):
-    """Classic Qiita's web login form: strip, then lowercase. Non-ASCII is
-    rejected *before* lowercasing (Qiita only stores ASCII emails, and e.g. the
-    Kelvin sign lowercases to 'k'). None when it can't be a Qiita email."""
-    if not isinstance(raw, str):
-        return None
-    s = raw.strip()
-    if not s or len(s) > _MAX_EMAIL or not s.isascii() or s.count("@") != 1:
-        return None
-    return s.lower()
 
 
 def valid_password_format(pw) -> bool:

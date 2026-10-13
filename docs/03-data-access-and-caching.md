@@ -192,13 +192,13 @@ Full schema in [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md).
 
 ### Migration philosophy
 
-Forward-only and additive. New columns arrive as `ALTER TABLE ... ADD COLUMN` statements wrapped in `try/except`, which makes them idempotent — the second run raises "duplicate column" and is ignored. There is no version table; `meta` holds one-off markers such as `users_classic_v1`.
+Forward-only and additive. New columns arrive as `ALTER TABLE ... ADD COLUMN` statements wrapped in `try/except`, which makes them idempotent — the second run raises "duplicate column" and is ignored. There is no version table; `meta` holds one-off markers such as `users_email_v1`.
 
 For a single-file local store this is a reasonable trade. Two consequences are worth naming:
 
 > **The bare** `except Exception: pass` **around each ALTER cannot distinguish "column already exists" from a real failure** — a locked database, a full disk, a corrupt file. In the failure case the application boots with a **silently incomplete schema** and fails later, somewhere unrelated. Catching only `sqlite3.OperationalError` and matching on the duplicate-column message would preserve idempotency without swallowing genuine errors. This is TKT-002 territory.
 
-Two migrations are not additive, both on `users`, whose shape `CREATE TABLE IF NOT EXISTS` cannot upgrade. `backend/store/db.py :: _reconcile_legacy_users_table` handles a pre-authentication table, detected by its `username` / `password_hash` columns: it guards on `auth_sessions` being empty, then renames the old table aside and drops `auth_sessions` so the schema script can recreate both. `_migrate_users_to_classic` (2026-10) rebuilds the qiita-miint-era table into the classic-Qiita login shape in one locked transaction, keeping every `user_id` and revoking every session. Both run at import time on every boot and are no-ops once done. Details in [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md#migration-history).
+Two migrations are not additive, both on `users`, whose shape `CREATE TABLE IF NOT EXISTS` cannot upgrade. `backend/store/db.py :: _reconcile_legacy_users_table` handles a pre-authentication table, detected by its `username` / `password_hash` columns: it guards on `auth_sessions` being empty, then renames the old table aside and drops `auth_sessions` so the schema script can recreate both. `_migrate_users_to_email_v1` (2026-10) rebuilds the qiita-miint-era table (or this branch's interim classic_v1 one) into the one-account-per-email shape in one locked transaction, keeping every `user_id` and leaving sessions alone. Both run at import time on every boot and are no-ops once done. Details in [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md#migration-history).
 
 ### The facade
 

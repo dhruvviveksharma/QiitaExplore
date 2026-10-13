@@ -70,7 +70,7 @@ flowchart LR
         L["loaders.js"]
     end
 
-    A["auth.js<br/>useAuth · QiitaLogin"]
+    A["auth.js<br/>useAuth · LoginScreen"]
     C["components.js<br/>shared components<br/>SLASH_COMMANDS · model lists"]
     SC["study_card.js<br/>StudyCard"]
     H["hooks/<br/>useModelSelection.js"]
@@ -113,7 +113,7 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/utils.js`                   | 86    | Global hook destructure, `API`, `apiFetch`/`apiPost`/`apiPatch`/`apiDel`, CSRF token, `fetchStudyDetail`, `parseSSE` |
 | `frontend/js/icons.js`                   | 60    | Five inline stroke SVG components (`ChevronIcon`, `MergeIcon`, `SunIcon`, `MoonIcon`, `BoltIcon`)                    |
 | `frontend/js/loaders.js`                 | 168   | Canvas-drawn loading animations (`InfinityLoader`, `WreathLoader`)                                                    |
-| `frontend/js/auth.js`                    | 166   | `useAuth`, `QiitaLogin` (classic-Qiita email + password form), `AccountBar`                                         |
+| `frontend/js/auth.js`                    | 246   | `useAuth`, `LoginScreen` (one card per enabled login: `QiitaLogin`, classic-Qiita email + password; `MiintLogin`, qiita-miint login link + `qk_` token), `AccountBar` |
 | `frontend/js/hooks/useInputHistory.js`   | 84    | `useInputHistory(name, {transcript, resetKey})` — ↑ / ↓ recall like a shell. In a chat the composer walks that chat's own saved messages (raw text, as typed: optimistic messages keep `sent`), restarting on a chat switch; the Browse bar and the composer before a chat exists walk the last 50 entries kept in `localStorage` (`qe-history:<name>`) |
 | `frontend/js/context_bar.js`             | 82    | `ContextBar` — before the model chip: how full the chat's last request was, one colored segment per part, click for the breakdown (`useDropdown` panel). From the `context_usage` SSE event / the chat GET's `context_usage` (`chatCache[chatId].contextUsage`); after a model switch, rescaled to the new window until the next reply |
 | `frontend/js/hooks/useOutsideClose.js`   | 25    | `useOutsideClose(onClose, ignoreSelector)` — closes an always-open panel (the model picker) on a mousedown outside it |
@@ -414,12 +414,16 @@ stateDiagram-v2
 
     authenticated --> anonymous: logout()
     authenticated --> anonymous: any 401 (setUnauthorizedHandler)
-    anonymous --> authenticated: QiitaLogin — POST /auth/login succeeds
+    anonymous --> authenticated: LoginScreen — POST /auth/login<br/>or POST /auth/connect succeeds
 ```
 
-After the initial load, authentication is binary: either the local session is valid and the app opens, or the sign-in screen is shown. There is no "reconnecting" state. The backend re-checks the account against classic Qiita every 5 minutes; when that revokes the session (password changed, account gone or unverified), the next request's 401 drops the UI straight to the sign-in screen through the unauthorized handler `useAuth` installs.
+After the initial load, authentication is binary: either the local session is valid and the app opens, or the sign-in screen is shown. There is no "reconnecting" state. For a classic session the backend re-checks the account against classic Qiita every 5 minutes; when that fails (password changed, account gone or unverified) it revokes every session of the account, qiita-miint ones included, and the next request's 401 drops the UI straight to the sign-in screen through the unauthorized handler `useAuth` installs. The same happens when the server switches off the login method a session was made with.
 
-If `/auth/me` fails for any reason (backend down, session expired, a 503 while Qiita's user database has been unreachable for over an hour, etc.), the frontend clears local auth state and shows the sign-in screen. Login failures are shown inside the form, using the server's message: 401 (generic "Incorrect email or password."), 403 (verify your email on Qiita first), 429 (with the wait), 503. The anonymous `/auth/me` answer carries `qiita_url`, which the form uses for its "Forgot password?" and "Create a Qiita account" links.
+If `/auth/me` fails for any reason (backend down, session expired, a 503 while Qiita's user database has been unreachable for over an hour, etc.), the frontend clears local auth state and shows the sign-in screen. Sign-in failures are shown inside the card that made them, using the server's message (or `Sign-in failed (<status>)`). Classic: 401 (generic "Incorrect email or password."), 403 (verify your email on Qiita first), 429 (with the wait), 503. qiita-miint: 401 (not a `qk_` token, a token qiita-miint rejects, or an email that can't be used), 409 (the email's account belongs to a different qiita-miint account), 502, 503 (qiita-miint unreachable, or the server busy). `/auth/me` always carries `qiita_url`, which the classic card uses for its "Forgot password?" and "Create a Qiita account" links, and `login_methods`.
+
+### The login screen
+
+`LoginScreen` shows one card per method in `login_methods` (both, if the answer had none): "Log in with Qiita" (`QiitaLogin`) and "Log in with qiita-miint" (`MiintLogin`), as equal cards side by side — a CSS grid of `repeat(auto-fit, minmax(min(100%, 280px), 380px))` columns, so they stack on a narrow screen, and the gate scrolls when the stack is taller than the viewport. With both shown, a note under them reads "Same email, same account: either way, your workspaces, chats and aggregations are there." `MiintLogin` asks `GET /api/auth/login-url` on mount and links "Open qiita-miint login ↗" to the answer (new tab, `rel="noopener noreferrer"`) only if it is an `http(s)://` URL; otherwise the link stays greyed out.
 
 ### The ordering guarantee
 
@@ -440,9 +444,10 @@ Doing this with a conditional inside one component would be a Rules-of-Hooks vio
 
 Nothing durable is written. There is no bearer token, no `localStorage` entry, no `sessionStorage` entry, and no auth material in any URL.
 
-- **The session** is an `HttpOnly`, `SameSite=Lax` cookie set by `POST /api/auth/login` — `__Host-qe_sid` when the backend sets `Secure` (production), `qe_sid` in plain-HTTP dev. `apiFetch` sets `credentials: 'include'` on **every** request, so it rides along automatically and no call site does anything auth-specific. Login also sets a known-device cookie (`__Host-qe_dev`) that exempts this browser from the login limits for that account; JS never reads either.
-- **The CSRF token** lives in a module-scope `let _csrfToken` in `frontend/js/utils.js`, written by `setCsrfToken` from the `/auth/me` or `/auth/login` response body. `apiFetch` attaches it as `X-CSRF-Token` **only** when the method is one of POST, PUT, PATCH, DELETE. A cross-site page can make the browser send the cookie but cannot read the response body that carries the token.
+- **The session** is an `HttpOnly`, `SameSite=Lax` cookie set by `POST /api/auth/login` or `POST /api/auth/connect` — `__Host-qe_sid` when the backend sets `Secure` (production), `qe_sid` in plain-HTTP dev. `apiFetch` sets `credentials: 'include'` on **every** request, so it rides along automatically and no call site does anything auth-specific. Classic login also sets a known-device cookie (`__Host-qe_dev`) that exempts this browser from the login limits for that account; JS never reads either.
+- **The CSRF token** lives in a module-scope `let _csrfToken` in `frontend/js/utils.js`, written by `setCsrfToken` from the `/auth/me`, `/auth/login` or `/auth/connect` response body. `apiFetch` attaches it as `X-CSRF-Token` **only** when the method is one of POST, PUT, PATCH, DELETE. A cross-site page can make the browser send the cookie but cannot read the response body that carries the token.
 - **The password** exists only in `QiitaLogin`'s `useState`. On submit it is copied to a local, cleared from state with `setPassword('')` *before* the request is sent, and POSTed once as JSON — so it is gone from the form whether the login succeeds or fails. It is never put in `localStorage`, `sessionStorage` or a URL, and neither field uses `useInputHistory`. The form is a real `<form method="post">` with `autoComplete="username"` / `"current-password"` so password managers recognize it; `onSubmit` calls `preventDefault()` first, so a native submit can't send the password to the page URL (the CSP's `form-action 'self'` backs that up).
+- **The qiita-miint token** exists only in `MiintLogin`'s `useState`, and is handled the same way: trimmed, cleared with `setToken('')` before the request, POSTed once as JSON, never stored or put in a URL. Its field is deliberately `type="text"` (with `autoComplete="off"` and spell-check off), not `type="password"`: a password manager would otherwise offer to save the token as this site's password, or fill the classic password into it. The token is therefore visible on screen while it sits in the field.
 
 Full server-side treatment is in [`02-authentication.md`](02-authentication.md).
 

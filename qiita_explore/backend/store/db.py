@@ -1,9 +1,12 @@
 """SQLite schema creation, migration helpers, and core connection utilities."""
 
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Go up one level (store/ → backend/) so the data dir stays at backend/data/
 _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -295,17 +298,16 @@ def _create_schema(conn):
             cached_at         TEXT
         );
 
-        -- One row per QiitaExplore account (store/auth_store.py). Accounts log in
-        -- with classic Qiita; qiita_email (normalized) binds a row to its Qiita
-        -- account. principal_idx / miint_email: the qiita-miint identity of
-        -- accounts from before 2026-10, kept so scripts/bind_classic_accounts.py
-        -- can show who they were; NULL for newer accounts.
+        -- One row per person (store/auth_store.py). user_id is opaque and owns all
+        -- their data; email (normalized) is the link both logins resolve through,
+        -- so classic Qiita and qiita-miint reach the same account for the same
+        -- email. user_level: from classic Qiita; principal_idx: the qiita-miint
+        -- principal. Either is NULL until that kind of login.
         CREATE TABLE IF NOT EXISTS users (
             user_id       TEXT PRIMARY KEY,
-            qiita_email   TEXT UNIQUE,
+            email         TEXT UNIQUE,
             user_level    TEXT,
             principal_idx INTEGER,
-            miint_email   TEXT,
             created_at    TEXT,
             updated_at    TEXT,
             last_login_at TEXT
@@ -439,29 +441,36 @@ def _move_aggregation_filters_to_studies(conn):
         conn.execute("UPDATE aggregations SET file_filter_json=NULL WHERE aggregation_id=?", (aggregation_id,))
 
 
-_USERS_CLASSIC_COLUMNS = """
+_USERS_COLUMNS = """
     user_id       TEXT PRIMARY KEY,
-    qiita_email   TEXT UNIQUE,
+    email         TEXT UNIQUE,
     user_level    TEXT,
     principal_idx INTEGER,
-    miint_email   TEXT,
     created_at    TEXT,
     updated_at    TEXT,
     last_login_at TEXT
 """
 
 
-def _users_is_classic(conn) -> bool:
-    return "qiita_email" in {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+def _users_is_current(conn) -> bool:
+    # qiita-miint rows have `email` but no `user_level`; classic_v1 rows have `qiita_email`.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    return "email" in cols and "user_level" in cols
 
 
-def _migrate_users_to_classic():
-    """One-time rebuild of a qiita-miint-era `users` table into the classic-Qiita
-    shape (2026-10). Old rows keep their user_id (all their data hangs off it)
-    and principal_idx; their qiita-miint email moves to miint_email, and
-    qiita_email starts NULL: binding an old account to a classic-Qiita login is
-    an explicit, operator-confirmed step (scripts/bind_classic_accounts.py),
-    never automatic. Every live session is revoked (all are qiita-miint ones).
+def _migrate_users_to_email_v1():
+    """One-time rebuild of `users` into the one-account-per-email shape (2026-10),
+    from either earlier shape:
+      - qiita-miint (production before 2026-10): user_id = str(principal_idx),
+        whoami-verified `email`;
+      - classic_v1 (only where branch qiita-classic-login ran first): qiita_email,
+        or else miint_email.
+    Every row keeps its user_id (all its data hangs off it), principal_idx and
+    timestamps; its email becomes the link both logins resolve through. An email
+    two rows claim stays with a classic-bound row first, then the latest login;
+    the others — and any whose email isn't usable — keep their data with email
+    NULL and are logged. Sessions are left alone: both kinds of login still
+    exist, and user_ids don't change.
 
     Done the only safe way SQLite allows (verified in the 2026-10-12 review):
     its own autocommit connection; foreign keys turned off *before* the
@@ -472,48 +481,77 @@ def _migrate_users_to_classic():
     key to point at it); foreign_key_check must come back empty. A crash before
     COMMIT leaves the old table untouched.
     """
+    from helpers.emails import normalize_email     # the logins' own rule
+
     conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_MS / 1000.0, isolation_level=None)
     try:
         conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-        if _users_is_classic(conn):
+        if _users_is_current(conn):
             return
         conn.execute("PRAGMA foreign_keys = OFF")
         if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
             raise RuntimeError("could not turn foreign keys off for the users migration")
         conn.execute("BEGIN IMMEDIATE")
         try:
-            if _users_is_classic(conn):           # another worker got here first
+            if _users_is_current(conn):           # another worker got here first
                 conn.execute("ROLLBACK")
                 return
             old_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
             pick = lambda c: c if c in old_cols else "NULL"   # noqa: E731
             rows = conn.execute(
-                f"SELECT user_id, {pick('principal_idx')}, {pick('email')}, {pick('created_at')}, "
+                f"SELECT user_id, {pick('qiita_email')}, {pick('miint_email')}, {pick('email')}, "
+                f"{pick('user_level')}, {pick('principal_idx')}, {pick('created_at')}, "
                 f"{pick('updated_at')}, {pick('last_login_at')} FROM users").fetchall()
-            conn.execute(f"CREATE TABLE users_new ({_USERS_CLASSIC_COLUMNS})")
+            rows.sort(key=lambda r: r[8] or "", reverse=True)      # latest login first...
+            rows.sort(key=lambda r: r[1] is None)                  # ...after classic-bound rows
+            emails, principals, out, unlinked = set(), set(), [], []
+            for uid, qiita_email, miint_email, email, level, principal, created, updated, last in rows:
+                e = normalize_email(qiita_email or miint_email or email)
+                if e is None or e in emails:     # unusable, or another account kept it
+                    unlinked.append(uid)
+                    e = None
+                elif e:
+                    emails.add(e)
+                if principal in principals:
+                    principal = None
+                elif principal is not None:
+                    principals.add(principal)
+                out.append((uid, e, level, principal, created, updated, last))
+            conn.execute(f"CREATE TABLE users_new ({_USERS_COLUMNS})")
             conn.executemany(
-                "INSERT INTO users_new(user_id, qiita_email, user_level, principal_idx, miint_email, "
-                "created_at, updated_at, last_login_at) VALUES(?, NULL, NULL, ?, ?, ?, ?, ?)", rows)
-            conn.execute("UPDATE auth_sessions SET revoked_at = ? WHERE revoked_at IS NULL", (_now(),))
+                "INSERT INTO users_new(user_id, email, user_level, principal_idx, created_at, updated_at, "
+                "last_login_at) VALUES(?, ?, ?, ?, ?, ?, ?)", out)
             conn.execute("DROP TABLE users")
             conn.execute("ALTER TABLE users_new RENAME TO users")
+            conn.execute(_USERS_PRINCIPAL_INDEX)
             problems = conn.execute("PRAGMA foreign_key_check(auth_sessions)").fetchall()   # users' only referrer
             if problems:
                 raise RuntimeError(f"users migration left {len(problems)} broken foreign keys")
-            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('users_classic_v1', ?)", (_now(),))
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('users_email_v1', ?)", (_now(),))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
     finally:
         conn.close()
+    if unlinked:
+        logger.warning("users migration: %d account(s) left without an email — shared with another account, "
+                       "or not usable as one (data kept): %s", len(unlinked), ", ".join(unlinked))
+
+
+_USERS_PRINCIPAL_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_principal ON users(principal_idx) "
+                          "WHERE principal_idx IS NOT NULL")
 
 
 def _bootstrap():
     with _conn() as conn:
         _create_schema(conn)
         conn.commit()
-    _migrate_users_to_classic()
+    _migrate_users_to_email_v1()
+    with _conn() as conn:          # after the migration: an older users table may lack the column
+        if _users_is_current(conn):
+            conn.execute(_USERS_PRINCIPAL_INDEX)
+            conn.commit()
 
 
 _bootstrap()

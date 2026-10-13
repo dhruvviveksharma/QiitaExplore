@@ -26,5 +26,8 @@ openpyxl==3.1.5
 # ── Classic-Qiita password check (helpers/qiita_accounts.py) ────────────────
 bcrypt==4.3.0
 
+# ── qiita-miint login: whoami (helpers/qiita_client.py) ─────────────────────
+httpx>=0.25,<1.0
+
 # ── Production WSGI server ──────────────────────────────────────────────────
 gunicorn>=21.0,<22.0

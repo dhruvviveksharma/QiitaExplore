@@ -1,10 +1,15 @@
 """Pytest fixtures for qiita_explore tests."""
+import os
 import pytest
 import sys
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
+
+# qiita-miint login is on by default, and config refuses to start without an
+# explicit control-plane URL then; whoami itself is always faked in tests.
+os.environ.setdefault("QIITA_CONTROL_PLANE_URL", "https://control-plane.test")
 
 _FAKE_QIITA_DB_STUBBED = False
 

@@ -22,5 +22,8 @@ openpyxl>=3.1,<4.0
 # on passwords over 72 bytes, where Qiita (bcrypt 4) truncates.
 bcrypt>=4.0,<5
 
+# qiita-miint login: whoami against the control plane (helpers/qiita_client.py)
+httpx>=0.25,<1.0
+
 # Production WSGI server
 gunicorn>=21.0,<22.0

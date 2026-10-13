@@ -31,11 +31,13 @@ flowchart TB
     LIM[("SQLite<br/>login limiter")]
     NRP["NRP-Nautilus<br/>ellm.nrp-nautilus.io/v1"]
     ANT["Anthropic API"]
+    CP["qiita-miint control plane<br/>QIITA_CONTROL_PLANE_URL"]
 
     B --> NG
     S -.serves.-> B
     P --> GU
-    W -->|"study data · qiita_user (login)"| PGDB
+    W -->|"study data · qiita_user (classic login)"| PGDB
+    W -->|"whoami (qiita-miint login)"| CP
     W --> SQ
     W --> LIM
     W --> NRP
@@ -46,7 +48,7 @@ flowchart TB
 
 ### Development (SSH tunnels)
 
-The dev setup runs the backend on port **5002** on barnacle, forwarded to the developer's machine, with the frontend served locally. `frontend/index.html` ships with `<meta name="api-base" content="http://127.0.0.1:5002/api">` and a TODO to revert it to 5001 before merging to master — this is the CLAUDE.md port convention, not a bug. `Qiita/start_qiita_stack.sh` brings up the tunnels in both directions: a forward tunnel for the browser to reach the backend, and a **reverse** tunnel so the backend can reach a control plane running on the developer's laptop. Since 2026-10-12 QiitaExplore no longer calls the control plane (logins are checked against classic Qiita), so only the forward tunnel matters to it.
+The dev setup runs the backend on port **5002** on barnacle, forwarded to the developer's machine, with the frontend served locally. `frontend/index.html` ships with `<meta name="api-base" content="http://127.0.0.1:5002/api">` and a TODO to revert it to 5001 before merging to master — this is the CLAUDE.md port convention, not a bug. `Qiita/start_qiita_stack.sh` brings up the tunnels in both directions: a forward tunnel for the browser to reach the backend, and a **reverse** tunnel so the backend can reach a control plane running on the developer's laptop. With the qiita-miint login on (the default, `QIITA_EXPLORE_LOGIN_METHODS`), QiitaExplore calls that control plane's `whoami` once per qiita-miint sign-in, so both tunnels matter. A plain-HTTP tunnel endpoint for `QIITA_CONTROL_PLANE_URL` is refused at import unless `QIITA_CONTROL_PLANE_ALLOW_HTTP=true`, and that opt-in is only safe where no other local user can take the port over: email is the link to every account, so whoever answers `whoami` can open any of them ([`02-authentication.md`](02-authentication.md)). Barnacle is multi-user, so a dev backend that only needs classic login can set `QIITA_EXPLORE_LOGIN_METHODS=classic` instead.
 
 If you are reading a diagram in these docs and it says `:8080`, it is drawing production.
 
@@ -135,7 +137,8 @@ sequenceDiagram
     alt session invalid / expired / revoked
         M1-->>F: g.user_id stays None
     else session valid
-        M1->>M1: every 5 min: re-read the account in qiita.qiita_user<br/>(password changed / gone / unverified → revoke)
+        M1->>M1: login method switched off → treat as signed out
+        M1->>M1: classic sessions, every 5 min: re-read the account in qiita.qiita_user<br/>(password changed / gone / unverified → revoke all the account's sessions)
         M1->>M1: touch_session (throttled)
     end
     M1->>M2: g.user_id set (or None)
@@ -161,7 +164,7 @@ backend/
   config.py         env loading, LLM clients, model roster, prompts, auth config
   agent_harness.py  offline CLI driver for the agent loop
 
-  routes/     9 modules, 74 routes — thin; parse, authorize, delegate, serialize
+  routes/     9 modules, 76 routes — thin; parse, authorize, delegate, serialize
   helpers/    subsystem logic — the agent loop, tools, search, BIOM, auth, SSE
   services/   study_service.py (SQL builders), llm.py (regex query planner)
   store/      SQLite access, one module per domain + a flat re-export facade

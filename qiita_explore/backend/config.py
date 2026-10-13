@@ -96,11 +96,47 @@ REPORT_SAMPLE_LIMIT             = 200
 PINNED_CHARS_PER_STUDY          = int(os.getenv("PINNED_CHARS_PER_STUDY", "60000"))
 PINNED_INLINE_STUDIES           = int(os.getenv("PINNED_INLINE_STUDIES", "5"))
 
-# ── Classic-Qiita login (helpers/qiita_accounts.py, routes/auth_routes.py) ───
-# Users log in with their classic-Qiita email + password, checked against
-# qiita.qiita_user through the read-only Postgres role. Sign-up, email
-# verification and password reset stay on classic Qiita at this URL.
+# ── Login (routes/auth_routes.py) ────────────────────────────────────────────
+# Two ways in, side by side, both reaching one account per email:
+#   classic — classic-Qiita email + password, checked against qiita.qiita_user
+#             through the read-only Postgres role (helpers/qiita_accounts.py);
+#   miint   — a qiita-miint `qk_` token, checked once with whoami
+#             (helpers/qiita_client.py).
+LOGIN_METHODS = [m.strip() for m in os.getenv("QIITA_EXPLORE_LOGIN_METHODS", "classic,miint").split(",") if m.strip()]
+if not LOGIN_METHODS or set(LOGIN_METHODS) - {"classic", "miint"}:
+    raise ValueError(f"QIITA_EXPLORE_LOGIN_METHODS must list classic and/or miint, got {LOGIN_METHODS!r}")
+
+# Sign-up, email verification and password reset stay on classic Qiita at this URL.
 QIITA_CLASSIC_URL = os.getenv("QIITA_CLASSIC_URL", "https://qiita.ucsd.edu").rstrip("/")
+
+# Where whoami is asked. Since email is the link to every account, whatever
+# answers here can open any account, classic ones included — so with qiita-miint
+# login on it must be set explicitly (no silent loopback default, which another
+# user on a shared host could bind) and use https, unless
+# QIITA_CONTROL_PLANE_ALLOW_HTTP=true for a channel no one else can take over.
+QIITA_CONTROL_PLANE_URL = os.getenv("QIITA_CONTROL_PLANE_URL", "").strip().rstrip("/")
+if "miint" in LOGIN_METHODS:
+    if not QIITA_CONTROL_PLANE_URL:
+        raise ValueError("QIITA_CONTROL_PLANE_URL must be set when qiita-miint login is on (QIITA_EXPLORE_LOGIN_METHODS)")
+    if (not QIITA_CONTROL_PLANE_URL.startswith("https://")
+            and os.getenv("QIITA_CONTROL_PLANE_ALLOW_HTTP", "").strip().lower() not in ("1", "true", "yes")):
+        raise ValueError("QIITA_CONTROL_PLANE_URL must be https://, or set QIITA_CONTROL_PLANE_ALLOW_HTTP=true "
+                         "for a private channel: a plain-HTTP whoami can be answered by whoever takes that port")
+QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "3"))
+
+# qiita-miint URL the user's BROWSER is sent to for login. Deliberately
+# separate from QIITA_CONTROL_PLANE_URL (used only for backend-to-Qiita
+# server calls like whoami): in a split-tunnel deployment — backend reaches
+# Qiita via a reverse SSH tunnel on one port, the browser reaches it directly
+# on another — these are not the same address. Defaults to
+# QIITA_CONTROL_PLANE_URL for the common case where both paths coincide.
+QIITA_PUBLIC_LOGIN_URL = os.getenv("QIITA_PUBLIC_LOGIN_URL", "").rstrip("/") or QIITA_CONTROL_PLANE_URL
+
+# AuthRocket LoginRocket realm base (e.g. https://<realm>.e2.loginrocket.com).
+# When set, /api/auth/login-url routes the browser through LoginRocket /logout
+# first, so a cached AuthRocket session can't hijack the login / "Need a login"
+# entry into completing login as the previously-cached user. Empty = disabled.
+QIITA_LOGINROCKET_URL = os.getenv("QIITA_LOGINROCKET_URL", "").rstrip("/")
 
 # A single hard ceiling, and no idle timeout: a session ends when it hits this,
 # when the user logs out, when the user signs in again, or when the account
@@ -109,8 +145,8 @@ AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SE
 
 # The exact origin (scheme://host[:port]) browsers load QiitaExplore from in
 # production, e.g. https://qiita-explore.knight-lab-dev.org. POST /api/auth/login
-# requires its Origin header to equal this or one of ALLOWED_ORIGINS, and is
-# refused (503) when neither is configured.
+# and /api/auth/connect require their Origin header to equal this or one of
+# ALLOWED_ORIGINS, and are refused (503) when neither is configured.
 PUBLIC_ORIGIN = os.getenv("QIITA_EXPLORE_PUBLIC_ORIGIN", "").strip().rstrip("/")
 
 # Comma-separated exact origins allowed for credentialed cross-origin dev

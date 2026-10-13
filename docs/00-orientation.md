@@ -39,21 +39,21 @@ flowchart LR
         CP["Control plane :8080<br/>FastAPI"]
     end
 
-    QE ==>|"ALL study data + logins<br/>direct SQL, read-only"| PG
-    QE -.->|"not used today"| CP
+    QE ==>|"ALL study data + classic logins<br/>direct SQL, read-only"| PG
+    QE -.->|"qiita-miint logins only<br/>whoami, once per sign-in"| CP
 
     style PG stroke-width:2px
 ```
 
-**Classic Qiita** is the original monolith. QiitaExplore reads *all* of its scientific data — studies, preps, artifacts, sample metadata — by connecting directly to its PostgreSQL database, read-only, using a vendored and trimmed copy of Qiita's own DB layer (`qiita_db/`, `qiita_core/`). No HTTP is involved. QiitaExplore never writes to it. Since 2026-10-12 it is also where logins are checked: a user signs in with their classic-Qiita email and password, which QiitaExplore verifies against `qiita.qiita_user` through the same read-only role (see [`02-authentication.md`](02-authentication.md)).
+**Classic Qiita** is the original monolith. QiitaExplore reads *all* of its scientific data — studies, preps, artifacts, sample metadata — by connecting directly to its PostgreSQL database, read-only, using a vendored and trimmed copy of Qiita's own DB layer (`qiita_db/`, `qiita_core/`). No HTTP is involved. QiitaExplore never writes to it. Since 2026-10 it is also one of the two places logins are checked: a user can sign in with their classic-Qiita email and password, which QiitaExplore verifies against `qiita.qiita_user` through the same read-only role (see [`02-authentication.md`](02-authentication.md)).
 
-**Qiita-MIINT** is the new platform. QiitaExplore used exactly one thing from it — identity, by checking a pasted `qk_` token against the control plane's `whoami` — until that login was replaced on 2026-10-12. It uses nothing from it today. Its data plane and compute orchestrator were never part of this integration.
+**Qiita-MIINT** is the new platform. QiitaExplore uses exactly one thing from it: identity, for the other login, by checking a pasted `qk_` token once against the control plane's `whoami`. That was the only login until 2026-10; it now sits beside classic Qiita's, and the same email reaches the same QiitaExplore account either way. Its data plane and compute orchestrator were never part of this integration.
 
 So the seam is:
 
 | Concern | Source |
 |---|---|
-| Who is this user? | Classic Qiita, `qiita.qiita_user` over direct SQL |
+| Who is this user? | Either classic Qiita (`qiita.qiita_user` over direct SQL) or Qiita-MIINT (`whoami`); the verified email picks the account |
 | What studies exist, and what's in them? | Classic Qiita, over direct SQL |
 
 Moving data reads onto the new platform is the long-term direction, and it is the root of most of [`11-roadmap.md`](11-roadmap.md). It is blocked today for two concrete reasons documented there.
@@ -62,10 +62,10 @@ Moving data reads onto the new platform is the long-term direction, and it is th
 
 The name causes real confusion, so: **MIINT is not a security component, an auth provider, or a realm.** Two unrelated things carry the name.
 
-1. **`qiita-miint`** is the deployment codename and hostname of the new platform's production instance (`qiita-miint.ucsd.edu`). The git branch `Qiita-miint-auth-integration` meant "integrate auth against the qiita-miint deployment" — nothing more. That login was removed on 2026-10-12.
+1. **`qiita-miint`** is the deployment codename and hostname of the new platform's production instance (`qiita-miint.ucsd.edu`). The git branch `Qiita-miint-auth-integration` meant "integrate auth against the qiita-miint deployment" — nothing more. That login is still one of the two ways in.
 2. **`duckdb-miint`** is a separate DuckDB SQL extension providing bioinformatics functions inside the Rust data plane. Unrelated to authentication entirely.
 
-The new platform's identity provider is **AuthRocket** (via its hosted LoginRocket UI), which the control plane wraps. QiitaExplore never spoke to AuthRocket directly, and since 2026-10-12 it doesn't use the control plane either — see [`02-authentication.md`](02-authentication.md).
+The new platform's identity provider is **AuthRocket** (via its hosted LoginRocket UI), which the control plane wraps. QiitaExplore never speaks to AuthRocket directly; it only sends the browser to the control plane's login page (optionally through LoginRocket `/logout`) and asks the control plane `whoami` — see [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -112,7 +112,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | **GOLD** | A curation tag (`qiita.per_study_tags`) marking high-quality studies. The default browse grid shows GOLD studies. |
 | **Visibility** | Artifacts carry a visibility; QiitaExplore only ever returns studies with at least one `public` artifact. |
 | **`qiita_user`** | Classic Qiita's account table: email, bcrypt password hash, user level. QiitaExplore checks logins against it, read-only. Level 5, `unverified`, can't log in. |
-| **`principal_idx`** | The Qiita-MIINT control plane's integer identifier for a user. Accounts created under the old qiita-miint login keep it, and their `user_id` is still this number as a string; new accounts get an opaque `q…` id. |
+| **`principal_idx`** | The Qiita-MIINT control plane's integer identifier for a user. Recorded on a QiitaExplore account at its first qiita-miint sign-in; a different principal later presenting the same email is refused (409). Accounts are never matched by it. Accounts from the qiita-miint-only era keep it as their `user_id` (the number as a string); newer accounts get an opaque `q…` id. |
 
 ### QiitaExplore concepts
 
@@ -130,7 +130,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | **Autopick** | The heuristic that selects a default artifact per study in a merge workspace. |
 | **Deep search** | The default sample-metadata search mode, probing up to 500 candidate studies (vs. 40 in the legacy fast path). Slower, higher recall. |
 | **Enrichment** | The background pass that fills in a project study's sample counts, prep list, and data types after it is added. |
-| **Binding** | Attaching a qiita-miint-era QiitaExplore account to a classic-Qiita email, so that person's login reaches their old data. Done by an operator with `scripts/bind_classic_accounts.py`, never automatically. |
+| **One account per email** | Classic-Qiita login and qiita-miint login with the same (normalized) email reach the same QiitaExplore account and data; accounts are matched by email only, so different emails are different accounts. Automatic — there is no operator binding step. |
 | **Barnacle** | The deployment host (`barnacle2.ucsd.edu`) where the backend runs. |
 
 ---

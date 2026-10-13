@@ -54,15 +54,17 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 <a id="env-QIITA_EXPLORE_ALLOWED_ORIGINS"></a>
 <a id="env-QIITA_EXPLORE_CLIENT_IP_HEADER"></a>
 <a id="env-QIITA_EXPLORE_LIMITER_DB"></a>
+<a id="env-QIITA_EXPLORE_LOGIN_METHODS"></a>
 
-Classic-Qiita email + password login ([`02-authentication.md`](02-authentication.md)).
+Both logins — classic-Qiita email + password, and a qiita-miint `qk_` token — reaching one account per email ([`02-authentication.md`](02-authentication.md)). The qiita-miint login's own addresses are under [Qiita connectivity](#qiita-connectivity).
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
-| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `86400` (computed as `24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime; also the session cookie's `max_age`. There is deliberately no idle timeout. Separately, the session is re-checked against classic Qiita every 5 minutes (a constant, below). | Yes |
+| `QIITA_EXPLORE_LOGIN_METHODS` | `classic,miint` | `backend/config.py` (`LOGIN_METHODS`), `backend/routes/auth_routes.py` | Comma-separated login methods to enable: `classic` (`POST /api/auth/login`), `miint` (`POST /api/auth/connect`, `GET /api/auth/login-url`). A disabled method's routes answer **404**, and its existing sessions are revoked on their next request; `GET /api/auth/me` returns the list as `login_methods`, and the login page shows only those cards. Empty, or anything other than those two names, raises `ValueError` at import — the backend won't start without a usable login. With `miint` on, `QIITA_CONTROL_PLANE_URL` becomes required (below). | Yes |
+| `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` | `86400` (computed as `24 * 3600`) | `backend/store/auth_store.py`, `backend/routes/auth_routes.py` | Hard session lifetime, for both logins; also the session cookie's `max_age`. There is deliberately no idle timeout. Separately, a classic-Qiita session is re-checked against classic Qiita every 5 minutes (a constant, below); a qiita-miint session is not, so this is its only expiry. | Yes |
 | `QIITA_EXPLORE_COOKIE_SECURE` | `true` | `backend/config.py`, `backend/routes/auth_routes.py :: _cookie_kwargs` | `Secure` flag on the session and known-device cookies. Anything in `false` / `0` / `no` (case-insensitive) disables it. On, the cookies are named `__Host-qe_sid` / `__Host-qe_dev` (host-only, `path=/`); off, `qe_sid` / `qe_dev` — for plain-HTTP loopback dev only. | Yes |
-| `QIITA_EXPLORE_PUBLIC_ORIGIN` | `""` | `backend/routes/auth_routes.py :: _origin_error` | The exact origin (`scheme://host[:port]`, trailing `/` stripped) browsers load QiitaExplore from in production, e.g. `https://qiita-explore.knight-lab-dev.org`. `POST /api/auth/login` requires its `Origin` header to equal this or an entry of `QIITA_EXPLORE_ALLOWED_ORIGINS`; with neither set, login answers **503** "Login is not configured on this server." | Yes |
-| `QIITA_EXPLORE_ALLOWED_ORIGINS` | `""` → empty list | `backend/run.py` (Flask-CORS), `backend/routes/auth_routes.py` | Comma-separated **exact** origins allowed to make credentialed cross-origin requests, and accepted as login `Origin`s — for dev, where the page and the API are on different ports. Each entry must be a literal origin (`https?://host[:port]`); anything else raises `ValueError` at import, because Flask-CORS would treat regex characters as a pattern. Empty means no CORS, which is correct for a same-origin deployment. | Yes |
+| `QIITA_EXPLORE_PUBLIC_ORIGIN` | `""` | `backend/routes/auth_routes.py :: _origin_error` | The exact origin (`scheme://host[:port]`, trailing `/` stripped) browsers load QiitaExplore from in production, e.g. `https://qiita-explore.knight-lab-dev.org`. `POST /api/auth/login` and `POST /api/auth/connect` require their `Origin` header to equal this or an entry of `QIITA_EXPLORE_ALLOWED_ORIGINS`; with neither set, both answer **503** "Login is not configured on this server." | Yes |
+| `QIITA_EXPLORE_ALLOWED_ORIGINS` | `""` → empty list | `backend/run.py` (Flask-CORS), `backend/routes/auth_routes.py` | Comma-separated **exact** origins allowed to make credentialed cross-origin requests, and accepted as login and connect `Origin`s — for dev, where the page and the API are on different ports. Each entry must be a literal origin (`https?://host[:port]`); anything else raises `ValueError` at import, because Flask-CORS would treat regex characters as a pattern. Empty means no CORS, which is correct for a same-origin deployment. | Yes |
 | `QIITA_EXPLORE_CLIENT_IP_HEADER` | `""` → no per-client limit | `backend/routes/auth_routes.py :: _client_ip` | The request header carrying the real client IP — its **last** comma-separated entry, the one the trusted proxy wrote, parsed as an IP — used for the per-client login block (30 failed attempts / 15 min → 15-min block). Set it **only** once the proxy chain guarantees the header can't be forged — see traps. | Yes |
 | `QIITA_EXPLORE_LIMITER_DB` | *computed* — `<tempfile.gettempdir()>/qiita_explore-<uid>/login_limiter.db` | `backend/config.py`, `backend/helpers/login_limiter.py` | The login limiter's own SQLite file (attempt counters, known devices). Put it on local disk, not `/ddn_scratch`. The file and its folder must be owned by the backend's user and not group- or world-writable (the folder is created `0700`, the file set `0600`). If it can't be used, login answers 503. | Yes |
 
@@ -71,12 +73,22 @@ The cookie names are not configurable; they are `SESSION_COOKIE_NAME` / `DEVICE_
 ### Qiita connectivity
 
 <a id="env-QIITA_CLASSIC_URL"></a>
+<a id="env-QIITA_CONTROL_PLANE_URL"></a>
+<a id="env-QIITA_CONTROL_PLANE_ALLOW_HTTP"></a>
+<a id="env-QIITA_PUBLIC_LOGIN_URL"></a>
+<a id="env-QIITA_LOGINROCKET_URL"></a>
+<a id="env-QIITA_WHOAMI_TIMEOUT_SECONDS"></a>
 <a id="env-QIITA_CONFIG_FP"></a>
 <a id="env-QIITA_BASE_DATA_DIR"></a>
 
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
-| `QIITA_CLASSIC_URL` | `https://qiita.ucsd.edu` | `backend/routes/auth_routes.py :: api_auth_me` | Classic Qiita's web address, returned as `qiita_url` by `GET /api/auth/me`. The sign-in form links "Forgot password?" (`/auth/forgot/`) and "Create a Qiita account" (`/auth/create/`) to it. Trailing slash stripped. Display only — the backend never calls it. | Yes |
+| `QIITA_CLASSIC_URL` | `https://qiita.ucsd.edu` | `backend/routes/auth_routes.py :: api_auth_me` | Classic Qiita's web address, returned as `qiita_url` by `GET /api/auth/me`. The classic sign-in card links "Forgot password?" (`/auth/forgot/`) and "Create a Qiita account" (`/auth/create/`) to it. Trailing slash stripped. Display only — the backend never calls it. | Yes |
+| `QIITA_CONTROL_PLANE_URL` | *(none — required when `miint` is in `QIITA_EXPLORE_LOGIN_METHODS`)* | `backend/config.py`, `backend/helpers/qiita_client.py :: whoami` | Base URL of the qiita-miint control plane for **backend-to-qiita-miint** calls — only `GET /api/v1/auth/whoami`, once per connect. Whitespace and trailing slash stripped. With the qiita-miint login on, unset raises `ValueError` at import, and so does anything not starting with `https://` unless `QIITA_CONTROL_PLANE_ALLOW_HTTP` is on. Whatever answers here can open **any** account, classic ones included, because email is the link — see traps. Unreachable → every connect answers **503**. | Yes |
+| `QIITA_CONTROL_PLANE_ALLOW_HTTP` | unset (off) | `backend/config.py` | `1` / `true` / `yes` (case-insensitive) lets `QIITA_CONTROL_PLANE_URL` be plain `http://`. Only for a channel no other local user can take over — see traps. | Yes |
+| `QIITA_PUBLIC_LOGIN_URL` | *computed* — falls back to `QIITA_CONTROL_PLANE_URL` (no https check of its own) | `backend/routes/auth_routes.py :: api_auth_login_url` | Base URL the user's **browser** is sent to for the qiita-miint login (`<this>/api/v1/auth/login`). Separate from the above because in a split-tunnel deployment (the backend reaches the control plane over a tunnel, the browser reaches it directly) the two addresses differ. Trailing slash stripped. | Yes |
+| `QIITA_LOGINROCKET_URL` | `""` → disabled | `backend/routes/auth_routes.py :: api_auth_login_url` | AuthRocket LoginRocket realm base (e.g. `https://<realm>.e2.loginrocket.com`). When set, `/api/auth/login-url` wraps the control-plane login in `<this>/logout?redirect_uri=<url-encoded login URL>`, so a cached AuthRocket session can't complete the login as the previously signed-in user. **Leave unset** — see traps. | Yes |
+| `QIITA_WHOAMI_TIMEOUT_SECONDS` | `3` (parsed as float) | `backend/helpers/qiita_client.py :: whoami` | httpx timeout for the connect-time `whoami` call. A timeout counts as transient (toward the circuit breaker) and surfaces as connect **503**; the request thread is held that long. | Yes |
 | `QIITA_CONFIG_FP` | *(none)* | vendored `qiita_core/configuration_manager.py` | Path to the Qiita config file supplying **PostgreSQL credentials** (user, password, database, host, port) — for study data and, through `helpers/qiita_accounts.py`'s own pool, for login. Read via `environ["QIITA_CONFIG_FP"]` — a hard `KeyError` if absent. Not read by `config.py`; exported by both start scripts. | Yes |
 | `QIITA_BASE_DATA_DIR` | `""` | `backend/helpers/qiita_fetch.py`, `backend/helpers/artifact_graph.py`, `backend/helpers/biom_samples.py` | Prefix prepended to **relative** artifact filepaths from the Qiita DB. Empty means paths are used as-is — fine when the DB stores absolute paths, broken when it does not. | Yes |
 
@@ -156,7 +168,7 @@ The merge executor is explicitly dev-only. Its module docstring carries a `TODO 
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `API_KEY` are additionally read directly from `os.environ` by `backend/tests/e2e/parity_helpers.py`, bypassing `config.py`. `QIITA_EXPERIMENT_DB_PATH` is *written* by `backend/tests/test_auth.py` to redirect the suite at a temporary database. The e2e suite logs in with `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD`, sending `QIITA_TEST_ORIGIN` as the `Origin` (`backend/tests/e2e/auth_client.py`; see `backend/tests/README.md`). `QIITA_TEST_ALLOW_FAILED_LOGIN=1` enables the wrong-password e2e test — dev only, since failed attempts count toward the account's login delay.
 
-**Removed on 2026-10-12** with the qiita-miint login, and ignored if still present in a `.env`: `QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, `QIITA_LOGINROCKET_URL`, `QIITA_WHOAMI_TIMEOUT_SECONDS`, `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX`, and `QIITA_EXPLORE_DEBUG_ERRORS` (it only affected the removed `/auth/connect`). Delete them from deployed `.env` files so nobody mistakes them for live settings.
+**Removed on 2026-10-12**, and ignored if still present in a `.env`: `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX` (the removed legacy `"default"` claim), `QIITA_EXPLORE_DEBUG_ERRORS` (it only affected master's `/auth/connect` error text; today's connect returns fixed messages), and `QIITA_EXPLORE_PAT_ENCRYPTION_KEY`. Delete them from deployed `.env` files so nobody mistakes them for live settings. The qiita-miint variables above (`QIITA_CONTROL_PLANE_URL`, `QIITA_PUBLIC_LOGIN_URL`, `QIITA_LOGINROCKET_URL`, `QIITA_WHOAMI_TIMEOUT_SECONDS`) are **live** — keep them; `QIITA_CONTROL_PLANE_URL` is required while the qiita-miint login is on.
 
 ### Minimum viable `.env`
 
@@ -166,12 +178,14 @@ The smallest file that produces a backend which boots, queries, authenticates, a
 API_KEY=<nrp-nautilus-key>
 QIITA_EXPLORE_PUBLIC_ORIGIN=https://<the origin browsers load QiitaExplore from>
 QIITA_EXPLORE_LIMITER_DB=/local/disk/path/qiita_explore_login_limiter.db
+QIITA_CONTROL_PLANE_URL=https://<qiita-miint control plane, as the backend reaches it>
+QIITA_PUBLIC_LOGIN_URL=https://<qiita-miint, as the browser reaches it>
 QIITA_BASE_DATA_DIR=/path/to/qiita/data
 ```
 
-Plus `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` exported by `start_barnacle.sh`. Without `QIITA_EXPLORE_PUBLIC_ORIGIN` (or, in dev, `QIITA_EXPLORE_ALLOWED_ORIGINS`) nobody can log in. Everything else has a default that is at least defensible.
+Plus `QIITA_CONFIG_FP` and `QIITA_EXPERIMENT_DB_PATH` exported by `start_barnacle.sh`. Without `QIITA_EXPLORE_PUBLIC_ORIGIN` (or, in dev, `QIITA_EXPLORE_ALLOWED_ORIGINS`) nobody can log in. The two control-plane lines are for the qiita-miint login, which is on by default: without `QIITA_CONTROL_PLANE_URL` (an `https://` URL, or `http://` plus `QIITA_CONTROL_PLANE_ALLOW_HTTP=true`) the backend won't import. With `QIITA_EXPLORE_LOGIN_METHODS=classic` they can go. Everything else has a default that is at least defensible.
 
-The `.env` at `qiita_explore/.env` is gitignored (never committed); each deployment maintains its own. A typical one sets `API_KEY`, `QIITA_EXPLORE_PUBLIC_ORIGIN` (production) or `QIITA_EXPLORE_ALLOWED_ORIGINS` (dev), `QIITA_EXPLORE_LIMITER_DB`, and the cookie override for its topology.
+The `.env` at `qiita_explore/.env` is gitignored (never committed); each deployment maintains its own. A typical one sets `API_KEY`, `QIITA_EXPLORE_PUBLIC_ORIGIN` (production) or `QIITA_EXPLORE_ALLOWED_ORIGINS` (dev), `QIITA_EXPLORE_LIMITER_DB`, `QIITA_CONTROL_PLANE_URL` / `QIITA_PUBLIC_LOGIN_URL`, and the cookie override for its topology.
 
 ### Alphabetical index
 
@@ -195,17 +209,23 @@ The `.env` at `qiita_explore/.env` is gitignored (never committed); each deploym
 | [`QIITA_BASE_DATA_DIR`](#env-QIITA_BASE_DATA_DIR) | Qiita | `""` |
 | [`QIITA_CLASSIC_URL`](#env-QIITA_CLASSIC_URL) | Qiita | `https://qiita.ucsd.edu` |
 | [`QIITA_CONFIG_FP`](#env-QIITA_CONFIG_FP) | Qiita | *(none)* |
+| [`QIITA_CONTROL_PLANE_ALLOW_HTTP`](#env-QIITA_CONTROL_PLANE_ALLOW_HTTP) | Qiita | unset |
+| [`QIITA_CONTROL_PLANE_URL`](#env-QIITA_CONTROL_PLANE_URL) | Qiita | *(none; required with `miint`)* |
 | [`QIITA_EXPERIMENT_DB_PATH`](#env-QIITA_EXPERIMENT_DB_PATH) | Storage | computed |
 | [`QIITA_EXPLORE_ALLOWED_ORIGINS`](#env-QIITA_EXPLORE_ALLOWED_ORIGINS) | Auth | `""` |
 | [`QIITA_EXPLORE_CLIENT_IP_HEADER`](#env-QIITA_EXPLORE_CLIENT_IP_HEADER) | Auth | `""` |
 | [`QIITA_EXPLORE_COOKIE_SECURE`](#env-QIITA_EXPLORE_COOKIE_SECURE) | Auth | `true` |
 | [`QIITA_EXPLORE_LIMITER_DB`](#env-QIITA_EXPLORE_LIMITER_DB) | Auth | computed (temp dir) |
+| [`QIITA_EXPLORE_LOGIN_METHODS`](#env-QIITA_EXPLORE_LOGIN_METHODS) | Auth | `classic,miint` |
 | [`QIITA_EXPLORE_PUBLIC_ORIGIN`](#env-QIITA_EXPLORE_PUBLIC_ORIGIN) | Auth | `""` |
+| [`QIITA_LOGINROCKET_URL`](#env-QIITA_LOGINROCKET_URL) | Qiita | `""` (keep unset) |
+| [`QIITA_PUBLIC_LOGIN_URL`](#env-QIITA_PUBLIC_LOGIN_URL) | Qiita | computed |
+| [`QIITA_WHOAMI_TIMEOUT_SECONDS`](#env-QIITA_WHOAMI_TIMEOUT_SECONDS) | Qiita | `3` |
 | [`SAMPLE_SEARCH_DEEP_CANDIDATES`](#env-SAMPLE_SEARCH_DEEP_CANDIDATES) | Search | `500` |
 | [`SAMPLE_SEARCH_DEFAULT_CANDIDATES`](#env-SAMPLE_SEARCH_DEFAULT_CANDIDATES) | Search | `40` |
 | [`SAMPLE_SEARCH_PROBE_TIMEOUT_MS`](#env-SAMPLE_SEARCH_PROBE_TIMEOUT_MS) | Search | `15000` |
 
-Twenty-seven names are indexed here (2026-10-12): `QIITA_CONFIG_FP` is read by the vendored `qiita_core`, `BARNACLE_URL` by the tests, and the rest by `config.py` or backend helpers. A few newer tunables read by `config.py` (for example `SEARCH_CALLS_PER_MESSAGE`, `LLM_RETRY_MAX`, `HISTORY_KEEP_VERBATIM_TOKENS`) are not yet on this page.
+Thirty-three names are indexed here (2026-10-12): `QIITA_CONFIG_FP` is read by the vendored `qiita_core`, `BARNACLE_URL` by the tests, and the rest by `config.py` or backend helpers. A few newer tunables read by `config.py` (for example `SEARCH_CALLS_PER_MESSAGE`, `LLM_RETRY_MAX`, `HISTORY_KEEP_VERBATIM_TOKENS`) are not yet on this page.
 
 ---
 
@@ -215,7 +235,8 @@ Twenty-seven names are indexed here (2026-10-12): `QIITA_CONFIG_FP` is read by t
 
 1. **[`QIITA_CONFIG_FP`](#env-QIITA_CONFIG_FP)** — without it the vendored config manager raises `KeyError`, and there is no database. The value baked into both start scripts is a hardcoded path on one specific machine.
 2. **[`OPENAI_API_KEY`](#env-OPENAI_API_KEY) or [`API_KEY`](#env-API_KEY)** — the OpenAI client is constructed with `api_key=None` if neither is set. Every NRP model call fails at request time.
-3. **[`QIITA_EXPLORE_PUBLIC_ORIGIN`](#env-QIITA_EXPLORE_PUBLIC_ORIGIN)** (production) — without it, and with no `QIITA_EXPLORE_ALLOWED_ORIGINS`, the backend boots but every login answers 503.
+3. **[`QIITA_EXPLORE_PUBLIC_ORIGIN`](#env-QIITA_EXPLORE_PUBLIC_ORIGIN)** (production) — without it, and with no `QIITA_EXPLORE_ALLOWED_ORIGINS`, the backend boots but every login and connect answers 503.
+4. **[`QIITA_CONTROL_PLANE_URL`](#env-QIITA_CONTROL_PLANE_URL)** (with the qiita-miint login on, the default) — the control plane as the backend reaches it, `https://`. Unset or plain `http://` (without [`QIITA_CONTROL_PLANE_ALLOW_HTTP`](#env-QIITA_CONTROL_PLANE_ALLOW_HTTP)), the backend refuses to import; unreachable, every connect answers 503. Set [`QIITA_PUBLIC_LOGIN_URL`](#env-QIITA_PUBLIC_LOGIN_URL) too when the browser reaches it at a different address.
 
 **Defaults that are wrong for production:**
 
@@ -227,6 +248,10 @@ Twenty-seven names are indexed here (2026-10-12): `QIITA_CONFIG_FP` is read by t
 | [`MERGE_CONDA_ENV`](#env-MERGE_CONDA_ENV) | `qiita` | Names a *local* conda env; the whole merge executor is dev-only by its own TODO. |
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | `8` | Per gunicorn worker. `start_barnacle.sh` runs 4 workers, so the real ceiling against Qiita's PostgreSQL is 32 connections, plus a separate short-lived `ThreadedConnectionPool` per sample-search call. |
 | [`QIITA_EXPLORE_COOKIE_SECURE`](#env-QIITA_EXPLORE_COOKIE_SECURE) | `true` (safe) | Correct by default. The trap is setting it `false` for loopback dev and shipping that `.env`. |
+
+**The `QIITA_CONTROL_PLANE_URL` / `QIITA_CONTROL_PLANE_ALLOW_HTTP` trap.** Email is the link to every QiitaExplore account, so whatever answers `whoami` at this URL can name any email and open that account — classic-Qiita ones included. That is why there is no default (an old `http://127.0.0.1:8080` default was a loopback port any other user on a shared host like barnacle2 could bind while the real tunnel was down) and why plain HTTP is refused. Set `QIITA_CONTROL_PLANE_ALLOW_HTTP=true` only when the HTTP channel can't be taken over by anyone else: not a loopback port on a multi-user host, and not a network hop someone else can sit on. If neither https nor a private channel is available, turn the qiita-miint login off (`QIITA_EXPLORE_LOGIN_METHODS=classic`).
+
+**The `QIITA_LOGINROCKET_URL` trap.** Leave it **unset** unless the wrap has been tested end to end in the deployment. It exists to route the qiita-miint login through LoginRocket `/logout` first, defeating a cached AuthRocket session that would otherwise complete login as the previously signed-in user. The master-era docs recorded that the logout-first wrap does not work when pointed at an external control-plane URL, and production ran with it unset. Setting it produces a login link that looks configured and can misbehave. The code path is real and tested (`backend/tests/test_miint_connect.py :: TestLoginUrl`); the deployment topology is what breaks it.
 
 **The `QIITA_EXPLORE_CLIENT_IP_HEADER` trap.** The backend trusts this header's last entry completely. If any client can reach gunicorn with a header of that name it chose itself — including any other account on barnacle2, which can connect to `127.0.0.1` — it can rotate fake IPs to dodge the per-client block, or name a victim's IP to get that IP blocked. Set it only when the proxy in front of gunicorn accepts the real client IP from Cloudflare's ranges alone and **always overwrites** the header it forwards (Caddy: `trusted_proxies` with Cloudflare's ranges plus `client_ip_headers CF-Connecting-IP`; see [`../DEPLOYING.md`](../DEPLOYING.md)). In the nginx topology, nginx overwrites `X-Real-IP` with `$remote_addr`, which is only the real client when nothing proxies in front of nginx. Behind the kl-remote SSH tunnel without such a header, every request arrives from `127.0.0.1` — which is why the per-client limit is off by default.
 
@@ -279,7 +304,10 @@ These are literals in source. They cannot be changed without an edit and a resta
 | LLM client timeout | `300.0` s | `backend/config.py` | Applied to both the NRP `OpenAI` client and every `anthropic.Anthropic` client. |
 | `SESSION_COOKIE_NAME` | `__Host-qe_sid` (Secure on) / `qe_sid` | `backend/config.py` | Session cookie name. Follows `QIITA_EXPLORE_COOKIE_SECURE`; not otherwise configurable. |
 | `DEVICE_COOKIE_NAME` | `__Host-qe_dev` (Secure on) / `qe_dev` | `backend/config.py` | Known-device cookie name; same rule. |
-| login body cap | 8 KB (`_MAX_LOGIN_BODY`) | `backend/routes/auth_routes.py` | `POST /api/auth/login`: over it by `Content-Length` → 413 before parsing; the body is then read with a bounded read, so a chunked body is capped too. |
+| login body cap | 8 KB (`_MAX_LOGIN_BODY`) | `backend/routes/auth_routes.py` | `POST /api/auth/login` and `POST /api/auth/connect`: over it by `Content-Length` → 413 before parsing; the body is then read with a bounded read, so a chunked body is capped too. |
+| qiita-miint token shape | `qk_` + 30–128 of `[A-Za-z0-9_-]` (`_TOKEN_RE`) | `backend/routes/auth_routes.py` | `POST /api/auth/connect`: anything else → 401 without calling `whoami`. |
+| `whoami` slot wait | 0.5 s, 1 call per worker (`_SLOT_WAIT_SECONDS`, `_slot`) | `backend/helpers/qiita_client.py` | Past it, connect answers 503 "The server is busy" with `Retry-After: 2`. |
+| `whoami` circuit breaker | 3 transient failures → 30 s open (`_BREAKER_FAILS`, `_BREAKER_OPEN_SECONDS`) | `backend/helpers/qiita_client.py` | Per worker. While open, connect answers 503 "qiita-miint is unreachable" without calling. Any non-transient answer resets the count. |
 | per-email login delay | 5 free attempts per 15 min, then 2^(n−5) s, max 300 s | `backend/helpers/login_limiter.py` (`EMAIL_FREE_ATTEMPTS`, `WINDOW_SECONDS`, `MAX_DELAY_SECONDS`) | Progressive delay per email; cleared by a success. |
 | per-client login block | 30 failed attempts per 15 min → 900 s | `backend/helpers/login_limiter.py` (`CLIENT_MAX_ATTEMPTS`, `CLIENT_BLOCK_SECONDS`) | Only with `QIITA_EXPLORE_CLIENT_IP_HEADER` set. A success takes its attempt back. |
 | known-device lifetime | 30 days (`DEVICE_TTL_SECONDS`) | `backend/helpers/login_limiter.py` | How long a browser stays exempt from both login limits after its last login. |
@@ -287,8 +315,8 @@ These are literals in source. They cannot be changed without an edit and a resta
 | bcrypt slot wait | 0.5 s, 1 check per worker | `backend/helpers/qiita_accounts.py` (`_BCRYPT_WAIT_SECONDS`, `_bcrypt_slot`) | Past it, login answers 503 with `Retry-After: 2`. |
 | account-read timeouts | connect 5 s, statement 5 s | `backend/helpers/qiita_accounts.py :: _get_pool` | The login / re-check pool (`ThreadedConnectionPool(2, 4)` per worker, read-only transactions). |
 | account-read circuit breaker | 3 failures → 30 s open | `backend/helpers/qiita_accounts.py` (`_BREAKER_FAILS`, `_BREAKER_OPEN_SECONDS`) | Per worker. While open, login and re-checks fail fast as "unreachable". |
-| Qiita re-check interval | 300 s (`RECHECK_SECONDS`) | `backend/helpers/auth_middleware.py` | How stale `last_verified_at` may get before a request re-reads the account. |
-| Qiita outage grace | 3600 s (`RECHECK_GRACE_SECONDS`) | `backend/helpers/auth_middleware.py` | How long a session is served after its last good check while Qiita's database is unreachable; then 503. |
+| Qiita re-check interval | 300 s (`RECHECK_SECONDS`) | `backend/helpers/auth_middleware.py` | How stale a classic session's `last_verified_at` may get before a request re-reads the account. qiita-miint sessions are never re-checked. |
+| Qiita outage grace | 3600 s (`RECHECK_GRACE_SECONDS`) | `backend/helpers/auth_middleware.py` | How long a classic session is served after its last good check while Qiita's database is unreachable; then 503. |
 | gunicorn topology | 4 workers × 2 threads, `gthread`, 120 s timeout | `qiita_explore/start_barnacle.sh` | Process model. Multiplies every per-worker cache and pool above. |
 | nginx proxy read timeout | `120` s | `qiita_explore/nginx.conf` | Must stay ≥ the gunicorn timeout or long SSE streams are cut by the proxy. `proxy_buffering off` is what makes SSE stream at all. |
 
