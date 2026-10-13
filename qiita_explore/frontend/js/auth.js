@@ -4,9 +4,9 @@
 // ensures useAppState() (which fires project/chat/study/settings/merge
 // requests) never runs until useAuth() has confirmed a session via GET /auth/me.
 //
-// The password and the token live only in their form's local state, are POSTed
-// once as JSON, then cleared (success or failure) — never a URL param,
-// localStorage, or sessionStorage, and never in input history.
+// The password and the token live only in their form's local state, are sealed
+// to the backend's key and POSTed once, then cleared (success or failure) —
+// never a URL param, localStorage, or sessionStorage, and never in input history.
 
 function useAuth() {
   // 'loading' | 'anonymous' | 'authenticated'
@@ -75,6 +75,60 @@ function useAuth() {
   return { status, identity, qiitaUrl, loginMethods, refresh, logout };
 }
 
+// ─── Sealed sign-in ────────────────────────────────────────────────────────
+// Requests pass through Cloudflare and kl-remote, which both see bodies in
+// plain text, so a password or token is sealed in the browser to a key only the
+// backend holds (backend/helpers/login_crypto.py): a fresh AES-256-GCM key
+// encrypts the payload, with the server's one-time challenge as associated
+// data, and RSA-OAEP-SHA256 wraps that key. Web Crypto only exists on https://
+// and loopback pages, so there's no way to send these readable from http://.
+class SealError extends Error {}
+const _SEALED_SIZE = 1536;   // > the longest payload (254-char email + 1024-char password); < the server's 4 KB cap
+
+const _b64ToBytes = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const _bytesToB64 = (buf) => {
+  let bin = '';
+  new Uint8Array(buf).forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+};
+
+async function sealForServer(payload) {
+  const subtle = window.crypto && window.crypto.subtle;
+  if (!subtle) throw new SealError('Sign-in needs a secure connection — open this page over https://.');
+  const res = await apiFetch('/auth/login-key');
+  const info = await res.json().catch(() => ({}));
+  if (!res.ok || info.alg !== 'RSA-OAEP-256+A256GCM') {
+    throw new SealError(info.error || 'Sign-in is unavailable right now — try again shortly.');
+  }
+  const publicKey = await subtle.importKey('spki', _b64ToBytes(info.public_key),
+    { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+  const aesKey = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  // Padded to a fixed size (JSON allows trailing spaces), so the ciphertext's
+  // length doesn't give away the password's.
+  const plaintext = enc.encode(JSON.stringify(payload).padEnd(_SEALED_SIZE));
+  const ciphertext = await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(info.challenge) },
+    aesKey, plaintext);
+  const wrapped = await subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, await subtle.exportKey('raw', aesKey));
+  return { key_id: info.key_id, challenge: info.challenge,
+           wrapped_key: _bytesToB64(wrapped), iv: _bytesToB64(iv), ciphertext: _bytesToB64(ciphertext) };
+}
+
+// POST a sealed payload; once more with a fresh key and challenge if the
+// server says the form expired. Returns { res, data }.
+async function postSealed(path, payload) {
+  let res, data;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await apiPost(path, { envelope: await sealForServer(payload) });
+    data = await res.json().catch(() => ({}));
+    if (!(res.status === 409 && data.expired)) break;
+  }
+  return { res, data };
+}
+
+const _NETWORK_ERROR = 'Network error — check that the backend is reachable and try again.';
+
 function QiitaLogin({ qiitaUrl, onLoggedIn }) {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
@@ -89,8 +143,7 @@ function QiitaLogin({ qiitaUrl, onLoggedIn }) {
     setPassword('');      // never kept past this request, success or not
     setBusy(true); setError('');
     try {
-      const res = await apiPost('/auth/login', { email: email.trim(), password: pw });
-      const d = await res.json().catch(() => ({}));
+      const { res, data: d } = await postSealed('/auth/login', { email: email.trim(), password: pw });
       if (!res.ok) {
         // The server's message covers 401 (generic), 403 unverified, 429 (with the wait) and 503.
         setError(d.error || `Sign-in failed (${res.status})`);
@@ -98,8 +151,8 @@ function QiitaLogin({ qiitaUrl, onLoggedIn }) {
       }
       setCsrfToken(d.csrf_token);
       onLoggedIn(d);
-    } catch (_) {
-      setError('Network error — check that the backend is reachable and try again.');
+    } catch (err) {
+      setError(err instanceof SealError ? err.message : _NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
@@ -147,16 +200,15 @@ function MiintLogin({ onLoggedIn }) {
     setToken('');         // never kept past this request, success or not
     setBusy(true); setError('');
     try {
-      const res = await apiPost('/auth/connect', { token: pat });
-      const d = await res.json().catch(() => ({}));
+      const { res, data: d } = await postSealed('/auth/connect', { token: pat });
       if (!res.ok) {
         setError(d.error || `Sign-in failed (${res.status})`);
         return;
       }
       setCsrfToken(d.csrf_token);
       onLoggedIn(d);
-    } catch (_) {
-      setError('Network error — check that the backend is reachable and try again.');
+    } catch (err) {
+      setError(err instanceof SealError ? err.message : _NETWORK_ERROR);
     } finally {
       setBusy(false);
     }

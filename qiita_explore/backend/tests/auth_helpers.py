@@ -1,8 +1,16 @@
 """Signing a test client in through the real routes — POST /api/auth/login with
 classic Qiita's account table faked (no Postgres), POST /api/auth/connect with
 qiita-miint's whoami faked (no network) — so no route-test fixture reaches
-into the session store directly."""
+into the session store directly. Secrets are sealed exactly as the browser
+does it (frontend/js/auth.js sealForServer)."""
+import base64
+import json
+import os
+
 import bcrypt
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 TEST_ORIGIN = "http://qe.test"
 TEST_PASSWORD = "correct-horse-1"
@@ -43,10 +51,26 @@ def fake_accounts(monkeypatch, *accts):
     return table
 
 
+def seal(client, payload, info=None):
+    """The envelope the browser would send: AES-256-GCM over the JSON payload,
+    the challenge as associated data, the AES key wrapped with RSA-OAEP-SHA256."""
+    info = info or client.get("/api/auth/login-key").get_json()
+    public = serialization.load_der_public_key(base64.b64decode(info["public_key"]))
+    aes_key, iv = AESGCM.generate_key(256), os.urandom(12)
+    plaintext = json.dumps(payload).ljust(1536).encode()          # padded, as the browser does
+    ciphertext = AESGCM(aes_key).encrypt(iv, plaintext, info["challenge"].encode())
+    wrapped = public.encrypt(aes_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(),
+                                                   label=None))
+    b64 = lambda raw: base64.b64encode(raw).decode()   # noqa: E731
+    return {"key_id": info["key_id"], "challenge": info["challenge"],
+            "wrapped_key": b64(wrapped), "iv": b64(iv), "ciphertext": b64(ciphertext)}
+
+
 def post_login(client, email, password=TEST_PASSWORD, origin=TEST_ORIGIN, **kw):
     headers = {"Origin": origin} if origin else {}
     headers.update(kw.pop("headers", {}))
-    return client.post("/api/auth/login", json={"email": email, "password": password}, headers=headers, **kw)
+    body = {"envelope": seal(client, {"email": email, "password": password})}
+    return client.post("/api/auth/login", json=body, headers=headers, **kw)
 
 
 def login(client, monkeypatch, email, **account_kw):
@@ -89,7 +113,7 @@ def fake_whoami(monkeypatch, identities):
 def post_connect(client, token, origin=TEST_ORIGIN, **kw):
     headers = {"Origin": origin} if origin else {}
     headers.update(kw.pop("headers", {}))
-    return client.post("/api/auth/connect", json={"token": token}, headers=headers, **kw)
+    return client.post("/api/auth/connect", json={"envelope": seal(client, {"token": token})}, headers=headers, **kw)
 
 
 def connect(client, monkeypatch, email, principal_idx):

@@ -43,6 +43,25 @@ Every production account so far signed in with qiita-miint. Keeping it beside cl
 
 ---
 
+## Secrets sealed in the browser
+
+A sign-in passes through Cloudflare, where TLS ends, and Caddy on kl-remote, which reads each request to proxy it. Both would see a request body in plain text. So the browser never sends the password or the Qiita-Miint token readable: it seals them to a key only the backend on barnacle holds (`frontend/js/auth.js :: sealForServer`, `backend/helpers/login_crypto.py`).
+
+1. On each submit the page fetches `GET /api/auth/login-key`: the backend's RSA-3072 public key, its `key_id`, and a fresh one-time **challenge**. The challenge is stateless: an expiry two minutes ahead plus 16 random bytes, signed with HMAC-SHA256 under a key derived from the private key, so issuing one writes nothing.
+2. Web Crypto generates a fresh AES-256-GCM key and encrypts the JSON payload with it, using the challenge as associated data. The payload is `{email, password}` for classic and `{token}` for Qiita-Miint.
+3. It wraps that AES key with the public key (RSA-OAEP-SHA256) and posts `{"envelope": {key_id, challenge, wrapped_key, iv, ciphertext}}`, base64-encoded.
+4. The backend opens it, cheapest checks first: field shapes and sizes; the `key_id`; the challenge's signature and expiry; **single use**, recorded in the limiter's SQLite file (`used_challenges`), so a captured request can't be replayed; then RSA and AES-GCM. A ciphertext moved onto another, valid challenge fails, because the challenge is its associated data.
+
+**What it protects.** Neither secret is readable to passive exposure at Cloudflare or kl-remote: proxy logs, traffic captures, process memory there, Cloudflare logging. The plaintext is padded to a fixed 1536 characters, so the ciphertext doesn't reveal the password's length either. A captured request can't be replayed once it has reached the backend: each challenge works once, decided under the limiter file's write lock together with its expiry, and used challenges are remembered five minutes past their two-minute life. One that never reached the backend (a 502 during a restart, say) stays usable until it expires.
+
+**What it doesn't.** Whoever can *change* what those hops serve can defeat it. The page and its script come through them too, so `kl-user` editing the frontend checkout, or Cloudflare rewriting a response, could swap the script or the public key and capture passwords. Closing that would mean serving the page from somewhere they can't modify. The session cookie also still crosses those hops readable; it's QiitaExplore-only and lasts 24 h.
+
+**Plain secrets are refused.** A body carrying a plain `password` (login) or `token` (connect) gets **400** "This sign-in page is out of date — reload it.", so a sign-in never succeeds that way. That refusal comes only after the request has crossed Cloudflare and kl-remote, though: a page still open from before this change, or a cached copy of the old `index.html`, does send the secret readable. That's why purging `index.html` from Cloudflare's cache is a required deploy step ([`../DEPLOYING.md`](../DEPLOYING.md)). Web Crypto only exists on `https://` and loopback pages, so on a plain `http://` page the current page stops before anything is sent, with "Sign-in needs a secure connection — open this page over https://."
+
+**The key.** `QIITA_EXPLORE_LOGIN_KEY` (default `<tmp>/qiita_explore-<uid>/login_key.pem`): created on first use, mode 0600, and made by `start_barnacle.sh` before the workers start. Every use checks it on the opened file itself: a regular file, not a symlink, this user's, readable by no one else (mode 0600 enforced), in a real (not symlinked) folder this user owns and no one else can write; otherwise sign-in answers 503. An encrypted or non-RSA-3072 key gets the same 503. One RSA decrypt runs per worker at a time (it holds the GIL); a second request waits at most 0.5 s, then gets **503** "The server is busy" without using its challenge up. It's written beside its final path and linked into place, so racing workers never read half a file. Each worker re-reads it whenever the file changes, so all of them follow the same key. To rotate it, delete the file and restart; a page holding the old key gets a 409 and retries once with the new one.
+
+---
+
 ## The classic login
 
 ```mermaid
@@ -68,7 +87,7 @@ sequenceDiagram
 
 ### The checks, in order
 
-`backend/routes/auth_routes.py :: api_auth_login`. Every check fails closed. The first one that fails answers; nothing after it runs. With `classic` switched off, the route answers **404** before step 1. Steps 1–4 are the same code as connect's (`_read_json_body`).
+`backend/routes/auth_routes.py :: api_auth_login`. Every check fails closed. The first one that fails answers; nothing after it runs. With `classic` switched off, the route answers **404** before step 1. Steps 1–5 are the same code as connect's (`_read_json_body`, then `_open_sealed`).
 
 | # | Check | On failure | Counted toward a limit? |
 |---|---|---|---|
@@ -76,11 +95,12 @@ sequenceDiagram
 | 2 | **JSON only.** The request must be `application/json`. A cross-site HTML form can't send that content type, so this stops form-based login CSRF. | **415** `JSON body required` | No |
 | 3 | **Origin.** `Origin` must exactly equal `QIITA_EXPLORE_PUBLIC_ORIGIN` or one entry of `QIITA_EXPLORE_ALLOWED_ORIGINS` (dev). If `Sec-Fetch-Site` is sent, it must be `same-origin` (`same-site` too, but only for a dev origin from `QIITA_EXPLORE_ALLOWED_ORIGINS`: a sibling subdomain of the public site is same-site). | **403** `origin not allowed`. With neither setting configured, login refuses outright: **503** `Login is not configured on this server.` | No |
 | 4 | **Bounded read, then a JSON object.** The body is read with a hard limit of 8 KB + 1 bytes, so a chunked body (no `Content-Length` for step 1 to check) can't run past it either. | Over 8 KB: **413**. Not a JSON object: **415**. | No |
-| 5 | **Format.** Email: [the shared email rule](#the-email-rule) (strip; ASCII only, checked *before* lowercasing so the Kelvin sign can't become `k`; exactly one `@`; no inner whitespace or control characters; at most 254 characters; then lowercase). Password: classic Qiita's rule (8+ characters, ASCII, no space, no backslash) plus QiitaExplore's own 1024-character cap. | **401** with the generic text. Nothing is written. | **No** — no bcrypt work was done |
-| 6 | **Limits** — see [Brute-force limits](#brute-force-limits-built-not-to-lock-people-out). The attempt is reserved *before* any bcrypt work. | **429** with `Retry-After` and `retry_after`, text "Too many attempts — try again in N minutes." Limiter file unusable: **503**. | It *is* the count |
-| 7 | **Account and password.** Read the account; compare the password. | Unknown email: a dummy bcrypt check of the same cost, then **401**. Wrong password: **401**, same text. Database down or circuit open: **503** `Qiita's user database is unreachable — try again shortly.` This worker already busy with a bcrypt check for 0.5 s: **503** with `Retry-After: 2`. | Yes (reserved at step 6) |
-| 8 | **Unverified.** Level id 5, or level name `unverified`. Only checked *after* the right password, so it reveals nothing to a guesser. | **403** `Verify your email on Qiita first.` (`"unverified": true`). No session. | Yes |
-| 9 | **Success.** | — | Clears this email's counter, and takes its own attempt back off the client's |
+| 5 | **Sealed secret** ([above](#secrets-sealed-in-the-browser)). No plain `password` field; the envelope opens. | Plain field: **400** `This sign-in page is out of date — reload it.` Challenge expired, or sealed to an older key: **409** `The sign-in form expired — try again.` (`"expired": true`; the page retries once). Malformed, tampered with, or replayed: **400**. Key or single-use record unusable: **503** `Sign-in is unavailable right now — try again shortly.` | No |
+| 6 | **Format.** Email: [the shared email rule](#the-email-rule) (strip; ASCII only, checked *before* lowercasing so the Kelvin sign can't become `k`; exactly one `@`; no inner whitespace or control characters; at most 254 characters; then lowercase). Password: classic Qiita's rule (8+ characters, ASCII, no space, no backslash) plus QiitaExplore's own 1024-character cap. | **401** with the generic text. Nothing is written. | **No** — no bcrypt work was done |
+| 7 | **Limits** — see [Brute-force limits](#brute-force-limits-built-not-to-lock-people-out). The attempt is reserved *before* any bcrypt work. | **429** with `Retry-After` and `retry_after`, text "Too many attempts — try again in N minutes." Limiter file unusable: **503**. | It *is* the count |
+| 8 | **Account and password.** Read the account; compare the password. | Unknown email: a dummy bcrypt check of the same cost, then **401**. Wrong password: **401**, same text. Database down or circuit open: **503** `Qiita's user database is unreachable — try again shortly.` This worker already busy with a bcrypt check for 0.5 s: **503** with `Retry-After: 2`. | Yes (reserved at step 7) |
+| 9 | **Unverified.** Level id 5, or level name `unverified`. Only checked *after* the right password, so it reveals nothing to a guesser. | **403** `Verify your email on Qiita first.` (`"unverified": true`). No session. | Yes |
+| 10 | **Success.** | — | Clears this email's counter, and takes its own attempt back off the client's |
 
 The generic 401 text is `Incorrect email or password.` for an unknown email, a wrong password and a malformed attempt alike.
 
@@ -148,17 +168,17 @@ sequenceDiagram
 
 | # | Check | On failure |
 |---|---|---|
-| 1–4 | **The same front checks as login** (`_read_json_body`): `Content-Length` over 8 KB, JSON only, exact `Origin` (and `Sec-Fetch-Site`), a bounded read of a JSON object. | **413** / **415** / **403** / **503**, exactly as for login |
-| 5 | **Token shape.** A string that, stripped, is exactly `qk_` followed by 30–128 characters from `[A-Za-z0-9_-]`. qiita-miint issues `qk_` + `secrets.token_urlsafe(32)`, 43 characters. | **401** `That isn't a qiita-miint access token (qk_…).` `whoami` is never called. |
-| 6 | **`whoami`** (`helpers/qiita_client.py`): `GET {QIITA_CONTROL_PLANE_URL}/api/v1/auth/whoami` with the token as a Bearer, timeout `QIITA_WHOAMI_TIMEOUT_SECONDS` (3 s). One call per worker at a time: a second waits at most 0.5 s. A per-worker circuit breaker opens after 3 transient failures in a row and, for 30 s, answers "transient" without calling. Only a `200` whose `kind` is `human` is accepted. | Definitive (a `401`, or a `200` for an anonymous or service principal): **401** `invalid or unrecognized Qiita token`. Anything else (a timeout, a connection error, a 5xx, any other status, a body that isn't JSON, the breaker open): **503** `qiita-miint is unreachable — try again shortly.` This worker already mid-call for 0.5 s: **503** `The server is busy — try again in a moment.` with `Retry-After: 2`. |
-| 7 | **Principal.** `principal_idx` must be an integer. | **502** `unexpected identity response from Qiita` |
-| 8 | **Email.** The reported email must pass [the same email rule](#the-email-rule) as classic login, and must not carry leading or trailing whitespace (it is identity data from a server, not typed input, so padding is refused rather than trimmed). The email is the link to an account, so a non-ASCII lookalike must never land on someone else's address. | **401** `This qiita-miint account's email can't be used to sign in here.` |
-| 9 | **Principal still matches.** `resolve_user(email, principal_idx=…)`: if the email's account already has a recorded `principal_idx` and it is a different one, the address has moved between qiita-miint accounts ([below](#one-account-per-email)). | **409** `This email's QiitaExplore account belongs to a different qiita-miint account. Sign in with classic Qiita instead.` Logged with both ids. No session. |
-| 10 | **Success.** `purge_expired_sessions()`; `create_session(source="qiita-miint")` with no `password_fp`, revoking the browser's current session in the same transaction. | — |
+| 1–5 | **The same front checks as login** (`_read_json_body`, then `_open_sealed`): `Content-Length` over 8 KB, JSON only, exact `Origin` (and `Sec-Fetch-Site`), a bounded read of a JSON object, then the sealed envelope (a plain `token` field is refused). | **413** / **415** / **403** / **503** / **400** / **409**, exactly as for login |
+| 6 | **Token shape.** A string that, stripped, is exactly `qk_` followed by 30–128 characters from `[A-Za-z0-9_-]`. qiita-miint issues `qk_` + `secrets.token_urlsafe(32)`, 43 characters. | **401** `That isn't a qiita-miint access token (qk_…).` `whoami` is never called. |
+| 7 | **`whoami`** (`helpers/qiita_client.py`): `GET {QIITA_CONTROL_PLANE_URL}/api/v1/auth/whoami` with the token as a Bearer, timeout `QIITA_WHOAMI_TIMEOUT_SECONDS` (3 s). One call per worker at a time: a second waits at most 0.5 s. A per-worker circuit breaker opens after 3 transient failures in a row and, for 30 s, answers "transient" without calling. Only a `200` whose `kind` is `human` is accepted. | Definitive (a `401`, or a `200` for an anonymous or service principal): **401** `invalid or unrecognized Qiita token`. Anything else (a timeout, a connection error, a 5xx, any other status, a body that isn't JSON, the breaker open): **503** `qiita-miint is unreachable — try again shortly.` This worker already mid-call for 0.5 s: **503** `The server is busy — try again in a moment.` with `Retry-After: 2`. |
+| 8 | **Principal.** `principal_idx` must be an integer. | **502** `unexpected identity response from Qiita` |
+| 9 | **Email.** The reported email must pass [the same email rule](#the-email-rule) as classic login, and must not carry leading or trailing whitespace (it is identity data from a server, not typed input, so padding is refused rather than trimmed). The email is the link to an account, so a non-ASCII lookalike must never land on someone else's address. | **401** `This qiita-miint account's email can't be used to sign in here.` |
+| 10 | **Principal still matches.** `resolve_user(email, principal_idx=…)`: if the email's account already has a recorded `principal_idx` and it is a different one, the address has moved between qiita-miint accounts ([below](#one-account-per-email)). | **409** `This email's QiitaExplore account belongs to a different qiita-miint account. Sign in with classic Qiita instead.` Logged with both ids. No session. |
+| 11 | **Success.** `purge_expired_sessions()`; `create_session(source="qiita-miint")` with no `password_fp`, revoking the browser's current session in the same transaction. | — |
 
 The response has the same shape as login's, `{user_id, email, level, csrf_token}`. `level` is `null` for an account that has never signed in with classic Qiita. A failed connect leaves the current session untouched.
 
-**The token is never stored or logged.** It lives in the form's state until submit, is POSTed once, used for the one `whoami` call and dropped. `qiita_client` logs only status codes and exception type names. `test_miint_connect.py :: test_token_never_stored` checks the SQLite, `-wal` and `-journal` files. The master-era `auth_sessions.pat_encrypted` column stays `''`.
+**The token is never stored or logged.** It lives in the form's state until submit, is sealed in the browser and POSTed once, used for the one `whoami` call and dropped. `qiita_client` logs only status codes and exception type names. `test_miint_connect.py :: test_token_never_stored` checks the SQLite, `-wal` and `-journal` files. The master-era `auth_sessions.pat_encrypted` column stays `''`.
 
 **No brute-force limits.** A qiita-miint token is random and can't be guessed, so connect has no limiter and no known-device cookie. A well-shaped attempt still costs one outbound `whoami` call. The per-worker slot keeps that to one of each worker's two request threads, the 3-second timeout bounds each call, and the breaker stops a dead control plane from being asked at all. A flood can still make legitimate connects answer 503. The Cloudflare rate-limiting rule should cover `POST /api/auth/connect` as well as login ([`../DEPLOYING.md`](../DEPLOYING.md)); it is the only per-client throttle connect has.
 
@@ -392,15 +412,12 @@ The download's path safety is separate and unchanged: `_resolve_artifact_file` r
 
 ## Threat model, stated plainly
 
-**Where the password can be read in plaintext.** The production path is browser → Cloudflare → Caddy on kl-remote → SSH tunnel → gunicorn on barnacle ([`../DEPLOYING.md`](../DEPLOYING.md)).
+**Who can read a password or a Qiita-Miint token.** The production path is browser → Cloudflare → Cloudflare Tunnel → Caddy on kl-remote → SSH tunnel → gunicorn on barnacle ([`../DEPLOYING.md`](../DEPLOYING.md)). Every network leg is encrypted, and the secret itself is [sealed in the browser](#secrets-sealed-in-the-browser) to a key only barnacle holds, so:
 
-- **Cloudflare.** TLS from the browser ends at Cloudflare's edge, so Cloudflare sees every password.
-- **Anyone with the `kl-user` account on kl-remote.** That account runs Caddy, which handles the request in plaintext before it enters the tunnel; whoever controls it can log or redirect the body.
-- **Barnacle's gunicorn processes**, which must read it to check it.
+- **Passively, only barnacle's gunicorn processes**, which must read it to check it. Cloudflare and `kl-user` see an envelope they can't open, and can't replay it once it has reached the backend.
+- **Actively, Cloudflare or anyone with the `kl-user` account** can still get it, by changing the page or script they serve (or the public key in it) so the browser seals to their key, or sends the secret elsewhere. That takes deliberate tampering with what every visitor receives, rather than reading a log.
 
-This covers **admin-level Qiita accounts too**: every verified level may log in. Encrypting the Cloudflare → kl-remote hop is a deploy prerequisite; it removes a network eavesdropper on that hop, not the parties above.
-
-A pasted qiita-miint token takes the same path, so the same parties can read it. Unlike a password, it is a bearer credential for qiita-miint itself for as long as qiita-miint accepts it.
+This covers **admin-level Qiita accounts too**: every verified level may log in. A Qiita-Miint token is a bearer credential for qiita-miint itself for as long as qiita-miint accepts it, so it gets the same protection.
 
 **QiitaExplore reads every bcrypt hash.** Its read-only Postgres role can `SELECT` all of `qiita.qiita_user`, so whoever holds that role's credentials (`QIITA_CONFIG_FP` on barnacle) can copy every hash and crack them offline. The role had that access before this change; now QiitaExplore's code reads hashes routinely. The fix is a `SECURITY DEFINER verify(email, password)` function on the Qiita side, so the role checks passwords without reading hashes (TKT-100).
 
@@ -422,6 +439,8 @@ Stated plainly, without overclaiming.
 
 **Defends against:**
 
+- Cloudflare or kl-remote passively reading a password or Qiita-Miint token (logs, captures, memory there), and replay of a captured sign-in — sealed in the browser to a key only barnacle holds, under a one-time challenge.
+- A sign-in sent readable from a plain `http://` page — no Web Crypto there — or a sign-in *succeeding* with a plain secret from an old page or a script, which the server refuses.
 - Session token theft from the database at rest — only hashes are stored.
 - Password or qiita-miint token disclosure from QiitaExplore's own storage or logs — neither is stored or logged, and only a SHA-256 of the bcrypt hash is kept.
 - CSRF on state-changing requests — a constant-time-compared header token that a cross-site page cannot read.
@@ -441,7 +460,9 @@ Stated plainly, without overclaiming.
 
 **Does not defend against:**
 
-- Cloudflare, or anyone with the `kl-user` account on kl-remote, reading passwords and qiita-miint tokens — see the threat model.
+- Cloudflare, or anyone with the `kl-user` account on kl-remote, *changing* the page or script they serve to capture passwords and Qiita-Miint tokens — see the threat model. Passive reading is covered; active tampering is not.
+- Session cookies crossing Cloudflare and kl-remote readable: a stolen cookie is a QiitaExplore session for up to 24 h.
+- A page still open from before sealed sign-in, or a cached old `index.html`, sending a password or token readable before the server refuses it — closed by purging `index.html` at deploy.
 - Anyone holding QiitaExplore's Postgres credentials reading every bcrypt hash.
 - Online guessing against classic Qiita directly.
 - Anyone either system wrongly vouches for an email reaching that email's account — the weaker of the two verifications guards each account — and a fake or compromised `whoami` reaching any account, classic ones included.
@@ -457,4 +478,4 @@ Stated plainly, without overclaiming.
 
 ---
 
-*See also: [`appendix-a-api-reference.md`](appendix-a-api-reference.md#auth) for the 5 auth endpoints · [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md#table-auth_sessions) for the `users` and `auth_sessions` tables and the limiter file · [`appendix-d-configuration.md`](appendix-d-configuration.md#authentication) for the auth variables · [`08-frontend.md`](08-frontend.md) for the browser-side state machine · [`../DEPLOYING.md`](../DEPLOYING.md) for the deploy prerequisites.*
+*See also: [`appendix-a-api-reference.md`](appendix-a-api-reference.md#auth) for the 6 auth endpoints · [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md#table-auth_sessions) for the `users` and `auth_sessions` tables and the limiter file · [`appendix-d-configuration.md`](appendix-d-configuration.md#authentication) for the auth variables · [`08-frontend.md`](08-frontend.md) for the browser-side state machine · [`../DEPLOYING.md`](../DEPLOYING.md) for the deploy prerequisites.*

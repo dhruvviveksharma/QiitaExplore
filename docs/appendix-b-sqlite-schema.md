@@ -1,6 +1,6 @@
 # Appendix B — Local SQLite Schema
 
-Complete reference for QiitaExplore's local SQLite store: the 20 tables, 12 indexes (counted from `store/db.py`, 2026-09-24), their owning modules, and the migration behavior that runs on every import. The login limiter keeps two more tables in a separate file — see [The login limiter file](#the-login-limiter-file).
+Complete reference for QiitaExplore's local SQLite store: the 20 tables, 12 indexes (counted from `store/db.py`, 2026-09-24), their owning modules, and the migration behavior that runs on every import. The login limiter keeps three more tables in a separate file — see [The login limiter file](#the-login-limiter-file).
 
 ---
 
@@ -684,6 +684,15 @@ A success deletes the email's row, and decrements the client's (clearing a block
 | `email_key` | TEXT | no | — | The `e:` key of the account it logged into; a device only exempts that account. |
 | `expires` | REAL | no | — | Unix time, 30 days after the last login from this browser. |
 | `failures` | INTEGER | no | `0` | Attempts through this device since its last success. At 10 (`DEVICE_MAX_FAILURES`) the device stops exempting the account; the next success through the normal limits deletes it and issues a new token. |
+
+### limiter-used_challenges
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `challenge_hash` | TEXT | no (PK) | — | SHA-256 of a sign-in challenge that has been used ([sealed sign-in](02-authentication.md#secrets-sealed-in-the-browser)). |
+| `expires` | REAL | no | — | The challenge's own expiry (Unix time). |
+
+`consume_challenge` decides each use in one `BEGIN IMMEDIATE` transaction, with one clock reading: expired → refused; already present → a replay, refused; otherwise inserted. Rows are pruned only five minutes past their expiry, so pruning can never race a late replay.
 
 **Lifecycle:** each reservation and success is one `BEGIN IMMEDIATE` transaction. On about one reservation in fifty, it prunes attempt rows whose window began over 24 hours ago and that aren't blocking anything, and expired devices.
 

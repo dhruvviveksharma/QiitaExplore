@@ -25,6 +25,9 @@ echo "Frontend uses Babel standalone (runtime transpilation) — no compile step
 # Schema bootstrap once in the parent process so four workers don't race
 # CREATE TABLE / journal_mode on a fresh (or NFS) SQLite file.
 python -c "import store.db"
+# The key sign-in secrets are sealed to (helpers/login_crypto.py): made once
+# here, so the workers only ever read it.
+python -c "from helpers import login_crypto; login_crypto.load_key()"
 
 echo "Starting gunicorn on port $QE_PORT (4 workers, 2 threads each)..."
 # Loopback only: the kl-remote SSH tunnel reaches it as localhost, and this

@@ -280,6 +280,14 @@ what can be closed; they don't change that.
   answers 503. (Unset, it uses `/tmp/qiita_explore-<uid>/login_limiter.db`,
   which it creates `0700`.) Losing the file is harmless: counters reset and
   browsers lose their known-device exemption.
+- **Set** `QIITA_EXPLORE_LOGIN_KEY` to a path in that same private folder,
+  e.g. `/home/d4sharma/qe-limiter/login_key.pem`. Passwords and Qiita-Miint
+  tokens are sealed in the browser to this key, so Cloudflare and kl-remote
+  never see them readable. `start_barnacle.sh` creates it (mode `0600`) on
+  first start. To rotate it, delete the file and restart; open sign-in pages
+  retry once on their own. Needs `cryptography` in the env:
+  `python -c "import cryptography; print(cryptography.__version__)"` must
+  print 41–46.
 - **Optional:** `QIITA_CLASSIC_URL` (default `https://qiita.ucsd.edu`; only
   used for the form's "Forgot password?" / "Create a Qiita account" links).
 - **Leave** `QIITA_EXPLORE_COOKIE_SECURE` unset (true) — the cookies become
@@ -352,12 +360,16 @@ what can be closed; they don't change that.
    `global_chats.context_usage` and `study_detail_cache.sample_files_json`.
    Check `/tmp/qe-5001.log`, then on barnacle:
    `curl -s http://127.0.0.1:5001/api/auth/me` → `{"anonymous":true,...}`.
-4. **Pull the frontend on kl-remote at the same time**
-   (`/home/kl-user/QittaExplore`). The old page only offers the qiita-miint
-   login (its `/api/auth/connect` and `/api/auth/login-url` still answer);
-   the new one adds the classic card beside it. The new
-   `index.html` bumps every changed script's `?v=`; if the old sign-in page
-   still shows, purge `index.html` from Cloudflare's cache. The page's CSP
+4. **Pull the frontend on kl-remote right after the restart, then purge
+   `index.html` from Cloudflare's cache — both required**
+   (`/home/kl-user/QittaExplore`). Sign-in secrets are now sealed in the
+   browser, and the backend refuses a plain token or password ("This sign-in
+   page is out of date — reload it."), so the old page can't sign anyone in
+   against the new backend. Worse, the old page still *sends* the token
+   readable before it's refused, so keep the gap short and make sure no one
+   is served a cached copy: purge `index.html` (Caching → Configuration →
+   Custom Purge → URL) and check that a fresh load shows both cards. The new
+   `index.html` bumps every changed script's `?v=`. The page's CSP
    blocks scripts from hosts other than unpkg and jsdelivr, so if Cloudflare
    injects its analytics beacon, expect a harmless CSP error for it in the
    browser console.

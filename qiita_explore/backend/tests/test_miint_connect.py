@@ -128,7 +128,8 @@ class TestConnect:
     @pytest.mark.parametrize("token", ["", "not-a-token", "qk_short", "qk_" + "a" * 200, "qk_" + "a" * 40 + "!", None, 5])
     def test_bad_token_shape_never_reaches_whoami(self, client, monkeypatch, token):
         calls = ah.fake_whoami(monkeypatch, {})
-        resp = client.post("/api/auth/connect", json={"token": token}, headers={"Origin": ah.TEST_ORIGIN})
+        body = {"envelope": ah.seal(client, {"token": token})}
+        resp = client.post("/api/auth/connect", json=body, headers={"Origin": ah.TEST_ORIGIN})
         assert resp.status_code == 401 and calls == []
 
     def test_unknown_token_401_and_transient_503(self, client, monkeypatch):
