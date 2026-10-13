@@ -22,10 +22,11 @@ nothing about this deployment shape had been written down anywhere before.
 visitor's browser
       │  https://qiita-explore.knight-lab-dev.org/
       ▼
-Cloudflare (inferred from cdn-cgi/rum beacon calls seen in the browser
-            network log — never directly confirmed; see "Open questions"
-            below)
-      │  forwards to kl-remote, almost certainly on :8081
+Cloudflare (nameservers, edge certificate and `server: cloudflare`
+            checked 2026-10-13)
+      │  Cloudflare Tunnel: `cloudflared` on kl-remote holds an outbound,
+      │  encrypted connection to Cloudflare and hands requests to :8081
+      │  (confirmed by Dhruv, 2026-10-13)
       ▼
 kl-remote:8081  —  Caddy
       ├─ /api/*  → reverse_proxy 127.0.0.1:5001  ──┐
@@ -73,7 +74,7 @@ again, but with a different symptom (see "Known bugs" below).
 | Caddy binary | `~/caddy` (i.e. `/home/kl-user/caddy`) | v2.11.4, linux/amd64. **Not** the same as `~/QittaExplore/caddy.tar.gz` — see bug #3 below. |
 | Caddy config | `~/Caddyfile` | Content below. Proxies `/api/*` to the tunnel, serves everything else as static files. |
 | Caddy process | started via `nohup ~/caddy run --config ~/Caddyfile > /tmp/caddy.log 2>&1 &`, run from `~` | Not a systemd service — see "Open follow-ups." |
-| Public domain | `qiita-explore.knight-lab-dev.org` | Fronted by something (Cloudflare, inferred) that forwards to kl-remote, almost certainly port 8081. |
+| Public domain | `qiita-explore.knight-lab-dev.org` | Cloudflare, reaching kl-remote through a Cloudflare Tunnel (`cloudflared` on kl-remote → Caddy on :8081). As of 2026-10-13 plain `http://` is also served (no redirect, no HSTS) — see the first prerequisite below. |
 
 **Current `~/Caddyfile`** (confirmed working 2026-08-17):
 ```caddyfile
@@ -158,13 +159,18 @@ what can be closed; they don't change that.
 
 ### Prerequisites — do these before the first production restart
 
-1. **Encrypt the Cloudflare → kl-remote hop.** Today Caddy listens on plain
-   HTTP `:8081`. Either run a **Cloudflare Tunnel** (`cloudflared` on
-   kl-remote, outbound only, pointing at Caddy on loopback), or switch
-   Cloudflare's SSL/TLS mode to **Full (strict)** with Caddy serving HTTPS
-   on that port using a Cloudflare Origin CA certificate. First confirm how
-   Cloudflare reaches kl-remote today (see "Cloudflare-fronting is inferred,
-   not confirmed" below) — the rest of this list depends on the answer.
+1. **HTTPS only, from the browser on.** The Cloudflare → kl-remote hop is a
+   Cloudflare Tunnel, so it's encrypted. But on 2026-10-13
+   `http://qiita-explore.knight-lab-dev.org/` (and `/api/*`) was served over
+   plain HTTP with no redirect, so a sign-in from an `http://` page would send
+   the password unencrypted before the backend's Origin check refused it. In
+   Cloudflare: SSL/TLS → Edge Certificates → **Always Use HTTPS** on, **HSTS**
+   on (max-age 6 months; leave include-subdomains and preload off unless every
+   `knight-lab-dev.org` subdomain is HTTPS-only), minimum TLS 1.2. Check:
+   `curl -sI http://qiita-explore.knight-lab-dev.org/` answers 301 to https.
+   Also make Caddy listen on loopback only (`127.0.0.1:8081`): `cloudflared`
+   is its only client, and a public `:8081` would be a plain-HTTP way around
+   Cloudflare.
 2. **Gunicorn now binds `127.0.0.1`** (`start_barnacle.sh`, was `0.0.0.0`).
    The tunnel already targets barnacle's loopback, so nothing else should
    change. Confirm nothing else reaches `barnacle2:5001` directly (another
@@ -435,13 +441,10 @@ the first place. See "Open follow-ups."
   whole public deployment down with no automatic recovery and no alert.
   Worth a systemd service (or at minimum a screen/tmux session) for both
   the tunnel and Caddy if this needs to stay up unattended.
-- **Cloudflare-fronting is inferred, not confirmed.** The `cdn-cgi/rum`
-  beacon calls seen in the browser's network log strongly suggest
-  Cloudflare sits in front of `qiita-explore.knight-lab-dev.org`, and that
-  it forwards to kl-remote on port 8081 specifically (matching the port
-  already in use) — but no `cloudflared` config or equivalent was actually
-  located or inspected during this session. Whoever has access to that
-  layer should confirm where it's configured and document it here.
+- **Cloudflare Tunnel: confirmed, config not yet recorded here.** Cloudflare
+  reaches kl-remote through `cloudflared` (Dhruv, 2026-10-13). Where its
+  config lives (`~/.cloudflared/` or `/etc/cloudflared/`, or a
+  dashboard-managed tunnel) and how it's kept running isn't written down yet.
 - **This whole approach depends on the frontend's relative-`/api` default
   staying in place.** If a future change to `qiita_explore/frontend/js/utils.js`
   reintroduces a hardcoded absolute API base (as some other branches had
