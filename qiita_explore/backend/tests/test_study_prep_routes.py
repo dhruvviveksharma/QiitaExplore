@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from .conftest import stub_qiita_db_and_core
+from . import auth_helpers as ah
 
 
 @pytest.fixture(scope="module")
@@ -21,8 +22,7 @@ def _app(tmp_path_factory):
     stub_qiita_db_and_core()
     import run
     import config
-    config.ALLOWED_ORIGINS = []
-    config.SESSION_COOKIE_SECURE = False
+    ah.configure(config)
     return run.app
 
 
@@ -33,16 +33,11 @@ def client(_app):
 
 @pytest.fixture
 def sr(client, monkeypatch):
-    import routes.auth_routes as auth_routes
     import routes.study_routes as mod
-    from helpers.qiita_client import WhoAmIResult
 
-    monkeypatch.setattr(auth_routes, "whoami", lambda pat: WhoAmIResult(ok=True, identity={
-        "principal_idx": 90004, "email": "prep@test.local",
-        "system_role": "user", "scopes": [], "profile_complete": True,
-    }))
-    assert client.post("/api/auth/connect", json={"token": "qk_test"}).status_code == 200
+    ah.login(client, monkeypatch, "prep@test.local")
     monkeypatch.setattr(mod, "is_study_public", lambda sid: sid != 99999)
+    monkeypatch.setattr(mod.study_detail, "public_artifact_ids", lambda sid: set() if sid == 99999 else {1})
     return mod
 
 
@@ -81,9 +76,9 @@ def test_detail_samples_carry_prep_ids(client, sr, monkeypatch):
 
 
 @pytest.mark.parametrize("node, refetched", [
-    ({"kind": "artifact", "node_id": "a1", "filepaths": []}, True),                              # pre-visibility cache
-    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public"}, True),     # pre-paths_v cache
-    ({"kind": "artifact", "node_id": "a1", "filepaths": [], "visibility": "public", "paths_v": 2}, False),
+    ({"kind": "artifact", "node_id": "a1", "artifact_id": 1, "filepaths": []}, True),                          # pre-visibility cache
+    ({"kind": "artifact", "node_id": "a1", "artifact_id": 1, "filepaths": [], "visibility": "public"}, True), # pre-paths_v cache
+    ({"kind": "artifact", "node_id": "a1", "artifact_id": 1, "filepaths": [], "visibility": "public", "paths_v": 2}, False),
 ])
 def test_detail_refetches_graph_cached_before_visibility(client, sr, monkeypatch, node, refetched):
     """The study modal's chart hides archived artifacts by `visibility`, and file

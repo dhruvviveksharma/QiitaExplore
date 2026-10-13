@@ -39,9 +39,9 @@ async function copyToClipboard(text) {
 }
 
 // ─── HTTP helpers ──────────────────────────────────────────────────────────────
-// Identity now comes from the session cookie (set by POST /auth/connect), not
+// Identity now comes from the session cookie (set by POST /auth/login), not
 // a client-supplied user_id. auth.js calls setCsrfToken() once /auth/me or
-// /auth/connect resolves; every state-changing request below picks it up
+// /auth/login resolves; every state-changing request below picks it up
 // automatically — no per-call-site wiring needed.
 const _STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let _csrfToken = null;
@@ -62,7 +62,7 @@ const apiFetch = async (path, opts = {}) => {
     headers['X-CSRF-Token'] = _csrfToken;
   }
   const res = await fetch(`${API}${path}`, { ...opts, headers, credentials: 'include' });
-  // /auth/connect legitimately 401s on a bad token — routing that through the
+  // /auth/login legitimately 401s on a wrong password — routing that through the
   // handler would fight the sign-in screen it is trying to render.
   if (res.status === 401 && !path.startsWith('/auth/') && _onUnauthorized) {
     _onUnauthorized();
@@ -100,9 +100,11 @@ function renderMarkdown(text) {
   const raw = typeof marked !== 'undefined'
     ? (typeof marked.parse === 'function' ? marked.parse(src) : marked(src))
     : src;
+  // No sanitizer (the CDN file failed its integrity check or didn't load):
+  // show the text escaped rather than unsanitized HTML.
   let html = typeof DOMPurify !== 'undefined'
     ? DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] })
-    : raw;
+    : src.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   // External links open in a new tab — applied post-sanitize so it works across marked versions.
   html = html.replace(
     /<a\s+([^>]*?)href="(https?:\/\/[^"]+)"([^>]*)>/gi,

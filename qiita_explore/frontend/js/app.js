@@ -1,17 +1,12 @@
-function AuthenticatedApp({ identity, onLogout, onClaimDone }) {
+function AuthenticatedApp({ identity, onLogout }) {
   const state = useAppState();
-  return (
-    <>
-      <LegacyClaimBanner onDone={onClaimDone} />
-      {/* AccountBar renders inside the topbar (see app_render.js) so flex
-          centers it, rather than floating over the page on fixed coordinates. */}
-      {renderApp(state, { identity, onLogout })}
-    </>
-  );
+  // AccountBar renders inside the topbar (see app_render.js) so flex
+  // centers it, rather than floating over the page on fixed coordinates.
+  return renderApp(state, { identity, onLogout });
 }
 
 function App() {
-  const { status, identity, refresh, logout } = useAuth();
+  const { status, identity, qiitaUrl, refresh, logout } = useAuth();
 
   // Keep the address bar pointed at /login whenever we're anonymous — covers
   // first-load-anonymous, explicit logout, and mid-session-401 uniformly,
@@ -30,9 +25,9 @@ function App() {
   // through parseHash/buildHash (already-global, from useUrlSync.js) rather
   // than a raw decode+assign: URLSearchParams.get() already fully decodes
   // `next`, so a second decodeURIComponent() would double-decode and can
-  // throw URIError on a malformed link — which auth.js's connect try/catch
+  // throw URIError on a malformed link — which auth.js's sign-in try/catch
   // would swallow as a false "Network error" even though sign-in succeeded.
-  const handleConnected = () => {
+  const handleLoggedIn = () => {
     const qs = window.location.hash.split('?')[1] || '';
     const nextHash = new URLSearchParams(qs).get('next');
     const { view, studyId } = nextHash ? parseHash(nextHash) : { view: { type: 'browse' }, studyId: null };
@@ -44,9 +39,9 @@ function App() {
     return <div className="auth-loading"><WreathLoader size={32} /></div>;
   }
   if (status === 'anonymous') {
-    return <ConnectQiita onConnected={handleConnected} />;
+    return <QiitaLogin qiitaUrl={qiitaUrl} onLoggedIn={handleLoggedIn} />;
   }
-  return <AuthenticatedApp identity={identity} onLogout={logout} onClaimDone={refresh} />;
+  return <AuthenticatedApp identity={identity} onLogout={logout} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

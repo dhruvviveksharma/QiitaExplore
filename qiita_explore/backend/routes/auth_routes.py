@@ -1,136 +1,176 @@
+"""Classic-Qiita login: POST /api/auth/login, GET /api/auth/me, POST /api/auth/logout.
+
+Users log in with their classic-Qiita email + password, checked against
+qiita.qiita_user (helpers/qiita_accounts.py). Every check fails closed, in this
+order: body size, JSON only (stops HTML-form login CSRF), exact Origin, format,
+brute-force limits (helpers/login_limiter.py), then the account and the bcrypt
+compare. Unknown email and wrong password answer identically. The password is
+never logged, stored, put in an error or echoed back. docs/02-authentication.md.
+"""
+import ipaddress
 import json
 import logging
-from urllib.parse import quote
 
 from flask import g, jsonify, request
 
 import config
 from run import app
-from helpers.qiita_client import whoami
-from store.auth_store import create_session, get_user, revoke_session, upsert_user
-from store.legacy_claim import (
-    LegacyClaimConflict,
-    claim_eligible,
-    claim_legacy_default,
-    legacy_default_counts,
-)
+from helpers import login_limiter as limiter
+from helpers import qiita_accounts as accounts
+from store.auth_store import create_session, get_user, purge_expired_sessions, resolve_user, revoke_session
 
 logger = logging.getLogger(__name__)
 
+_MAX_LOGIN_BODY = 8 * 1024
+_GENERIC_401 = "Incorrect email or password."
+
 
 def _cookie_kwargs():
+    # No Domain: with Secure on the names carry __Host- (host-only, path /).
     return dict(httponly=True, samesite="Lax", secure=config.SESSION_COOKIE_SECURE, path="/")
 
 
 def _set_session_cookie(resp, raw_token: str):
-    resp.set_cookie(
-        config.SESSION_COOKIE_NAME,
-        raw_token,
-        max_age=config.AUTH_SESSION_ABSOLUTE_TTL_SECONDS,
-        **_cookie_kwargs(),
-    )
+    resp.set_cookie(config.SESSION_COOKIE_NAME, raw_token,
+                    max_age=config.AUTH_SESSION_ABSOLUTE_TTL_SECONDS, **_cookie_kwargs())
 
 
 def _clear_session_cookie(resp):
-    resp.delete_cookie(config.SESSION_COOKIE_NAME, path="/")
+    resp.delete_cookie(config.SESSION_COOKIE_NAME, path="/", secure=config.SESSION_COOKIE_SECURE)
 
 
-def _origin_allowed() -> bool:
-    """Exact-origin check for the connect endpoint (defense against a
-    cross-site page silently posting a token to us on the user's behalf)."""
-    if not config.ALLOWED_ORIGINS:
-        # No explicit allowlist configured — same-origin production
-        # deployment behind the proxy. Nothing to check against.
-        return True
-    return request.headers.get("Origin") in config.ALLOWED_ORIGINS
+def _origin_error():
+    """None when the request's Origin is QiitaExplore's own; else (body, status).
+    Refuses outright when no origin is configured: there is nothing to check
+    against, and guessing from Host is unreliable behind Cloudflare + Caddy."""
+    allowed = set(config.ALLOWED_ORIGINS)
+    if config.PUBLIC_ORIGIN:
+        allowed.add(config.PUBLIC_ORIGIN)
+    if not allowed:
+        logger.error("login refused: set QIITA_EXPLORE_PUBLIC_ORIGIN (or QIITA_EXPLORE_ALLOWED_ORIGINS)")
+        return {"error": "Login is not configured on this server."}, 503
+    origin = request.headers.get("Origin")
+    if origin not in allowed:
+        return {"error": "origin not allowed"}, 403
+    # same-site only for a dev origin (frontend and backend on different ports).
+    site = request.headers.get("Sec-Fetch-Site")
+    ok_sites = ("same-origin", "same-site") if origin in config.ALLOWED_ORIGINS else ("same-origin",)
+    if site and site not in ok_sites:
+        return {"error": "origin not allowed"}, 403
+    return None
+
+
+def _client_ip():
+    """The real client IP, from the configured trusted header only. Its last
+    entry is the one the trusted proxy wrote; earlier ones are the client's own."""
+    if not config.CLIENT_IP_HEADER:
+        return None
+    raw = (request.headers.get(config.CLIENT_IP_HEADER) or "").split(",")[-1].strip()
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return None
 
 
 def _identity_payload(user_row: dict) -> dict:
     return {
         "user_id": user_row["user_id"],
-        "email": user_row.get("email"),
-        "system_role": user_row.get("system_role"),
-        "scopes": json.loads(user_row.get("scopes") or "[]"),
-        "profile_complete": bool(user_row.get("profile_complete")),
-        "claim_eligible": claim_eligible(user_row["user_id"]),
+        "email": user_row.get("qiita_email"),
+        "level": user_row.get("user_level"),
     }
 
 
-@app.route("/api/auth/login-url", methods=["GET"])
-def api_auth_login_url():
-    # Default: send the browser straight to the control plane's login entry.
-    # When QIITA_LOGINROCKET_URL is configured, wrap that in a LoginRocket
-    # /logout first so a cached AuthRocket session can't hijack the login /
-    # "Need a login" entry into completing login as the previously-cached user.
-    # The control plane's /api/v1/auth/login still runs on the next hop (it sets
-    # the signed login-state cookie), so this only prepends a session clear.
-    control_plane_login = f"{config.QIITA_PUBLIC_LOGIN_URL}/api/v1/auth/login"
-    if config.QIITA_LOGINROCKET_URL:
-        url = f"{config.QIITA_LOGINROCKET_URL}/logout?redirect_uri={quote(control_plane_login, safe='')}"
-    else:
-        url = control_plane_login
-    return jsonify({"url": url})
+def _limited(retry_after: int):
+    minutes = max(1, (retry_after + 59) // 60)
+    resp = jsonify({"error": f"Too many attempts — try again in {minutes} minute{'s' if minutes != 1 else ''}.",
+                    "retry_after": retry_after})
+    resp.headers["Retry-After"] = str(retry_after)
+    return resp, 429
 
 
-@app.route("/api/auth/connect", methods=["POST"])
-def api_auth_connect():
-    if not _origin_allowed():
-        return jsonify({"error": "origin not allowed"}), 403
+def _busy():
+    resp = jsonify({"error": "The server is busy — try again in a moment."})
+    resp.headers["Retry-After"] = "2"
+    return resp, 503
 
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "JSON body required"}), 400
-    pat = (data.get("token") or "").strip()
-    if not pat:
-        return jsonify({"error": "token required"}), 400
 
-    result = whoami(pat)
-    if result.transient_error:
-        return jsonify({"error": "Qiita is temporarily unreachable, try again shortly"}), 503
-    if not result.ok:
-        return jsonify({"error": "invalid or unrecognized Qiita token"}), 401
+def _unreachable():
+    return jsonify({"error": "Qiita's user database is unreachable — try again shortly."}), 503
 
-    identity = result.identity
-    principal_idx = identity.get("principal_idx")
-    if principal_idx is None:
-        return jsonify({"error": "unexpected identity response from Qiita"}), 502
 
-    prior_hash = (g.session_row or {}).get("session_hash")
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    if (request.content_length or 0) > _MAX_LOGIN_BODY:
+        return jsonify({"error": "request too large"}), 413
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 415
+    err = _origin_error()
+    if err:
+        return jsonify(err[0]), err[1]
+    # Bounded read: a chunked body has no Content-Length for the check above.
+    raw = request.stream.read(_MAX_LOGIN_BODY + 1)
+    if len(raw) > _MAX_LOGIN_BODY:
+        return jsonify({"error": "request too large"}), 413
     try:
-        user_id = upsert_user(
-            principal_idx=principal_idx,
-            email=identity.get("email"),
-            system_role=identity.get("system_role"),
-            scopes=identity.get("scopes") or [],
-            profile_complete=identity.get("profile_complete", False),
-        )
-        raw_token, csrf_token = create_session(
-            user_id=user_id,
-            source="paste",
-            replace_session_hash=prior_hash,
-        )
-        user_row = get_user(user_id)
-    except Exception as exc:
-        logger.exception("unexpected error establishing session for principal_idx=%s", principal_idx)
-        body = {"error": "unexpected error establishing session"}
-        if config.DEBUG_ERROR_DETAIL:
-            body["detail"] = f"{type(exc).__name__}: {exc}"
-        return jsonify(body), 500
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON body required"}), 415
 
-    resp = jsonify({**_identity_payload(user_row), "csrf_token": csrf_token})
+    email = accounts.normalize_email(data.get("email"))
+    password = data.get("password")
+    if email is None or not accounts.valid_password_format(password):
+        return jsonify({"error": _GENERIC_401}), 401        # not counted: no bcrypt work was done
+
+    device_token = request.cookies.get(config.DEVICE_COOKIE_NAME)
+    client_ip = _client_ip()
+    try:
+        allowed, retry_after, via_device = limiter.reserve(email, client_ip, device_token)
+    except limiter.LimiterUnavailable:
+        logger.exception("login limiter unavailable")
+        return _unreachable()
+    if not allowed:
+        return _limited(retry_after)
+
+    try:
+        acct = accounts.fetch_account(email)
+        ok = accounts.check_password(password, acct.password_hash) if acct else accounts.burn_check(password)
+    except accounts.AccountsUnavailable:
+        return _unreachable()
+    except accounts.Busy:
+        return _busy()
+    if not ok:
+        return jsonify({"error": _GENERIC_401}), 401
+    if acct.unverified:
+        return jsonify({"error": "Verify your email on Qiita first.", "unverified": True}), 403
+
+    try:
+        new_device = limiter.succeeded(email, device_token, client_ip, via_device)
+    except limiter.LimiterUnavailable:
+        new_device = None                                   # the login itself is fine
+    purge_expired_sessions()
+    user_id = resolve_user(email, acct.level)              # == acct.email: the lookup is exact
+    raw_token, csrf_token = create_session(
+        user_id=user_id, source="qiita-classic",
+        password_fp=accounts.password_fingerprint(acct.password_hash),
+        replace_session_hash=(g.get("session_row") or {}).get("session_hash"))
+    resp = jsonify({**_identity_payload(get_user(user_id)), "csrf_token": csrf_token})
     _set_session_cookie(resp, raw_token)
+    if new_device:
+        resp.set_cookie(config.DEVICE_COOKIE_NAME, new_device,
+                        max_age=limiter.DEVICE_TTL_SECONDS, **_cookie_kwargs())
     return resp
 
 
 @app.route("/api/auth/me", methods=["GET"])
 def api_auth_me():
-    if g.get("user_id") is None:
-        return jsonify({"anonymous": True})
-    user_row = get_user(g.user_id)
+    user_row = get_user(g.user_id) if g.get("user_id") is not None else None
     if user_row is None:
-        return jsonify({"anonymous": True})
+        return jsonify({"anonymous": True, "qiita_url": config.QIITA_CLASSIC_URL})
     payload = _identity_payload(user_row)
-    payload["csrf_token"] = (g.session_row or {}).get("csrf_token")
+    payload["csrf_token"] = (g.get("session_row") or {}).get("csrf_token")
+    payload["qiita_url"] = config.QIITA_CLASSIC_URL
     return jsonify(payload)
 
 
@@ -141,23 +181,3 @@ def api_auth_logout():
     resp = jsonify({"ok": True})
     _clear_session_cookie(resp)
     return resp
-
-
-@app.route("/api/auth/legacy-default", methods=["GET"])
-def api_auth_legacy_default():
-    eligible = claim_eligible(g.user_id)
-    payload = {"eligible": eligible}
-    if eligible:
-        payload["counts"] = legacy_default_counts()
-    return jsonify(payload)
-
-
-@app.route("/api/auth/claim-default", methods=["POST"])
-def api_auth_claim_default():
-    try:
-        counts = claim_legacy_default(g.user_id)
-    except ValueError:
-        return jsonify({"error": "not eligible to claim"}), 403
-    except LegacyClaimConflict:
-        return jsonify({"error": "legacy data already claimed"}), 409
-    return jsonify({"ok": True, "claimed": counts})

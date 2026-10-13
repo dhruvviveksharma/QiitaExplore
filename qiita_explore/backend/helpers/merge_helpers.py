@@ -4,18 +4,47 @@ routes/artifact_routes.py — pure (no Flask dependency)."""
 import json
 
 from store import get_study_detail_cache, upsert_study_detail_cache
-from helpers.qiita_fetch import _fetch_study_detail_from_qiita
+from helpers.artifact_graph import fetch_artifact_graph
+from helpers.qiita_fetch import _fetch_study_detail_from_qiita, public_artifact_ids
 from helpers.biom_autopick import autopick_artifact, _namespace
 
 
+def public_artifacts(study_id: int) -> dict:
+    """{artifact_id: graph node} for the study's public artifacts — {} when the
+    study isn't public (TKT-043). Visibility is per artifact (a public study can
+    still hold private or sandboxed ones) and is read live; the cached graph
+    only supplies the file lists."""
+    public = public_artifact_ids(study_id)
+    if not public:
+        return {}
+    cached = get_study_detail_cache(study_id)
+    graph = None
+    if cached and cached.get("artifact_graph_json"):
+        try:
+            graph = json.loads(cached["artifact_graph_json"])
+        except ValueError:
+            graph = None
+    nodes = [n for n in graph or [] if n.get("kind") == "artifact"]
+    if not nodes or "filepaths" not in nodes[0] or "paths_v" not in nodes[0]:   # study_detail's staleness rule
+        nodes = [n for n in fetch_artifact_graph(study_id) if n.get("kind") == "artifact"]
+    return {n.get("artifact_id"): n for n in nodes if n.get("artifact_id") in public}
+
+
 def _get_artifacts(study_id: int) -> list:
-    """Return artifact list from cache (warm) or Qiita DB (cold)."""
+    """The study's public artifacts, from cache (warm) or Qiita DB (cold).
+    Everything that reads BIOM files or sample lists for a merge workspace or
+    an artifact goes through here, and every signed-in Qiita user reaches those
+    routes — so private studies and non-public artifacts are left out (TKT-043)."""
+    public = public_artifact_ids(study_id)
+    if not public:
+        return []
     cached = get_study_detail_cache(study_id)
     if cached and cached.get("artifacts_json"):
-        return json.loads(cached["artifacts_json"])
-    preps, artifacts = _fetch_study_detail_from_qiita(study_id)
-    upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))
-    return artifacts
+        artifacts = json.loads(cached["artifacts_json"])
+    else:
+        preps, artifacts = _fetch_study_detail_from_qiita(study_id)
+        upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))
+    return [a for a in artifacts if a.get("artifact_id") in public]
 
 
 def _type_filtered_artifacts(artifacts: list, common_type: str) -> list:

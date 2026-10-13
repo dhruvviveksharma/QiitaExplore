@@ -8,12 +8,12 @@ Prerequisites: [`00-orientation.md`](00-orientation.md) — the two-Qiitas disti
 
 ## The strategic problem
 
-QiitaExplore straddles two systems:
+QiitaExplore depends entirely on the classic Qiita monolith:
 
-- **Identity** comes from the Qiita-MIINT control plane, over HTTPS.
-- **All scientific data** comes from the classic Qiita monolith, over direct read-only SQL, through a vendored copy of Qiita's own database layer.
+- **All scientific data** comes from it, over direct read-only SQL, through a vendored copy of Qiita's own database layer.
+- **Identity** comes from it too, since 2026-10-12: users log in with their classic-Qiita email and password, checked against `qiita.qiita_user` through the same read-only Postgres role ([`02-authentication.md`](02-authentication.md)). Before that, identity came from the Qiita-MIINT control plane (a pasted `qk_` token checked with `whoami`).
 
-That is not a destination. It is where an in-progress migration currently stands, and it carries real costs: a vendored dependency (`qiita_db/`, `qiita_core/`) that must track upstream schema changes, direct coupling to a database schema that is not a published interface, and a thread-unsafe transaction singleton still in the request path.
+That is not a destination. The long-term target is the new platform, and the current state carries real costs: a vendored dependency (`qiita_db/`, `qiita_core/`) that must track upstream schema changes, direct coupling to a database schema that is not a published interface, and a thread-unsafe transaction singleton still in the request path.
 
 The target:
 
@@ -28,11 +28,11 @@ flowchart LR
 
     PG[("classic Qiita<br/>PostgreSQL")]
 
-    QE ==>|"identity — works today"| CP
+    QE -.->|"identity — used until 2026-10-12"| CP
     QE -.->|"❌ no list-studies endpoint"| CP
     QE -.->|"❌ no per-user access resolution"| CP
     QE -.->|"future — bulk reads"| DP
-    QE ==>|"everything else, today"| PG
+    QE ==>|"everything today, logins included"| PG
 
     style PG stroke-dasharray: 5 5
     linkStyle 1 stroke:#c0392b,stroke-width:2px
@@ -81,11 +81,11 @@ That is **create-time ownership assignment**, not read-path impersonation. It se
 
 | Approach | How it works | Cost |
 |---|---|---|
-| **Login-time identity only** *(what ships today)* | Verify PAT once at connect; authorize later requests with local session cookie | Cannot call platform APIs as the user after login; revoked PATs remain valid locally until session ends |
+| **Login-time identity only** *(what shipped until 2026-10-12)* | Verify a PAT once at connect; authorize later requests with a local session cookie | Cannot call platform APIs as the user after login; revoked PATs remain valid locally until session ends. Today's classic-Qiita login has the same shape — and the same gap: it proves who the user is, never which studies they may see, so QiitaExplore serves public data only (TKT-043) |
 | **New platform endpoint** | Add `GET /study/{idx}/access/{principal_idx}` or an `X-On-Behalf-Of` scope | Requires an upstream change and a security review — an impersonation surface is a serious thing to add |
 | **Cached access list** | Service account periodically syncs per-user grants into local storage | Stale-permission window; duplicates the platform's authorization model |
 
-**Recommendation: pursue a platform access-check endpoint.** QiitaExplore no longer stores per-user PATs (see [`02-authentication.md`](02-authentication.md)), so per-user PAT forwarding is not an option without redesigning auth again. A service-account model with an explicit on-behalf-of access check is the cleanest path for future platform API calls.
+**Recommendation: pursue a platform access-check endpoint.** QiitaExplore holds no per-user platform credential — today it logs users in against classic Qiita and keeps no token (see [`02-authentication.md`](02-authentication.md)) — so per-user token forwarding is not an option without redesigning auth again. A service-account model with an explicit on-behalf-of access check is the cleanest path for future platform API calls.
 
 ---
 
@@ -194,16 +194,17 @@ None of these were previously ticketed. The four most serious were filed as **TK
 
 | Finding | Ticket | Severity | Chapter |
 |---|---|---|---|
-| `/api/settings` is **global, not per-user** — any user overwrites everyone's Anthropic API key | **TKT-042** | **High** | [`02`](02-authentication.md) |
-| Artifact download performs **no study-level authorization** — any authenticated user can fetch files from non-public studies | **TKT-043** | **High** | [`02`](02-authentication.md) |
+| ~~`/api/settings` is **global, not per-user** — any user overwrites everyone's Anthropic API key~~ Fixed 2026-10-12: `POST` removed; per-user keys are TKT-102 | **TKT-042** | **High** | [`02`](02-authentication.md) |
+| ~~Artifact download performs **no study-level authorization**~~ Fixed 2026-10-12: artifact and merge-workspace routes serve only public artifacts of public studies | **TKT-043** | **High** | [`02`](02-authentication.md) |
 | Merge silently falls back to autopick when an explicitly chosen artifact is absent from the prep-joined list — **merges a different artifact than the one selected** | **TKT-044** | **High** | [`07`](07-merge-and-biom.md) |
-| `.env.bak.*` files accumulate on the deployment host containing the LLM key and the **PAT encryption key** in plaintext | **TKT-045** | **High** | [`09`](09-operations.md) |
+| `.env.bak.*` files accumulate on the deployment host containing the LLM key (and, in older backups, the now-unused PAT encryption key) in plaintext | **TKT-045** | **High** | [`09`](09-operations.md) |
 | No test guards the dual-authored segment contract | — | Medium | [`06`](06-streaming-and-chat.md), [`10`](10-testing.md) |
 | `study_detail_cache.cached_at` is per-row while payload columns COALESCE — one fresh column resets the TTL for all nine | — | Medium | [`03`](03-data-access-and-caching.md) |
 | Aborting a stream leaves the message spinning until reload | — | Medium | [`06`](06-streaming-and-chat.md) |
-| e2e tier and `run_tests.sh` preflight both hit protected endpoints unauthenticated — **the whole tier skips** | — | Medium | [`10`](10-testing.md) |
+| ~~e2e tier and `run_tests.sh` preflight both hit protected endpoints unauthenticated~~ Fixed: both probe `/api/auth/me`, and the e2e tier logs in once | — | Medium | [`10`](10-testing.md) |
 | SQLite opened with no `busy_timeout` — `database is locked` surfaces as a 500 under write contention | — | Medium | [`09`](09-operations.md) |
-| `purge_expired_sessions()` is defined but **never called** — session rows accumulate forever | — | Low | [`02`](02-authentication.md) |
+| `purge_expired_sessions()` was **never called** — now runs on every login (2026-10-12), so rows are only purged when someone logs in | TKT-056 | Low | [`02`](02-authentication.md) |
+| QiitaExplore's Postgres role reads **every bcrypt hash** in `qiita.qiita_user` to check logins; ask Qiita's DB admins for a `SECURITY DEFINER` verify function | **TKT-100** | Medium | [`02`](02-authentication.md#threat-model-stated-plainly) |
 | Cache TTL check **fails open** on an unparseable timestamp; the auth path fails closed | — | Low | [`03`](03-data-access-and-caching.md) |
 | `reasoning` tokens are generated and **silently dropped** on the web path | — | Low | [`05`](05-agent.md), [`06`](06-streaming-and-chat.md) |
 | `get_study_report`'s auto-pin swallows cap rejection — the study is silently not pinned | — | Low | [`05`](05-agent.md) |
@@ -216,7 +217,7 @@ None of these were previously ticketed. The four most serious were filed as **TK
 
 Ordered by value per unit of effort, not by ticket number.
 
-1. **The three access-control defects** — TKT-042 (settings tenancy), TKT-043 (artifact download authorization), TKT-045 (plaintext key backups). Small, contained, and currently wrong. TKT-045 first if the barnacle host has accumulated `.env.bak.*` files, since exposure continues until they are removed.
+1. **The remaining access-control defect** — TKT-045 (plaintext key backups). TKT-042 and TKT-043 were fixed with the classic-Qiita login (2026-10-12), which opened QiitaExplore to every verified Qiita user. Remove any `.env.bak.*` files on the barnacle host first, since exposure continues until they are gone; then TKT-100 (the hash-reading role) is an upstream ask worth starting early.
 2. **Remove `compute_diversity` from the live schema.** One line; stops wasting agent iterations today.
 3. **The segment-contract parity test.** The contract is correct *now*; a test is what keeps it correct.
 4. **TKT-023's compatibility checks.** Scientifically the most consequential item on this list — a silently wrong merge is worse than a failed one.

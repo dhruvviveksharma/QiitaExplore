@@ -28,25 +28,25 @@ flowchart TB
 
     PGDB[("classic Qiita<br/>PostgreSQL")]
     SQ[("SQLite · WAL<br/>projects.db")]
+    LIM[("SQLite<br/>login limiter")]
     NRP["NRP-Nautilus<br/>ellm.nrp-nautilus.io/v1"]
     ANT["Anthropic API"]
-    CP["Qiita-MIINT<br/>control plane :8080"]
 
     B --> NG
     S -.serves.-> B
     P --> GU
-    W --> PGDB
+    W -->|"study data · qiita_user (login)"| PGDB
     W --> SQ
+    W --> LIM
     W --> NRP
     W --> ANT
-    W -->|whoami| CP
 ```
 
-`start_barnacle.sh` launches Gunicorn with `-w 4 --threads 2 --worker-class gthread --timeout 120 --graceful-timeout 30`. That is **4 processes × 2 threads = 8 concurrent requests**, and the `gthread` worker class is the reason several design decisions downstream look the way they do.
+`start_barnacle.sh` launches Gunicorn with `-w 4 --threads 2 --worker-class gthread --timeout 120 --graceful-timeout 30`, bound to `127.0.0.1` only (since 2026-10-12 — this backend takes passwords, so only the local proxy or SSH tunnel may reach it). That is **4 processes × 2 threads = 8 concurrent requests**, and the `gthread` worker class is the reason several design decisions downstream look the way they do.
 
 ### Development (SSH tunnels)
 
-The dev setup runs the backend on port **5002** on barnacle, forwarded to the developer's machine, with the frontend served locally. `frontend/index.html` ships with `<meta name="api-base" content="http://127.0.0.1:5002/api">` and a TODO to revert it to 5001 before merging to master — this is the CLAUDE.md port convention, not a bug. `Qiita/start_qiita_stack.sh` brings up the tunnels in both directions: a forward tunnel for the browser to reach the backend, and a **reverse** tunnel so the backend can reach a control plane running on the developer's laptop.
+The dev setup runs the backend on port **5002** on barnacle, forwarded to the developer's machine, with the frontend served locally. `frontend/index.html` ships with `<meta name="api-base" content="http://127.0.0.1:5002/api">` and a TODO to revert it to 5001 before merging to master — this is the CLAUDE.md port convention, not a bug. `Qiita/start_qiita_stack.sh` brings up the tunnels in both directions: a forward tunnel for the browser to reach the backend, and a **reverse** tunnel so the backend can reach a control plane running on the developer's laptop. Since 2026-10-12 QiitaExplore no longer calls the control plane (logins are checked against classic Qiita), so only the forward tunnel matters to it.
 
 If you are reading a diagram in these docs and it says `:8080`, it is drawing production.
 
@@ -128,13 +128,14 @@ sequenceDiagram
     participant M2 as _require_auth
     participant H as Handler
 
-    B->>F: request (Cookie: qe_sid, X-CSRF-Token)
+    B->>F: request (Cookie: __Host-qe_sid, X-CSRF-Token)
     F->>M1: before_request #1
     Note over M1: OPTIONS → short-circuit
     M1->>M1: look up session by SHA-256(cookie)
     alt session invalid / expired / revoked
         M1-->>F: g.user_id stays None
     else session valid
+        M1->>M1: every 5 min: re-read the account in qiita.qiita_user<br/>(password changed / gone / unverified → revoke)
         M1->>M1: touch_session (throttled)
     end
     M1->>M2: g.user_id set (or None)
@@ -148,7 +149,7 @@ sequenceDiagram
     H-->>B: response
 ```
 
-The details of each branch — why a transient failure returns 503 without logging the user out, why the public allowlist matches exact endpoint names rather than path prefixes — are in [`02-authentication.md`](02-authentication.md).
+The details of each branch — why Qiita's database being unreachable returns 503 (after an hour's grace) without logging the user out, why the public allowlist matches exact endpoint names rather than path prefixes — are in [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -160,7 +161,7 @@ backend/
   config.py         env loading, LLM clients, model roster, prompts, auth config
   agent_harness.py  offline CLI driver for the agent loop
 
-  routes/     7 modules, 52 endpoints — thin; parse, authorize, delegate, serialize
+  routes/     9 modules, 74 routes — thin; parse, authorize, delegate, serialize
   helpers/    subsystem logic — the agent loop, tools, search, BIOM, auth, SSE
   services/   study_service.py (SQL builders), llm.py (regex query planner)
   store/      SQLite access, one module per domain + a flat re-export facade
@@ -176,13 +177,15 @@ The intended layering is `routes → helpers/services → store`, and it mostly 
 
 ## Three ways to reach PostgreSQL
 
-QiitaExplore reads classic Qiita's database through three distinct mechanisms. This is not redundancy — each exists for a specific reason, and one of them is being retired.
+QiitaExplore reads classic Qiita's database through three distinct mechanisms. This is not redundancy — each exists for a specific reason, and one of them is being retired. (Login adds a small fourth pool, below the table.)
 
 | Mechanism | Where | Why |
 |---|---|---|
 | **Vendored `qiita_db.sql_connection.TRN`** | 2 call sites only | Legacy. A single shared psycopg2 connection wrapped in a transaction singleton. **Not thread-safe.** |
-| **Shared pool — `pooled_fetchall`** | The majority of reads | `ThreadedConnectionPool(2, 8)`, lazily constructed. The default path. |
+| **Shared pool — `pooled_fetchall`** | The majority of reads | `ThreadedConnectionPool(2, 8)`, lazily constructed. The default path. Since 2026-10-12: `connect_timeout=5` and TCP keepalives, so a silent Postgres can't pin request threads on connect; no `statement_timeout` yet (TKT-103). |
 | **Per-call pools / dedicated connections** | `sample_search`, `artifact_graph` | Needs its own `statement_timeout`, or fans out across many threads at once. |
+
+**Account reads for login** (`helpers/qiita_accounts.py`) have their own `ThreadedConnectionPool(2, 4)` per worker (two kept open for reuse): read-only transactions, 5-second connect and statement timeouts, and a circuit breaker (3 failures → 30 s fail-fast), so a silent Postgres can't pin the login path or the per-request session re-check.
 
 ### Why `TRN` is a problem
 

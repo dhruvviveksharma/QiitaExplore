@@ -11,11 +11,14 @@ Prerequisites: [`06-streaming-and-chat.md`](06-streaming-and-chat.md) — the SS
 There is no bundler, no `package.json`, no `node_modules`, and no compile artifact. `frontend/index.html` loads React 18 UMD, `marked`, `DOMPurify`, and `@babel/standalone` from CDNs, and then lists every application file as a `<script type="text/babel">`. Babel transpiles the JSX **in the browser, on every page load**.
 
 ```html
-<script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"
+        integrity="sha384-…"></script>
 <script type="text/babel" src="js/utils.js?v=5"></script>
 <script type="text/babel" src="js/icons.js?v=1"></script>
 <!-- … twelve more … -->
 ```
+
+**Pinned, with SRI, under a CSP** (since 2026-10-12, because this page takes Qiita passwords). Each CDN script is an exact version — React and ReactDOM 18.3.1, marked 15.0.12, DOMPurify 3.2.4, `@babel/standalone` 7.23.10 — with an `integrity="sha384-…"` hash and `crossorigin="anonymous"`, so a CDN file that changes fails to load instead of running. A `Content-Security-Policy` meta tag limits the page to `script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'unsafe-eval' 'unsafe-inline'`, `connect-src 'self' http://127.0.0.1:* http://localhost:*` (loopback only for local dev against a tunneled backend), Google Fonts for styles and fonts, `img-src 'self' data:`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`. The pinned, SRI-checked scripts are the main protection; the CSP is defense in depth. Babel standalone needs `'unsafe-eval'` and inline scripts, so the CSP does not stop injected script, and while `connect-src` keeps `fetch`/XHR on the page's own origin, injected script could still leave by navigation. `frame-ancestors` is ignored in a meta CSP; the proxy has to send it as a header ([`../DEPLOYING.md`](../DEPLOYING.md)). **Bumping a CDN version means recomputing its `integrity` hash**, and adding a new external host means editing the CSP.
 
 There are no ES modules. No file has an `import` or an `export`. Every function, every constant, and every component lands in one shared global lexical scope, and each file reaches the previous file's definitions by name.
 
@@ -37,7 +40,7 @@ const API = document.querySelector('meta[name="api-base"]')?.content || '/api';
 
 The relative default resolves against whatever origin actually served the page, so it works unmodified behind any same-origin proxy — production nginx, a Cloudflare Tunnel, or anything else that serves the frontend and proxies `/api/` from one hostname. Nothing in the frontend needs to know the deployment's hostname or port.
 
-The meta tag exists only as an **override**, for the one case the relative default cannot cover: local dev where the frontend and backend are *not* same-origin — a static file server on one port, the API reached through a separate loopback SSH tunnel on another. That case needs an explicit absolute URL, and the host in that URL is load-bearing. **A browser treats** `127.0.0.1` **and** `localhost` **as different sites.** The session cookie set by `POST /api/auth/connect` is `SameSite=Lax`. If the page is served from `127.0.0.1` and the override says `localhost`, every authenticated fetch becomes cross-site, the cookie is withheld, and the application presents as permanently logged out with no error message that points at the cause. Both sides must agree, which is also why a development SSH tunnel of this kind is specified as `ssh -L 127.0.0.1:5001:localhost:5001` and why that exact origin must appear in barnacle's `QIITA_EXPLORE_ALLOWED_ORIGINS`.
+The meta tag exists only as an **override**, for the one case the relative default cannot cover: local dev where the frontend and backend are *not* same-origin — a static file server on one port, the API reached through a separate loopback SSH tunnel on another. That case needs an explicit absolute URL, and the host in that URL is load-bearing. **A browser treats** `127.0.0.1` **and** `localhost` **as different sites.** The session cookie set by `POST /api/auth/login` is `SameSite=Lax`. If the page is served from `127.0.0.1` and the override says `localhost`, every authenticated fetch becomes cross-site, the cookie is withheld, and the application presents as permanently logged out with no error message that points at the cause. Both sides must agree, which is also why a development SSH tunnel of this kind is specified as `ssh -L 127.0.0.1:5001:localhost:5001` and why that exact origin must appear in barnacle's `QIITA_EXPLORE_ALLOWED_ORIGINS` — login also refuses any `Origin` not in that list (or equal to `QIITA_EXPLORE_PUBLIC_ORIGIN`). The CSP's `connect-src` allows loopback on any port for the same reason.
 
 **Why relative-by-default, not a hardcoded host with a revert TODO.** The previous design hardcoded an absolute dev URL as the committed default, in *two* independent places (this meta tag and a matching JS fallback in `utils.js`), each carrying its own `// TODO: revert to port 5001 before committing to master`. Both TODOs went stale and shipped to `master` unreverted — twice. Worse, even a correctly-reverted absolute `127.0.0.1:5001` default only works for a browser on the same machine as the tunnel; it silently breaks for anyone reaching the app through a public hostname, which defeats the point of a Cloudflare Tunnel or any other real deployment. Making the safe, portable behavior (relative) the default and the narrow, host-specific behavior (absolute) an explicit opt-in removes the whole class of bug — there's no longer a value that must be remembered to change before a commit.
 
@@ -67,7 +70,7 @@ flowchart LR
         L["loaders.js"]
     end
 
-    A["auth.js<br/>useAuth · ConnectQiita"]
+    A["auth.js<br/>useAuth · QiitaLogin"]
     C["components.js<br/>shared components<br/>SLASH_COMMANDS · model lists"]
     SC["study_card.js<br/>StudyCard"]
     H["hooks/<br/>useModelSelection.js"]
@@ -105,12 +108,12 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 
 | File                                     | Lines | Purpose                                                                                                              |
 | ---------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
-| `frontend/index.html`                    | 46    | Script tags, CDN dependencies, `api-base` meta, cache-bust versions                                                  |
+| `frontend/index.html`                    | 88    | Script tags, CDN dependencies (pinned, SRI), CSP meta, `api-base` note, cache-bust versions                         |
 | `frontend/style.css`                     | 1885  | Every style in the application. Tokens, layout, dark theme                                                           |
 | `frontend/js/utils.js`                   | 86    | Global hook destructure, `API`, `apiFetch`/`apiPost`/`apiPatch`/`apiDel`, CSRF token, `fetchStudyDetail`, `parseSSE` |
 | `frontend/js/icons.js`                   | 60    | Five inline stroke SVG components (`ChevronIcon`, `MergeIcon`, `SunIcon`, `MoonIcon`, `BoltIcon`)                    |
 | `frontend/js/loaders.js`                 | 168   | Canvas-drawn loading animations (`InfinityLoader`, `WreathLoader`)                                                    |
-| `frontend/js/auth.js`                    | 179   | `useAuth`, `ConnectQiita`, `LegacyClaimBanner`, `AccountBar`                                                         |
+| `frontend/js/auth.js`                    | 166   | `useAuth`, `QiitaLogin` (classic-Qiita email + password form), `AccountBar`                                         |
 | `frontend/js/hooks/useInputHistory.js`   | 84    | `useInputHistory(name, {transcript, resetKey})` — ↑ / ↓ recall like a shell. In a chat the composer walks that chat's own saved messages (raw text, as typed: optimistic messages keep `sent`), restarting on a chat switch; the Browse bar and the composer before a chat exists walk the last 50 entries kept in `localStorage` (`qe-history:<name>`) |
 | `frontend/js/context_bar.js`             | 82    | `ContextBar` — before the model chip: how full the chat's last request was, one colored segment per part, click for the breakdown (`useDropdown` panel). From the `context_usage` SSE event / the chat GET's `context_usage` (`chatCache[chatId].contextUsage`); after a model switch, rescaled to the new window until the next reply |
 | `frontend/js/hooks/useOutsideClose.js`   | 25    | `useOutsideClose(onClose, ignoreSelector)` — closes an always-open panel (the model picker) on a mousedown outside it |
@@ -410,21 +413,22 @@ stateDiagram-v2
     loading --> anonymous: response not ok or network throw
 
     authenticated --> anonymous: logout()
-    anonymous --> authenticated: connect() succeeds
+    authenticated --> anonymous: any 401 (setUnauthorizedHandler)
+    anonymous --> authenticated: QiitaLogin — POST /auth/login succeeds
 ```
 
-After the initial load, authentication is binary: either the local session is valid and the app opens, or the connect screen is shown. There is no mid-session "reconnecting" state — periodic PAT re-verification was removed from the backend.
+After the initial load, authentication is binary: either the local session is valid and the app opens, or the sign-in screen is shown. There is no "reconnecting" state. The backend re-checks the account against classic Qiita every 5 minutes; when that revokes the session (password changed, account gone or unverified), the next request's 401 drops the UI straight to the sign-in screen through the unauthorized handler `useAuth` installs.
 
-If `/auth/me` fails for any reason (backend down, session expired, etc.), the frontend clears local auth state and shows the connect screen. Login-time Qiita failures (invalid token, control plane unreachable) are errors inside the connect form only.
+If `/auth/me` fails for any reason (backend down, session expired, a 503 while Qiita's user database has been unreachable for over an hour, etc.), the frontend clears local auth state and shows the sign-in screen. Login failures are shown inside the form, using the server's message: 401 (generic "Incorrect email or password."), 403 (verify your email on Qiita first), 429 (with the wait), 503. The anonymous `/auth/me` answer carries `qiita_url`, which the form uses for its "Forgot password?" and "Create a Qiita account" links.
 
 ### The ordering guarantee
 
 `frontend/js/app.js` splits the tree in two, and the split exists for one reason:
 
 ```js
-function AuthenticatedApp({ identity, onLogout, onClaimDone }) {
+function AuthenticatedApp({ identity, onLogout }) {
   const state = useAppState();     // ← only reachable once auth resolved
-  return <>…{renderApp(state)}</>;
+  return renderApp(state, { identity, onLogout });
 }
 ```
 
@@ -436,9 +440,9 @@ Doing this with a conditional inside one component would be a Rules-of-Hooks vio
 
 Nothing durable is written. There is no bearer token, no `localStorage` entry, no `sessionStorage` entry, and no auth material in any URL.
 
-- **The session** is a `SameSite=Lax` cookie. `apiFetch` sets `credentials: 'include'` on **every** request, so it rides along automatically and no call site does anything auth-specific.
-- **The CSRF token** lives in a module-scope `let _csrfToken` in `frontend/js/utils.js`, written by `setCsrfToken` from the `/auth/me` or `/auth/connect` response body. `apiFetch` attaches it as `X-CSRF-Token` **only** when the method is one of POST, PUT, PATCH, DELETE. A cross-site page can make the browser send the cookie but cannot read the response body that carries the token.
-- **The PAT** exists only as the `token` value in `ConnectQiita`'s `useState`, is POSTed once, and is cleared with `setToken('')` on the success path *and* both failure paths. It is never persisted anywhere.
+- **The session** is an `HttpOnly`, `SameSite=Lax` cookie set by `POST /api/auth/login` — `__Host-qe_sid` when the backend sets `Secure` (production), `qe_sid` in plain-HTTP dev. `apiFetch` sets `credentials: 'include'` on **every** request, so it rides along automatically and no call site does anything auth-specific. Login also sets a known-device cookie (`__Host-qe_dev`) that exempts this browser from the login limits for that account; JS never reads either.
+- **The CSRF token** lives in a module-scope `let _csrfToken` in `frontend/js/utils.js`, written by `setCsrfToken` from the `/auth/me` or `/auth/login` response body. `apiFetch` attaches it as `X-CSRF-Token` **only** when the method is one of POST, PUT, PATCH, DELETE. A cross-site page can make the browser send the cookie but cannot read the response body that carries the token.
+- **The password** exists only in `QiitaLogin`'s `useState`. On submit it is copied to a local, cleared from state with `setPassword('')` *before* the request is sent, and POSTed once as JSON — so it is gone from the form whether the login succeeds or fails. It is never put in `localStorage`, `sessionStorage` or a URL, and neither field uses `useInputHistory`. The form is a real `<form method="post">` with `autoComplete="username"` / `"current-password"` so password managers recognize it; `onSubmit` calls `preventDefault()` first, so a native submit can't send the password to the page URL (the CSP's `form-action 'self'` backs that up).
 
 Full server-side treatment is in [`02-authentication.md`](02-authentication.md).
 
@@ -500,7 +504,7 @@ Model output is untrusted input, and it is rendered as HTML in exactly two place
 dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content)) }}
 ```
 
-`marked.parse` produces HTML from the model's markdown; `DOMPurify.sanitize` strips scripts, event handlers, and dangerous URLs from it. **The sanitize step is the mitigation, and it must never be dropped from either call site.** This matters more here than in a typical application because the CSRF token lives in a JavaScript variable, so successful script injection in the page defeats it — the dependency is noted from the other direction in [`02-authentication.md`](02-authentication.md). Everything else the model influences (tool labels, result summaries, SQL text) is rendered as text nodes, not HTML.
+`marked.parse` produces HTML from the model's markdown; `DOMPurify.sanitize` strips scripts, event handlers, and dangerous URLs from it. **The sanitize step is the mitigation, and it must never be dropped from either call site.** If DOMPurify is missing — its CDN file failed the SRI check or didn't load — `utils.js :: renderMarkdown` shows the text HTML-escaped rather than unsanitized. This matters more here than in a typical application because the CSRF token lives in a JavaScript variable, so successful script injection in the page defeats it — the dependency is noted from the other direction in [`02-authentication.md`](02-authentication.md). Everything else the model influences (tool labels, result summaries, SQL text) is rendered as text nodes, not HTML.
 
 ---
 

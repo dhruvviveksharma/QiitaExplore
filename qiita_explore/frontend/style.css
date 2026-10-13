@@ -1007,30 +1007,8 @@ input, textarea { font-family: var(--sans); }
 .model-picker-row:hover { background: var(--accent-soft); color: var(--text-1); }
 .model-picker-row.active { color: var(--accent); font-weight: 600; }
 .model-picker-dot { margin-right: 6px; }
-.model-picker-key-prompt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-2);
-}
-.model-picker-key-prompt input {
-  flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--text);
-}
-.model-picker-key-prompt button {
-  padding: 4px 10px;
-  font-size: 12px;
-  border-radius: 6px;
-}
+.model-picker-row.disabled { opacity: .45; cursor: not-allowed; }
+.model-picker-row.disabled:hover { background: none; color: var(--text-2); }
 
 .composer-pins {
   max-width: var(--chat-max-w);
@@ -1930,16 +1908,17 @@ input, textarea { font-family: var(--sans); }
   animation: slideUp .16s ease;
 }
 .auth-logo { justify-content: center; margin-bottom: 4px; }
-.auth-steps { color: var(--text-2); font-size: 0.85rem; line-height: 1.6; padding-left: 20px; margin: 0; }
-.auth-login-link { text-align: center; text-decoration: none; }
-.auth-login-link.disabled { opacity: 0.5; pointer-events: none; }
-.auth-token-input {
+.auth-intro { color: var(--text-2); font-size: 0.85rem; text-align: center; margin: 0; }
+.auth-input {
   font-size: 0.85rem; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface-2); color: var(--text-1);
   width: 100%; box-sizing: border-box;
 }
-.auth-connect-btn { width: 100%; padding: 8px; }
+.auth-submit-btn { width: 100%; padding: 8px; }
+.auth-links { display: flex; justify-content: space-between; gap: 10px; font-size: 0.8rem; }
+.auth-links a { color: var(--accent); text-decoration: none; }
+.auth-links a:hover { text-decoration: underline; }
 .auth-error { color: #b02a2a; font-size: 0.8rem; }
 .dark .auth-error { color: #e08080; }
 
@@ -1979,12 +1958,3 @@ input, textarea { font-family: var(--sans); }
   display: flex; align-items: center; gap: 9px;
 }
 .auth-account-menu-item:hover { background: var(--accent-soft); color: var(--accent-h); }
-
-.auth-claim-banner {
-  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 150;
-  display: flex; align-items: center; gap: 10px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 8px 14px;
-  font-size: 0.82rem; color: var(--text-2);
-  max-width: 90vw;
-}

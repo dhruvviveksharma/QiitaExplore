@@ -23,6 +23,7 @@ from helpers.biom_autopick import (autopick_artifact, autopick_reason,
 from helpers.biom_samples import get_biom_sample_ids, compute_merge_preview
 from helpers.merge_samples import build_sample_page
 from helpers.merge_executor import run_merge_job
+from helpers.qiita_fetch import is_study_public
 from helpers.merge_helpers import (
     _get_artifacts,
     _type_filtered_artifacts,
@@ -84,6 +85,12 @@ def add_study_to_merge_workspace(workspace_id):
     }
     if not study["study_id"]:
         return jsonify({"error": "study_id required"}), 400
+    try:
+        public = is_study_public(int(study["study_id"]))
+    except (TypeError, ValueError):
+        return jsonify({"error": "study_id must be an integer"}), 400
+    if not public:                      # TKT-043: any signed-in Qiita user reaches this
+        return jsonify({"error": "Study not found or not public"}), 404
     studies = add_study_to_workspace(workspace_id, g.user_id, study)
     if studies == "not_found":
         return jsonify({"error": "Not found"}), 404

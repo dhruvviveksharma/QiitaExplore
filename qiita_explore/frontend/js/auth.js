@@ -1,16 +1,17 @@
-// Paste-PAT authentication gate. Loaded before app.js — app.js's App /
+// Classic-Qiita email + password sign-in. Loaded before app.js — app.js's App /
 // AuthenticatedApp split (see app.js) ensures useAppState() (which fires
 // project/chat/study/settings/merge requests) never runs until useAuth()
 // has confirmed a session via GET /auth/me.
 //
-// The PAT itself never persists client-side: it lives only in the connect
-// form's local input state, is POSTed once, then cleared immediately
-// (success or failure) — never a URL param, localStorage, or sessionStorage.
+// The password lives only in the form's local state, is POSTed once as JSON,
+// then cleared (success or failure) — never a URL param, localStorage, or
+// sessionStorage, and never in input history.
 
 function useAuth() {
   // 'loading' | 'anonymous' | 'authenticated'
   const [status,   setStatus]   = useState('loading');
   const [identity, setIdentity] = useState(null);
+  const [qiitaUrl, setQiitaUrl] = useState(null);   // sign-up / password reset live on classic Qiita
 
   const refresh = useCallback(async () => {
     // A dead/hung connection (e.g. a stale SSH tunnel that accepts the socket
@@ -26,6 +27,7 @@ function useAuth() {
         return;
       }
       const d = await res.json();
+      if (d.qiita_url) setQiitaUrl(d.qiita_url);
       if (d.anonymous) {
         clearCsrfToken();
         setIdentity(null);
@@ -67,39 +69,33 @@ function useAuth() {
     setStatus('anonymous');
   }, []);
 
-  return { status, identity, refresh, logout };
+  return { status, identity, qiitaUrl, refresh, logout };
 }
 
-function ConnectQiita({ onConnected }) {
-  const [loginUrl, setLoginUrl] = useState(null);
-  const [token,    setToken]    = useState('');
+function QiitaLogin({ qiitaUrl, onLoggedIn }) {
+  const [email,    setEmail]    = useState('');
+  const [password, setPassword] = useState('');
   const [busy,     setBusy]     = useState(false);
   const [error,    setError]    = useState('');
+  const qiita = /^https?:\/\//.test(qiitaUrl || '') ? qiitaUrl : 'https://qiita.ucsd.edu';
 
-  useEffect(() => {
-    apiFetch('/auth/login-url')
-      .then(r => r.json())
-      .then(d => setLoginUrl(d.url))
-      .catch(() => {});
-  }, []);
-
-  const handleConnect = async () => {
-    const pat = token.trim();
-    if (!pat || busy) return;
+  const submit = async (e) => {
+    e.preventDefault();   // first: a native submit would send the password to the page URL
+    if (busy || !email.trim() || !password) return;
+    const pw = password;
+    setPassword('');      // never kept past this request, success or not
     setBusy(true); setError('');
     try {
-      const res = await apiPost('/auth/connect', { token: pat });
-      setToken(''); // clear the pasted PAT from state immediately, success or not
+      const res = await apiPost('/auth/login', { email: email.trim(), password: pw });
+      const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setError(d.error || `Connect failed (${res.status})`);
+        // The server's message covers 401 (generic), 403 unverified, 429 (with the wait) and 503.
+        setError(d.error || `Sign-in failed (${res.status})`);
         return;
       }
-      const identity = await res.json();
-      setCsrfToken(identity.csrf_token);
-      onConnected(identity);
+      setCsrfToken(d.csrf_token);
+      onLoggedIn(d);
     } catch (_) {
-      setToken('');
       setError('Network error — check that the backend is reachable and try again.');
     } finally {
       setBusy(false);
@@ -108,84 +104,25 @@ function ConnectQiita({ onConnected }) {
 
   return (
     <div className="auth-gate">
-      <div className="auth-card">
+      <form className="auth-card" method="post" onSubmit={submit}>
         <div className="app-logo app-logo-home auth-logo">
           <span className="app-logo-mark"><WreathLoader size={32} /></span>
           <span className="app-logo-text">Qiita<em>Explore</em></span>
         </div>
-        <ol className="auth-steps">
-          <li>Log in with your Qiita account (opens in a new tab).</li>
-          <li>Copy the access token Qiita shows you.</li>
-          <li>Paste it below to connect.</li>
-        </ol>
-        <a
-          className={`merge-btn-primary auth-login-link${loginUrl ? '' : ' disabled'}`}
-          href={loginUrl || undefined}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => { if (!loginUrl) e.preventDefault(); }}
-        >
-          Log in with Qiita ↗
-        </a>
-        <input
-          type="password"
-          autoComplete="off"
-          className="auth-token-input"
-          placeholder="Paste your Qiita access token (qk_…)"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleConnect(); }}
-        />
-        {error && <div className="auth-error">{error}</div>}
-        <button className="merge-btn-primary auth-connect-btn" disabled={busy || !token.trim()} onClick={handleConnect}>
-          {busy ? 'Connecting…' : 'Connect'}
+        <p className="auth-intro">Sign in with your Qiita account.</p>
+        <input type="email" name="username" autoComplete="username" className="auth-input"
+          placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} autoFocus required />
+        <input type="password" name="password" autoComplete="current-password" className="auth-input"
+          placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !email.trim() || !password}>
+          {busy ? 'Signing in…' : 'Sign in'}
         </button>
-      </div>
-    </div>
-  );
-}
-
-function LegacyClaimBanner({ onDone }) {
-  const [counts,  setCounts]  = useState(null);
-  const [visible, setVisible] = useState(true);
-  const [busy,    setBusy]    = useState(false);
-  const [error,   setError]   = useState('');
-
-  useEffect(() => {
-    apiFetch('/auth/legacy-default')
-      .then(r => r.json())
-      .then(d => { if (d.eligible) setCounts(d.counts); else setVisible(false); })
-      .catch(() => setVisible(false));
-  }, []);
-
-  // Only dismiss the banner on a confirmed claim. Hiding it unconditionally
-  // reported a 403/409 as success and left the data stranded under 'default'
-  // with no way back to the banner short of a reload.
-  const claim = async () => {
-    setBusy(true); setError('');
-    try {
-      await apiJson('/auth/claim-default', { method: 'POST', body: '{}' });
-      setVisible(false);
-      onDone();
-    } catch (e) {
-      setError(e.message || 'Could not claim your earlier data.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!visible || !counts) return null;
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  if (total === 0) return null;
-
-  return (
-    <div className="auth-claim-banner">
-      <span>Found {total} existing item{total === 1 ? '' : 's'} from before login was added. Claim {total === 1 ? 'it' : 'them'} as yours?</span>
-      {error && <span className="auth-error">{error}</span>}
-      <button className="merge-btn-ghost" onClick={() => setVisible(false)}>Not now</button>
-      <button className="merge-btn-primary" disabled={busy} onClick={claim}>
-        {busy ? 'Claiming…' : 'Claim'}
-      </button>
+        <div className="auth-links">
+          <a href={`${qiita}/auth/forgot/`} target="_blank" rel="noopener noreferrer">Forgot password?</a>
+          <a href={`${qiita}/auth/create/`} target="_blank" rel="noopener noreferrer">Create a Qiita account</a>
+        </div>
+      </form>
     </div>
   );
 }

@@ -796,26 +796,18 @@ const _CLAUDE_MODELS = [
 ];
 
 function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
-  const [apiKeyInput,  setApiKeyInput]  = React.useState('');
-  const [pendingClaude, setPendingClaude] = React.useState(null);
-  const [saving,       setSaving]       = React.useState(false);
   const rootRef = useOutsideClose(onClose, '.composer-model-chip');   // the chip toggles it itself
 
+  // Claude models need a server-side key (ANTHROPIC_API_KEY in the backend .env);
+  // there is no way to enter one from the browser (TKT-042).
   const pick = (id) => {
-    if (id.startsWith('claude-') && !anthropicKeySet) { setPendingClaude(id); return; }
-    onPick(id, false);
+    if (id.startsWith('claude-') && !anthropicKeySet) return;
+    onPick(id);
   };
 
-  const saveKey = async () => {
-    if (!apiKeyInput.trim()) return;
-    setSaving(true);
-    await apiPost('/settings', { anthropic_api_key: apiKeyInput.trim() });
-    setSaving(false);
-    onPick(pendingClaude, true);
-  };
-
-  const row = (id, label) => (
-    <div key={id} className={`model-picker-row${id === current ? ' active' : ''}`} onClick={() => pick(id)}>
+  const row = (id, label, disabled) => (
+    <div key={id} className={`model-picker-row${id === current ? ' active' : ''}${disabled ? ' disabled' : ''}`}
+      onClick={() => pick(id)}>
       <span className="model-picker-dot">{id === current ? '●' : '○'}</span>{label}
     </div>
   );
@@ -827,22 +819,12 @@ function ModelPickerCard({ current, anthropicKeySet, onPick, onClose }) {
         <button className="model-picker-close" onClick={onClose}>×</button>
       </div>
       <div className="model-picker-group">NRP-Nautilus</div>
-      {_NRP_MODELS.map(([id, label]) => row(id, label))}
+      {_NRP_MODELS.map(([id, label]) => row(id, label, false))}
       <div className="model-picker-group">
         Anthropic
-        {!anthropicKeySet && <span className="model-picker-key-note"> — API key required</span>}
+        {!anthropicKeySet && <span className="model-picker-key-note"> — not configured on this server</span>}
       </div>
-      {_CLAUDE_MODELS.map(([id, label]) => row(id, label))}
-      {pendingClaude && (
-        <div className="model-picker-key-prompt">
-          <span>Enter your Anthropic API key:</span>
-          <input type="password" placeholder="sk-ant-..." value={apiKeyInput}
-            onChange={e => setApiKeyInput(e.target.value)} autoFocus />
-          <button onClick={saveKey} disabled={saving || !apiKeyInput.trim()}>
-            {saving ? '…' : 'Save & use'}
-          </button>
-        </div>
-      )}
+      {_CLAUDE_MODELS.map(([id, label]) => row(id, label, !anthropicKeySet))}
     </div>
   );
 }

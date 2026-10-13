@@ -165,6 +165,20 @@ def is_study_public(study_id: int) -> bool:
     return bool(rows)
 
 
+def public_artifact_ids(study_id: int) -> set:
+    """The study's public artifact ids, read live — the study detail cache's
+    per-artifact visibility can be hours stale (TKT-043). Empty when the study
+    isn't public, and on a failed read (fails closed)."""
+    rows = _qiita_fetch(
+        """SELECT sa.artifact_id FROM qiita.study_artifact sa
+           JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+           JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+           WHERE sa.study_id = %s AND v.visibility = 'public'""",
+        [int(study_id)],
+    )
+    return {r[0] for r in rows}
+
+
 # Sample lists read qiita.sample_{study_id} on its own, in primary-key order:
 # that table holds exactly the study's samples plus one sentinel row. Joining
 # qiita.study_sample first made Postgres hash-join and extract JSON for every

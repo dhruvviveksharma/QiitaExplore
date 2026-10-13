@@ -104,7 +104,14 @@ jobs:
           # The dev override must stay commented out; an active tag points the
           # deployed frontend at localhost. Strip HTML comments first so the
           # commented-out example doesn't false-positive.
-          if ! python3 -c 'import re,sys; html=open(sys.argv[1]).read(); html=re.sub(r"<!--.*?-->","",html,flags=re.S); sys.exit(1 if "api-base" in html else 0)' "$INDEX"; then
+          guard() { python3 -c 'import re,sys; html=open(sys.argv[1]).read(); html=re.sub(r"<!--.*?-->","",html,flags=re.S); sys.exit(1 if "api-base" in html else 0)' "$1"; }
+          # First prove the guard catches the exact override it exists for.
+          printf '<!-- <meta name="api-base" content="x"> -->\n  <meta name="api-base" content="http://127.0.0.1:5002/api">\n' > "$RUNNER_TEMP/probe.html"
+          if guard "$RUNNER_TEMP/probe.html"; then
+            echo "::error::the api-base guard failed to reject an active override"
+            exit 1
+          fi
+          if ! guard "$INDEX"; then
             echo "::error file=$INDEX::Active <meta name=\"api-base\"> tag found. This override is for local dev only and must stay commented out in commits (see DEPLOYING.md)."
             exit 1
           fi

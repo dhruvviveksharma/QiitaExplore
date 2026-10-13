@@ -31,7 +31,7 @@ function renderApp(s, account) {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setPendingMergeStudy,
-    setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    setShowModelPicker, setShowPlusMenu, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     projects, projLoading, openProjId, openProject, view,
@@ -731,9 +731,8 @@ function renderApp(s, account) {
             <ModelPickerCard
               current={selectedModel}
               anthropicKeySet={anthropicKeySet}
-              onPick={(model, keySaved) => {
+              onPick={(model) => {
                 setSelectedModel(model);
-                if (keySaved) setAnthropicKeySet(true);
                 setShowModelPicker(false);
               }}
               onClose={() => setShowModelPicker(false)}

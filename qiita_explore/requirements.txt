@@ -18,9 +18,9 @@ biom-format
 # Sample Aggregation export for spreadsheets (helpers/fastq_manifest.to_xlsx)
 openpyxl>=3.1,<4.0
 
-# Qiita PAT authentication (sync HTTP client + PAT-at-rest encryption)
-httpx>=0.25,<1.0
-cryptography>=41.0
+# Classic-Qiita password check (helpers/qiita_accounts.py). <5: bcrypt 5 raises
+# on passwords over 72 bytes, where Qiita (bcrypt 4) truncates.
+bcrypt>=4.0,<5
 
 # Production WSGI server
 gunicorn>=21.0,<22.0

@@ -5,7 +5,7 @@ beyond per-test fixture teardown, in case a test crashed mid-run and skipped
 its own cleanup.
 
 Usage: teardown_sweep.py <prefix>
-Requires QIITA_TEST_PAT and (optionally) BARNACLE_URL in the environment.
+Requires QIITA_TEST_EMAIL / QIITA_TEST_PASSWORD and (optionally) BARNACLE_URL in the environment.
 """
 import os
 import sys

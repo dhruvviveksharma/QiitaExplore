@@ -6,7 +6,7 @@ through /api/search or /api/studies/<id>/detail via the authenticated client
 (every endpoint requires a session — helpers/auth_middleware.py).
 
 Requires: running barnacle backend (bash qiita_explore/start_barnacle.sh)
-and QIITA_TEST_PAT set to a valid Qiita personal access token.
+and QIITA_TEST_EMAIL / QIITA_TEST_PASSWORD set to a classic-Qiita account.
 """
 import pytest
 

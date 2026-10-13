@@ -2,36 +2,25 @@
 routes/merge_routes.py to keep it under the 500-line cap.
 """
 
-import json
 import os
 
 from flask import Response, g, jsonify, request, send_file
 
 from run import app
-from store import get_merge_job, get_study_detail_cache
-from helpers.artifact_graph import fetch_artifact_graph
+from store import get_merge_job
 from helpers.biom_samples import get_biom_sample_ids
 from helpers.fastq_manifest import fetch_manifest, to_tsv
 from helpers.qiita_fetch import _qiita_fetch, is_study_public
-from helpers.merge_helpers import _get_artifacts
+from helpers.merge_helpers import _get_artifacts, public_artifacts
 
 _FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
 
 
 def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
-    """Return (real_path, filename) for a file within an artifact, with safety checks."""
-    cached = get_study_detail_cache(study_id)
-    graph = None
-    if cached and cached.get("artifact_graph_json"):
-        try:
-            graph = json.loads(cached["artifact_graph_json"])
-        except Exception:
-            pass
-    if not graph:
-        graph = fetch_artifact_graph(study_id)
-    node = next((n for n in graph if n.get("kind") == "artifact" and n.get("artifact_id") == artifact_id), None)
+    """Return (real_path, filename) for a file within a public artifact, with safety checks."""
+    node = public_artifacts(study_id).get(artifact_id)
     if not node:
-        raise ValueError(f"Artifact {artifact_id} not in study {study_id}")
+        raise ValueError(f"Artifact {artifact_id} not found or not public in study {study_id}")
     fp_entry = next((f for f in (node.get("filepaths") or []) if f.get("filepath_id") == filepath_id), None)
     if not fp_entry:
         raise ValueError(f"File {filepath_id} not in artifact {artifact_id}")
@@ -54,7 +43,7 @@ def get_artifact_samples(artifact_id):
     if not study_id:
         return jsonify({"error": "study_id required"}), 400
 
-    artifacts = _get_artifacts(study_id)
+    artifacts = _get_artifacts(study_id)          # public artifacts of public studies only
     art = next((a for a in artifacts if a.get("artifact_id") == artifact_id), None)
     if not art or not art.get("full_path"):
         return jsonify({"error": "Artifact not found or has no file path"}), 404
@@ -89,7 +78,7 @@ def get_artifact_sample_counts():
     if not study_id or not artifact_ids:
         return jsonify({"error": "study_id and artifact_ids required"}), 400
 
-    artifacts = _get_artifacts(int(study_id))
+    artifacts = _get_artifacts(int(study_id))     # public artifacts of public studies only
     art_by_id = {a["artifact_id"]: a for a in artifacts}
 
     counts = {}

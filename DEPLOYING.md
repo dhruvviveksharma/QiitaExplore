@@ -40,6 +40,7 @@ kl-remote:8081  —  Caddy
                                                       ▼
                                      barnacle2.ucsd.edu:5001 — gunicorn,
                                      started via qiita_explore/start_barnacle.sh
+                                     (bound to 127.0.0.1 since 2026-10-12)
 ```
 
 **Why a reverse proxy is required here, structurally**: in both documented
@@ -120,14 +121,229 @@ nohup ./caddy run --config ~/Caddyfile > /tmp/caddy.log 2>&1 &
 ## Verification
 
 ```bash
-curl -s http://localhost:8081/api/auth/me          # expect: {"anonymous":true}
-curl -s http://localhost:8081/api/auth/login-url   # expect: {"url":"https://qiita-miint.ucsd.edu/..."}
+curl -s http://localhost:8081/api/auth/me   # expect: {"anonymous":true,"qiita_url":"https://qiita.ucsd.edu"}
 ```
-Then load `https://qiita-explore.knight-lab-dev.org/` in a real browser:
-the login page should render directly at `/` (not a directory listing),
-with an active "Log in with Qiita" button. Complete a real login and send
-one chat message to confirm the tunnel→gunicorn path is healthy end-to-end,
-not just reachable, and that streaming still works.
+(`/api/auth/me` is public and answers without a session. `/api/auth/login-url`,
+used here before 2026-10-12, no longer exists.) Then load
+`https://qiita-explore.knight-lab-dev.org/` in a real browser: the sign-in
+page should render directly at `/` (not a directory listing), with an email +
+password form and "Forgot password?" / "Create a Qiita account" links to
+qiita.ucsd.edu. Log in with a real classic-Qiita account and send one chat
+message to confirm the tunnel→gunicorn path is healthy end-to-end, not just
+reachable, and that streaming still works.
+
+---
+
+## Classic-Qiita login: deploy prerequisites and steps (2026-10-12)
+
+The login changed from "paste a qiita-miint `qk_` token" to **classic-Qiita
+email + password**, checked against `qiita.qiita_user` in classic Qiita's
+production Postgres through QiitaExplore's read-only role. Real Qiita
+passwords now cross this deployment, so the path in front of gunicorn
+matters in a way it didn't before. Design and threat model:
+`docs/02-authentication.md`.
+
+**Stated plainly:** every password is readable in plaintext by Cloudflare
+(browser TLS ends there) and by anyone with the `kl-user` account on
+kl-remote (Caddy handles the request in plaintext before the SSH tunnel).
+That includes admin-level Qiita accounts — every verified level may log in.
+The prerequisites below close what can be closed; they don't change that.
+
+### Prerequisites — do these before the first production restart
+
+1. **Encrypt the Cloudflare → kl-remote hop.** Today Caddy listens on plain
+   HTTP `:8081`. Either run a **Cloudflare Tunnel** (`cloudflared` on
+   kl-remote, outbound only, pointing at Caddy on loopback), or switch
+   Cloudflare's SSL/TLS mode to **Full (strict)** with Caddy serving HTTPS
+   on that port using a Cloudflare Origin CA certificate. First confirm how
+   Cloudflare reaches kl-remote today (see "Cloudflare-fronting is inferred,
+   not confirmed" below) — the rest of this list depends on the answer.
+2. **Gunicorn now binds `127.0.0.1`** (`start_barnacle.sh`, was `0.0.0.0`).
+   The tunnel already targets barnacle's loopback, so nothing else should
+   change. Confirm nothing else reaches `barnacle2:5001` directly (another
+   proxy, a firewall rule, a second tunnel). Loopback keeps the network out,
+   **not** other accounts on barnacle2: any local user can still connect to
+   `127.0.0.1:5001` and send any header — including the client-IP header of
+   step 3, so the per-client login limit is only as good as barnacle2's user
+   isolation (the per-email delay doesn't depend on it). If the kl-remote tunnel reports
+   `connect failed` after the restart, change its target from
+   `localhost:5001` to `127.0.0.1:5001` (an IPv6 `localhost` won't reach an
+   IPv4-only listener).
+3. **Caddy: trust the client IP only from Cloudflare, forward it in a header
+   Caddy always overwrites, cap request bodies, and forbid framing.** Only
+   once this is live, set `QIITA_EXPLORE_CLIENT_IP_HEADER` in the backend
+   `.env` (to the header name below); until then leave it unset — a header
+   the backend trusts but anyone can send lets an attacker dodge the
+   per-client login block or get someone else's IP blocked.
+   - `trusted_proxies`: Cloudflare's published ranges
+     (https://www.cloudflare.com/ips/) when Cloudflare connects to Caddy
+     directly (Full strict); only loopback when `cloudflared` on kl-remote
+     is the client (Tunnel) — and then Caddy must listen on loopback only.
+   - `client_ip_headers CF-Connecting-IP`, so `{client_ip}` is the
+     visitor's address when the request came through a trusted proxy and
+     the connection's own address otherwise.
+   - Forward it with `header_up X-Real-IP {client_ip}`, which replaces any
+     `X-Real-IP` the client sent. Then `QIITA_EXPLORE_CLIENT_IP_HEADER=X-Real-IP`.
+   - Cap bodies: the backend already refuses a login body over 8 KB (by
+     `Content-Length`, then with a bounded read, so chunked bodies too); a
+     Caddy cap stops oversized requests before they reach the tunnel, for
+     every route.
+   - Send `Content-Security-Policy: frame-ancestors 'none'` (and/or
+     `X-Frame-Options: DENY`) on the frontend. The page's own CSP is a
+     `<meta>` tag, where browsers ignore `frame-ancestors`.
+
+   A sketch of the result — **untested on kl-remote; adapt to step 1's
+   answer and run `./caddy validate --config ~/Caddyfile` before
+   restarting Caddy**:
+   ```caddyfile
+   {
+   	servers {
+   		trusted_proxies static <Cloudflare ranges — or 127.0.0.1/32 ::1/128 behind cloudflared>
+   		client_ip_headers CF-Connecting-IP
+   	}
+   }
+
+   :8081 {
+   	handle /api/auth/login {
+   		request_body {
+   			max_size 16KB
+   		}
+   		reverse_proxy 127.0.0.1:5001 {
+   			header_up X-Real-IP {client_ip}
+   		}
+   	}
+   	handle /api/* {
+   		request_body {
+   			max_size 10MB
+   		}
+   		reverse_proxy 127.0.0.1:5001 {
+   			header_up X-Real-IP {client_ip}
+   		}
+   	}
+   	handle {
+   		header Content-Security-Policy "frame-ancestors 'none'"
+   		header X-Frame-Options DENY
+   		root * /home/kl-user/QittaExplore/qiita_explore/frontend
+   		file_server
+   		try_files {path} /index.html
+   	}
+   }
+   ```
+   The `10MB` general cap is a placeholder — check the largest request the
+   app legitimately sends before tightening it.
+4. **A Cloudflare rate-limiting rule on `POST /api/auth/login`** (Security →
+   WAF → Rate limiting rules), per client IP. Cloudflare sees the real
+   client IP, which the backend can't by itself; the backend's own limits
+   are a per-email progressive delay and, with step 3, a per-client block.
+5. **Confirm no shared or demo Qiita account has a known password** in
+   production (e.g. a guest or wet-lab admin account). Every verified level
+   can now log in to QiitaExplore.
+
+### Production `.env` (barnacle, `/home/d4sharma/QittaExplore/qiita_explore/.env`)
+
+- **Set** `QIITA_EXPLORE_PUBLIC_ORIGIN=https://qiita-explore.knight-lab-dev.org`.
+  Login compares the browser's `Origin` to it exactly; without it every
+  login answers 503 "Login is not configured on this server."
+- **Set** `QIITA_EXPLORE_LIMITER_DB` to a file on barnacle's **local** disk,
+  not `/ddn_scratch` (check the filesystem with `df -T <dir>` — `/home` may
+  be network-mounted too), in a folder owned by `d4sharma` and not group- or
+  world-writable: the limiter refuses anything else and every login then
+  answers 503. (Unset, it uses `/tmp/qiita_explore-<uid>/login_limiter.db`,
+  which it creates `0700`.) Losing the file is harmless: counters reset and
+  browsers lose their known-device exemption.
+- **Optional:** `QIITA_CLASSIC_URL` (default `https://qiita.ucsd.edu`; only
+  used for the form's "Forgot password?" / "Create a Qiita account" links).
+- **Leave** `QIITA_EXPLORE_COOKIE_SECURE` unset (true) — the cookies become
+  `__Host-qe_sid` / `__Host-qe_dev` — and `QIITA_EXPLORE_ALLOWED_ORIGINS`
+  empty: production is same-origin behind Caddy, and anything listed there
+  is also accepted as a login origin.
+- **Leave** `QIITA_EXPLORE_CLIENT_IP_HEADER` unset until prerequisite 3 is live.
+- **Remove** the qiita-miint variables (now ignored): `QIITA_CONTROL_PLANE_URL`,
+  `QIITA_PUBLIC_LOGIN_URL`, `QIITA_LOGINROCKET_URL`,
+  `QIITA_WHOAMI_TIMEOUT_SECONDS`, `QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX`,
+  `QIITA_EXPLORE_DEBUG_ERRORS`, and any old `QIITA_EXPLORE_PAT_ENCRYPTION_KEY`.
+
+### Steps
+
+Do steps 3–5 in one sitting: between the restart and the binding, an old
+user's first login would create a new, empty account (see step 5).
+
+1. **Back up the database** on barnacle:
+   ```bash
+   sqlite3 /ddn_scratch/d4sharma/QiitaExploreDB/deployment/projects.db \
+     ".backup '/ddn_scratch/d4sharma/QiitaExploreDB/deployment/projects.db.pre-classic-login-$(date +%Y%m%d%H%M%S)'"
+   ```
+2. **Check `bcrypt` is in the `qiita-web` conda env** (shared by dev and
+   prod): `conda run -n qiita-web python -c "import bcrypt; print(bcrypt.__version__)"`
+   should print a 4.x version. If not, `pip install 'bcrypt==4.3.0'` in that
+   env. Without it the backend can't import and won't boot.
+3. **Pull and restart production (5001) — only 5001.** In
+   `/home/d4sharma/QittaExplore`, pull `master`. Stop the running gunicorn
+   **by PID**: `ss -ltnp | grep ':5001 '` shows the master process; `kill`
+   that PID. Never `pkill -f gunicorn` (it also kills dev on 5002), and never
+   put a `pkill -f "gunicorn…5001"` inside an `ssh barnacle2 '…'` command
+   string — the pattern matches that remote shell's own command line and
+   the shell kills itself. The old process listens on `0.0.0.0:5001`; the
+   new one will be on `127.0.0.1:5001`. Start it again:
+   ```bash
+   cd /home/d4sharma/QittaExplore
+   nohup bash qiita_explore/start_barnacle.sh > /tmp/qe-5001.log 2>&1 &
+   ```
+   `start_barnacle.sh` imports `store.db` once before gunicorn starts, so
+   the `users` migration runs there, once: every existing account is kept
+   (its qiita-miint email moves to `miint_email`, `qiita_email` stays
+   `NULL`) and **every existing session is revoked**. The dry run on a copy
+   of the production DB (2026-10-12) kept 4 users and revoked 11 sessions,
+   with an empty foreign-key check and a clean integrity check. **This
+   restart also applies earlier pending migrations:** the production
+   gunicorn has run since 2026-09-03 and was never restarted after `master`
+   was pulled to `43b9a5c`, so this boot also creates the Sample Aggregation
+   tables, `chat_exports` and `study_sample_files_cache`, and adds
+   `global_chats.context_usage` and `study_detail_cache.sample_files_json`.
+   Check `/tmp/qe-5001.log`, then on barnacle:
+   `curl -s http://127.0.0.1:5001/api/auth/me` → `{"anonymous":true,...}`.
+4. **Pull the frontend on kl-remote at the same time**
+   (`/home/kl-user/QittaExplore`). The old page calls
+   `/api/auth/connect` and `/api/auth/login-url`, which now 404. The new
+   `index.html` bumps every changed script's `?v=`; if the old sign-in page
+   still shows, purge `index.html` from Cloudflare's cache. The page's CSP
+   blocks scripts from hosts other than unpkg and jsdelivr, so if Cloudflare
+   injects its analytics beacon, expect a harmless CSP error for it in the
+   browser console.
+5. **Bind the old accounts — dry run first.** The script needs the same
+   environment `start_barnacle.sh` sets up; `.env` alone is not enough.
+   Without `QIITA_EXPERIMENT_DB_PATH` it refuses to run (it would otherwise
+   open `backend/data/projects.db`, a different database); it prints the
+   database path it uses first — check it.
+   ```bash
+   cd /home/d4sharma/QittaExplore/qiita_explore/backend
+   conda activate qiita-web
+   export QIITA_CONFIG_FP=/home/d4sharma/qiita-web/qiita_config.cfg
+   export QIITA_EXPERIMENT_DB_PATH=/ddn_scratch/d4sharma/QiitaExploreDB/deployment/projects.db
+   python ../scripts/bind_classic_accounts.py          # dry run: lists, changes nothing
+   ```
+   Review each `user_id → email` mapping **with Dhruv** — qiita-miint never
+   proved its users owned their emails, so a match on email alone is not
+   proof. Then bind only the confirmed ones:
+   ```bash
+   python ../scripts/bind_classic_accounts.py --apply <user_id>=<classic email> ...
+   ```
+   It binds a pair only if a **verified** classic account exists for that
+   email, the account is still unbound, and the email isn't bound
+   elsewhere. Do this **before those people first log in**: a first login
+   creates a new, empty account bound to their email, after which the
+   script can't bind the old one to it.
+6. **Check for an old Anthropic key in the database.** `POST /api/settings`
+   is gone, but a key stored through it earlier is still preferred over
+   `.env`'s `ANTHROPIC_API_KEY`:
+   ```bash
+   sqlite3 /ddn_scratch/d4sharma/QiitaExploreDB/deployment/projects.db \
+     "SELECT key FROM meta WHERE key = 'anthropic_api_key';"
+   ```
+   If a row comes back and it isn't the key you intend to bill, delete it
+   (`DELETE FROM meta WHERE key = 'anthropic_api_key';`) so the `.env` key
+   applies. Any user could have written it.
+7. **Verify** as in "Verification" above, with a real classic-Qiita login.
 
 ---
 
@@ -139,7 +355,11 @@ server. It's a pure static file server with no proxy capability at all, so
 `/api/*` requests 404 through it regardless of which directory it's run
 from. Symptom was subtle: the page loaded, but "Log in with Qiita" and
 "Connect" sat visually disabled because the JS calls that populate them
-(`/api/auth/me`, `/api/auth/login-url`) both failed. **Never use a plain
+(`/api/auth/me`, `/api/auth/login-url`) both failed. (Those were the old
+qiita-miint login's controls. Since 2026-10-12 the page shows an email +
+password form instead, and the same failure looks like the form rendering
+but every attempt failing with "Sign-in failed (<status>)", because
+`/api/auth/me` and `POST /api/auth/login` never reach gunicorn.) **Never use a plain
 static file server for this topology** — it needs something with reverse
 proxy capability (Caddy here; nginx would also work).
 

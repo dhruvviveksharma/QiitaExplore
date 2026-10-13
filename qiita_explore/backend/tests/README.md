@@ -24,7 +24,10 @@ python -m pytest tests/ -m "not e2e" -v
 | `test_studies.py` | Add/remove studies, deduplication |
 | `test_chats.py` | Chat CRUD, message persistence |
 | `test_api.py` | Schema integrity, foreign keys, cascade delete |
-| `test_auth.py` | PAT crypto, session lifecycle, CSRF, route auth |
+| `test_auth.py` | Classic-Qiita login (every check in order), sessions, the Qiita re-check, CSRF, cross-user isolation, TKT-042 |
+| `test_login_limiter.py` | Login delay / known device / per-client block; email and password rules; bcrypt check; circuit breaker |
+| `test_users_migration.py` | qiita-miint → classic `users` migration (crash, concurrency, re-boot) and `scripts/bind_classic_accounts.py` |
+| `test_artifact_access.py` | TKT-043: artifact files and samples only for public artifacts of public studies |
 | `test_pinned_context.py` | Pinned-study context builder (inline vs. manifest, budget) |
 | `test_agent_tool_call.py` | Agent tool-call dispatch |
 | `test_merge.py` | Merge workspace logic |
@@ -36,14 +39,17 @@ fixture) and stub `qiita_db`/`qiita_core` — no external dependencies. Fast
 ## E2E tests — overnight full suite
 
 Every non-auth endpoint requires a real session (`helpers/auth_middleware.py`
-is default-deny), so the e2e suite authenticates once via
-`POST /api/auth/connect` with a real Qiita personal access token and runs
-every journey as that user.
+is default-deny), so the e2e suite logs in once via `POST /api/auth/login` as a
+real classic-Qiita account and runs every journey as that user. Use a test
+account: the password sits in your shell environment for the run. Route tests
+that need a session sign in through the same route with the account table
+faked — `tests/auth_helpers.py`.
 
 **Run it with the single overnight entrypoint, not pytest directly:**
 
 ```bash
-export QIITA_TEST_PAT=<a valid Qiita personal access token>
+export QIITA_TEST_EMAIL=<a verified classic-Qiita test account>
+read -rs QIITA_TEST_PASSWORD && export QIITA_TEST_PASSWORD   # not in shell history
 export OPENAI_API_KEY=<key>   # needed for llm_judge — see warning below
 bash qiita_explore/start_barnacle.sh &   # or confirm the systemd unit is up
 
@@ -58,9 +64,10 @@ Required/optional env vars:
 
 | Var | Required | Purpose |
 |-----|----------|---------|
-| `QIITA_TEST_PAT` | yes | Qiita PAT for the account the suite logs in and runs as |
+| `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD` | yes | classic-Qiita account the suite logs in and runs as |
 | `BARNACLE_URL` | no (default `http://localhost:5001`) | backend base URL |
-| `QIITA_TEST_ORIGIN` | no (default `http://localhost:5503`) | `Origin` header for `/api/auth/connect`; must match `QIITA_EXPLORE_ALLOWED_ORIGINS` if the backend sets it |
+| `QIITA_TEST_ORIGIN` | no (default `http://localhost:5503`) | `Origin` header for `/api/auth/login`; must equal the backend's `QIITA_EXPLORE_PUBLIC_ORIGIN` or one of `QIITA_EXPLORE_ALLOWED_ORIGINS` |
+| `QIITA_TEST_ALLOW_FAILED_LOGIN` | no | `1` runs the wrong-password e2e test — dev backend only, since failed attempts count toward the account's login delay |
 | `OPENAI_API_KEY` / `API_KEY` | no, but see below | used by the `llm_judge()` helper |
 
 **⚠ Without `OPENAI_API_KEY`/`API_KEY` set, `llm_judge()` silently returns

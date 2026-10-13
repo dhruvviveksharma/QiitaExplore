@@ -1,6 +1,8 @@
 # Appendix A — API Reference
 
-Complete reference for the QiitaExplore HTTP surface: 73 endpoints (counted from `@app.route`, 2026-09-30), all under `/api/`.
+Complete reference for the QiitaExplore HTTP surface: 74 routes (counted from `@app.route`, 2026-10-12), all under `/api/`.
+
+> **Known gap.** Nine routes added by later PRs are not yet in the tables below: `api_get_study`, `api_study_prep_samples`, `api_study_sample_preps`, `api_update_chat`, `api_update_global_chat`, `api_move_chat_to_project`, `api_move_global_chat_to_project`, `api_remove_chat_from_project` (one function with two routes), and `download_fastq_manifest` (now listed under Artifacts). `grep -n "@app.route" backend/routes/*.py` is the authority.
 
 This appendix is the single source of truth for the HTTP surface. It is derived directly from the seven route modules in `backend/routes/` plus the auth guard in `backend/helpers/auth_middleware.py`. If an endpoint is not listed here, it does not exist; if the behavior described here disagrees with the code, the code is right and this file needs updating.
 
@@ -18,28 +20,29 @@ Backend runs under Gunicorn on port 5001 (`qiita_explore/start_barnacle.sh`). CO
 
 Two `before_request` hooks are registered together by `backend/helpers/auth_middleware.py :: register_auth_middleware`:
 
-1. `_load_session` — reads the `qe_sid` cookie, resolves it to a session row, and sets `g.user_id` / `g.session_row`. No remote Qiita calls.
+1. `_load_session` — reads the session cookie (`__Host-qe_sid`, or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off), resolves it to a session row, and sets `g.user_id` / `g.session_row`. Every 5 minutes per session it re-reads the classic-Qiita account and revokes the session if the password changed or the account is gone or unverified — see [Login-time failures and the Qiita re-check](#login-time-failures-and-the-qiita-re-check).
 2. `_require_auth` — default-deny. Any endpoint not in the public set gets **401** when `g.user_id` is `None`.
 
-**Exactly three endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
+**Exactly two endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
 
-- `api_auth_login_url`
-- `api_auth_connect`
+- `api_auth_login`
 - `api_auth_me`
 
-Note that `api_auth_logout`, `api_auth_legacy_default`, and `api_auth_claim_default` live under `/api/auth/` but are **not** public — they require a session like everything else. The comment in the source is explicit that prefix matching is the hole this guard exists to close.
+Note that `api_auth_logout` lives under `/api/auth/` but is **not** public — it requires a session and the CSRF header like everything else. The comment in the source is explicit that prefix matching is the hole this guard exists to close.
 
 `OPTIONS` requests bypass both hooks. Requests to unrouted paths (`request.endpoint is None`) fall through to Flask's normal 404.
 
-### Connect-time failures
+### Login-time failures and the Qiita re-check
 
-`POST /api/auth/connect` calls `whoami` once. If Qiita is unreachable, connect returns **503** `{"error": "Qiita is temporarily unreachable, try again shortly"}`. If the PAT is invalid, connect returns **401**. Mid-session requests do not call Qiita.
+`POST /api/auth/login` reads `qiita.qiita_user` once. If classic Qiita's database can't be read (or the per-worker circuit breaker is open), login returns **503** `{"error": "Qiita's user database is unreachable — try again shortly."}`. A wrong password or unknown email returns **401** `{"error": "Incorrect email or password."}`.
+
+Mid-session, `_load_session` re-reads the account when the session's `last_verified_at` is more than 5 minutes old. If the database can't be read, the session keeps working for up to 1 hour after its last good check; after that **every** request on that session — public endpoints included — gets **503** with `Retry-After: 30` until Qiita answers again, except `POST /api/auth/logout`, which still revokes it. The session is not revoked by an outage. See [`02-authentication.md`](02-authentication.md#following-qiita-the-re-check).
 
 ### CSRF
 
 Every `POST`, `PUT`, `PATCH`, and `DELETE` to a non-public endpoint requires an `X-CSRF-Token` header whose value matches the session's stored `csrf_token`, compared with `hmac.compare_digest`. A missing or mismatched token yields **403** `{"error": "CSRF token missing or invalid"}`. An absent stored token also fails closed.
 
-Clients get the token from `api_auth_connect` (on login) or `api_auth_me` (on rehydrate).
+Clients get the token from `api_auth_login` (on login) or `api_auth_me` (on rehydrate).
 
 ### Error envelope
 
@@ -49,9 +52,9 @@ Errors are a flat JSON object with a single `error` key holding a human-readable
 { "error": "Project not found" }
 ```
 
-There is no error code, type, or nested detail field in the general case. Two deviations exist:
+There is no error code, type, or nested detail field in the general case. A few deviations exist:
 
-- `api_auth_connect` adds a `detail` key (`"TypeName: message"`) on unexpected 500s, but only when `config.DEBUG_ERROR_DETAIL` is set via `QIITA_EXPLORE_DEBUG_ERRORS`.
+- `api_auth_login` adds `retry_after` (seconds) to its **429**, and `"unverified": true` to its **403**.
 - Several merge/validate handlers add a plural `errors` array alongside `error` — see `submit_merge_job`.
 
 Some handlers pass the raw exception text through as `str(e)` (notably `api_study_detail`, `search`, `api_first_studies`, `api_sample_detail`). Treat those strings as diagnostic, not stable.
@@ -71,18 +74,17 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 
 ## Summary table
 
-### Auth — `backend/routes/auth_routes.py` (6)
+### Auth — `backend/routes/auth_routes.py` (3)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
-| GET | `/api/auth/login-url` | `api_auth_login_url` | public | Build the Qiita control-plane login URL |
-| POST | `/api/auth/connect` | `api_auth_connect` | public | Exchange a pasted PAT for a session cookie |
-| GET | `/api/auth/me` | `api_auth_me` | public | Current identity, or `{anonymous: true}` |
+| POST | `/api/auth/login` | `api_auth_login` | public | Classic-Qiita email + password → session cookie |
+| GET | `/api/auth/me` | `api_auth_me` | public | Current identity, or `{anonymous: true}`; both carry `qiita_url` |
 | POST | `/api/auth/logout` | `api_auth_logout` | session | Revoke the session and clear the cookie |
-| GET | `/api/auth/legacy-default` | `api_auth_legacy_default` | session | Whether legacy `"default"` data can be claimed |
-| POST | `/api/auth/claim-default` | `api_auth_claim_default` | session | Claim legacy `"default"`-owned rows |
 
-### Studies — `backend/routes/study_routes.py` (8)
+Removed 2026-10-12, now **404**: `GET /api/auth/login-url`, `POST /api/auth/connect`, `GET /api/auth/legacy-default`, `POST /api/auth/claim-default`.
+
+### Studies — `backend/routes/study_routes.py` (7)
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
@@ -91,8 +93,7 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | POST | `/api/search` | `search` | session | Browse search: regex planner, relevance ranking, facet filters |
 | GET | `/api/search/facets` | `api_search_facets` | session | PI / data-type / year-added option lists for the Browse filters |
 | GET | `/api/systems` | `api_systems` | session | Live health probe of every allowed model |
-| GET | `/api/settings` | `api_get_settings` | session | Whether an Anthropic key is stored |
-| POST | `/api/settings` | `api_post_settings` | session | Store an Anthropic API key |
+| GET | `/api/settings` | `api_get_settings` | session | Whether the server has an Anthropic key (read-only; `POST` removed, TKT-042) |
 | GET | `/api/studies/first` | `api_first_studies` | session | First N public studies for the browse grid |
 
 ### Projects — `backend/routes/project_routes.py` (8)
@@ -140,7 +141,7 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | GET | `/api/merge-workspaces/<workspace_id>` | `get_merge_workspace` | session | One workspace with its study slots |
 | DELETE | `/api/merge-workspaces/<workspace_id>` | `delete_merge_workspace` | session | Delete a workspace |
 | PATCH | `/api/merge-workspaces/<workspace_id>` | `patch_merge_workspace` | session | Rename a workspace |
-| POST | `/api/merge-workspaces/<workspace_id>/studies` | `add_study_to_merge_workspace` | session | Add a study slot, max 5 (**201**) |
+| POST | `/api/merge-workspaces/<workspace_id>/studies` | `add_study_to_merge_workspace` | session | Add a **public** study slot, max 5 (**201**) |
 | DELETE | `/api/merge-workspaces/<workspace_id>/studies/<int:study_id>` | `remove_study_from_merge_workspace` | session | Remove a study slot |
 | PATCH | `/api/merge-workspaces/<workspace_id>/studies/<int:study_id>` | `update_merge_workspace_study` | session | Set chosen artifacts / sample filter |
 | GET | `/api/merge-workspaces/<workspace_id>/validate` | `validate_merge_workspace` | session | Compatibility check + merge preview |
@@ -150,13 +151,16 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | GET | `/api/merge-workspaces/<workspace_id>/jobs` | `get_workspace_jobs` | session | List jobs for a workspace |
 | GET | `/api/merge-jobs/<job_id>` | `poll_merge_job` | session | Poll one job's status |
 
-### Artifacts — `backend/routes/artifact_routes.py` (4)
+### Artifacts — `backend/routes/artifact_routes.py` (5)
+
+Every artifact route serves **public artifacts of public studies only** (TKT-043). See [Artifacts](#artifacts).
 
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
-| GET | `/api/artifacts/<int:artifact_id>/samples` | `get_artifact_samples` | session | Sample IDs + metadata for a BIOM artifact |
-| POST | `/api/artifacts/sample-counts` | `get_artifact_sample_counts` | session | Batch `{artifact_id: count}` |
-| GET | `/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download` | `download_artifact_file` | session | Download one file from an artifact |
+| GET | `/api/artifacts/<int:artifact_id>/samples` | `get_artifact_samples` | session | Sample IDs + metadata for a public BIOM artifact |
+| POST | `/api/artifacts/sample-counts` | `get_artifact_sample_counts` | session | Batch `{artifact_id: count}`, public artifacts only |
+| GET | `/api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download` | `download_artifact_file` | session | Download one file from a public artifact |
+| GET | `/api/artifacts/<int:artifact_id>/fastq-manifest` | `download_fastq_manifest` | session | QIIME 2 manifest (TSV) of a public artifact's per-sample FASTQ paths |
 | GET | `/api/merge-jobs/<job_id>/download` | `download_merge_result` | session | Download a finished merge tarball |
 
 ### Aggregations — `backend/routes/aggregation_routes.py` (11)
@@ -188,81 +192,55 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 
 ## Auth
 
-### api_auth_login_url
+### api_auth_login
 
-`GET /api/auth/login-url` — public.
+`POST /api/auth/login` — public.
 
-Returns `{"url": "..."}`. The URL is `{QIITA_PUBLIC_LOGIN_URL}/api/v1/auth/login`. When `QIITA_LOGINROCKET_URL` is configured, that is wrapped in a LoginRocket `/logout?redirect_uri=...` first, so a cached AuthRocket session cannot hijack the login into completing as the previously-cached user. (`backend/routes/auth_routes.py :: api_auth_login_url`)
+Signs in with a classic-Qiita email and password, checked against `qiita.qiita_user` in classic Qiita's PostgreSQL. This is the only endpoint that mints a session cookie.
 
-### api_auth_connect
-
-`POST /api/auth/connect` — public.
-
-Exchanges a pasted Qiita personal access token for a session. This is the only endpoint that mints a session cookie.
-
-Request:
+Request (`Content-Type: application/json`, with an `Origin` header):
 
 ```json
-{ "token": "<qiita personal access token>" }
+{ "email": "someone@ucsd.edu", "password": "<their classic-Qiita password>" }
 ```
 
-Behavior, in order:
+Behavior, in order — the first failing check answers:
 
-1. **Origin check.** If `config.ALLOWED_ORIGINS` is non-empty, the `Origin` header must appear in it exactly, else **403** `{"error": "origin not allowed"}`. An empty allowlist means same-origin deployment behind the proxy and the check is skipped.
-2. Body must be a JSON object (**400**) with a non-empty `token` (**400**).
-3. `whoami(pat)` against Qiita. Transient failure → **503**; rejection → **401** `{"error": "invalid or unrecognized Qiita token"}`; a response with no `principal_idx` → **502** `{"error": "unexpected identity response from Qiita"}`.
-4. Upsert the user and create the session. If a valid session cookie was already present, the prior session is revoked in the same transaction.
+1. **Body size.** `Content-Length` over 8 KB → **413** `{"error": "request too large"}`, before parsing.
+2. **JSON only.** Not `application/json` → **415** `{"error": "JSON body required"}`.
+3. **Origin.** `Origin` must equal `config.PUBLIC_ORIGIN` (`QIITA_EXPLORE_PUBLIC_ORIGIN`) or one entry of `config.ALLOWED_ORIGINS`, else **403** `{"error": "origin not allowed"}`. A `Sec-Fetch-Site` header, when sent, must be `same-origin` — or `same-site` for a dev origin from `ALLOWED_ORIGINS` only (else the same 403). With neither setting configured → **503** `{"error": "Login is not configured on this server."}`.
+4. **Bounded read.** The body is read with a hard limit of 8 KB + 1 bytes, so a chunked body (no `Content-Length` for step 1) that runs over → **413**. Not a JSON object → **415**.
+5. **Format.** An email that can't be a Qiita email (over 254 characters, non-ASCII, not exactly one `@`) or a password outside Qiita's rule (8–1024 characters, ASCII, no space or backslash) → **401** `{"error": "Incorrect email or password."}`. Not counted toward any limit.
+6. **Limits** (`helpers/login_limiter.py`): a blocked email or client → **429** `{"error": "Too many attempts — try again in N minutes.", "retry_after": <seconds>}` with a `Retry-After` header. A valid known-device cookie for this account skips both (up to 10 attempts in a row without a success). Limiter storage unusable → **503**.
+7. **Account and password.** Unknown email or wrong password → **401** with the same text as step 5 (an unknown email still costs one bcrypt check). Qiita's database unreachable or circuit open → **503** `{"error": "Qiita's user database is unreachable — try again shortly."}`. This worker already busy with a bcrypt check → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`.
+8. **Unverified** account (level id 5), after the correct password → **403** `{"error": "Verify your email on Qiita first.", "unverified": true}`. No session.
+9. **Success.** Clears this email's attempt counter (and takes this attempt back off the client's failure count), purges expired sessions, finds or creates the QiitaExplore account bound to the email (`store/auth_store.py :: resolve_user`), and creates the session. If a valid session cookie was already present, the prior session is revoked in the same transaction.
 
-On success, sets the `qe_sid` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` per `config.SESSION_COOKIE_SECURE`, `max_age = AUTH_SESSION_ABSOLUTE_TTL_SECONDS`) and returns the identity payload plus the CSRF token:
+On success, sets the session cookie — `__Host-qe_sid` (or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off): `HttpOnly`, `SameSite=Lax`, `Secure` per config, `path=/`, no `Domain`, `max_age = AUTH_SESSION_ABSOLUTE_TTL_SECONDS`. Unless the browser already holds a valid known-device cookie for this account, it also sets one — `__Host-qe_dev` (or `qe_dev`), same attributes, 30 days. Returns:
 
 ```json
-{
-  "user_id": "...", "email": "...", "system_role": "...",
-  "scopes": [], "profile_complete": true,
-  "claim_eligible": false, "csrf_token": "..."
-}
+{ "user_id": "q3f9…", "email": "someone@ucsd.edu", "level": "user", "csrf_token": "..." }
 ```
 
-`backend/routes/auth_routes.py :: api_auth_connect`
+The password is never logged, stored, or echoed back. Full treatment in [`02-authentication.md`](02-authentication.md#the-checks-in-order).
+
+`backend/routes/auth_routes.py :: api_auth_login`
 
 ### api_auth_me
 
 `GET /api/auth/me` — public.
 
-Returns `{"anonymous": true}` when there is no session, or when the session resolves to a user row that no longer exists. Otherwise returns the same identity payload as `api_auth_connect`, with `csrf_token` read from the session row. This is the rehydrate path on page load. (`backend/routes/auth_routes.py :: api_auth_me`)
+Returns `{"anonymous": true, "qiita_url": "https://qiita.ucsd.edu"}` when there is no session, or when the session resolves to a user row that no longer exists. Otherwise returns `{user_id, email, level, csrf_token, qiita_url}`, with `csrf_token` read from the session row. `qiita_url` is `QIITA_CLASSIC_URL`; the sign-in form links its "Forgot password?" and "Create a Qiita account" to it. This is the rehydrate path on page load. Like every endpoint except logout, it answers **503** when the caller's session is past the 1-hour Qiita-outage grace. (`backend/routes/auth_routes.py :: api_auth_me`)
 
 ### api_auth_logout
 
 `POST /api/auth/logout` — session + CSRF.
 
-Revokes the session row if present and deletes the cookie. Returns `{"ok": true}`. Not public: a caller with no valid session gets 401 from the guard before the handler runs. (`backend/routes/auth_routes.py :: api_auth_logout`)
+Revokes the session row if present and deletes the cookie. Returns `{"ok": true}`. Not public: a caller with no valid session gets 401 from the guard before the handler runs. It is the one route that still works on a session past the Qiita-outage grace. (`backend/routes/auth_routes.py :: api_auth_logout`)
 
-### api_auth_legacy_default
+### Removed
 
-`GET /api/auth/legacy-default` — session.
-
-Returns `{"eligible": <bool>}`, plus `"counts"` from `legacy_default_counts()` when eligible. Used to decide whether to offer the claim flow. (`backend/routes/auth_routes.py :: api_auth_legacy_default`)
-
-### api_auth_claim_default
-
-`POST /api/auth/claim-default` — session + CSRF.
-
-Reassigns rows still owned by the pre-auth `"default"` user to the calling user — the one-time migration for data created before real identities existed.
-
-No request body is read. Delegates to `claim_legacy_default(g.user_id)`:
-
-- `ValueError` → **403** `{"error": "not eligible to claim"}`
-- `LegacyClaimConflict` → **409** `{"error": "legacy data already claimed"}`
-
-Success returns the per-table counts that were transferred:
-
-```json
-{ "ok": true, "claimed": { "projects": 3, "global_chats": 7 } }
-```
-
-The exact keys in `claimed` come from `store/legacy_claim.py`, not from this handler.
-
-`backend/routes/auth_routes.py :: api_auth_claim_default`
+`GET /api/auth/login-url`, `POST /api/auth/connect` (paste a qiita-miint token), `GET /api/auth/legacy-default` and `POST /api/auth/claim-default` were removed on 2026-10-12 with the qiita-miint login and `store/legacy_claim.py`. They now return **404**.
 
 ---
 
@@ -290,6 +268,8 @@ A fifth step populates `samples_context` (the LLM context text) when absent. Res
   "cached": true
 }
 ```
+
+**Non-public artifacts of a public study** (TKT-043) stay in `artifacts` and `artifact_graph`, so the chart is complete, but lose their file paths: `full_path` is `null` and graph nodes' `filepaths` is empty. Which artifacts are public is read live (`qiita_fetch.py :: public_artifact_ids`), not from the cache.
 
 `cached` reflects only whether the **preps/artifacts** stage hit — the other stages can still have missed and re-fetched. Samples are capped at 200 regardless of `total_samples`.
 
@@ -378,13 +358,9 @@ Because this fans out a live request per model on every call, it is a page-load-
 
 `GET /api/settings` — session.
 
-Returns `{"anthropic_key_set": <bool>}`. The key value itself is never returned. (`backend/routes/study_routes.py :: api_get_settings`)
+Returns `{"anthropic_key_set": <bool>}`: true when a key is stored in the `meta` table (`anthropic_api_key`, written before 2026-10-12) or `ANTHROPIC_API_KEY` is set in the server's `.env`. The key value itself is never returned. The frontend disables the Claude models when it is false. (`backend/routes/study_routes.py :: api_get_settings`)
 
-### api_post_settings
-
-`POST /api/settings` — session + CSRF.
-
-Body `{"anthropic_api_key": "..."}`. A blank or whitespace-only value is ignored rather than clearing the stored key. Always returns `{"ok": true}`, including when nothing was written. The value is stored via `set_setting` in the global `meta` table — see the note in the closing findings about scoping. (`backend/routes/study_routes.py :: api_post_settings`)
+`POST /api/settings` was removed on 2026-10-12 (TKT-042): it let any signed-in user replace the one shared key. It now answers **405**. The key can only be changed on the server.
 
 ### api_first_studies
 
@@ -606,7 +582,9 @@ Errors surface as an `error` event with `friendly_llm_error(e, model)`. Full eve
 
 `POST /api/merge-workspaces/<workspace_id>/studies` — session + CSRF.
 
-Body `{"study_id", "study_title", "data_types", "num_samples"}`. Missing `study_id` → **400**. Unknown/unowned workspace → **404**. At the 5-study cap → **400** `{"error": "Workspace already has 5 studies (maximum)"}`. Success returns `{"studies": [...]}` with status **201**. (`backend/routes/merge_routes.py :: add_study_to_merge_workspace`)
+Body `{"study_id", "study_title", "data_types", "num_samples"}`. Missing `study_id` → **400**; a non-integer one → **400** `{"error": "study_id must be an integer"}`. A study that isn't public → **404** `{"error": "Study not found or not public"}` (TKT-043 — any verified Qiita user can reach this). Unknown/unowned workspace → **404**. At the 5-study cap → **400** `{"error": "Workspace already has 5 studies (maximum)"}`. Success returns `{"studies": [...]}` with status **201**. (`backend/routes/merge_routes.py :: add_study_to_merge_workspace`)
+
+**Every merge route below that resolves artifacts** — `validate_merge_workspace`, `get_workspace_samples`, `get_workspace_study_samples`, `submit_merge_job` — gets them from `helpers/merge_helpers.py :: _get_artifacts`, which returns only the **public artifacts of a public study** (`[]` for a study that is no longer public). A chosen artifact that isn't public is therefore treated as absent.
 
 ### remove_study_from_merge_workspace
 
@@ -708,25 +686,33 @@ Poll `poll_merge_job` for progress. Merge execution runs a local `conda run` and
 
 ## Artifacts
 
+**Visibility rule (TKT-043, 2026-10-12).** Every signed-in Qiita user reaches these routes, and QiitaExplore does not resolve per-user Qiita permissions, so they serve only **public artifacts of public studies**. Visibility is per artifact: a public study can hold private, sandboxed or archived artifacts. `helpers/qiita_fetch.py :: public_artifact_ids(study_id)` reads the public artifact ids live (empty for a non-public study, or when the read fails). `helpers/merge_helpers.py :: public_artifacts(study_id)` returns the artifact-graph nodes for those ids, and `_get_artifacts` filters the prep-joined artifact list to them. The sequence-file query behind `download_fastq_manifest` and the Sample Aggregation export (`helpers/fastq_manifest.py :: _FILES_FROM`) joins only public artifacts.
+
 ### get_artifact_samples
 
 `GET /api/artifacts/<int:artifact_id>/samples?study_id=<id>&limit=50` — session.
 
-Reads sample IDs from the BIOM file, then joins metadata from `qiita.sample_{study_id}` for the first `limit` of them. `limit` is capped at 500. Missing `study_id` → **400**; artifact not found in the study or lacking a file path → **404**; a BIOM read failure → **500** with the exception text. Returns a JSON **array** of `{"sample_id": "...", "fields": {...}}`, with `fields` empty for samples that have no metadata row. (`backend/routes/artifact_routes.py :: get_artifact_samples`)
+Reads sample IDs from the BIOM file, then joins metadata from `qiita.sample_{study_id}` for the first `limit` of them. `limit` is capped at 500. Missing `study_id` → **400**; artifact not found among the study's public artifacts (or the study isn't public), or lacking a file path → **404**; a BIOM read failure → **500** with the exception text. Returns a JSON **array** of `{"sample_id": "...", "fields": {...}}`, with `fields` empty for samples that have no metadata row. (`backend/routes/artifact_routes.py :: get_artifact_samples`)
 
 ### get_artifact_sample_counts
 
 `POST /api/artifacts/sample-counts` — session + CSRF.
 
-Body `{"study_id": 10317, "artifact_ids": [1, 2]}`; either missing or empty → **400**. Returns a bare map `{"<artifact_id>": <count>}`. Artifacts that are unknown, lack a file path, or fail to read are **omitted** rather than reported — a short response is the only signal that something failed. (`backend/routes/artifact_routes.py :: get_artifact_sample_counts`)
+Body `{"study_id": 10317, "artifact_ids": [1, 2]}`; either missing or empty → **400**. Returns a bare map `{"<artifact_id>": <count>}`. Artifacts that are unknown, not public, lack a file path, or fail to read are **omitted** rather than reported — a short response is the only signal that something failed. (`backend/routes/artifact_routes.py :: get_artifact_sample_counts`)
 
 ### download_artifact_file
 
 `GET /api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download?study_id=<id>` — session.
 
-Streams one file from an artifact as an attachment. Missing `study_id` → **400**. `_resolve_artifact_file` locates the artifact node in the study's artifact graph (cached, else freshly fetched), finds the matching `filepath_id`, resolves the real path, and checks it is a file not under `_FORBIDDEN_ROOTS` (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`).
+Streams one file from an artifact as an attachment. Missing `study_id` → **400**. `_resolve_artifact_file` looks the artifact up in `public_artifacts(study_id)` — so a private study, or a private artifact in a public study, fails with `Artifact <id> not found or not public in study <id>` — then finds the matching `filepath_id`, resolves the real path, and checks it is a file not under `_FORBIDDEN_ROOTS` (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`).
 
 Every failure mode raises `ValueError` and is returned as **403** — including "File not found on disk", which is a 404 condition reported as a permissions error. See the closing findings. (`backend/routes/artifact_routes.py :: download_artifact_file`)
+
+### download_fastq_manifest
+
+`GET /api/artifacts/<int:artifact_id>/fastq-manifest?study_id=<id>` — session.
+
+Returns a QIIME 2 V2 manifest (TSV attachment, `manifest_prep<prep>_artifact<id>.tsv`) mapping each sample to its FASTQ path(s) under `QIITA_BASE_DATA_DIR`. Missing `study_id` → **400**; a study that isn't public → **404** `{"error": "Study not found or not public"}`; an artifact that isn't a public `per_sample_FASTQ` artifact of the study → **404**. The file query (`helpers/fastq_manifest.py`) only joins **public** artifacts, so a non-public artifact gets the same 404. (`backend/routes/artifact_routes.py :: download_fastq_manifest`)
 
 ### download_merge_result
 
@@ -837,8 +823,8 @@ Behaviors that are easy to misread from the route names alone:
 
 - **Silent-success mutations.** `api_delete_project`, `api_delete_chat`, `api_delete_global_chat`, and `patch_merge_workspace` return success regardless of whether anything was affected. Clients cannot distinguish "deleted" from "never existed".
 - **Empty-list-instead-of-404.** `get_workspace_jobs` returns an empty collection for an unknown parent.
-- **Settings are global, not per-user.** `api_get_settings` / `api_post_settings` read and write the shared `meta` table through `get_setting` / `set_setting`, which take no `user_id`. Any authenticated user reads the same flag and overwrites the same stored Anthropic key.
-- **Artifact downloads are not study-scoped.** `download_artifact_file` requires a session but performs no `is_study_public` check (unlike `api_study_detail`) and no ownership check. Its path safety is a blocklist of forbidden roots rather than an allowlist of permitted ones.
+- **One Anthropic key for everyone.** `api_get_settings` reports a single server-wide key; since 2026-10-12 there is no route that writes it (TKT-042). Per-user keys are TKT-102.
+- **Artifact routes are public-only, not owner-scoped.** Since 2026-10-12 they serve only public artifacts of public studies (TKT-043); artifacts are not owned by QiitaExplore users, so there is no ownership check. The download's path safety is still a blocklist of forbidden roots rather than an allowlist of permitted ones.
 - **Validate and submit disagree.** `validate_merge_workspace` runs `check_namespace_compatibility(..., explicit_only=True)`; `submit_merge_job` runs it without that flag. A green validate does not guarantee a successful submit.
 - **`str(e)` leaks into responses.** `api_study_detail`, `search`, `api_first_studies`, `api_sample_detail`, and `get_artifact_samples` return raw exception text in 500 bodies.
 
@@ -846,7 +832,7 @@ Behaviors that are easy to misread from the route names alone:
 
 ## See also
 
-- [`02-authentication.md`](02-authentication.md) — session model, single-login PAT handling, and the CSRF contract
+- [`02-authentication.md`](02-authentication.md) — classic-Qiita login, brute-force limits, the session model and Qiita re-check, the CSRF contract, and the public-only data rule
 - [`06-streaming-and-chat.md`](06-streaming-and-chat.md) — SSE contract and the frontend segments model
 - [`07-merge-and-biom.md`](07-merge-and-biom.md) — merge workspace lifecycle, BIOM resolution, and job execution
 - [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) — agent tool definitions and full SSE event payloads

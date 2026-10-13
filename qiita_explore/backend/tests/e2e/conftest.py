@@ -4,9 +4,9 @@ Requires a running barnacle backend: bash qiita_explore/start_barnacle.sh
 Set BARNACLE_URL env var to override the default http://localhost:5001.
 
 Every non-auth endpoint is default-deny (helpers/auth_middleware.py), so this
-suite authenticates once per session via POST /api/auth/connect using a real
-Qiita PAT (QIITA_TEST_PAT) and reuses the resulting qe_sid cookie + CSRF token
-for every request. See auth_client.py for the client, parity_helpers.py for
+suite authenticates once per session via POST /api/auth/login as a real
+classic-Qiita account (QIITA_TEST_EMAIL / QIITA_TEST_PASSWORD) and reuses the
+resulting session cookie + CSRF token for every request. See auth_client.py for the client, parity_helpers.py for
 SSE-stream and search helpers.
 """
 import os
@@ -49,8 +49,8 @@ def backend():
 @pytest.fixture(scope="session")
 def client(backend):
     """Authenticated session shared by the whole run — one login, reused
-    everywhere (the qe_sid session self-maintains via periodic reverify for
-    up to 24h, comfortably covering an overnight run)."""
+    everywhere (a session lasts up to 24h, comfortably covering an overnight
+    run; it ends early if the test account's password changes on Qiita)."""
     try:
         return AuthedClient(backend)
     except AuthError as exc:

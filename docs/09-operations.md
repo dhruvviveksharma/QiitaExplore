@@ -34,7 +34,7 @@ Note what the script does **not** do: it does not read `qiita_explore/.env`. Tha
 ### The gunicorn flags, and why each one is there
 
 ```
-gunicorn -w 4 --threads 2 -b 0.0.0.0:5001 \
+gunicorn -w 4 --threads 2 -b 127.0.0.1:$QE_PORT \
   --timeout 120 --graceful-timeout 30 \
   --worker-class gthread --log-level info run:app
 ```
@@ -44,7 +44,7 @@ gunicorn -w 4 --threads 2 -b 0.0.0.0:5001 \
 | `-w 4` | Four forked worker processes. Every in-process cache and connection pool is multiplied by this number — see [Capacity](#capacity). |
 | `--threads 2` | Two request threads per worker, so **8 concurrent requests** total. Chat requests hold a thread for the whole stream, which is what makes this number matter. |
 | `--worker-class gthread` | Required for `--threads` to mean anything. It is also the reason the vendored `TRN` transaction singleton is a hazard: two threads in one worker share it. |
-| `-b 0.0.0.0:5001` | Binds all interfaces. In production nginx is the only intended client; nothing in the app restricts who may connect directly to 5001. |
+| `-b 127.0.0.1:$QE_PORT` | Loopback only (since 2026-10-12; it was `0.0.0.0`). This backend takes Qiita passwords, so only a proxy or SSH tunnel on the same host may reach it. `QE_PORT` is 5001 on `master`, 5002 otherwise (`detect_env.sh`). |
 | `--timeout 120` | Gunicorn kills a worker whose request has not completed in 120 s. |
 | `--graceful-timeout 30` | On restart, workers get 30 s to finish in-flight work before `SIGKILL`. |
 | `--log-level info` | Gunicorn's *error* log level. It does not enable an access log — see [Logging](#logging-and-observability). |
@@ -62,7 +62,7 @@ A restart is therefore never free while a merge is running. Check for `running` 
 
 ### Restarting, and what a restart costs
 
-There is no zero-downtime story here. `start_barnacle.sh` ends in `exec gunicorn`, so the shell process *is* gunicorn and the ordinary stop-then-start is what the environment script suggests: `pkill -f gunicorn` followed by re-running the script, or `systemctl restart` where the backend runs as a unit.
+There is no zero-downtime story here. `start_barnacle.sh` ends in `exec gunicorn`, so the shell process *is* gunicorn and the ordinary stop-then-start is: stop that gunicorn, then re-run the script, or `systemctl restart` where the backend runs as a unit. On barnacle, production (5001) and dev (5002) run side by side, so never `pkill -f gunicorn` — stop only the one you mean, by the master PID that `ss -ltnp` shows on its port ([`../DEPLOYING.md`](../DEPLOYING.md)).
 
 Four things are lost or degraded on every restart, in rough order of how much they matter:
 
@@ -71,7 +71,7 @@ Four things are lost or degraded on every restart, in rough order of how much th
 - **Every in-process cache goes cold.** The per-worker study-header memo (`_STUDY_HEADER_TTL_SECONDS = 3600`) is a plain dict and does not survive. All four workers start cold and repopulate independently, so the first minutes after a restart put noticeably more load on PostgreSQL than steady state.
 - **Connection pools are rebuilt lazily.** `get_pool` constructs on first use rather than at import — deliberately, because gunicorn forks after import and an inherited pool would share sockets across processes. The first request into each worker pays the connect cost.
 
-What *does* survive is everything in SQLite: sessions, projects, chats, and the `study_detail_cache` and `biom_sample_cache` layers. Users stay logged in across a restart; only unverified in-flight work is lost.
+What *does* survive is everything in SQLite: sessions, projects, chats, and the `study_detail_cache` and `biom_sample_cache` layers. Users stay logged in across a restart; only unverified in-flight work is lost. (One exception: the first boot after the 2026-10-12 classic-login change runs the `users` migration, which revokes every session once.)
 
 Schema migration needs no separate step and cannot be run separately — importing anything from `store` bootstraps and migrates the SQLite database as an import side effect, once per worker at startup. That also means a migration failure presents as a worker that failed to boot, not as a failed migration command.
 
@@ -96,30 +96,26 @@ The port map is small enough to hold in your head:
 | Port | Listener | Reached by |
 |---|---|---|
 | `8080` | nginx | the browser — both the frontend and `/api/` |
-| `5001` | gunicorn, bound `0.0.0.0` | nginx's upstream block. Nothing in the app restricts direct clients. |
-| — | classic Qiita PostgreSQL | each worker's pool, credentials from `QIITA_CONFIG_FP` |
-| — | Qiita-MIINT control plane | `whoami` only, at `QIITA_CONTROL_PLANE_URL` |
+| `5001` | gunicorn, bound `127.0.0.1` | nginx's upstream block, on the same host. |
+| — | classic Qiita PostgreSQL | each worker's pools, credentials from `QIITA_CONFIG_FP` — study data, and the `qiita.qiita_user` reads behind login |
 
-Note that `QIITA_CONTROL_PLANE_URL`'s default, `http://127.0.0.1:8080`, **collides with the port nginx listens on**. Any real deployment has to set it; leaving the default in place points the backend's identity calls at its own web server.
+Set `QIITA_EXPLORE_PUBLIC_ORIGIN` to the exact origin browsers load the page from (scheme, host and port as the browser sees them); without it, login refuses with 503.
 
 One thing must be edited before `nginx.conf` works anywhere: `location /` has `root /path/to/qiita_explore/frontend;` — a literal placeholder. Deployed unchanged, every API call succeeds and every page load 404s.
 
 ### Development — SSH tunnels and port 5002
 
-The dev topology runs the backend on **5002** on barnacle as a systemd service, the control plane on the developer's Mac at `127.0.0.1:8080`, and the frontend from a static server on the Mac at `:5503`. `Qiita/start_qiita_stack.sh` brings the whole thing up in one command. Two tunnels connect it:
+The dev topology runs the backend on **5002** on barnacle, and the frontend from a static server on the Mac at `:5503`. One tunnel connects them:
 
 | Direction | Kind | Mapping | Carries |
 |---|---|---|---|
-| Browser → backend | **forward** | `Mac:5002 → barnacle:5002` | All API traffic from the developer's browser |
-| Backend → control plane | **reverse** | `barnacle:18080 → Mac:8080` | `whoami` — every PAT validation |
+| Browser → backend | **forward** | `Mac:5002 → barnacle:5002` | All API traffic from the developer's browser, including login |
+
+Login reads classic Qiita's Postgres from barnacle directly, so it needs no tunnel of its own. The dev `.env` must list the page's exact origin (e.g. `http://127.0.0.1:5503`) in `QIITA_EXPLORE_ALLOWED_ORIGINS`, or every login gets 403 `origin not allowed`. Until 2026-10-12 there was a second, **reverse** tunnel (`barnacle:18080 → Mac:8080`) so the backend could reach a qiita-miint control plane on the Mac for `whoami`; `Qiita/start_qiita_stack.sh` (in the sibling Qiita repo) still starts it, but QiitaExplore no longer uses it.
 
 `frontend/index.html` ships with `<meta name="api-base" content="http://127.0.0.1:5002/api">` and a TODO to revert it to 5001 before merging to master. That is the port convention in `CLAUDE.md`, not a bug.
 
-> **The reverse tunnel is the one that breaks, and its signature is specific.** If `barnacle:18080 → Mac:8080` is down, the backend is perfectly healthy but cannot reach the control plane. Login (`POST /api/auth/connect`) fails with **503 "Qiita is temporarily unreachable, try again shortly"**. Existing sessions are unaffected — mid-session requests use the local cookie only. Check the tunnel with `pgrep -f 'ssh.*-R 18080:localhost:8080'`, which is exactly what `start_qiita_stack.sh` does in its status block.
-
-The forward tunnel fails far more visibly: the browser cannot reach the API at all, so the failure announces itself on the first request rather than presenting as a degraded auth state.
-
-`start_qiita_stack.sh` is idempotent — it probes each component and skips whatever is already up — so re-running it is the standard first response to any dev-topology oddity. It also chooses which control-plane build to launch: `PATCHED=1` (the default) applies the AuthRocket logout-first fix at runtime via `Qiita/run_patched_control_plane.py`, leaving the Qiita repo untouched at master. `PATCHED=0` runs the plain build and reintroduces the account-hijack behavior described in [`02-authentication.md`](02-authentication.md); it exists for debugging only.
+The forward tunnel fails visibly: the browser cannot reach the API at all, so the failure announces itself on the first request rather than presenting as a degraded auth state.
 
 ---
 
@@ -154,9 +150,9 @@ The consequences, stated plainly:
 - `export FOO=bar` in your terminal does nothing to the running backend. Neither does `~/.bashrc`.
 - To change a setting: **edit `qiita_explore/.env`, then restart gunicorn.** There is no reload endpoint and no file watcher, because `config.py` binds every value to a module-level name at import.
 - The only variables that legitimately live in the shell are the two `start_barnacle.sh` exports itself.
-- `Qiita/barnacle_backend_env.sh` exists precisely because of this. Run on barnacle, it idempotently pins `QIITA_CONTROL_PLANE_URL` and `QIITA_PUBLIC_LOGIN_URL` into the `.env` file (backing it up first), deletes `QIITA_LOGINROCKET_URL`, and prints the restart command. It edits the file, not the environment.
+- `Qiita/barnacle_backend_env.sh` existed precisely because of this: it pinned the qiita-miint control-plane variables into the `.env` file. Those variables were removed on 2026-10-12 and are now ignored, so the script has nothing left to do for QiitaExplore — don't run it (it also leaves secret-bearing backups, TKT-045).
 
-The one exception to "restart required" is `ANTHROPIC_API_KEY`, which is re-read per request from the SQLite `meta` table — see appendix D.
+One wrinkle: an Anthropic key stored in the SQLite `meta` table (written before 2026-10-12) still overrides `ANTHROPIC_API_KEY` — see appendix D.
 
 ### The operational subset — what must be set for a healthy boot
 
@@ -164,10 +160,11 @@ The one exception to "restart required" is `ANTHROPIC_API_KEY`, which is re-read
 |---|---|
 | `QIITA_CONFIG_FP` | Vendored config manager raises `KeyError` — no PostgreSQL credentials, no study data at all. |
 | `OPENAI_API_KEY` or `API_KEY` | The OpenAI client is built with `api_key=None`; every NRP model call fails at request time. |
-| `QIITA_CONTROL_PLANE_URL` | Defaults to `http://127.0.0.1:8080` — loopback, and it collides with nginx's own port. |
+| `QIITA_EXPLORE_PUBLIC_ORIGIN` | Every login answers 503 "Login is not configured on this server." (In dev, `QIITA_EXPLORE_ALLOWED_ORIGINS` serves instead.) |
+| `QIITA_EXPLORE_LIMITER_DB` | Not fatal: the login limiter falls back to a file in the system temp directory. Set it to a path on local disk. |
 | `QIITA_BASE_DATA_DIR` | Artifact paths resolve relative to gunicorn's working directory. Fails later as "file not found", far from the cause. |
 
-`QIITA_LOGINROCKET_URL` must stay **unset**. It configures a login flow that appears correct and misbehaves; `barnacle_backend_env.sh` actively deletes it. The reasoning is in [`02-authentication.md`](02-authentication.md).
+`QIITA_EXPLORE_CLIENT_IP_HEADER` must stay **unset** until the proxy in front of gunicorn overwrites that header with the real client IP from a trusted source — otherwise anyone can forge it. See [`appendix-d-configuration.md`](appendix-d-configuration.md#env-QIITA_EXPLORE_CLIENT_IP_HEADER).
 
 ### Two requirements files, and which one is authoritative
 
@@ -202,7 +199,9 @@ Log messages carry stable bracketed prefixes, which is the closest thing this sy
 | `[search_studies]` | Expanded keywords, effective data types, text-hit count, sample-hit count, final merged count. Five lines per search — the whole search pipeline. |
 | `[sql] rows_returned=` | Row count from the study-search query. |
 | `[merge:<job_id>]` | Merge subprocess stdout (INFO) and stderr (WARNING), plus `job failed` with a traceback. |
-| `whoami transient failure` | Control plane unreachable — the reverse-tunnel signature. |
+| `Qiita account lookup failed` | A login or session re-check couldn't read `qiita.qiita_user` (the exception type follows; never the email or password). Three in a row open the per-worker circuit breaker for 30 s. |
+| `login limiter unavailable` | The limiter's SQLite file (`QIITA_EXPLORE_LIMITER_DB`) can't be opened or locked; logins answer 503 until it can. |
+| `login refused: set QIITA_EXPLORE_PUBLIC_ORIGIN` | No login origin is configured; every login answers 503. |
 | `hit max_iters` | An agent turn exhausted its four tool-call iterations without concluding. |
 | `probe study=... failed` | A single sample-search probe failed or timed out. Expected occasionally; a flood is not. |
 
@@ -213,7 +212,7 @@ This should be read as a list, not a footnote, because it bounds what any incide
 - **No metrics.** No counters, no histograms, no Prometheus endpoint. Request rates, error rates, and latency percentiles are not recorded anywhere. The `[timing]` log lines are the only latency data that exists, they cover tool calls only, and reading them means parsing text.
 - **No tracing.** No request IDs. Two concurrent chats interleave their log lines with nothing to separate them beyond the study or chat IDs that happen to appear in some messages.
 - **No health endpoint.** There is no `/healthz`, no readiness probe, and no liveness check the app itself answers.
-- **`/api/systems` is not a health check.** `backend/routes/study_routes.py :: api_systems` fans out across a thread pool and sends a real one-token `"Hi"` completion to **every model in `ALLOWED_MODELS`** with a 15-second per-model timeout, reporting `ok`/`down` and a latency figure for each. It probes the *LLM providers*, not this application — it will report every model `ok` on a backend whose PostgreSQL is unreachable and whose encryption key is missing. It also requires an authenticated session (it is not in `PUBLIC_ENDPOINTS`), so it cannot serve as an unauthenticated liveness probe, and each call costs one upstream request per model.
+- **`/api/systems` is not a health check.** `backend/routes/study_routes.py :: api_systems` fans out across a thread pool and sends a real one-token `"Hi"` completion to **every model in `ALLOWED_MODELS`** with a 15-second per-model timeout, reporting `ok`/`down` and a latency figure for each. It probes the *LLM providers*, not this application — it will report every model `ok` on a backend whose PostgreSQL is unreachable. It also requires an authenticated session (it is not in `PUBLIC_ENDPOINTS`), so it cannot serve as an unauthenticated liveness probe, and each call costs one upstream request per model.
 - **Background work is unobserved.** Project enrichment, preload, and merges are submitted to `_bg_executor` with their futures dropped. Exceptions surface only as log lines.
 - **Queue depth is invisible.** When all 8 request slots are busy, the ninth request waits in the kernel's listen backlog. Nothing counts or reports that wait, so saturation presents to users as unexplained slowness with no corresponding signal on the server.
 - **The data layer degrades silently by design.** `qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default; `artifact_graph :: fetch_artifact_graph` logs and returns `[]`. A persistent upstream problem presents in the UI as *missing data*, not as an error. See [`03-data-access-and-caching.md`](03-data-access-and-caching.md).
@@ -223,14 +222,13 @@ This should be read as a list, not a footnote, because it bounds what any incide
 
 Because there is no health endpoint, "is it up and correct?" is a manual sequence. Each step exercises a different dependency, and they are ordered so the first failure names the layer:
 
-1. **Process and port.** `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5001/api/auth/login-url` — expect `200`. This endpoint is public, so it needs no session, and it proves gunicorn is up and `config.py` imported.
+1. **Process and port.** `curl -s http://127.0.0.1:5001/api/auth/me` on the backend host — expect `{"anonymous":true,"qiita_url":"https://qiita.ucsd.edu"}`. This endpoint is public, so it needs no session, and it proves gunicorn is up and `config.py` imported. (Gunicorn listens on loopback only, so run this on the backend host.)
 2. **Through the proxy.** Same request against `:8080`. A difference between the two isolates nginx.
-3. **Control plane reachability.** From the backend host, `curl -s -o /dev/null -w '%{http_code}\n' <QIITA_CONTROL_PLANE_URL>/api/v1/auth/whoami`. Anything that is not a connection failure is fine here — a 401 is a healthy answer to an unauthenticated probe.
-4. **PostgreSQL.** Hit any study-listing endpoint with a valid session and confirm rows come back. There is no lighter probe; a failure here degrades to *empty results* rather than an error, so an empty grid is the symptom to watch for.
-5. **Authentication end to end.** Complete one real login and confirm subsequent chat requests do not contact the control plane.
-6. **Streaming.** Send one chat message and watch it render token by token rather than in a single block. This is the only check that covers the nginx SSE directives.
+3. **Authentication end to end.** Complete one real login in a browser with a real classic-Qiita account. A 503 "Qiita's user database is unreachable" points at PostgreSQL or `QIITA_CONFIG_FP`; a 503 "Login is not configured on this server." at `QIITA_EXPLORE_PUBLIC_ORIGIN`; a 403 "origin not allowed" at that value not matching the page's origin exactly.
+4. **PostgreSQL.** Hit any study-listing endpoint with that session and confirm rows come back. A failure here degrades to *empty results* rather than an error, so an empty grid is the symptom to watch for.
+5. **Streaming.** Send one chat message and watch it render token by token rather than in a single block. This is the only check that covers the nginx SSE directives.
 
-The dev topology's equivalent is the status block `Qiita/start_qiita_stack.sh` prints on exit: control plane, backend through the forward tunnel, and reverse-tunnel presence.
+In the dev topology, run step 1 against `http://127.0.0.1:5002` through the forward tunnel.
 
 ---
 
@@ -241,9 +239,14 @@ The centerpiece. Symptoms are listed as they present to a user or an operator, n
 | Symptom | Likely cause | Where to look | Fix |
 |---|---|---|---|
 | **Chat answer arrives all at once** after a long pause, instead of streaming | nginx buffering the response | `nginx.conf` `/api/` block | Confirm `proxy_buffering off` and `proxy_request_buffering off` are present and that the running config is the one on disk (`nginx -T`). If both are set, next suspect is the gzip/SSE item above — remove `text/event-stream` from `gzip_types` and retest. |
-| **Login fails with 503**; `/api/systems` reports models `ok` | Control plane unreachable from backend (tunnel down, wrong `QIITA_CONTROL_PLANE_URL`) | Connect returns 503; check tunnel and URL | Fix connectivity; existing sessions continue to work on local cookie auth |
-| **"Qiita is temporarily unreachable, try again shortly"** (503) on connect only | Control plane unreachable during login | `pgrep -f 'ssh.*-R 18080:localhost:8080'`; logs for `whoami transient failure` | Re-run `bash Qiita/start_qiita_stack.sh`. In production, verify `QIITA_CONTROL_PLANE_URL` from the backend host. |
-| **All users appear logged out at once** | SQLite store was replaced/moved, or `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` was shortened | `QIITA_EXPERIMENT_DB_PATH`; `auth_sessions.revoked_at` | Restore the correct DB path or TTL config |
+| **Login fails with 503 "Qiita's user database is unreachable"** | Classic Qiita's PostgreSQL can't be read for the account lookup (down, slow past the 5-s timeouts, wrong `QIITA_CONFIG_FP`), or the per-worker circuit breaker is open after 3 failures | Logs for `Qiita account lookup failed` | Fix connectivity; the breaker closes by itself 30 s after it opened. Existing sessions keep working for up to an hour since their last good re-check. |
+| **Login fails with 503 "Login is not configured on this server."** | Neither `QIITA_EXPLORE_PUBLIC_ORIGIN` nor `QIITA_EXPLORE_ALLOWED_ORIGINS` is set | Logs for `login refused: set QIITA_EXPLORE_PUBLIC_ORIGIN` | Set `QIITA_EXPLORE_PUBLIC_ORIGIN` in `.env` and restart. |
+| **Login fails with 403 "origin not allowed"** for everyone | The page's origin doesn't exactly match `QIITA_EXPLORE_PUBLIC_ORIGIN` / `QIITA_EXPLORE_ALLOWED_ORIGINS` (scheme, host and port all count), or a `Sec-Fetch-Site` other than `same-origin` (`same-site` passes only for a dev origin) | The browser's request `Origin` header vs. the `.env` | Set the exact origin the browser shows. |
+| **Login fails with 503 and nothing in the account logs** | The login limiter's SQLite file can't be used — unwritable, locked, or owned by another user / group- or world-writable (it refuses those on purpose) | Logs for `login limiter unavailable`; `QIITA_EXPLORE_LIMITER_DB` and its folder's owner and mode | Point it at a path on local disk in a folder only the backend's user can write. The limiter fails closed by design. |
+| **"Too many attempts — try again in N minutes."** (429) | The per-email delay (after 5 attempts in 15 min) or, with a client-IP header, the per-client block (30 failures in 15 min) | — | Wait it out. The user's usual browser (known-device cookie) skips both limits, for up to 10 attempts in a row without a success. |
+| **Every request suddenly 503 "Qiita's user database is unreachable"**, including `/api/auth/me` | Qiita's database has been unreachable for over an hour since those sessions' last good re-check | Logs for `Qiita account lookup failed` | Restore connectivity; sessions resume without logging in again. Logout still works meanwhile. |
+| **All users appear logged out at once** | SQLite store was replaced/moved, `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` was shortened, or the one-time 2026-10-12 `users` migration ran (it revokes every session) | `QIITA_EXPERIMENT_DB_PATH`; `auth_sessions.revoked_at` | Restore the correct DB path or TTL config. After the migration, everyone logs in again with their classic-Qiita account. |
+| **A user is logged out a few minutes after changing their Qiita password** | Expected: the re-check every 5 minutes revokes a session whose account's password hash changed | — | Log in with the new password. |
 | **Search times out or returns very few results** | Per-probe `statement_timeout` (8 s) killing sample probes, or the candidate set being too narrow | Logs for `[search_studies] text_hits=` / `sample_hits=` and `probe study=... failed` | Compare `text_hits` against `sample_hits` to see which half is starving. Raise `SAMPLE_SEARCH_PROBE_TIMEOUT_MS` or `SAMPLE_SEARCH_DEFAULT_CANDIDATES` — both cost PostgreSQL load. Sample search returns partial results rather than failing, so "too few" is the expected shape of this failure. |
 | **Stale study data after a Qiita-side change** | Layered caching: a per-worker 1-hour header memo plus a 6-hour SQLite `study_detail_cache` | `study_detail_cache` rows; [`03-data-access-and-caching.md`](03-data-access-and-caching.md) | Restart gunicorn to clear the in-process memo. The SQLite layer needs its rows deleted — its 6-hour TTL is hardcoded, not tunable, and a partial refresh resets the clock for the whole row. Expect inconsistency between workers until both layers turn over. |
 | **Merge job stuck in `running` forever** | The accepting worker restarted or was killed; the job lived only in that worker's `_bg_executor` | `merge_jobs` rows with `status='running'` and an old `updated_at`; absence of `[merge:<job_id>]` lines after a point | No automatic recovery exists. Update the row to `failed` manually and resubmit. Nothing reaps these — see [Routine maintenance](#routine-maintenance). |
@@ -252,9 +255,8 @@ The centerpiece. Symptoms are listed as they present to a user or an operator, n
 | **PostgreSQL connection exhaustion** (`FATAL: sorry, too many clients`) | Per-worker pools multiply; sample search adds a fresh pool per call | `PG_POOL_MAX_CONN`; server-side `pg_stat_activity` | Do the arithmetic in [Capacity](#capacity) before changing anything. Lowering `PG_POOL_MAX_CONN` or the worker count both help; lowering `SAMPLE_SEARCH_*` candidate counts reduces the spiky component. |
 | **`database is locked` from SQLite** | Many writers on one file, and no `busy_timeout` beyond Python's 5-second default | `backend/store/db.py :: _conn` | See the hazard note in [Capacity](#capacity). Reducing worker count reduces contention; the real fix is a longer busy timeout. |
 | **Frontend 404s while the API works** | `nginx.conf`'s `location /` still has the literal `root /path/to/qiita_explore/frontend;` | `nginx.conf` | Set `root` to this deployment's absolute frontend path. |
-| **Login succeeds, then the next request is 401** — the session cookie never comes back | Cookie rejected by the browser. `qe_sid` is set `HttpOnly`, `SameSite=Lax`, `Secure=QIITA_EXPLORE_COOKIE_SECURE` (default `true`), `path=/` | `backend/routes/auth_routes.py :: _cookie_kwargs`; the browser's cookie inspector | A `Secure` cookie over plain HTTP is dropped on any origin the browser does not treat as trustworthy. `localhost` and `127.0.0.1` are exempt, which is why the dev topology works — a plain-HTTP deployment on a real hostname is not. Serve over TLS, or set the variable `false` for that deployment only. |
-| **Cross-origin requests fail, or a token post is accepted from an unexpected page** | `QIITA_EXPLORE_ALLOWED_ORIGINS` empty in a deployment that is *not* same-origin | `backend/routes/auth_routes.py :: _origin_allowed` | Empty is correct behind nginx, where frontend and API share an origin. In a split deployment it means both no CORS *and* an Origin check on `/auth/connect` that passes unconditionally. Set the exact origins. |
-| **Exception internals appear in an API response body** | `QIITA_EXPLORE_DEBUG_ERRORS` left truthy after debugging | `qiita_explore/.env` | Unset it and restart. It leaks exception type and message to unauthenticated callers of `/auth/connect`. |
+| **Login succeeds, then the next request is 401** — the session cookie never comes back | Cookie rejected by the browser. The session cookie is `__Host-qe_sid` (`qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is false), `HttpOnly`, `SameSite=Lax`, `Secure` per that variable (default `true`), `path=/`, no `Domain` | `backend/routes/auth_routes.py :: _cookie_kwargs`; the browser's cookie inspector | A `Secure` (and every `__Host-`) cookie over plain HTTP is dropped on any origin the browser does not treat as trustworthy. `localhost` and `127.0.0.1` are exempt, which is why the dev topology works — a plain-HTTP deployment on a real hostname is not. Serve over TLS, or set the variable `false` for that deployment only. |
+| **Cross-origin requests fail in dev** | The page's origin is missing from `QIITA_EXPLORE_ALLOWED_ORIGINS` | `backend/run.py` (Flask-CORS); `backend/routes/auth_routes.py :: _origin_error` | Empty is correct behind a same-origin proxy. In a split dev setup, list the page's exact origin; it serves both CORS and the login `Origin` check. |
 
 ---
 
@@ -334,7 +336,7 @@ Raising `-w` multiplies, simultaneously: PostgreSQL connections, background thre
 
 Nothing on this list is automated. All four items grow without bound.
 
-**Expired session rows accumulate forever.** `backend/store/auth_store.py :: purge_expired_sessions` exists, is correct, and hard-deletes rows past absolute expiry while deliberately keeping revoked rows for audit. **It is never called** — no route, no scheduler, no startup hook. This is a storage-growth issue and not a security one: `get_session_by_token` rejects expired sessions regardless of whether their rows are still present. Until it is wired up, calling it periodically out-of-band is the workaround.
+**Session rows are purged only on login.** `backend/store/auth_store.py :: purge_expired_sessions` hard-deletes rows past absolute expiry and revoked rows older than 7 days. It runs on every successful login (since 2026-10-12, TKT-056) and nowhere else, so a quiet deployment keeps its rows until someone logs in. This is a storage-growth issue and not a security one: `get_session_by_token` rejects expired sessions regardless of whether their rows are still present. The login limiter's file prunes itself on write.
 
 **Merge result tarballs are never cleaned up.** Verified in `backend/helpers/merge_executor.py :: run_merge_job`: the temporary job directory is `shutil.rmtree`'d in a `finally` block, but the final `{job_id}.tar.gz` is moved into `MERGE_RESULTS_DIR` and left there permanently. No route deletes it, no TTL applies, and deleting a merge job or its workspace does not remove the file. These are full merged BIOM bundles, so the directory grows in proportion to total merges ever run, not to merges currently useful. It needs periodic pruning against the `merge_jobs` table.
 
@@ -344,12 +346,12 @@ Nothing on this list is automated. All four items grow without bound.
 
 **Orphaned merge jobs.** Related to the above and worth a periodic query: rows in `merge_jobs` with `status='running'` and an `updated_at` older than the merge subprocess timeout (600 s) plus a margin are almost certainly orphaned by a worker restart and will never change state on their own. A job's states are `pending` (written by `create_merge_job` at submission), then `running`, then `done` or `failed` — all four written through the single `_on_status` callback in `backend/routes/merge_routes.py :: submit_merge_job`. Nothing else transitions them.
 
-**`.env` backups accumulate, and they hold secrets.** `Qiita/barnacle_backend_env.sh` runs `cp "${ENV_FILE}" "${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"` on **every** invocation, and never prunes. Each backup is a full copy of the backend's `.env`, which on a correctly configured host contains the LLM API key and the Fernet PAT-encryption key in plaintext. The script is safe to re-run — that is the point of it — but re-running it leaves a growing set of timestamped secret files beside the live one. Prune them, and keep the directory's permissions in mind when you do.
+**`.env` backups accumulate, and they hold secrets.** `Qiita/barnacle_backend_env.sh` runs `cp "${ENV_FILE}" "${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"` on **every** invocation, and never prunes. Each backup is a full copy of the backend's `.env`, which on a correctly configured host contains the LLM API keys in plaintext (and, in backups from before 2026-10-12, the old PAT-encryption key, which no longer protects anything). The script's job — pinning control-plane variables — ended with the qiita-miint login, so there is no reason to run it again; the backups already on the host still need pruning, and keep the directory's permissions in mind when you do.
 >
-> Tracked as **TKT-045**. Note that `helpers/pat_crypto.py` keeps the Fernet key out of SQLite specifically so a leaked database file does not also leak PATs — plaintext copies beside the database partly defeat that, so this is worth treating as a live exposure rather than housekeeping.
+> Tracked as **TKT-045**.
 
 **None of this is scheduled.** There is no cron entry, no APScheduler, and no startup hook in the repo that performs any of the above. If these tasks are running on a host, they were added out-of-band and are not described by anything checked in.
 
 ---
 
-*See also: [`01-architecture.md`](01-architecture.md) for the process model these numbers derive from · [`appendix-d-configuration.md`](appendix-d-configuration.md) for every variable and its default · [`02-authentication.md`](02-authentication.md) for session and PAT failure semantics · [`../INSTALL.md`](../INSTALL.md) for first-time setup.*
+*See also: [`01-architecture.md`](01-architecture.md) for the process model these numbers derive from · [`appendix-d-configuration.md`](appendix-d-configuration.md) for every variable and its default · [`02-authentication.md`](02-authentication.md) for login and session failure semantics · [`../INSTALL.md`](../INSTALL.md) for first-time setup.*

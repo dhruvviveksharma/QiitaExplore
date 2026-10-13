@@ -20,12 +20,12 @@ The whole flow is organized around a **merge workspace** — a named, user-owned
 
 ## The user-facing flow
 
-Seven steps, each a distinct endpoint group. The endpoints themselves are catalogued in [`appendix-a-api-reference.md`](appendix-a-api-reference.md) — the 14 in `routes/merge_routes.py` and the 4 in `routes/artifact_routes.py`. This section is about the sequence and where it can stall.
+Seven steps, each a distinct endpoint group. The endpoints themselves are catalogued in [`appendix-a-api-reference.md`](appendix-a-api-reference.md) — the 14 in `routes/merge_routes.py` and the 5 in `routes/artifact_routes.py`. This section is about the sequence and where it can stall.
 
 | Step | What the user does | What the backend does |
 |---|---|---|
 | **1. Open a workspace** | Creates a new one, or picks from the existing list | `create_workspace` mints a 12-char UUID prefix; `list_workspaces` is scoped to `g.user_id` |
-| **2. Add studies** | Adds from the browse grid or a study modal | `add_study_to_workspace` snapshots `study_title`, `data_types`, `num_samples` into the workspace row |
+| **2. Add studies** | Adds from the browse grid or a study modal | The route refuses a study that isn't public (**404**, TKT-043); `add_study_to_workspace` snapshots `study_title`, `data_types`, `num_samples` into the workspace row |
 | **3. Inspect artifacts** | Expands a study to see its processing tree | `GET /api/studies/<id>/detail` returns `artifact_graph`; the tree renders from it |
 | **4. Choose (or accept autopick)** | Ticks BIOM checkboxes, or leaves it alone | `PATCH .../studies/<study_id>` stores `chosen_artifact_ids` as a JSON list |
 | **5. Validate** | Nothing — it runs automatically | `GET .../validate` recomputes type intersection, autopick, sample membership, namespace compatibility, and a merge preview |
@@ -136,6 +136,8 @@ This is a real source of confusion, so state it plainly. There are **two** indep
 | `artifacts` (flat) | `qiita_fetch.py :: _fetch_study_detail_from_qiita` | `merge_helpers.py :: _get_artifacts` → autopick, validate, submit | Prep-joined only, `LIMIT 500`, one row per artifact, `data_type` taken directly from the prep |
 
 Both are cached in `study_detail_cache`, in different columns (`artifact_graph_json` and `artifacts_json`). The user selects from the first; the backend resolves from the second.
+
+**Public artifacts only (TKT-043, 2026-10-12).** Every verified Qiita user can sign in, and QiitaExplore does not resolve per-user Qiita permissions, so `_get_artifacts` now returns only the flat-list artifacts whose graph node has `visibility == "public"`, and nothing for a study that isn't public (`merge_helpers.py :: public_artifacts`). Validate, the sample browsers and submit all see that filtered list. A chosen artifact that isn't public is therefore treated as absent — which, through the fallback below, means autopick over the public ones.
 
 > **Consequence worth knowing.** If a BIOM appears in the graph but not in the flat list, an explicit user selection of it is silently discarded. `merge_helpers.py :: _resolve_artifact` and the submit handler both do `chosen = [a for a in artifacts if a["artifact_id"] in chosen_ids]`, and on an empty result fall through to `autopick_artifact(...)` with no warning. The merge then runs on a *different* artifact than the one the user ticked. Not observed in practice — the two lists largely coincide — but the fallback is silent by construction. Tracked as **TKT-044**, together with three related issues in the same area (unconditional `error_message`/`result_path` overwrite, validate and submit disagreeing on `explicit_only`, and the BIOM-read fallback that overstates the overlap preview).
 
@@ -376,15 +378,15 @@ Two endpoints stream files from disk: `download_artifact_file` and `download_mer
 
 `backend/routes/artifact_routes.py :: _resolve_artifact_file` is the gate for artifact downloads. Its central property is that **the request never supplies a path**. The client sends `study_id`, `artifact_id`, and `filepath_id` — three integers, all coerced by Flask's `int` converter or `type=int`. The function then:
 
-1. Loads the study's artifact graph from `study_detail_cache`, falling back to a live `fetch_artifact_graph(study_id)`.
-2. Finds the node with `kind == "artifact"` and the matching `artifact_id`, raising `ValueError` if the artifact is not in *this study*.
+1. Calls `merge_helpers.py :: public_artifacts(study_id)`: nothing unless the study is public; otherwise the artifact nodes of its graph (from `study_detail_cache`, re-fetched live if missing or cached before `visibility` was recorded) whose `visibility` is `public` (TKT-043).
+2. Finds the node with the matching `artifact_id` there, raising `ValueError` if the artifact is not a public artifact of *this* public study.
 3. Finds the filepath entry with the matching `filepath_id` within that node, raising if absent.
 4. Reads `full_path` from that entry — a value that originated in `qiita.data_directory.mountpoint` joined to `qiita.filepath.filepath`, never from the request.
 5. `os.path.realpath` — collapses `..` and resolves symlinks, so the check applies to the true destination.
 6. `os.path.isfile` — rejects directories and non-existent paths.
 7. Rejects any resolved path under `_FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')`.
 
-Every `ValueError` becomes a **403** with the message, so a caller cannot distinguish "artifact not in study" from "file missing on disk" by status code alone.
+Every `ValueError` becomes a **403** with the message, so a caller cannot distinguish "artifact not in study, or not public" from "file missing on disk" by status code alone.
 
 Steps 1–4 are the real defense; steps 5–7 are defense in depth against a malformed database row or a symlink planted in Qiita's storage. Worth being clear about what the forbidden-roots list is and is not: it is a **denylist**, and a denylist is strictly weaker than an allowlist rooted at `QIITA_BASE_DATA_DIR`. It exists because the graph-derived path is already trusted; it catches a plainly wrong value rather than constraining an attacker-controlled one. If path construction ever moves closer to user input, this check must be replaced by an allowlist prefix test, not extended.
 

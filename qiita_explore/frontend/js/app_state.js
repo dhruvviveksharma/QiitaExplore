@@ -1014,7 +1014,7 @@ function useAppState() {
     setCtxStudies, setInput, setSelectedModel, setTheme,
     setSlashIndex, setSlashDismissed,
     setMergeWorkspaceId, setPendingMergeStudy,
-    setShowModelPicker, setShowPlusMenu, setAnthropicKeySet, setSidebarCollapsed,
+    setShowModelPicker, setShowPlusMenu, setSidebarCollapsed,
     setEditingChatId, setEditChatVal,
     openSearchResultsPanel, closeSearchResultsPanel, finishCloseSearchResultsPanel, openMergePanel,
     // state values

@@ -23,9 +23,8 @@ biom-format
 # ── Sample Aggregation xlsx export ──────────────────────────────────────────
 openpyxl==3.1.5
 
-# ── Qiita PAT authentication ─────────────────────────────────────────────────
-httpx>=0.25,<1.0
-cryptography>=41.0
+# ── Classic-Qiita password check (helpers/qiita_accounts.py) ────────────────
+bcrypt==4.3.0
 
 # ── Production WSGI server ──────────────────────────────────────────────────
 gunicorn>=21.0,<22.0
