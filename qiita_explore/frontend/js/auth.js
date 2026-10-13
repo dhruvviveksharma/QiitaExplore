@@ -168,7 +168,7 @@ function MiintLogin({ onLoggedIn }) {
         <li>Copy the access token it shows you.</li>
         <li>Paste it here.</li>
       </ol>
-      <a className={`merge-btn-ghost auth-miint-link${loginUrl ? '' : ' disabled'}`} href={loginUrl || undefined}
+      <a className={`auth-miint-link${loginUrl ? '' : ' disabled'}`} href={loginUrl || undefined}
         target="_blank" rel="noopener noreferrer" onClick={e => { if (!loginUrl) e.preventDefault(); }}>
         Open qiita-miint login ↗
       </a>

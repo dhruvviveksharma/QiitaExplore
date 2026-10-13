@@ -1907,8 +1907,15 @@ input, textarea { font-family: var(--sans); }
 }
 .auth-card-title { margin: 0; font-size: 1rem; font-weight: 600; text-align: center; color: var(--text-1); }
 .auth-steps { color: var(--text-2); font-size: 0.82rem; line-height: 1.6; padding-left: 20px; margin: 0; }
-.auth-miint-link { text-align: center; text-decoration: none; padding: 8px; }
-.auth-miint-link.disabled { opacity: 0.5; pointer-events: none; }
+/* An outlined button (a link underneath: it opens qiita-miint in a new tab),
+   the same size as the card's primary "Sign in". */
+.auth-miint-link {
+  display: block; padding: 7px 18px; text-align: center; text-decoration: none;
+  border: 1px solid var(--accent); border-radius: 7px; background: var(--surface);
+  color: var(--accent); font-size: 0.9rem; font-weight: 500;
+}
+.auth-miint-link:hover { background: var(--accent-soft); }
+.auth-miint-link.disabled { opacity: 0.45; pointer-events: none; }
 .auth-note { color: var(--text-3); font-size: 0.8rem; text-align: center; margin: 0; }
 .auth-card {
   background: var(--surface);
