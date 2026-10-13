@@ -14,6 +14,7 @@ from helpers.qiita_fetch import (
     _fetch_study_samples,
     _fetch_study_detail_from_qiita,
     _fetch_sample_context_text,
+    public_artifact_ids,
 )
 
 
@@ -114,6 +115,13 @@ def get_study_detail(study_id):
     membership = prep_membership(study_id)
     for sample in samples:
         sample["prep_ids"] = [pid for pid, _dt in membership.get(sample["sample_id"], [])]
+
+    # Non-public artifacts of a public study keep their place in the chart but
+    # lose their file paths: every signed-in Qiita user can open this (TKT-043).
+    public = public_artifact_ids(study_id)
+    artifacts = [a if a.get("artifact_id") in public else {**a, "full_path": None} for a in artifacts]
+    artifact_graph = [n if n.get("kind") != "artifact" or n.get("artifact_id") in public
+                      else {**n, "full_path": None, "filepaths": []} for n in artifact_graph]
 
     return {
         "study_id":       study_id,

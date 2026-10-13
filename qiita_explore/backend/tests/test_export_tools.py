@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from tests.conftest import stub_qiita_db_and_core
+from tests import auth_helpers as ah
 
 PATH = "/qmounts/qiita_data/"
 COLUMNS = ["sample_type", "host_body_site", "country"]
@@ -170,7 +171,7 @@ def _app(tmp_path_factory):
     stub_qiita_db_and_core()
     import run
     import config
-    config.ALLOWED_ORIGINS = []
+    ah.configure(config)
     return run.app
 
 
@@ -178,17 +179,10 @@ def _app(tmp_path_factory):
 def signed_in(_app, monkeypatch):
     """(client, the signed-in user's id, the route module) — the route's own
     store bindings, since fresh_db re-imports store for every test."""
-    import routes.auth_routes as auth_routes
     import routes.export_routes as er
-    from helpers.qiita_client import WhoAmIResult
-    monkeypatch.setattr(auth_routes, "whoami", lambda pat: WhoAmIResult(ok=True, identity={
-        "principal_idx": 90002, "email": "export@test.local", "system_role": "user", "scopes": [],
-        "profile_complete": True}))
     client = _app.test_client()
-    assert client.post("/api/auth/connect", json={"token": "qk_test"}).status_code == 200
-    conn = er.get_export.__globals__["_conn"]
-    with conn() as c:
-        user_id = c.execute("SELECT user_id FROM users WHERE principal_idx = 90002").fetchone()[0]
+    ah.login(client, monkeypatch, "export@test.local")
+    user_id = client.get("/api/auth/me").get_json()["user_id"]
     return client, user_id, er
 
 

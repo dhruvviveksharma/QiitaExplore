@@ -1,13 +1,17 @@
-"""User + session CRUD for Qiita-identity (paste-PAT) authentication.
+"""Accounts + sessions for both logins (routes/auth_routes.py).
 
-Sessions are looked up by SHA-256(raw token) — the plaintext session token
-never touches SQLite. The Qiita PAT is verified once at login and is not
-stored.
+A QiitaExplore account is a `users` row with an opaque user_id, which owns all
+its data, and the email both logins resolve through: classic Qiita and
+qiita-miint reach the same account for the same email. Sessions are looked up
+by SHA-256(raw token) — the plaintext session token never touches SQLite. A
+classic session also carries a fingerprint of the account's password hash, so
+a password changed on Qiita ends it (helpers/auth_middleware.py). No password
+or qiita-miint token is ever stored.
 """
 
 import hashlib
-import json
 import secrets
+import sqlite3
 from datetime import datetime, timedelta
 
 import config
@@ -28,32 +32,67 @@ def _parse_iso(value: str) -> datetime:
 
 # ── Users ────────────────────────────────────────────────────────────────────
 
-def upsert_user(*, principal_idx, email, system_role, scopes, profile_complete) -> str:
-    """Insert or refresh a users row keyed by str(principal_idx). Returns user_id."""
-    user_id = str(principal_idx)
+class PrincipalMismatch(Exception):
+    """The email's account belongs to a different qiita-miint principal: the
+    address moved between qiita-miint accounts. Refused, so whoever holds the
+    address now doesn't inherit someone else's data through qiita-miint."""
+
+
+def resolve_user(email: str, *, level: str = None, principal_idx: int = None) -> str:
+    """The account for a verified, normalized email — one per email, whichever
+    login proved it (classic Qiita or qiita-miint), so both reach the same data.
+    Matching is by email only: different emails are always different accounts.
+
+      - A row with this email: that account. A classic login refreshes its
+        level. A qiita-miint login records its principal on the account if it
+        has none (and no other account holds it), and raises PrincipalMismatch
+        if the account already has a different one.
+      - Otherwise a new account with an opaque id.
+
+    A concurrent login that wins a UNIQUE race (email or principal) makes this
+    one fail; the retry then finds the winner's row."""
+    try:
+        return _resolve_user(email, level, principal_idx)
+    except sqlite3.IntegrityError:
+        return _resolve_user(email, level, principal_idx)
+
+
+def _resolve_user(email, level, principal_idx) -> str:
     now = _now()
-    scopes_json = json.dumps(scopes or [])
     with _conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO users(user_id, principal_idx, email, system_role, scopes,
-                               profile_complete, created_at, updated_at, last_login_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                email            = excluded.email,
-                system_role      = excluded.system_role,
-                scopes           = excluded.scopes,
-                profile_complete = excluded.profile_complete,
-                updated_at       = excluded.updated_at,
-                last_login_at    = excluded.last_login_at
-            """,
-            (
-                user_id, int(principal_idx), email, system_role, scopes_json,
-                1 if profile_complete else 0, now, now, now,
-            ),
-        )
+        try:
+            row = conn.execute("SELECT user_id, principal_idx FROM users WHERE email = ?", (email,)).fetchone()
+            if row is None:
+                held = principal_idx is not None and conn.execute(
+                    "SELECT 1 FROM users WHERE principal_idx = ?", (principal_idx,)).fetchone() is not None
+                user_id = "q" + secrets.token_hex(8)
+                conn.execute(
+                    "INSERT INTO users(user_id, email, user_level, principal_idx, created_at, updated_at, "
+                    "last_login_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, email, level, None if held else principal_idx, now, now, now))
+            else:
+                user_id = row["user_id"]
+                if principal_idx is not None and row["principal_idx"] not in (None, principal_idx):
+                    raise PrincipalMismatch(user_id)
+                conn.execute("UPDATE users SET user_level = COALESCE(?, user_level), updated_at = ?, "
+                             "last_login_at = ? WHERE user_id = ?", (level, now, now, user_id))
+                if principal_idx is not None and row["principal_idx"] is None:
+                    held = conn.execute("SELECT 1 FROM users WHERE principal_idx = ?", (principal_idx,)).fetchone()
+                    if held is None:
+                        conn.execute("UPDATE users SET principal_idx = ? WHERE user_id = ?", (principal_idx, user_id))
+            conn.commit()
+            return user_id
+        except (sqlite3.IntegrityError, PrincipalMismatch):
+            conn.rollback()
+            raise
+
+
+def revoke_user_sessions(user_id: str):
+    """End every live session of an account — whichever login made it."""
+    with _conn() as conn:
+        conn.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                     (_now(), user_id))
         conn.commit()
-    return user_id
 
 
 def get_user(user_id: str):
@@ -64,9 +103,8 @@ def get_user(user_id: str):
 
 # ── Sessions ─────────────────────────────────────────────────────────────────
 
-def create_session(*, user_id: str, source: str, replace_session_hash: str = None,
-                    token_idx: str = None, pat_expires_at: str = None):
-    """Create a new session row. Returns (raw_token, csrf_token).
+def create_session(*, user_id: str, source: str, password_fp: str, replace_session_hash: str = None):
+    """Create a new session row, verified as of now. Returns (raw_token, csrf_token).
 
     When replace_session_hash is set, the prior session is revoked in the same
     transaction — used when a user signs in again while already authenticated.
@@ -85,12 +123,12 @@ def create_session(*, user_id: str, source: str, replace_session_hash: str = Non
             INSERT INTO auth_sessions(
                 session_hash, user_id, pat_encrypted, token_idx, source,
                 pat_expires_at, csrf_token, created_at, last_seen_at,
-                last_verified_at, absolute_expires_at, revoked_at
-            ) VALUES(?, ?, '', ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+                last_verified_at, absolute_expires_at, revoked_at, password_fp
+            ) VALUES(?, ?, '', NULL, ?, NULL, ?, ?, ?, ?, ?, NULL, ?)
             """,
             (
-                session_hash, user_id, token_idx, source,
-                pat_expires_at, csrf_token, now, now, absolute_expires_at,
+                session_hash, user_id, source, csrf_token, now, now, now,
+                absolute_expires_at, password_fp,
             ),
         )
         if replace_session_hash:
@@ -115,7 +153,8 @@ def get_session_by_token(raw_token: str):
     session_hash = _hash_token(raw_token)
     with _conn() as conn:
         row = conn.execute(
-            "SELECT * FROM auth_sessions WHERE session_hash = ?", (session_hash,)
+            "SELECT s.*, u.email FROM auth_sessions s LEFT JOIN users u USING (user_id) "
+            "WHERE s.session_hash = ?", (session_hash,)
         ).fetchone()
     if row is None:
         return None
@@ -153,6 +192,14 @@ def touch_session(session_hash: str, last_seen_at: str = None):
         conn.commit()
 
 
+def mark_session_verified(session_hash: str):
+    """The account was re-checked against Qiita just now (helpers/auth_middleware.py)."""
+    with _conn() as conn:
+        conn.execute("UPDATE auth_sessions SET last_verified_at = ? WHERE session_hash = ?",
+                     (_now(), session_hash))
+        conn.commit()
+
+
 def revoke_session(session_hash: str):
     with _conn() as conn:
         conn.execute(
@@ -162,11 +209,16 @@ def revoke_session(session_hash: str):
         conn.commit()
 
 
+_REVOKED_KEEP_DAYS = 7
+
+
 def purge_expired_sessions():
-    """Hard-delete sessions past absolute expiry (revoked rows are kept for audit)."""
+    """Hard-delete sessions past absolute expiry, and revoked ones after a
+    week (kept that long for audit). Run on each login (TKT-056)."""
+    kept_since = (datetime.utcnow() - timedelta(days=_REVOKED_KEEP_DAYS)).isoformat() + "Z"
     with _conn() as conn:
         conn.execute(
-            "DELETE FROM auth_sessions WHERE absolute_expires_at < ? AND revoked_at IS NULL",
-            (_now(),),
+            "DELETE FROM auth_sessions WHERE absolute_expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)",
+            (_now(), kept_since),
         )
         conn.commit()

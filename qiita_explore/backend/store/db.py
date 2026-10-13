@@ -1,9 +1,12 @@
 """SQLite schema creation, migration helpers, and core connection utilities."""
 
 import json
+import logging
 import os
 import sqlite3
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Go up one level (store/ → backend/) so the data dir stays at backend/data/
 _DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -50,26 +53,15 @@ def _chat_title(raw):
 
 
 def _reconcile_legacy_users_table(conn):
-    """Migrate a stale pre-auth `users` table left behind by an older,
-    pre-authentication version of this app.
+    """Move aside a `users` table left by the pre-authentication version of
+    this app (username + password_hash columns, fake seed rows), so the
+    executescript below can create the real one.
 
-    That old version's `users` table had an unrelated shape (username +
-    password_hash based, no `principal_idx`). `CREATE TABLE IF NOT EXISTS`
-    in the executescript below can't upgrade it in place — it just leaves
-    the stale table untouched. The current auth code
-    (store/auth_store.py:upsert_user) inserts rows keyed by `principal_idx`,
-    a column the legacy table lacks, so it fails with
-    `sqlite3.OperationalError: table users has no column named
-    principal_idx` on every POST /api/auth/connect. Simply ALTERing columns
-    in wouldn't fix it either: the legacy `username`/`password_hash` columns
-    are NOT NULL and would reject the new principal-keyed INSERTs.
-
-    The legacy rows are dead fake seed data from the old app — no real
-    session ever referenced them, since upsert_user always failed before a
-    session could be created. We preserve them non-destructively by
-    renaming the table aside to `users_legacy_pre_auth` (rather than
-    dropping it) so the executescript below can then CREATE the correct
-    `users`/`auth_sessions` tables fresh.
+    The old shape is detected positively, by its own columns. Testing for the
+    absence of a current column instead would mistake a later schema for it
+    and throw that away (it did, before the classic-Qiita login: v1 of that
+    plan dropped `principal_idx`). The rows are kept, renamed to
+    `users_legacy_pre_auth`; no session ever referenced them.
     """
     existing = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
@@ -78,12 +70,9 @@ def _reconcile_legacy_users_table(conn):
         return  # fresh DB; the executescript's CREATE TABLE handles it
 
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
-    if "principal_idx" in cols:
-        return  # already current schema; no-op on every normal boot
+    if "username" not in cols and "password_hash" not in cols:
+        return  # not the pre-auth table; no-op on every normal boot
 
-    # Legacy shape detected. auth_sessions FKs to users(user_id); a legacy
-    # users table means upsert_user never succeeded, so no session was ever
-    # created. Guard defensively anyway before touching anything.
     sessions_table = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='auth_sessions'"
     ).fetchone()
@@ -309,16 +298,19 @@ def _create_schema(conn):
             cached_at         TEXT
         );
 
+        -- One row per person (store/auth_store.py). user_id is opaque and owns all
+        -- their data; email (normalized) is the link both logins resolve through,
+        -- so classic Qiita and qiita-miint reach the same account for the same
+        -- email. user_level: from classic Qiita; principal_idx: the qiita-miint
+        -- principal. Either is NULL until that kind of login.
         CREATE TABLE IF NOT EXISTS users (
-            user_id          TEXT PRIMARY KEY,
-            principal_idx    INTEGER NOT NULL,
-            email            TEXT,
-            system_role      TEXT,
-            scopes           TEXT,
-            profile_complete INTEGER NOT NULL DEFAULT 0,
-            created_at       TEXT,
-            updated_at       TEXT,
-            last_login_at    TEXT
+            user_id       TEXT PRIMARY KEY,
+            email         TEXT UNIQUE,
+            user_level    TEXT,
+            principal_idx INTEGER,
+            created_at    TEXT,
+            updated_at    TEXT,
+            last_login_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -334,6 +326,7 @@ def _create_schema(conn):
             last_verified_at    TEXT,
             absolute_expires_at TEXT NOT NULL,
             revoked_at          TEXT,
+            password_fp         TEXT,
             FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
@@ -405,6 +398,9 @@ def _create_schema(conn):
         # Unused since 2026-09-24: the availability map moved to its own
         # study_sample_files_cache table (TKT-086). Kept so old DBs migrate alike.
         ("study_detail_cache", "sample_files_json", "TEXT"),
+        # sha256 of the account's bcrypt hash at login: a password changed on
+        # classic Qiita revokes the session (helpers/auth_middleware.py).
+        ("auth_sessions", "password_fp", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {definition}")
@@ -445,10 +441,117 @@ def _move_aggregation_filters_to_studies(conn):
         conn.execute("UPDATE aggregations SET file_filter_json=NULL WHERE aggregation_id=?", (aggregation_id,))
 
 
+_USERS_COLUMNS = """
+    user_id       TEXT PRIMARY KEY,
+    email         TEXT UNIQUE,
+    user_level    TEXT,
+    principal_idx INTEGER,
+    created_at    TEXT,
+    updated_at    TEXT,
+    last_login_at TEXT
+"""
+
+
+def _users_is_current(conn) -> bool:
+    # qiita-miint rows have `email` but no `user_level`; classic_v1 rows have `qiita_email`.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    return "email" in cols and "user_level" in cols
+
+
+def _migrate_users_to_email_v1():
+    """One-time rebuild of `users` into the one-account-per-email shape (2026-10),
+    from either earlier shape:
+      - qiita-miint (production before 2026-10): user_id = str(principal_idx),
+        whoami-verified `email`;
+      - classic_v1 (only where branch qiita-classic-login ran first): qiita_email,
+        or else miint_email.
+    Every row keeps its user_id (all its data hangs off it), principal_idx and
+    timestamps; its email becomes the link both logins resolve through. An email
+    two rows claim stays with a classic-bound row first, then the latest login;
+    the others — and any whose email isn't usable — keep their data with email
+    NULL and are logged. Sessions are left alone: both kinds of login still
+    exist, and user_ids don't change.
+
+    Done the only safe way SQLite allows (verified in the 2026-10-12 review):
+    its own autocommit connection; foreign keys turned off *before* the
+    transaction (a PRAGMA inside one is a no-op, and DROP TABLE users would then
+    cascade-delete auth_sessions); BEGIN IMMEDIATE so one gunicorn worker
+    migrates and the rest find it done; build users_new, drop users, rename
+    users_new (renaming the old table aside would rewrite auth_sessions' foreign
+    key to point at it); foreign_key_check must come back empty. A crash before
+    COMMIT leaves the old table untouched.
+    """
+    from helpers.emails import normalize_email     # the logins' own rule
+
+    conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_MS / 1000.0, isolation_level=None)
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        if _users_is_current(conn):
+            return
+        conn.execute("PRAGMA foreign_keys = OFF")
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+            raise RuntimeError("could not turn foreign keys off for the users migration")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if _users_is_current(conn):           # another worker got here first
+                conn.execute("ROLLBACK")
+                return
+            old_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+            pick = lambda c: c if c in old_cols else "NULL"   # noqa: E731
+            rows = conn.execute(
+                f"SELECT user_id, {pick('qiita_email')}, {pick('miint_email')}, {pick('email')}, "
+                f"{pick('user_level')}, {pick('principal_idx')}, {pick('created_at')}, "
+                f"{pick('updated_at')}, {pick('last_login_at')} FROM users").fetchall()
+            rows.sort(key=lambda r: r[8] or "", reverse=True)      # latest login first...
+            rows.sort(key=lambda r: r[1] is None)                  # ...after classic-bound rows
+            emails, principals, out, unlinked = set(), set(), [], []
+            for uid, qiita_email, miint_email, email, level, principal, created, updated, last in rows:
+                e = normalize_email(qiita_email or miint_email or email)
+                if e is None or e in emails:     # unusable, or another account kept it
+                    unlinked.append(uid)
+                    e = None
+                elif e:
+                    emails.add(e)
+                if principal in principals:
+                    principal = None
+                elif principal is not None:
+                    principals.add(principal)
+                out.append((uid, e, level, principal, created, updated, last))
+            conn.execute(f"CREATE TABLE users_new ({_USERS_COLUMNS})")
+            conn.executemany(
+                "INSERT INTO users_new(user_id, email, user_level, principal_idx, created_at, updated_at, "
+                "last_login_at) VALUES(?, ?, ?, ?, ?, ?, ?)", out)
+            conn.execute("DROP TABLE users")
+            conn.execute("ALTER TABLE users_new RENAME TO users")
+            conn.execute(_USERS_PRINCIPAL_INDEX)
+            problems = conn.execute("PRAGMA foreign_key_check(auth_sessions)").fetchall()   # users' only referrer
+            if problems:
+                raise RuntimeError(f"users migration left {len(problems)} broken foreign keys")
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('users_email_v1', ?)", (_now(),))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.close()
+    if unlinked:
+        logger.warning("users migration: %d account(s) left without an email — shared with another account, "
+                       "or not usable as one (data kept): %s", len(unlinked), ", ".join(unlinked))
+
+
+_USERS_PRINCIPAL_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_principal ON users(principal_idx) "
+                          "WHERE principal_idx IS NOT NULL")
+
+
 def _bootstrap():
     with _conn() as conn:
         _create_schema(conn)
         conn.commit()
+    _migrate_users_to_email_v1()
+    with _conn() as conn:          # after the migration: an older users table may lack the column
+        if _users_is_current(conn):
+            conn.execute(_USERS_PRINCIPAL_INDEX)
+            conn.commit()
 
 
 _bootstrap()

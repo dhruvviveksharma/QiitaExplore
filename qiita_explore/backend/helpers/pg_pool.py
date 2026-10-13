@@ -31,6 +31,10 @@ def get_pool():
                     database=qiita_config.database,
                     host=qiita_config.host,
                     port=qiita_config.port,
+                    # A silent Postgres must not pin request threads (login shares
+                    # them): fail connects fast and notice dead peers.
+                    connect_timeout=5, keepalives=1, keepalives_idle=30,
+                    keepalives_interval=10, keepalives_count=3,
                 )
     return _pool
 

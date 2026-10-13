@@ -27,7 +27,9 @@ echo "Frontend uses Babel standalone (runtime transpilation) — no compile step
 python -c "import store.db"
 
 echo "Starting gunicorn on port $QE_PORT (4 workers, 2 threads each)..."
-exec gunicorn -w 4 --threads 2 -b 0.0.0.0:$QE_PORT \
+# Loopback only: the kl-remote SSH tunnel reaches it as localhost, and this
+# backend takes passwords — nothing else on the network should reach it.
+exec gunicorn -w 4 --threads 2 -b 127.0.0.1:$QE_PORT \
   --timeout 120 --graceful-timeout 30 \
   --worker-class gthread \
   --log-level info \

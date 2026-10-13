@@ -1,4 +1,4 @@
-"""E2E tests for the login journey: POST /api/auth/connect, session cookie +
+"""E2E tests for the login journey: POST /api/auth/login, session cookie +
 CSRF issuance, CSRF enforcement on writes, and logout revocation.
 
 These tests deliberately avoid logging out or otherwise invalidating the
@@ -6,19 +6,37 @@ session-scoped `client` fixture — that session is shared by every other test
 module in the run. Anything that needs its own session lifecycle constructs a
 fresh AuthedClient instead.
 """
+import os
+
 import pytest
 import requests
 
-from auth_client import AuthedClient
+from auth_client import AuthedClient, login_request
 
 
 @pytest.mark.e2e
 class TestLogin:
-    def test_connect_sets_cookie_and_csrf(self, backend):
+    def test_login_sets_cookie_and_csrf(self, backend):
         fresh = AuthedClient(backend)
         assert fresh.user_id
         assert fresh.csrf_token
-        assert "qe_sid" in fresh.session.cookies.get_dict()
+        assert fresh.session_cookie()
+
+    def test_wrong_password_is_generic_401(self, backend):
+        """Counts toward the account's login delay, so it runs only when asked to
+        (QIITA_TEST_ALLOW_FAILED_LOGIN=1, against dev) — never against production."""
+        if os.environ.get("QIITA_TEST_ALLOW_FAILED_LOGIN") != "1":
+            pytest.skip("set QIITA_TEST_ALLOW_FAILED_LOGIN=1 (dev backend only) to run")
+        origin = os.environ.get("QIITA_TEST_ORIGIN", "http://localhost:5503")
+        r = login_request(requests.Session(), backend, os.environ["QIITA_TEST_EMAIL"],
+                          "definitely-not-it-1", origin)
+        assert r.status_code == 401
+        assert r.json() == {"error": "Incorrect email or password."}
+
+    def test_login_without_origin_is_refused(self, backend):
+        r = requests.post(f"{backend}/api/auth/login", json={"email": "a@b.edu", "password": "x" * 8},
+                          timeout=10)
+        assert r.status_code in (403, 503)
 
     def test_me_returns_identity_for_logged_in_session(self, client):
         r = client.get("/api/auth/me")
@@ -32,6 +50,7 @@ class TestLogin:
         r = requests.get(f"{backend}/api/auth/me", timeout=10)
         assert r.status_code == 200
         assert r.json().get("anonymous") is True
+        assert r.json().get("qiita_url")
 
 
 @pytest.mark.e2e

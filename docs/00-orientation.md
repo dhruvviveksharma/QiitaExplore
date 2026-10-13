@@ -19,54 +19,53 @@ QiitaExplore is a research console that sits in front of the read-only Qiita dat
 
 For product framing, screenshots, and quick-start, see [`README.md`](../README.md). This document set covers the system **as built** — how it works, why it is shaped that way, and where it is going.
 
-> **A note on the README.** It predates authentication and is stale in three specific ways: it lists four agent tools (there are five, one of them a stub), it does not mention the PAT/session auth system at all, and it says Flask serves the frontend when nginx does. Where this doc set and the README disagree, this doc set is current.
+> **A note on the README.** It predates authentication and is stale in three specific ways: it lists four agent tools (there are five, one of them a stub), it does not mention the login/session auth system at all, and it says Flask serves the frontend when nginx does. Where this doc set and the README disagree, this doc set is current.
 
 ---
 
 ## The two Qiitas
 
-**This is the single most important thing to understand before reading anything else.** Two different systems share the name "Qiita", and QiitaExplore talks to both — for different things, over different protocols.
+**This is the single most important thing to understand before reading anything else.** Two different systems share the name "Qiita". Today QiitaExplore talks to only one of them — classic Qiita — for both its data and its logins; the new platform is where the [roadmap](11-roadmap.md) wants data reads to go.
 
 ```mermaid
 flowchart LR
     QE["<b>QiitaExplore</b><br/>Flask + SQLite"]
 
     subgraph CLASSIC["Classic Qiita (the monolith)"]
-        PG[("PostgreSQL<br/>study · prep · artifact<br/>sample_{id} JSONB")]
+        PG[("PostgreSQL<br/>study · prep · artifact<br/>sample_{id} JSONB<br/>qiita_user")]
     end
 
     subgraph MIINT["Qiita-MIINT (the new platform)"]
         CP["Control plane :8080<br/>FastAPI"]
     end
 
-    QE ==>|"ALL study data<br/>direct SQL, read-only"| PG
-    QE ==>|"identity only<br/>PAT → whoami → principal_idx"| CP
+    QE ==>|"ALL study data + classic logins<br/>direct SQL, read-only"| PG
+    QE -.->|"qiita-miint logins only<br/>whoami, once per sign-in"| CP
 
     style PG stroke-width:2px
-    style CP stroke-width:2px
 ```
 
-**Classic Qiita** is the original monolith. QiitaExplore reads *all* of its scientific data — studies, preps, artifacts, sample metadata — by connecting directly to its PostgreSQL database, read-only, using a vendored and trimmed copy of Qiita's own DB layer (`qiita_db/`, `qiita_core/`). No HTTP is involved. QiitaExplore never writes to it.
+**Classic Qiita** is the original monolith. QiitaExplore reads *all* of its scientific data — studies, preps, artifacts, sample metadata — by connecting directly to its PostgreSQL database, read-only, using a vendored and trimmed copy of Qiita's own DB layer (`qiita_db/`, `qiita_core/`). No HTTP is involved. QiitaExplore never writes to it. Since 2026-10 it is also one of the two places logins are checked: a user can sign in with their classic-Qiita email and password, which QiitaExplore verifies against `qiita.qiita_user` through the same read-only role (see [`02-authentication.md`](02-authentication.md)).
 
-**Qiita-MIINT** is the new platform. QiitaExplore uses exactly one thing from it today: **identity**, via the FastAPI control plane. A user's Personal Access Token is verified against the control plane's `whoami` endpoint, and the returned `principal_idx` becomes that user's identity throughout QiitaExplore. Other MIINT services (data plane, compute orchestrator) are not part of this integration.
+**Qiita-MIINT** is the new platform. QiitaExplore uses exactly one thing from it: identity, for the other login, by checking a pasted `qk_` token once against the control plane's `whoami`. That was the only login until 2026-10; it now sits beside classic Qiita's, and the same email reaches the same QiitaExplore account either way. Its data plane and compute orchestrator were never part of this integration.
 
 So the seam is:
 
 | Concern | Source |
 |---|---|
-| Who is this user? | Qiita-MIINT control plane, over HTTPS |
+| Who is this user? | Either classic Qiita (`qiita.qiita_user` over direct SQL) or Qiita-MIINT (`whoami`); the verified email picks the account |
 | What studies exist, and what's in them? | Classic Qiita, over direct SQL |
 
-That split is not a design goal. It is where the migration currently stands, and it is the root of most of [`11-roadmap.md`](11-roadmap.md). Closing it means moving data reads onto the new platform — which is blocked today for two concrete reasons documented there.
+Moving data reads onto the new platform is the long-term direction, and it is the root of most of [`11-roadmap.md`](11-roadmap.md). It is blocked today for two concrete reasons documented there.
 
 ### "MIINT" is not an auth realm
 
 The name causes real confusion, so: **MIINT is not a security component, an auth provider, or a realm.** Two unrelated things carry the name.
 
-1. **`qiita-miint`** is the deployment codename and hostname of this production instance (`qiita-miint.ucsd.edu`). The git branch `Qiita-miint-auth-integration` means "integrate auth against the qiita-miint deployment" — nothing more.
+1. **`qiita-miint`** is the deployment codename and hostname of the new platform's production instance (`qiita-miint.ucsd.edu`). The git branch `Qiita-miint-auth-integration` meant "integrate auth against the qiita-miint deployment" — nothing more. That login is still one of the two ways in.
 2. **`duckdb-miint`** is a separate DuckDB SQL extension providing bioinformatics functions inside the Rust data plane. Unrelated to authentication entirely.
 
-The actual identity provider is **AuthRocket** (via its hosted LoginRocket UI), which the control plane wraps. QiitaExplore never speaks to AuthRocket directly — see [`02-authentication.md`](02-authentication.md).
+The new platform's identity provider is **AuthRocket** (via its hosted LoginRocket UI), which the control plane wraps. QiitaExplore never speaks to AuthRocket directly; it only sends the browser to the control plane's login page (optionally through LoginRocket `/logout`) and asks the control plane `whoami` — see [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -76,7 +75,7 @@ The actual identity provider is **AuthRocket** (via its hosted LoginRocket UI), 
 
 **Agentic chat** ([`05-agent.md`](05-agent.md), [`06-streaming-and-chat.md`](06-streaming-and-chat.md)) — For models that support tool-calling, a loop gives the model five tools and streams its work to the browser as it happens: each tool call and its result render as a card inline, before the final prose arrives. The loop is bounded at four iterations, and `search_studies` is *removed from the tool schema* after its first successful call — the model is mechanically prevented from re-searching, not merely instructed not to.
 
-**Curation** ([`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md)) — Projects, chats, and pins live in a local SQLite database, keyed by the user's `principal_idx`. Nothing curational is written back to Qiita. Every mutation updates the UI from the response body rather than triggering a refetch.
+**Curation** ([`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md)) — Projects, chats, and pins live in a local SQLite database, keyed by the user's QiitaExplore `user_id` (bound to one classic-Qiita email). Nothing curational is written back to Qiita. Every mutation updates the UI from the response body rather than triggering a refetch.
 
 **BIOM merge** ([`07-merge-and-biom.md`](07-merge-and-biom.md)) — A workspace holds up to five studies. For each, an artifact is auto-picked or chosen manually; the system validates compatibility, then runs a background job producing a combined BIOM table plus a merged sample-metadata TSV. Two significant caveats apply — see the chapter.
 
@@ -112,8 +111,8 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | **BIOM** | Biological Observation Matrix — the HDF5 table format holding feature counts per sample. The merge subsystem's input and output. |
 | **GOLD** | A curation tag (`qiita.per_study_tags`) marking high-quality studies. The default browse grid shows GOLD studies. |
 | **Visibility** | Artifacts carry a visibility; QiitaExplore only ever returns studies with at least one `public` artifact. |
-| **`principal_idx`** | The Qiita-MIINT control plane's stable integer identifier for a user. QiitaExplore's `user_id` is this number as a string. |
-| **PAT** | Personal Access Token. Minted by the control plane, shown to the user once, pasted into QiitaExplore to authenticate. |
+| **`qiita_user`** | Classic Qiita's account table: email, bcrypt password hash, user level. QiitaExplore checks logins against it, read-only. Level 5, `unverified`, can't log in. |
+| **`principal_idx`** | The Qiita-MIINT control plane's integer identifier for a user. Recorded on a QiitaExplore account at its first qiita-miint sign-in; a different principal later presenting the same email is refused (409). Accounts are never matched by it. Accounts from the qiita-miint-only era keep it as their `user_id` (the number as a string); newer accounts get an opaque `q…` id. |
 
 ### QiitaExplore concepts
 
@@ -131,7 +130,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | **Autopick** | The heuristic that selects a default artifact per study in a merge workspace. |
 | **Deep search** | The default sample-metadata search mode, probing up to 500 candidate studies (vs. 40 in the legacy fast path). Slower, higher recall. |
 | **Enrichment** | The background pass that fills in a project study's sample counts, prep list, and data types after it is added. |
-| **Legacy claim** | A one-time, opt-in migration adopting data created before authentication existed (owned by the literal user `"default"`). |
+| **One account per email** | Classic-Qiita login and qiita-miint login with the same (normalized) email reach the same QiitaExplore account and data; accounts are matched by email only, so different emails are different accounts. Automatic — there is no operator binding step. |
 | **Barnacle** | The deployment host (`barnacle2.ucsd.edu`) where the backend runs. |
 
 ---
@@ -142,7 +141,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 |---|---|
 | [`00-orientation.md`](00-orientation.md) | *This file* — framing, the two Qiitas, glossary |
 | [`01-architecture.md`](01-architecture.md) | Process topology, request lifecycle, module map, the three Postgres access paths |
-| [`02-authentication.md`](02-authentication.md) | Paste-PAT flow, sessions, CSRF, tenancy, legacy claim |
+| [`02-authentication.md`](02-authentication.md) | Classic-Qiita login, brute-force limits, sessions, CSRF, tenancy, threat model |
 | [`03-data-access-and-caching.md`](03-data-access-and-caching.md) | Reading classic Qiita, the three cache layers, context budgeting |
 | [`04-search.md`](04-search.md) | The three search paths and the SQL they build |
 | [`05-agent.md`](05-agent.md) | The tool-calling loop and the five tools |
@@ -152,7 +151,7 @@ Terms from the Qiita data model, plus terms this codebase invented.
 | [`09-operations.md`](09-operations.md) | Running it, and how failures present |
 | [`10-testing.md`](10-testing.md) | Test tiers and coverage gaps |
 | [`11-roadmap.md`](11-roadmap.md) | Platform migration, blockers, known debt |
-| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 52 endpoints |
+| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | The HTTP endpoints (74 routes) |
 | [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) | All 16 tables and 11 indexes |
 | [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) | Tool schemas and the SSE event vocabulary |
 | [`appendix-d-configuration.md`](appendix-d-configuration.md) | Every environment variable and tunable |

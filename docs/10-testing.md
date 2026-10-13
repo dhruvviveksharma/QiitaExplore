@@ -49,7 +49,11 @@ One line each, in the order a newcomer should read them.
 | `backend/tests/test_pin_command.py` | Store-level pinning: idempotent re-pin, the per-chat cap read from `PINNED_STUDIES_PER_CHAT_CAP`, unpin, and project/global scope isolation in both directions |
 | `backend/tests/test_agent_tool_call.py` | `helpers/agent.py :: _execute_tool_call` driven as a raw generator — the two yielded events, the synthetic `tool_{name}_{call_id}` name (full id, see TKT-055-era fix), the timing suffix on `detail`, the `(result_text, consumed_search_slot, failed)` return triple, and that a raising tool yields a failure result with `failed=True` instead of propagating |
 | `backend/tests/test_merge.py` | Artifact dedup preferring `.biom`, `_write_merged_sample_metadata` sample filtering and column union, and post-merge TSV trimming to BIOM sample IDs |
-| `backend/tests/test_auth.py` | The largest file in the suite — `whoami` classification, session lifecycle, single-login behavior, route behaviour, CSRF, cross-user isolation, and the legacy `users` table migration |
+| `backend/tests/test_auth.py` | Classic-Qiita login (rewritten 2026-10-12): the session store, `resolve_user` (matching by email only, a principal never moved onto a claimed email, 409 for an email that moved between principals, the first-login race), every `POST /api/auth/login` check in order, the per-request re-check against Qiita, CSRF and default-deny, cross-user isolation, and the TKT-042 settings lock. Classic Qiita's account table is faked (`tests/auth_helpers.py`); bcrypt is real |
+| `backend/tests/test_login_limiter.py` | The login limits (progressive delay, known device and its 10-failure cap, per-client block counting failures only, parallel reservations, hashed keys, private and fail-closed storage), email and password rules, the bcrypt compare and its 72-byte boundary, the per-worker bcrypt slot, and the account-read circuit breaker |
+| `backend/tests/test_miint_connect.py` | The qiita-miint login beside classic: the `whoami` client with httpx faked (human accepted, non-human and 401 definitive, everything else transient, the circuit breaker, the per-worker busy slot); `POST /api/auth/connect` (token shape checked before `whoami`, the front checks shared with login, 401/503/502, unusable and padded emails refused, 409 for an email that moved to another principal, busy 503, a failed connect keeps the session, the token never stored); `GET /api/auth/login-url` with and without LoginRocket; one account per email across both logins and different emails kept apart; `QIITA_EXPLORE_LOGIN_METHODS` (each method off, its sessions signed out, a bad value or a missing / plain-HTTP `QIITA_CONTROL_PLANE_URL` failing at import); and sessions per method (qiita-miint and legacy `paste` never re-checked, classic still re-checked, a password change ending the account's qiita-miint sessions too). `whoami` is faked (`tests/auth_helpers.py`) |
+| `backend/tests/test_users_migration.py` | The `users` migration to one account per email (`_migrate_users_to_email_v1`) from both earlier shapes — qiita-miint (production) and classic_v1: emails normalized and kept, a shared email kept by the classic-bound / latest-login row and the rest (and unusable emails) logged, sessions not revoked, both logins reaching migrated accounts — plus crash before `COMMIT`, two workers migrating once, a second boot changing nothing, and the pre-auth table still moved aside |
+| `backend/tests/test_artifact_access.py` | TKT-043: artifact downloads, samples and sample counts only for public artifacts of public studies; stale cached visibility isn't trusted; a private study can't be added to a merge workspace; study detail strips private artifacts' file paths |
 
 Two structural notes on how the unit tier achieves independence from the outside world.
 
@@ -59,7 +63,7 @@ Two structural notes on how the unit tier achieves independence from the outside
 
 > **Gap.** Two of the three merge test classes exercise *local reimplementations* of production logic, not the shipped functions. `test_merge.py :: _run_dedup` and `_filter_tsv_to_ids` are hand-copies of the dedup loop in `helpers/qiita_fetch.py` and the TSV filter in `remote_merge.main`. They will keep passing after the originals change. Only `TestWriteMergedSampleMetadata` imports and calls the real function. Rewriting the other two against the shipped code is a contained fix.
 
-`test_auth.py`'s module docstring refers to a `test_auth_smoke.py` "real-control-plane check". **That file does not exist in the repository.** Either it was never committed or it was removed; the reference should be dropped or the file restored.
+Route tests that need a session sign in through the real routes — `POST /api/auth/login` with the account table faked (`tests/auth_helpers.py :: login`), or `POST /api/auth/connect` with `whoami` faked (`connect`, `fake_whoami`) — shared by the route-test fixtures, rather than writing session rows directly. `tests/conftest.py` sets a dummy `https://` `QIITA_CONTROL_PLANE_URL` so `config.py` imports with the qiita-miint login on. A real classic-Qiita login is exercised only by the e2e tier (`tests/e2e/test_journey_auth.py`); a real `whoami` is not exercised by any test.
 
 ---
 
@@ -107,7 +111,7 @@ Three helpers carry both files:
 - **`stream_chat(...)`** — POST to a chat stream endpoint (global or project) and consume SSE by hand, returning a dict with `search_count`, `assistant_text`, `study_ids_mentioned`, `result_study_ids`, `ui_payload`, `step_done_labels`, `pinned_studies`, and `tool_ui_payloads`. It parses agentic events (`segment_tool_result`) and preparatory `step_done` events. Study IDs in prose are recovered with a loose regex — used only as a secondary signal alongside `result_study_ids` from tool payloads.
 - **`llm_judge(question, answer, rubric)`** — asks a model (kimi on NRP by default, Anthropic if a `claude-*` model is named) for a bare YES/NO. **On any exception, or a missing API key, it falls back to a regex over the answer and returns `True`.** That fail-open behaviour keeps a network outage from turning into a wall of red, at the cost of a judge test that can pass without a judge. Know that before trusting a green `--llm` run.
 
-> **Gap.** `tests/e2e/conftest.py` overrides the autouse `fresh_db` fixture with a no-op — correct, since e2e tests never touch the local SQLite store — but its `backend` health check calls `GET /api/global-chats` **unauthenticated**, and its `global_chat` fixture passes identity as a `user_id` query parameter. Both predate the auth system. `helpers/auth_middleware.py :: PUBLIC_ENDPOINTS` contains exactly three endpoint names (`api_auth_login_url`, `api_auth_connect`, `api_auth_me`); everything else defaults to deny. Against an auth-enabled backend the health check receives 401 and **the entire e2e tier skips itself** with "barnacle backend unhealthy". `run_tests.sh` fails earlier still: its preflight `curl -sf $BARNACLE_URL/api/systems` also hits a protected endpoint, so the script aborts before collecting anything. The e2e tier needs a session-establishing fixture — connect once with a test PAT, reuse the cookie and CSRF token — before it can run again.
+> **Auth in the e2e tier.** `tests/e2e/conftest.py` overrides the autouse `fresh_db` fixture with a no-op — correct, since e2e tests never touch the local SQLite store. Its `backend` health check probes the public `GET /api/auth/me`, and its session-scoped `client` fixture logs in once through `POST /api/auth/login` as `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD` (`tests/e2e/auth_client.py :: AuthedClient`, sending `QIITA_TEST_ORIGIN` as the `Origin`), then reuses that cookie and CSRF token. `helpers/auth_middleware.py :: PUBLIC_ENDPOINTS` contains exactly two endpoint names (`api_auth_login`, `api_auth_me`); everything else defaults to deny. Use a test account, not your own: its password sits in the shell environment for the run. The wrong-password e2e test runs only with `QIITA_TEST_ALLOW_FAILED_LOGIN=1`, and only against dev — failed attempts count toward that account's login delay, so never against production.
 
 ---
 
@@ -227,21 +231,37 @@ TKT-015: the executor shipped to master in dev-only mode, running a local `conda
 
 ### Auth coverage — better than expected
 
-`test_auth.py` is the strongest file in the suite, and the paths one would guess are missing are in fact covered:
+The two logins (2026-10) were written test-first across `test_auth.py`, `test_login_limiter.py`, `test_miint_connect.py`, `test_users_migration.py` and `test_artifact_access.py`, and the paths one would guess are missing are covered:
 
 | Path | Covered? |
 |---|---|
-| Single-login — `whoami` called only at connect, not on `/auth/me` or protected routes | Yes — `TestSingleLogin::test_whoami_called_only_at_connect` |
-| Single-login — PAT not persisted in SQLite | Yes — `TestSingleLogin::test_connect_does_not_persist_pat` |
-| Single-login — legacy `pat_encrypted` ciphertext scrubbed on bootstrap | Yes — `TestSingleLogin::test_legacy_pat_ciphertext_scrubbed_on_bootstrap` |
-| Single-login — successful re-login replaces prior session; failed re-login preserves current | Yes |
+| Every login check in order — body size 413, form post 415, Origin 403, no origin configured 503, dev origin allowed | Yes — `TestLogin` |
+| Malformed email/password: generic 401, not counted | Yes — `TestLogin::test_bad_format_is_generic_401_and_not_counted` |
+| Unknown email and wrong password answer identically | Yes — `TestLogin::test_unknown_email_and_wrong_password_look_the_same` |
+| Unverified told only after the correct password | Yes |
+| Qiita unreachable 503; bcrypt busy 503 + `Retry-After`; limiter unusable fails closed | Yes |
+| Progressive delay; known device skips both limits but gets 10 failures, then is replaced on success; success clears the email counter; per-client limit counts failures only | Yes — `TestLogin`, `test_login_limiter.py :: TestLimiter` |
+| Chunked body capped; client IP taken from the proxy's (last) header entry; limiter file must be private | Yes — `TestLogin::test_chunked_body_is_capped_too`, `test_client_ip_is_the_proxys_entry`, `TestLimiter::test_unusable_or_shared_storage_raises` |
+| Re-login replaces the prior session; failed re-login keeps the current one | Yes |
+| `__Host-` cookie names when Secure | Yes — `TestLogin::test_host_prefixed_cookies_when_secure` |
+| Password never in logs, SQLite, `-wal`/`-journal`, or the limiter file | Yes — `TestLogin::test_password_never_logged_or_stored` |
+| Legacy claim routes gone | Yes — `TestLogin::test_legacy_claim_routes_are_gone` |
+| qiita-miint connect — token shape before `whoami`, shared front checks, 401 / 503 / 502 / 409, unusable and padded emails, busy 503, failed connect keeps the session, token never stored | Yes — `test_miint_connect.py :: TestConnect` |
+| `whoami` client — definitive vs transient answers, circuit breaker, per-worker slot | Yes — `test_miint_connect.py :: TestWhoami` |
+| One account per email across both logins; different emails stay apart | Yes — `test_miint_connect.py :: TestOneAccountPerEmail` |
+| Login method switches — routes 404, sessions signed out, bad values and a missing or plain-HTTP control-plane URL fail at import | Yes — `test_miint_connect.py :: TestLoginMethodSwitches` |
+| qiita-miint and legacy `paste` sessions never re-checked; a failed classic re-check ends the account's qiita-miint sessions too | Yes — `test_miint_connect.py :: TestSessionsPerMethod` |
+| Re-check — password change, deletion, unverified, no fingerprint end the session; 1-hour grace, then 503, then recovery; logout still works during the outage | Yes — `TestRecheck` |
+| Email normalization (Kelvin sign, non-ASCII, length); 72-byte bcrypt boundary; malformed stored hash | Yes — `test_login_limiter.py :: TestAccountRules` |
+| `users` migration — from both earlier shapes, shared and unusable emails, sessions kept; rebuilt in place, idempotent, crash before `COMMIT`, two workers, boot twice with zero sessions | Yes — `test_users_migration.py :: TestFromQiitaMiint`, `TestFromClassicV1`, `TestMigrationSafety` |
+| `resolve_user` — first-login race, matching by email only, 409 for a moved email | Yes — `TestAuthStore::test_resolve_user_*` |
 | CSRF — missing token 403, wrong token 403, correct token 200 | Yes |
-| Session lifecycle — revoke, absolute expiry, and that `touch` does not extend absolute expiry | Yes |
-| `whoami` classification — human accepted; service and anonymous rejected; 401 non-transient; 5xx and `ConnectError` transient | Yes |
+| Session lifecycle — revoke, absolute expiry, `touch` does not extend it, purge of expired and week-old revoked rows | Yes — `TestAuthStore` |
 | Cross-user isolation — projects, global chats, merge-workspace mutations, and client-supplied `user_id` spoofing ignored | Yes |
-| Legacy pre-auth `users` table migration, and that a fresh DB is a no-op | Yes |
+| TKT-042 — `POST /api/settings` is 405; `GET` reports the server key | Yes — `TestSettingsLocked` |
+| TKT-043 — public artifacts of public studies only; stale cached visibility not trusted; study detail strips private artifacts' paths | Yes — `test_artifact_access.py` |
 
-What is **not** covered: the session-cookie attribute set (`Secure`, `HttpOnly`, `SameSite`) is never asserted — and the fixture forces `SESSION_COOKIE_SECURE = False`, so a regression flipping it off in production would pass; the legacy-claim **race** path (`claim_legacy_default` reaching its DB-level conflict rather than the `claim_eligible()` guard) is explicitly noted as unreached by the existing test; `PUBLIC_ENDPOINTS` is checked for one entry (`api_auth_login_url`) rather than asserted as an exact set, so an endpoint accidentally added to it would go unnoticed; and every `whoami` in these tests is a fake — the real control-plane handshake is exercised only by the `test_auth_smoke.py` the docstring names and the repository does not contain.
+What is **not** covered: `PUBLIC_ENDPOINTS` is not asserted as an exact set, so an endpoint accidentally added to it would go unnoticed; the account table is always faked in unit tests, so the real `qiita.qiita_user` query and the account pool's connection settings are exercised only by the e2e tier and by hand; `whoami` is always faked too, and the e2e tier never uses the qiita-miint login, so a real control plane is exercised only by hand; and nothing tests the page's CSP or SRI attributes.
 
 ### Other holes worth naming
 
@@ -268,9 +288,9 @@ bash run_tests.sh --all      # everything
 
 `run_tests.sh` runs from its own directory (`cd "$SCRIPT_DIR"`), so it works from anywhere. `BARNACLE_URL` overrides the backend address, defaulting to `http://localhost:5001`.
 
-The `--unit` flag is the one to know: it is checked **before** the backend health probe, so it is the only mode that skips the preflight entirely. Every other mode aborts if `curl -sf $BARNACLE_URL/api/systems` fails — which, per the gap noted above, it currently does against an auth-enabled backend.
+The `--unit` flag is the one to know: it is checked **before** the backend health probe, so it is the only mode that skips the preflight entirely. Every other mode aborts if `curl -sf $BARNACLE_URL/api/auth/me` fails — the public endpoint, so the probe means "backend up", not "logged in".
 
-**What to expect with nothing else running.** All 95 unit tests pass in roughly a second; the README's "~0.3s" predates the auth and merge files. `test_auth.py` includes two `time.sleep(1.2)` calls for TTL expiry, so about 2.5 s of the runtime is deliberate waiting. Nothing requires PostgreSQL, an LLM, or network access. Under bare `pytest tests/` (without `-m "not e2e"`), the e2e directory is collected and each test skips at its `backend` fixture — noisy but harmless.
+**What to expect with nothing else running.** All 95 unit tests pass in roughly a second; the README's "~0.3s" predates the auth and merge files. `test_auth.py` includes a `time.sleep(1.2)` for TTL expiry, so over a second of the runtime is deliberate waiting. Nothing requires PostgreSQL, an LLM, or network access. Under bare `pytest tests/` (without `-m "not e2e"`), the e2e directory is collected and each test skips at its `backend` fixture — noisy but harmless.
 
 **Fixtures available to a new unit test**, all in `backend/tests/conftest.py`:
 

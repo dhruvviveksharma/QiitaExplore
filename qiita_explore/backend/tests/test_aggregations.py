@@ -10,6 +10,7 @@ import sys
 import pytest
 
 from .conftest import stub_qiita_db_and_core
+from . import auth_helpers as ah
 
 
 STUDY = {"study_id": 16326, "study_title": "Test", "data_types": "16S", "num_samples": 2, "num_preps": 1,
@@ -31,8 +32,7 @@ def _app(tmp_path_factory):
     stub_qiita_db_and_core()
     import run
     import config
-    config.ALLOWED_ORIGINS = []
-    config.SESSION_COOKIE_SECURE = False
+    ah.configure(config)
     return run.app
 
 
@@ -44,16 +44,7 @@ def client(_app):
 @pytest.fixture
 def logged_in(client, monkeypatch):
     """Session cookie on `client`; returns the CSRF header dict for state-changing calls."""
-    import routes.auth_routes as auth_routes
-    from helpers.qiita_client import WhoAmIResult
-
-    monkeypatch.setattr(auth_routes, "whoami", lambda pat: WhoAmIResult(ok=True, identity={
-        "principal_idx": 90003, "email": "agg@test.local",
-        "system_role": "user", "scopes": [], "profile_complete": True,
-    }))
-    resp = client.post("/api/auth/connect", json={"token": "qk_test"})
-    assert resp.status_code == 200, resp.get_json()
-    return {"X-CSRF-Token": resp.get_json()["csrf_token"]}
+    return ah.login(client, monkeypatch, "agg@test.local")
 
 
 # s2 is in two artifacts (12 -> prep 5, 13 -> prep 6): two checkable rows, one sample.

@@ -1,6 +1,6 @@
 # Appendix B — Local SQLite Schema
 
-Complete reference for QiitaExplore's local SQLite store: the 20 tables, 12 indexes (counted from `store/db.py`, 2026-09-24), their owning modules, and the migration behavior that runs on every import.
+Complete reference for QiitaExplore's local SQLite store: the 20 tables, 12 indexes (counted from `store/db.py`, 2026-09-24), their owning modules, and the migration behavior that runs on every import. The login limiter keeps two more tables in a separate file — see [The login limiter file](#the-login-limiter-file).
 
 ---
 
@@ -40,7 +40,7 @@ Six tables carry a `user_id TEXT NOT NULL` column: `projects`, `project_chats`, 
 
 Values come from one of two places:
 
-- **Authenticated requests** — `g.user_id`, set by `backend/helpers/auth_middleware.py` from the session cookie. This is `str(principal_idx)` from the Qiita control plane, matching `users.user_id`.
+- **Authenticated requests** — `g.user_id`, set by `backend/helpers/auth_middleware.py` from the session cookie, matching `users.user_id`: an opaque `q` + 16-hex id for accounts created since 2026-10 (by either login), or the old `str(principal_idx)` for accounts from the qiita-miint-only era.
 - **Unauthenticated / legacy rows** — the literal string `"default"`, produced by `backend/store/db.py :: _resolve_user`:
 
   ```python
@@ -48,7 +48,7 @@ Values come from one of two places:
       return (user_id or "").strip() or "default"
   ```
 
-  Empty string, whitespace, and `None` all collapse to `"default"`. This is the pre-authentication tenancy fallback: every row created before the auth system existed is owned by `"default"`, and `backend/store/legacy_claim.py` exists to reassign those rows to a real principal once.
+  Empty string, whitespace, and `None` all collapse to `"default"`. This is the pre-authentication tenancy fallback: every row created before the auth system existed is owned by `"default"`. The one-time claim that could reassign those rows (`backend/store/legacy_claim.py`) was removed on 2026-10-12, so they stay owned by no one who can log in.
 
 **None of the `user_id` columns declare a foreign key to `users`.** That is deliberate and load-bearing: `"default"` has no `users` row, so an FK would reject every legacy row. The relationship is application-enforced only.
 
@@ -58,7 +58,7 @@ Values come from one of two places:
 
 Forward-only and additive. There is no schema version number and no down-migration path. New tables arrive as `CREATE TABLE IF NOT EXISTS` inside the single `executescript` in `backend/store/db.py :: _create_schema`; new columns arrive as bare `ALTER TABLE ... ADD COLUMN` wrapped in `try: / except Exception: pass`, so re-running against an already-migrated database is a no-op.
 
-The `meta` table is not a schema-version table — nothing reads a version from it before deciding what to migrate. The one case this model cannot handle is a table whose *shape* changed: `CREATE TABLE IF NOT EXISTS` sees the name exists and does nothing. `_reconcile_legacy_users_table` is the hand-written escape hatch for exactly that situation on `users`.
+The `meta` table is not a schema-version table — nothing reads a version from it before deciding what to migrate. The one case this model cannot handle is a table whose *shape* changed: `CREATE TABLE IF NOT EXISTS` sees the name exists and does nothing. `users` has needed that twice, and has a hand-written escape hatch for each: `_reconcile_legacy_users_table` (the pre-authentication shape) and `_migrate_users_to_email_v1` (the qiita-miint and classic_v1 shapes, 2026-10).
 
 ### Import-time bootstrap
 
@@ -78,7 +78,7 @@ Consequences worth knowing:
 
 ### The public facade
 
-`backend/store/__init__.py` re-exports a flat function surface from `crud`, `global_chat_crud`, `merge_crud`, and `cache`, so callers write `from store import get_project, upsert_study_detail_cache, ...`. Absent from the facade: `auth_store`, `legacy_claim`, and the `get_setting` / `set_setting` pair in `crud.py` — all imported by fully qualified path (`from store.auth_store import create_session`), which keeps the auth surface visibly separate from the general data surface.
+`backend/store/__init__.py` re-exports a flat function surface from `crud`, `global_chat_crud`, `merge_crud`, and `cache`, so callers write `from store import get_project, upsert_study_detail_cache, ...`. Absent from the facade: `auth_store` and `get_setting` in `crud.py` — both imported by fully qualified path (`from store.auth_store import create_session`), which keeps the auth surface visibly separate from the general data surface.
 
 ---
 
@@ -141,25 +141,26 @@ erDiagram
 
 ### table-meta
 
-Key/value side table. Holds the TinyDB import marker, the legacy-claim markers, and any application setting written through `set_setting()`.
+Key/value side table. Holds one-off migration markers and, on older databases, the Anthropic key written by the former `POST /api/settings`.
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
 | `key` | TEXT | no (PK) | — | Setting name. |
 | `value` | TEXT | yes | — | Setting value, always stored as text. |
 
-**Keys/constraints:** `key` is the primary key. `backend/store/legacy_claim.py :: claim_legacy_default` relies on that uniqueness as its concurrency guard — a second racing claim hits an `IntegrityError` on the plain `INSERT` and rolls the whole transaction back.
+**Keys/constraints:** `key` is the primary key.
 
 **Known keys:**
 
 | Key | Written by | Meaning |
 |---|---|---|
 | `tinydb_imported` | `backend/store/db.py :: _mark_migration` | `'1'` once the TinyDB JSON import has run or been skipped. |
-| `default_claimed_by` | `backend/store/legacy_claim.py :: claim_legacy_default` | `user_id` that claimed the legacy `"default"` rows. Its presence permanently disables further claims. |
-| `default_claimed_at` | `backend/store/legacy_claim.py :: claim_legacy_default` | Timestamp of the claim. |
-| `anthropic_api_key` | `backend/routes/study_routes.py` via `set_setting` | Stored API key. **Stored in plaintext** — unlike PATs, which are Fernet-encrypted in `auth_sessions`. |
+| `users_email_v1` | `backend/store/db.py :: _migrate_users_to_email_v1` | Timestamp of the one-time `users` rebuild into the one-account-per-email shape. Informational: the migration decides it is done from the `users` shape (both `email` and `user_level` columns), not from this key. Absent on a database that was created in the current shape. |
+| `users_classic_v1` | *(nothing, since 2026-10)* | Left by this branch's earlier classic-only migration, on databases where it ran. Never read. |
+| `default_claimed_by`, `default_claimed_at` | *(nothing, since 2026-10-12)* | Left by the removed legacy claim, on databases where it ran. Never read. |
+| `anthropic_api_key` | *(nothing, since 2026-10-12)* | The shared Anthropic key, **in plaintext**, written by the removed `POST /api/settings`. Still read: `config.py :: get_client` and `GET /api/settings` prefer it over `ANTHROPIC_API_KEY`. Delete the row to fall back to the env var. |
 
-**Writes owned by:** `backend/store/crud.py :: set_setting`, `backend/store/db.py :: _mark_migration`, `backend/store/legacy_claim.py :: claim_legacy_default`. Rows are never evicted.
+**Writes owned by:** `backend/store/db.py :: _migrate_users_to_email_v1`. Rows are never evicted. (`crud.py :: set_setting` was removed with `POST /api/settings`; the TinyDB import that wrote `tinydb_imported` is no longer in `db.py` either.)
 
 ---
 
@@ -180,8 +181,6 @@ A user-owned collection of Qiita studies plus its chats. The root of the project
 **Writes owned by:** `backend/store/crud.py` — `create_project`, `update_project`, `delete_project`, and `updated_at` bumps inside `add_study_to_project`, `remove_study_from_project`, `create_chat`, `append_chat_messages`, `delete_chat`.
 
 **Lifecycle:** deletion is owner-scoped (`WHERE project_id = ? AND user_id = ?`) and cascades to `project_studies`, `project_chats`, `project_chat_messages` (transitively), and `project_context_summaries`. `updated_at` doubles as the sidebar sort key — hence the child-mutation bumps.
-
-**Legacy claim:** this is one of the **5 root ownership tables** rewritten by `backend/store/legacy_claim.py :: claim_legacy_default`. See [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -233,8 +232,6 @@ A conversation thread scoped to one project.
 **Keys/constraints:** PK on `chat_id`. FK `project_id → projects(project_id) ON DELETE CASCADE`. `user_id` is redundant with `projects.user_id` but is stored so chat queries filter on both without a join — the CRUD layer consistently uses `WHERE project_id = ? AND user_id = ?`.
 
 **Writes owned by:** `backend/store/crud.py` — `create_chat`, `append_chat_messages` (provisional title + `updated_at`), `delete_chat`; `backend/store/chat_turn_persist.py` — `append_user_message` (provisional title, atomic conditional write) and `set_auto_title` (the LLM title, driven from `helpers/chat_title.py` via `helpers/chat_turn.py`). Cascades to `project_chat_messages` on delete; does **not** cascade to `chat_pinned_studies`, which is left orphaned. Both auto-title writers use a `CASE`/`IN` guard against the current row rather than a stale read, so the provisional write and the LLM write can never clobber each other regardless of which lands first; only an explicit `update_chat_title` PATCH changes the title afterwards. Renaming a chat to exactly the provisional string or to `"New chat"` is indistinguishable from the default, so a later LLM title can still land on it.
-
-**Legacy claim:** one of the **5 root ownership tables**. See [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -296,8 +293,6 @@ A conversation thread not scoped to any project — the entry point for the agen
 **Keys/constraints:** PK on `chat_id`. No FK at all — global chats have no parent row in this database.
 
 **Writes owned by:** `backend/store/global_chat_crud.py` — `create_global_chat`, `append_global_chat_messages`, `delete_global_chat`. Cascades to `global_chat_messages`; leaves `chat_pinned_studies` rows orphaned, same as project chats.
-
-**Legacy claim:** one of the **5 root ownership tables**. See [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -389,8 +384,6 @@ A named scratch space collecting up to 5 studies whose BIOM artifacts will be me
 
 **Lifecycle:** cascades to `merge_workspace_studies`, but **not** to `merge_jobs` — that FK is `ON DELETE SET NULL`, so deleting a workspace preserves its job history with a null `workspace_id`. That is intentional: a completed merge's result file outlives the workspace that produced it.
 
-**Legacy claim:** one of the **5 root ownership tables**. See [`02-authentication.md`](02-authentication.md).
-
 ---
 
 ### table-merge_workspace_studies
@@ -438,8 +431,6 @@ One asynchronous merge execution: its status, its result path, and a frozen snap
 **Writes owned by:** `backend/store/merge_crud.py` — `create_merge_job`, `update_merge_job_status`. Status transitions are driven from `backend/routes/merge_routes.py`.
 
 **Lifecycle:** rows are never deleted, and nothing cleans up the files at `result_path`. Job history and merge output both accumulate indefinitely. `update_merge_job_status` writes `error_message` and `result_path` unconditionally (not COALESCEd), so a transition that omits them clears whatever was there.
-
-**Legacy claim:** one of the **5 root ownership tables**. See [`02-authentication.md`](02-authentication.md).
 
 ---
 
@@ -584,69 +575,68 @@ Per-row selection: a row means "this (sample, artifact) file row is checked". Th
 
 ### table-users
 
-Users authenticated against the Qiita control plane. One row per Qiita principal.
+One row per person. `user_id` is opaque and owns all their data; the normalized `email` is the link both logins resolve through, so classic Qiita and qiita-miint reach the same account for the same email (`store/auth_store.py`, [`02-authentication.md`](02-authentication.md#one-account-per-email)).
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
-| `user_id` | TEXT | no (PK) | — | `str(principal_idx)`. This is the value that lands in every `user_id` ownership column. |
-| `principal_idx` | INTEGER | no | — | The same identity as an integer, as returned by the control plane. |
-| `email` | TEXT | yes | — | Email from the control plane profile. |
-| `system_role` | TEXT | yes | — | Role string from the control plane. |
-| `scopes` | TEXT | yes | — | JSON array of granted scopes. |
-| `profile_complete` | INTEGER | no | `0` | Boolean as 0/1. |
-| `created_at` | TEXT | yes | — | First login. |
-| `updated_at` | TEXT | yes | — | Last profile refresh. |
-| `last_login_at` | TEXT | yes | — | Last login. Set to the same value as `updated_at` on every upsert. |
+| `user_id` | TEXT | no (PK) | — | The value that lands in every `user_id` ownership column. New accounts: `"q"` + 16 hex characters (`secrets.token_hex(8)`). Accounts from the qiita-miint-only era keep their old `str(principal_idx)`. |
+| `email` | TEXT | yes | — | The account's email, normalized by `helpers/emails.py :: normalize_email` (stripped, ASCII only, lowercased). `UNIQUE`. Both logins look the account up by it. `NULL` only for a row the migration couldn't give one (an email another row kept, or one that fails the rule). |
+| `user_level` | TEXT | yes | — | Classic Qiita's level name (`user`, `admin`, …) as of the last classic login. `NULL` until the account signs in with classic Qiita; a qiita-miint login leaves it unchanged. |
+| `principal_idx` | INTEGER | yes | — | The qiita-miint principal. Recorded by the account's first qiita-miint login when no other row holds it. A later qiita-miint login with this email but a *different* principal is refused (409). Matching never uses it: a principal whose email changed reaches the new email's account. `NULL` until the account signs in with qiita-miint (or when its principal was already held). |
+| `created_at` | TEXT | yes | — | First login (or the migrated row's original value). |
+| `updated_at` | TEXT | yes | — | Last change. |
+| `last_login_at` | TEXT | yes | — | Last successful login, either way. |
 
-**Keys/constraints:** PK on `user_id`. Referenced by `auth_sessions.user_id` — the only declared FK pointing at this table. The five ownership tables point here by convention only.
+**Keys/constraints:** PK on `user_id`; `UNIQUE` on `email` (multiple `NULL`s allowed); partial unique index `idx_users_principal` on `principal_idx` `WHERE principal_idx IS NOT NULL`. Referenced by `auth_sessions.user_id` — the only declared FK pointing at this table. The ownership tables point here by convention only.
 
-**Writes owned by:** `backend/store/auth_store.py :: upsert_user`, called from `backend/routes/auth_routes.py` on connect. It is an `ON CONFLICT(user_id) DO UPDATE` upsert that refreshes every profile field on each login while preserving `created_at`. Rows are never deleted; deleting one would cascade its `auth_sessions` but leave its projects, chats, workspaces, and jobs behind, since those have no FK.
+**Writes owned by:** `backend/store/auth_store.py :: resolve_user`, on every successful login or connect, matching by email only: a row with the email → refresh `updated_at`, `last_login_at`, `user_level` (classic) and record `principal_idx` (qiita-miint, if unset and unheld; a different recorded principal raises `PrincipalMismatch` and writes nothing); else insert a new row, with the principal unless another row holds it. `email` is never changed after insert. A concurrent first login that loses a `UNIQUE` race (email or principal) rolls back and is retried once, which finds the winner's row. Rows are never deleted; deleting one would cascade its `auth_sessions` but leave its projects, chats, workspaces, and jobs behind, since those have no FK.
 
-**Note:** `principal_idx` is stored twice, once as the TEXT primary key and once as an INTEGER column, because `user_id` needs to be TEXT to hold the `"default"` sentinel across the ownership tables while the control plane's identity is genuinely numeric.
+**Shape history:** pre-authentication (`username` / `password_hash`, moved aside by `_reconcile_legacy_users_table`) → qiita-miint (`principal_idx NOT NULL`, `email`, `system_role`, `scopes`, `profile_complete`; production until 2026-10) → classic_v1 (`qiita_email`, `user_level`, `principal_idx`, `miint_email`; only where this branch's earlier commit ran) → one account per email (above, rebuilt by `_migrate_users_to_email_v1`). See [Migration history](#migration-history).
 
 ---
 
 ### table-auth_sessions
 
-Server-side sessions. Each row holds the CSRF token bound to that session. The Qiita PAT is verified once at login and is not stored.
+Server-side sessions, from either login. Each row holds the CSRF token bound to that session and, for a classic-Qiita session, a fingerprint of the account's password hash. No password, hash, or Qiita / qiita-miint token is stored.
 
 | Name | Type | Null | Default | Meaning |
 |---|---|---|---|---|
 | `session_hash` | TEXT | no (PK) | — | `hashlib.sha256(raw_token).hexdigest()`. See below. |
 | `user_id` | TEXT | no | — | Session owner. |
-| `pat_encrypted` | TEXT | no | — | Legacy column; always `''`. Bootstrap scrubs any non-empty legacy ciphertext. |
-| `token_idx` | TEXT | yes | — | Control-plane token index, when the source provides one. |
-| `source` | TEXT | no | `'paste'` | How the session was created. |
-| `pat_expires_at` | TEXT | yes | — | Reserved; unused. |
+| `pat_encrypted` | TEXT | no | — | Legacy column (qiita-miint); always `''`. Bootstrap scrubs any non-empty legacy ciphertext. |
+| `token_idx` | TEXT | yes | — | Legacy column (qiita-miint); always `NULL`. |
+| `source` | TEXT | no | `'paste'` | How the session was created: `'qiita-classic'` (`POST /api/auth/login`) or `'qiita-miint'` (`POST /api/auth/connect`). Production's sessions from before 2026-10 say `'paste'` (the qiita-miint login of that time). Only `'qiita-classic'` sessions are re-checked against Qiita. A session whose method (`qiita-classic` → classic; `qiita-miint`, `paste` → miint) is switched off in `QIITA_EXPLORE_LOGIN_METHODS` is revoked by the middleware on its next request. |
+| `pat_expires_at` | TEXT | yes | — | Legacy column; always `NULL`. |
 | `csrf_token` | TEXT | no | — | Per-session CSRF token, 32 bytes url-safe. |
 | `created_at` | TEXT | yes | — | Session start. |
 | `last_seen_at` | TEXT | yes | — | Informational; throttled updates only. |
-| `last_verified_at` | TEXT | yes | — | Legacy column; unused. |
+| `last_verified_at` | TEXT | yes | — | When the account was last verified. Set at login or connect; for a classic session, refreshed by `mark_session_verified` when a re-check against classic Qiita (due every 5 minutes) passes. |
 | `absolute_expires_at` | TEXT | no | — | Hard ceiling. Never extended. |
-| `revoked_at` | TEXT | yes | — | Set on logout or session replacement. A non-null value fails the session lookup. |
+| `revoked_at` | TEXT | yes | — | Set on logout, session replacement, or — on every session of the account, qiita-miint ones included — when a classic session's re-check fails. The `users` migration leaves it alone. A non-null value fails the session lookup. |
+| `password_fp` | TEXT | yes | — | *(migration)* Classic sessions: SHA-256 of the account's bcrypt hash at login. A re-check that finds a different hash — the password was changed on Qiita — or a `NULL` here revokes a classic session. Always `NULL` on a qiita-miint session, which is never re-checked. |
 
 **Keys/constraints:** PK on `session_hash`. FK `user_id → users(user_id) ON DELETE CASCADE`.
 
-**The raw session token is never stored.** `backend/store/auth_store.py :: create_session` generates a 32-byte url-safe token, returns it to the caller for the cookie, and persists only its SHA-256 digest as the primary key. Lookup in `get_session_by_token` re-hashes the incoming cookie and probes by that digest. A database compromise therefore yields no usable session cookies.
+**The raw session token is never stored.** `backend/store/auth_store.py :: create_session` generates a 32-byte url-safe token, returns it to the caller for the cookie, and persists only its SHA-256 digest as the primary key. Lookup in `get_session_by_token` re-hashes the incoming cookie and probes by that digest (joining `users` for `email`, which the classic re-check reads). A database compromise therefore yields no usable session cookies.
 
-**Writes owned by:** `backend/store/auth_store.py` — `create_session`, `touch_session`, `revoke_session`, `purge_expired_sessions`.
+**Writes owned by:** `backend/store/auth_store.py` — `create_session`, `touch_session`, `mark_session_verified`, `revoke_session`, `revoke_user_sessions` (every live session of one `user_id`), `purge_expired_sessions`. The `users` migration (`backend/store/db.py :: _migrate_users_to_email_v1`) does not touch sessions.
 
 **Lifecycle:**
 
 1. **Absolute** — `absolute_expires_at`, set at creation to now + `AUTH_SESSION_ABSOLUTE_TTL_SECONDS` (default 24 hours). `touch_session` must never extend this.
-2. **Revocation** — `revoked_at`, set by logout or when a successful re-login replaces the prior session.
+2. **Revocation** — `revoked_at`, set by logout, when a successful login or connect replaces the prior session, or — for every session of the account, via `revoke_user_sessions` — when the Qiita re-check of one of its classic sessions in `helpers/auth_middleware.py` finds the account gone, unverified, or its password changed.
 
-There is deliberately **no idle expiry** and **no periodic PAT re-verification**. `last_seen_at` is informational only; `touch_session` throttles its writes (~5 min) rather than issuing an `UPDATE` on every request.
+There is deliberately **no idle expiry**. `last_seen_at` is informational only; `touch_session` throttles its writes (~5 min) rather than issuing an `UPDATE` on every request.
 
-Both mechanisms are evaluated read-side in `get_session_by_token`, which returns `None` for either. Notably, a malformed or missing timestamp also returns `None` (`except (KeyError, ValueError)`) — the auth path fails closed, unlike the study cache's TTL check, which fails open.
+Expiry and revocation are evaluated read-side in `get_session_by_token`, which returns `None` for either. Notably, a malformed or missing timestamp also returns `None` (`except (KeyError, ValueError)`) — the auth path fails closed, unlike the study cache's TTL check, which fails open.
 
-`purge_expired_sessions` hard-deletes rows past absolute expiry but **preserves revoked rows** (`AND revoked_at IS NULL`) so logouts remain auditable.
+`purge_expired_sessions` runs on every successful login or connect. It hard-deletes rows past absolute expiry, and revoked rows whose `revoked_at` is more than 7 days old (kept that long for audit).
 
 ---
 
 ## Indexes
 
-All 11 indexes are created inside the `executescript` in `backend/store/db.py :: _create_schema`, as `CREATE INDEX IF NOT EXISTS`.
+The indexes below are created inside the `executescript` in `backend/store/db.py :: _create_schema`, as `CREATE INDEX IF NOT EXISTS` — except `idx_users_principal`, which `_bootstrap` creates (`CREATE UNIQUE INDEX IF NOT EXISTS`) only once `users` has the current shape, after the `users` migration (which also creates it after its rebuild); an older `users` table may lack the column.
 
 | Name | Table | Columns | Query it serves |
 |---|---|---|---|
@@ -659,27 +649,60 @@ All 11 indexes are created inside the `executescript` in `backend/store/db.py ::
 | `idx_merge_ws_user` | `merge_workspaces` | `user_id, updated_at DESC` | `backend/store/merge_crud.py :: list_workspaces` — `WHERE user_id = ? ORDER BY updated_at DESC`. Exact match. |
 | `idx_merge_jobs_ws` | `merge_jobs` | `workspace_id, created_at DESC` | `backend/store/merge_crud.py :: list_merge_jobs` — `WHERE workspace_id = ? AND user_id = ? ORDER BY created_at DESC`. Covers the workspace filter and the sort; the `user_id` predicate is a residual check. |
 | `idx_merge_jobs_user` | `merge_jobs` | `user_id, created_at DESC` | No store-layer query filters `merge_jobs` by `user_id` alone — `get_merge_job` uses the PK plus a `user_id` residual, and `list_merge_jobs` leads with `workspace_id`. This index appears to be provisioned for a per-user job history view that does not exist yet. |
+| `idx_users_principal` | `users` | `principal_idx` `WHERE principal_idx IS NOT NULL` (`UNIQUE`) | `backend/store/auth_store.py :: resolve_user` — `WHERE principal_idx = ?` (the "already held" check before recording a principal). Its real job is the constraint: at most one account per qiita-miint principal. |
 | `idx_auth_sessions_user` | `auth_sessions` | `user_id` | Serves the `ON DELETE CASCADE` from `users`, and any "revoke all sessions for this user" sweep. No store-layer read currently queries sessions by `user_id`. |
-| `idx_auth_sessions_expiry` | `auth_sessions` | `absolute_expires_at` | `backend/store/auth_store.py :: purge_expired_sessions` — `WHERE absolute_expires_at < ?`. The one index in the schema that exists purely for a maintenance sweep rather than a user-facing read. |
+| `idx_auth_sessions_expiry` | `auth_sessions` | `absolute_expires_at` | `backend/store/auth_store.py :: purge_expired_sessions` — `WHERE absolute_expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`. The `OR` on an unindexed `revoked_at` means the sweep may scan the table anyway, which is fine at its size. The one index in the schema that exists purely for a maintenance sweep rather than a user-facing read. |
 
-There are no partial indexes, no expression indexes, and no `UNIQUE` indexes beyond those implied by primary keys.
+There are no expression indexes. The one partial index is `idx_users_principal`. Beyond those implied by primary keys, the `UNIQUE` indexes are `idx_users_principal` and SQLite's automatic one for `users.email` (2026-10).
+
+---
+
+## The login limiter file
+
+The login limits ([`02-authentication.md`](02-authentication.md#brute-force-limits-built-not-to-lock-people-out)) live in a **separate SQLite file**, not in `projects.db`, so login writes never contend with chat writes on `/ddn_scratch`. `backend/helpers/login_limiter.py` owns it entirely.
+
+**Location:** `QIITA_EXPLORE_LIMITER_DB`, defaulting to `qiita_explore-<uid>/login_limiter.db` under the system temp directory (`tempfile.gettempdir()`). Production should set it explicitly, on barnacle's **local** disk. The folder is created `0700` and the file set to `0600`; if either is owned by another user or is group- or world-writable, the limiter refuses it (barnacle is multi-user, and a planted or shared file could hand out device rows or wipe the counters). Every call opens its own connection (`isolation_level=None`, `busy_timeout` 1 s, default rollback journal) and creates the tables if missing. If the file can't be used, login answers **503** — the limiter fails closed.
+
+**No raw emails or IPs.** Every key and token is a SHA-256 hex digest.
+
+### limiter-attempts
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `key` | TEXT | no (PK) | — | `e:` + SHA-256 of the normalized email, or `c:` + SHA-256 of the client IP. |
+| `window_start` | REAL | no | — | Unix time the current 15-minute window began. |
+| `count` | INTEGER | no | — | Attempts reserved in this window (bumped before any bcrypt work). For a client key, a success takes its own attempt back off, so it counts failures. |
+| `blocked_until` | REAL | no | `0` | Unix time before which this key is refused: the per-email delay (2^(n−5) s, at most 5 min) or the per-client 15-minute block (set at 30). |
+
+A success deletes the email's row, and decrements the client's (clearing a block that attempt set). Attempts made through a known device touch neither. A reservation after the window has lapsed starts a fresh one.
+
+### limiter-devices
+
+| Name | Type | Null | Default | Meaning |
+|---|---|---|---|---|
+| `token_hash` | TEXT | no (PK) | — | SHA-256 of the random known-device cookie value. |
+| `email_key` | TEXT | no | — | The `e:` key of the account it logged into; a device only exempts that account. |
+| `expires` | REAL | no | — | Unix time, 30 days after the last login from this browser. |
+| `failures` | INTEGER | no | `0` | Attempts through this device since its last success. At 10 (`DEVICE_MAX_FAILURES`) the device stops exempting the account; the next success through the normal limits deletes it and issues a new token. |
+
+**Lifecycle:** each reservation and success is one `BEGIN IMMEDIATE` transaction. On about one reservation in fifty, it prunes attempt rows whose window began over 24 hours ago and that aren't blocking anything, and expired devices.
 
 ---
 
 ## Migration history
 
-Everything below runs on **every** import of `store`, in this exact order, inside `_bootstrap()` → `_create_schema()`.
+Everything below runs on **every** import of `store`, in this exact order, inside `_bootstrap()`: steps 1–3 in `_create_schema()`, then step 4.
 
 ### 1. `_reconcile_legacy_users_table(conn)`
 
 Runs *first*, before the `executescript`, because it has to clear the way for it.
 
-An older pre-authentication build shipped a `users` table with an unrelated shape — username plus password_hash, no `principal_idx`. `CREATE TABLE IF NOT EXISTS users (...)` sees the name is taken and silently does nothing, so the new schema never materializes, and every `POST /api/auth/connect` fails with `sqlite3.OperationalError: table users has no column named principal_idx`. Adding the missing columns via `ALTER` would not fix it either: the legacy `username` and `password_hash` columns are `NOT NULL` with no defaults, so principal-keyed inserts would still be rejected.
+An older pre-authentication build shipped a `users` table with an unrelated shape — `username` plus `password_hash`. `CREATE TABLE IF NOT EXISTS users (...)` sees the name is taken and silently does nothing, so the new schema never materializes, and every login failed with `sqlite3.OperationalError` on a missing column. Adding the missing columns via `ALTER` would not fix it either: the legacy `username` and `password_hash` columns are `NOT NULL` with no defaults.
 
 The reconciliation:
 
 1. Return immediately if no `users` table exists (fresh database).
-2. Return immediately if `PRAGMA table_info(users)` shows a `principal_idx` column (already current — this is the no-op path on every normal boot).
+2. Return immediately unless `PRAGMA table_info(users)` shows a `username` or `password_hash` column — the pre-auth table is detected **positively**, by its own columns. (Until 2026-10-12 it tested for a missing `principal_idx` instead, which would have mistaken any later `users` shape for the pre-auth one and thrown it away.) This is the no-op path on every normal boot.
 3. Guard: if `auth_sessions` exists and holds any rows, **return without touching anything** and leave it to a human. The author notes this is impossible in practice, since `upsert_user` always failed before a session could be created.
 4. Otherwise: `DROP TABLE IF EXISTS auth_sessions`, `DROP TABLE IF EXISTS users_legacy_pre_auth`, then `ALTER TABLE users RENAME TO users_legacy_pre_auth`.
 
@@ -708,12 +731,29 @@ Each wrapped in `try: / except Exception: pass`, in this order:
 | 19 | `aggregations` | `file_filter_json TEXT` | The aggregation's saved Data type / Processing filter (2026-09-24). **Unused since 2026-09-30**, when the filter moved to each study. |
 | 20 | `aggregation_studies` | `file_filter_json TEXT` | Each study's own Data type / Processing / Artifact filter (2026-09-30). |
 | — | `aggregations` | `chat_id TEXT`, `chat_scope TEXT` | A chat's temporary aggregation (2026-10-02); NULL = saved. |
+| — | `auth_sessions` | `password_fp TEXT` | SHA-256 of the account's bcrypt hash at login, so a password changed on classic Qiita revokes the session (2026-10-12). Also in the `CREATE TABLE`. |
 
 After the ALTERs, `_move_aggregation_filters_to_studies` copies any remaining `aggregations.file_filter_json` to that aggregation's studies whose own filter is still NULL, with `artifacts` emptied, and then nulls the aggregation's value. A second boot finds nothing to move, and a study added later starts unfiltered.
 
 Six of the twenty target `study_detail_cache`, which is why the COALESCE upsert pattern below matters so much: that table grew one column at a time, each added by a different feature with its own caller.
 
-### 4. TinyDB import (one time only)
+### 4. `_migrate_users_to_email_v1()` — the `users` rebuild (one time, 2026-10)
+
+Runs after `_create_schema` has committed, on its **own** autocommit connection. It turns a qiita-miint-era `users` table (`principal_idx NOT NULL`, `email`, `system_role`, …; production) or a classic_v1 one (`qiita_email`, `miint_email`; only where this branch's earlier commit ran) into the one-account-per-email shape ([`table-users`](#table-users)), which `CREATE TABLE IF NOT EXISTS` can't do.
+
+1. Return if `users` already has both an `email` and a `user_level` column (a fresh database is created that way; a migrated one has them). This is the no-op path on every normal boot.
+2. `PRAGMA foreign_keys = OFF`, read back, abort unless it is 0. It has to be set *outside* a transaction (inside one it is a no-op), and with it on, `DROP TABLE users` would cascade-delete `auth_sessions`.
+3. `BEGIN IMMEDIATE` — the write lock, so one gunicorn worker migrates and the others find it done. Inside the lock, re-check step 1 and `ROLLBACK` if another worker finished first.
+4. Read the old rows (columns the old shape lacks read as `NULL`), classic-bound rows (non-`NULL` `qiita_email`) first, then latest `last_login_at` first. For each: `email = normalize_email(qiita_email or miint_email or email)`; an email that fails the rule, or that an earlier row already took, becomes `NULL` and the row's `user_id` is noted; a `principal_idx` an earlier row already took becomes `NULL`. `user_id`, `user_level`, `principal_idx` and the timestamps are kept. `CREATE TABLE users_new` and insert them.
+5. **Sessions are not touched.** Both logins still exist and no `user_id` changes, so production's (`source = 'paste'`) sessions stay valid.
+6. `DROP TABLE users`, then `ALTER TABLE users_new RENAME TO users`. Renaming the *old* table aside instead would rewrite `auth_sessions`' foreign key to point at the renamed table. Then `CREATE UNIQUE INDEX idx_users_principal … WHERE principal_idx IS NOT NULL` (the drop took the old table's copy with it).
+7. `PRAGMA foreign_key_check(auth_sessions)` — the only table that references `users` — must come back empty, else everything rolls back.
+8. Insert `meta.users_email_v1`, `COMMIT`.
+9. After the commit, if any row was left without an email (another row kept it, or it failed the rule or was missing), log one warning listing their `user_id`s (`users migration: N account(s) left without an email — shared with another account, or not usable as one (data kept): …`).
+
+Any exception before `COMMIT` rolls back and leaves the old table untouched; it also fails the boot, so a broken migration presents as a worker that won't start. The `UNIQUE` on `email` comes with the new `CREATE TABLE`.
+
+### 5. TinyDB import (one time only)
 
 After `_create_schema`, `_bootstrap()` calls `_should_migrate(conn)`, which returns `True` only when **both**: `meta.tinydb_imported` is not `'1'`, and `projects` is empty. If so, `_migrate_from_tinydb` reads `backend/data/projects.json`, falling back to `/tmp/qiita-experiment/projects.json`, and replays each document — project documents through `_insert_project_doc`, and documents whose `bucket_type` starts with `global_chats::` through `_insert_global_bucket`. Then `_mark_migration` sets `meta.tinydb_imported = '1'`.
 
@@ -772,5 +812,5 @@ Third, and sharpest in practice: a row existing is not the same as a row holding
 ## See also
 
 - [`03-data-access-and-caching.md`](03-data-access-and-caching.md) — how `study_detail_cache` and `biom_sample_cache` sit within the wider cache stack, alongside the in-process TTL memoization in `qiita_fetch.py`.
-- [`02-authentication.md`](02-authentication.md) — the `users` / `auth_sessions` lifecycle, PAT encryption, session cookie handling, and the legacy-claim flow that rewrites the 5 root ownership tables.
+- [`02-authentication.md`](02-authentication.md) — both logins (classic Qiita and qiita-miint), one account per email and the `users` migration, the `auth_sessions` lifecycle and the classic re-check, session cookie handling, and the brute-force limits.
 - [`07-merge-and-biom.md`](07-merge-and-biom.md) — the merge workspace/job model and BIOM artifact handling built on `merge_workspaces`, `merge_workspace_studies`, `merge_jobs`, and `biom_sample_cache`.

@@ -1,4 +1,6 @@
 import os
+import re
+import tempfile
 from dotenv import load_dotenv
 from openai import OpenAI
 import anthropic as _anthropic
@@ -94,13 +96,35 @@ REPORT_SAMPLE_LIMIT             = 200
 PINNED_CHARS_PER_STUDY          = int(os.getenv("PINNED_CHARS_PER_STUDY", "60000"))
 PINNED_INLINE_STUDIES           = int(os.getenv("PINNED_INLINE_STUDIES", "5"))
 
-# ── Qiita PAT authentication ────────────────────────────────────────────────
-SESSION_COOKIE_NAME = "qe_sid"
+# ── Login (routes/auth_routes.py) ────────────────────────────────────────────
+# Two ways in, side by side, both reaching one account per email:
+#   classic — classic-Qiita email + password, checked against qiita.qiita_user
+#             through the read-only Postgres role (helpers/qiita_accounts.py);
+#   miint   — a qiita-miint `qk_` token, checked once with whoami
+#             (helpers/qiita_client.py).
+LOGIN_METHODS = [m.strip() for m in os.getenv("QIITA_EXPLORE_LOGIN_METHODS", "classic,miint").split(",") if m.strip()]
+if not LOGIN_METHODS or set(LOGIN_METHODS) - {"classic", "miint"}:
+    raise ValueError(f"QIITA_EXPLORE_LOGIN_METHODS must list classic and/or miint, got {LOGIN_METHODS!r}")
 
-QIITA_CONTROL_PLANE_URL = os.getenv("QIITA_CONTROL_PLANE_URL", "http://127.0.0.1:8080").rstrip("/")
-QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "5"))
+# Sign-up, email verification and password reset stay on classic Qiita at this URL.
+QIITA_CLASSIC_URL = os.getenv("QIITA_CLASSIC_URL", "https://qiita.ucsd.edu").rstrip("/")
 
-# Qiita URL the user's BROWSER is redirected to for login. Deliberately
+# Where whoami is asked. Since email is the link to every account, whatever
+# answers here can open any account, classic ones included — so with qiita-miint
+# login on it must be set explicitly (no silent loopback default, which another
+# user on a shared host could bind) and use https, unless
+# QIITA_CONTROL_PLANE_ALLOW_HTTP=true for a channel no one else can take over.
+QIITA_CONTROL_PLANE_URL = os.getenv("QIITA_CONTROL_PLANE_URL", "").strip().rstrip("/")
+if "miint" in LOGIN_METHODS:
+    if not QIITA_CONTROL_PLANE_URL:
+        raise ValueError("QIITA_CONTROL_PLANE_URL must be set when qiita-miint login is on (QIITA_EXPLORE_LOGIN_METHODS)")
+    if (not QIITA_CONTROL_PLANE_URL.startswith("https://")
+            and os.getenv("QIITA_CONTROL_PLANE_ALLOW_HTTP", "").strip().lower() not in ("1", "true", "yes")):
+        raise ValueError("QIITA_CONTROL_PLANE_URL must be https://, or set QIITA_CONTROL_PLANE_ALLOW_HTTP=true "
+                         "for a private channel: a plain-HTTP whoami can be answered by whoever takes that port")
+QIITA_WHOAMI_TIMEOUT_SECONDS = float(os.getenv("QIITA_WHOAMI_TIMEOUT_SECONDS", "3"))
+
+# qiita-miint URL the user's BROWSER is sent to for login. Deliberately
 # separate from QIITA_CONTROL_PLANE_URL (used only for backend-to-Qiita
 # server calls like whoami): in a split-tunnel deployment — backend reaches
 # Qiita via a reverse SSH tunnel on one port, the browser reaches it directly
@@ -111,34 +135,51 @@ QIITA_PUBLIC_LOGIN_URL = os.getenv("QIITA_PUBLIC_LOGIN_URL", "").rstrip("/") or 
 # AuthRocket LoginRocket realm base (e.g. https://<realm>.e2.loginrocket.com).
 # When set, /api/auth/login-url routes the browser through LoginRocket /logout
 # first, so a cached AuthRocket session can't hijack the login / "Need a login"
-# entry into completing login as the previously-cached user. Empty = disabled
-# (login goes straight to the control plane, exactly as before).
+# entry into completing login as the previously-cached user. Empty = disabled.
 QIITA_LOGINROCKET_URL = os.getenv("QIITA_LOGINROCKET_URL", "").rstrip("/")
 
 # A single hard ceiling, and no idle timeout: a session ends when it hits this,
-# when the user logs out, or when the user signs in again. An idle timeout under
-# a 24-hour ceiling would only reintroduce the mid-session logout.
+# when the user logs out, when the user signs in again, or when the account
+# changes on Qiita (re-checked every few minutes, helpers/auth_middleware.py).
 AUTH_SESSION_ABSOLUTE_TTL_SECONDS  = int(os.getenv("AUTH_SESSION_ABSOLUTE_TTL_SECONDS", str(24 * 3600)))
+
+# The exact origin (scheme://host[:port]) browsers load QiitaExplore from in
+# production, e.g. https://qiita-explore.knight-lab-dev.org. POST /api/auth/login
+# and /api/auth/connect require their Origin header to equal this or one of
+# ALLOWED_ORIGINS, and are refused (503) when neither is configured.
+PUBLIC_ORIGIN = os.getenv("QIITA_EXPLORE_PUBLIC_ORIGIN", "").strip().rstrip("/")
 
 # Comma-separated exact origins allowed for credentialed cross-origin dev
 # requests (e.g. frontend on a different port than the backend). Leave unset
 # in production — same-origin deployments behind the proxy need no CORS.
+# Literal origins only: Flask-Cors treats an entry with regex characters as a
+# pattern and would reflect matching origins with credentials.
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("QIITA_EXPLORE_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+for _origin in ALLOWED_ORIGINS:
+    if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d{1,5})?", _origin):
+        raise ValueError(f"QIITA_EXPLORE_ALLOWED_ORIGINS entry is not a literal origin: {_origin!r}")
 
 # Cookie Secure flag. Defaults to True; set to "false" only for plain-HTTP
-# loopback development (e.g. http://127.0.0.1 with no TLS).
+# loopback development (e.g. http://127.0.0.1 with no TLS). With Secure on, the
+# cookies take the __Host- prefix (host-only, path /), so a sibling subdomain
+# can't plant one.
 SESSION_COOKIE_SECURE = os.getenv("QIITA_EXPLORE_COOKIE_SECURE", "true").strip().lower() not in ("false", "0", "no")
+SESSION_COOKIE_NAME = "__Host-qe_sid" if SESSION_COOKIE_SECURE else "qe_sid"
+# A browser that has logged into an account before (helpers/login_limiter.py).
+DEVICE_COOKIE_NAME = "__Host-qe_dev" if SESSION_COOKIE_SECURE else "qe_dev"
 
-# If set, only this Qiita principal_idx may claim the legacy 'default'-owned
-# data via POST /api/auth/claim-default. Unset (default) = claiming disabled.
-_claimant_raw = os.getenv("QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX", "").strip()
-QIITA_DEFAULT_DATA_CLAIMANT_PRINCIPAL_IDX = int(_claimant_raw) if _claimant_raw.isdigit() else None
+# The request header carrying the real client IP, trusted only when set, and
+# only once the proxy chain guarantees it can't be forged (DEPLOYING.md): e.g.
+# Caddy accepting CF-Connecting-IP from Cloudflare's ranges only. Unset = no
+# per-client login limit (behind the SSH tunnel every request is 127.0.0.1).
+CLIENT_IP_HEADER = os.getenv("QIITA_EXPLORE_CLIENT_IP_HEADER", "").strip()
 
-# Temporary debugging aid: when true, an unexpected exception in
-# POST /auth/connect includes the exception type/message in the JSON
-# response, not just the server log. Off by default — only enable while
-# actively diagnosing a deployment issue, never leave on in real use.
-DEBUG_ERROR_DETAIL = os.getenv("QIITA_EXPLORE_DEBUG_ERRORS", "false").strip().lower() in ("1", "true", "yes")
+# The login limiter's own SQLite file — on local disk, not the shared
+# projects.db on /ddn_scratch, so login writes never contend with chat writes.
+# The default is a per-user folder under /tmp; helpers/login_limiter.py refuses
+# a file or folder another user owns or can write (barnacle is multi-user).
+LIMITER_DB_PATH = os.getenv("QIITA_EXPLORE_LIMITER_DB", "") or os.path.join(
+    tempfile.gettempdir(), f"qiita_explore-{os.getuid()}", "login_limiter.db")
 
 # Shared by both chat prompts: the study detail tools (helpers/study_tools.py),
 # each of which the user sees as an interactive widget.

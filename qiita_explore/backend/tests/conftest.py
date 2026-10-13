@@ -1,10 +1,15 @@
 """Pytest fixtures for qiita_explore tests."""
+import os
 import pytest
 import sys
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
+
+# qiita-miint login is on by default, and config refuses to start without an
+# explicit control-plane URL then; whoami itself is always faked in tests.
+os.environ.setdefault("QIITA_CONTROL_PLANE_URL", "https://control-plane.test")
 
 _FAKE_QIITA_DB_STUBBED = False
 
@@ -60,6 +65,11 @@ def fresh_db(tmp_path, monkeypatch):
     stub_qiita_db_and_core()
     db_path = str(tmp_path / "test.db")
     monkeypatch.setenv("QIITA_EXPERIMENT_DB_PATH", db_path)
+    # Login attempt counters are their own SQLite file (helpers/login_limiter.py);
+    # read from config on every call, so a per-test path isolates them.
+    # (raising=False: a few agent tests swap in a stub `config` module.)
+    import config
+    monkeypatch.setattr(config, "LIMITER_DB_PATH", str(tmp_path / "limiter.db"), raising=False)
     # Force re-bootstrap with new path
     for mod_name in list(sys.modules.keys()):
         if 'sql_store' in mod_name or 'store' in mod_name or mod_name in (

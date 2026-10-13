@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from .conftest import stub_qiita_db_and_core
+from . import auth_helpers as ah
 
 BASE = "/qmounts/qiita_data"
 
@@ -306,8 +307,7 @@ def _app(tmp_path_factory):
     stub_qiita_db_and_core()
     import run
     import config
-    config.ALLOWED_ORIGINS = []
-    config.SESSION_COOKIE_SECURE = False
+    ah.configure(config)
     return run.app
 
 
@@ -318,15 +318,7 @@ def client(_app):
 
 @pytest.fixture
 def logged_in(client, monkeypatch):
-    import routes.auth_routes as auth_routes
-    from helpers.qiita_client import WhoAmIResult
-
-    monkeypatch.setattr(auth_routes, "whoami", lambda pat: WhoAmIResult(ok=True, identity={
-        "principal_idx": 90002, "email": "fastq@test.local",
-        "system_role": "user", "scopes": [], "profile_complete": True,
-    }))
-    resp = client.post("/api/auth/connect", json={"token": "qk_test"})
-    assert resp.status_code == 200, resp.get_json()
+    ah.login(client, monkeypatch, "fastq@test.local")
 
 
 @pytest.fixture

@@ -32,7 +32,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 |---|---|
 | [`00-orientation.md`](00-orientation.md) | What the system is · **the two Qiitas** · glossary |
 | [`01-architecture.md`](01-architecture.md) | Topology · request lifecycle · per-worker state · the three PostgreSQL paths |
-| [`02-authentication.md`](02-authentication.md) | Paste-PAT flow · sessions · CSRF · tenancy · legacy claim |
+| [`02-authentication.md`](02-authentication.md) | Two logins (classic Qiita, qiita-miint) · one account per email · brute-force limits · sessions · CSRF · tenancy · threat model |
 | [`03-data-access-and-caching.md`](03-data-access-and-caching.md) | Reading classic Qiita · three cache layers · context budgeting |
 | [`04-search.md`](04-search.md) | Three search paths · the SQL builder · per-study JSONB probes |
 | [`05-agent.md`](05-agent.md) | The tool loop · the search budget · the five tools |
@@ -47,7 +47,7 @@ Read the dual-authoring section of `06` before changing anything in the streamin
 
 | File | Covers |
 |---|---|
-| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | All 52 endpoints |
+| [`appendix-a-api-reference.md`](appendix-a-api-reference.md) | The HTTP endpoints (74 routes) |
 | [`appendix-b-sqlite-schema.md`](appendix-b-sqlite-schema.md) | All 16 tables · 11 indexes · migrations |
 | [`appendix-c-agent-tools-and-sse.md`](appendix-c-agent-tools-and-sse.md) | 5 tool schemas · 10 SSE events · the `ui_payload` shape |
 | [`appendix-d-configuration.md`](appendix-d-configuration.md) | Every environment variable · model roster · tunables |
@@ -78,7 +78,7 @@ backend/nginx.conf (the `proxy_buffering off` block)
 
 Paths are relative to `qiita_explore/`. Line numbers are omitted deliberately — they go stale on the first reformat, and a symbol name survives edits that move it.
 
-**Enumerable sets live in exactly one place — an appendix.** Endpoints, tables, tool schemas, SSE events, environment variables. Narrative chapters reference members by name and link to the anchor; they never re-enumerate. Anchors are stable identifiers rather than prose headings: `#search_studies`, `#api_auth_connect`, `#table-auth_sessions`, `#event-segment_tool_call`.
+**Enumerable sets live in exactly one place — an appendix.** Endpoints, tables, tool schemas, SSE events, environment variables. Narrative chapters reference members by name and link to the anchor; they never re-enumerate. Anchors are stable identifiers rather than prose headings: `#search_studies`, `#api_auth_login`, `#table-auth_sessions`, `#event-segment_tool_call`.
 
 **Current state and future work are kept apart.** Anything not shipped is confined to [`11-roadmap.md`](11-roadmap.md) or marked in place. Stubs are described as stubs — `compute_diversity` is in the live tool schema and returns an apology, and this set says so rather than describing what it will one day compute.
 
@@ -94,7 +94,7 @@ The claims most likely to rot, and how to check them:
 
 | Claim | Check |
 |---|---|
-| 52 endpoints, split by module | `grep -c "@app.route" backend/routes/*.py` |
+| 74 routes, split by module | `grep -c "@app.route" backend/routes/*.py` |
 | 16 tables, 11 indexes | `CREATE TABLE` / `CREATE INDEX` in `backend/store/db.py` |
 | 5 tools, 10 SSE events | `TOOL_SCHEMAS` in `agent_tools.py`; `_sse(` call sites vs. `parseSSE`'s dispatch table |
 | 7 models | `ALLOWED_MODELS` in `config.py` |

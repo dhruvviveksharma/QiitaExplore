@@ -26,12 +26,15 @@ import io
 from helpers.artifact_graph import _BASE
 from helpers.pg_pool import pooled_fetchall
 
+# Public artifacts only: a public study can hold private or sandboxed ones, and
+# their paths are not for every signed-in Qiita user (TKT-043).
 _FILES_FROM = """
 SELECT sa.study_id, a.artifact_id, pa.prep_template_id, ft.filepath_type,
        dd.mountpoint, dd.subdirectory, f.filepath, dt.data_type, at.artifact_type,
        sc.name
 FROM qiita.study_artifact sa
 JOIN qiita.artifact a               ON sa.artifact_id = a.artifact_id
+JOIN qiita.visibility v             ON a.visibility_id = v.visibility_id AND v.visibility = 'public'
 JOIN qiita.artifact_type at         ON a.artifact_type_id = at.artifact_type_id
 JOIN qiita.preparation_artifact pa  ON pa.artifact_id = a.artifact_id
 JOIN qiita.prep_template pt         ON pa.prep_template_id = pt.prep_template_id

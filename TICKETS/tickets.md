@@ -1103,7 +1103,7 @@ does not appear in the real `qiita_explore/backend/data/projects.db` after the t
 ## TKT-042: `/api/settings` Is Global, Not Per-User
 
 **Severity:** High
-**Status:** Open
+**Status:** Resolved (2026-10-12) — the key can no longer be set from the browser; per-user keys are TKT-102
 
 ### Description
 
@@ -1136,6 +1136,24 @@ column to it
 - Add a test: user A sets a key; user B's `GET /api/settings` does not report it set; B setting a
 key does not disturb A's
 
+### Resolution (2026-10-12, with the classic-Qiita login)
+
+The classic-Qiita login opened QiitaExplore to every verified Qiita user, so this was fixed in
+the same change rather than deferred. Instead of per-user keys, the write path is gone:
+
+- `POST /api/settings` is removed (`routes/study_routes.py`; it now answers 405), and
+  `store/crud.py :: set_setting` with it. Nobody can replace the shared key from a browser.
+- `GET /api/settings` reports `anthropic_key_set` from a key already in `meta` **or**
+  `config.ANTHROPIC_API_KEY` (the server's `.env`).
+- Frontend: the key prompt and `saveKey` are gone from `ModelPickerCard`
+  (`frontend/js/components.js`); without a server key the Claude models are shown disabled,
+  "not configured on this server".
+- Tests: `tests/test_auth.py :: TestSettingsLocked`.
+
+Still true: `config.py :: get_client` prefers a key already stored in `meta.anthropic_api_key`
+over the env var. A key written through the old route stays in effect until that row is deleted
+(deploy step in `DEPLOYING.md`). Per-user keys: TKT-102.
+
 
 
 ### Files
@@ -1153,7 +1171,7 @@ key does not disturb A's
 ## TKT-043: Artifact File Download Performs No Study-Level Authorization
 
 **Severity:** High
-**Status:** Open
+**Status:** Partly resolved (2026-10-12) — access rule done for artifact routes, merge workspaces, study detail and the FASTQ/aggregation file query; the path allowlist and the 404 status below are still open
 
 ### Description
 
@@ -1189,6 +1207,30 @@ same gate
 handler; 404 is the correct status
 - Add tests: a non-public study's artifact returns 404 for an authenticated user; a path escaping
 the data root is rejected; a legitimate public-study download still succeeds
+
+### Resolution (2026-10-12, with the classic-Qiita login)
+
+Every verified Qiita user can now log in and QiitaExplore does not resolve per-user Qiita
+permissions, so every path that reads Qiita files serves **public artifacts of public studies
+only**. Visibility is per artifact (a public study can hold private or sandboxed ones), and it is
+read live, because the cached copy can be hours stale:
+
+- `helpers/qiita_fetch.py :: public_artifact_ids(study_id)` — the study's public artifact ids,
+  live; empty for a non-public study or a failed read (fails closed).
+- `helpers/merge_helpers.py :: public_artifacts` (graph nodes for those ids) and `_get_artifacts`
+  (the flat list filtered to them). This covers `routes/artifact_routes.py ::
+  _resolve_artifact_file` (download), `get_artifact_samples`, `get_artifact_sample_counts`, and
+  **merge workspaces**: validate, workspace samples, per-study samples and job submission.
+- `routes/merge_routes.py :: add_study_to_merge_workspace` refuses a non-public study (404).
+- `helpers/fastq_manifest.py :: _FILES_FROM` joins only public artifacts — the FASTQ manifest,
+  the Sample Aggregation export and its file map.
+- `helpers/study_detail.py` keeps a public study's non-public artifacts in the detail's chart but
+  strips their `full_path` / `filepaths`.
+- Tests: `tests/test_artifact_access.py`.
+
+Still open from the plan above: the `_FORBIDDEN_ROOTS` blocklist is not yet an allowlist under
+`QIITA_BASE_DATA_DIR`, and "File not found on disk" still answers 403. Private **preps'**
+metadata and membership are tracked separately (TKT-105).
 
 
 
@@ -1282,7 +1324,7 @@ overlap preview with no warning surfaced
 ## TKT-045: `barnacle_backend_env.sh` Leaks Secrets Into Unpruned `.env.bak` Files
 
 **Severity:** High
-**Status:** Open
+**Status:** Open (narrowed 2026-10-12) — the Fernet/PAT parts are obsolete: no qiita-miint token is stored (the qiita-miint login checks it once with `whoami` and drops it). Still open: the script's full-file backups, and existing `.env.bak.*` files that hold the LLM keys
 
 ### Description
 
@@ -1301,6 +1343,14 @@ file plus any one `.env.bak.*` has both halves.
 
 Note: `Qiita/barnacle_backend_env.sh` is tracked in git but currently **deleted from the working
 tree** ( `D` in `git status`). Read it with `git show HEAD:Qiita/barnacle_backend_env.sh`.
+
+**Update (2026-10-12):** there is no PAT ciphertext and no Fernet key to protect: the qiita-miint
+login (now beside classic-Qiita login) checks a token once with `whoami` and never stores it. The
+key-rotation bullet below is obsolete. The variables the script pins (`QIITA_CONTROL_PLANE_URL`,
+`QIITA_PUBLIC_LOGIN_URL`, and deleting `QIITA_LOGINROCKET_URL`) are live again for that login, so
+the script still has a job; its full-file backups are the problem. What remains: stop the
+full-file backups before the script is run again, and prune the `.env.bak.*` files already on
+barnacle (they hold `API_KEY` / `OPENAI_API_KEY`, possibly `ANTHROPIC_API_KEY`).
 
 Found 2026-07-18 while documenting operations.
 
@@ -1366,6 +1416,11 @@ OIDC round-trip, similar to what `tests/test_auth.py` does for unit tests) or pe
 - Once re-armed, re-run the e2e suite once to confirm it actually exercises real assertions again,
 not just green-via-skip.
 
+**Update (2026-10-12):** the e2e tier no longer needs a test PAT. It logs in once
+through classic-Qiita `POST /api/auth/login` as `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD`
+(`tests/e2e/auth_client.py :: AuthedClient`), and `run_tests.sh` / `run_full_suite.sh` preflight
+against the public `/api/auth/me`. The benchmark scripts are still unauthenticated.
+
 
 
 ### Files
@@ -1391,7 +1446,7 @@ not just green-via-skip.
 ## TKT-047: Unit Tests Fail Unless `QIITA_EXPLORE_ALLOWED_ORIGINS` Is Manually Cleared
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Resolved (2026-10-12) — `tests/auth_helpers.py :: configure` pins `ALLOWED_ORIGINS = []`, `PUBLIC_ORIGIN`, the cookie settings and `CLIENT_IP_HEADER` on each freshly imported app, and every route test logs in with a matching `Origin`. The master-era PAT/whoami test classes named below no longer exist; the restored qiita-miint connect is tested in `tests/test_miint_connect.py`, which uses the same `configure`
 
 ### Description
 
@@ -1478,7 +1533,9 @@ silently.
 `store/db.py:31` `_resolve_user` maps an empty `user_id` to the literal `"default"` — the
 legacy pre-auth bucket. It is **not** currently a live second identity path: default-deny
 (`helpers/auth_middleware.py:107`) guarantees `g.user_id` is a real principal on every
-route, and `store/legacy_claim.py:12` addresses the legacy rows by their own literal.
+route, and `store/legacy_claim.py:12` addresses the legacy rows by their own literal. (Update
+2026-10-12: `store/legacy_claim.py` and the claim routes were removed;
+rows still owned by `"default"` are now unreachable.)
 
 But it converts "identity was lost" from a crash into a silent write into another tenant's
 bucket, and `store/merge_crud.py` doesn't call it at all — so the store runs two ownership
@@ -1620,7 +1677,7 @@ resolution only where a real entity exists.
 ## TKT-054: Split `test_auth.py` (over 500-line cap)
 
 **Severity:** Low
-**Status:** Open
+**Status:** Resolved (2026-10-12) — rewritten for the two logins and split: `test_auth.py` (about 525 lines, under the current 750 cap), `test_login_limiter.py`, `test_users_migration.py`, `test_artifact_access.py`, `test_miint_connect.py`. The periodic-reverify class named below is obsolete (it re-verified stored PATs); the classic-Qiita re-check is `test_auth.py :: TestRecheck`
 
 ### Description
 
@@ -1726,7 +1783,7 @@ the *existing* convention, not correcting it.
 ## TKT-056: `purge_expired_sessions()` Is Never Called — `auth_sessions` Grows Unboundedly
 
 **Severity:** Medium
-**Status:** Open
+**Status:** Partially resolved (2026-10-12) — runs on every successful login and also deletes revoked rows older than 7 days; nothing runs it when nobody logs in
 
 ### Description
 
@@ -1741,6 +1798,11 @@ in the app — no route, no cron, no startup hook. Expired session rows accumula
 Call `purge_expired_sessions()` opportunistically inside `create_session()` (garbage-collect
 expired rows on every new login) — no new infra/cron needed, low risk since login is
 infrequent per user.
+
+**Done (2026-10-12):** `routes/auth_routes.py :: api_auth_login` calls it on every successful
+login, and `store/auth_store.py :: purge_expired_sessions` now also deletes revoked rows whose
+`revoked_at` is more than 7 days old (kept that long for audit). Remaining: a quiet deployment
+purges nothing until someone logs in; a periodic sweep would close that if it ever matters.
 
 ### Files
 
@@ -3142,3 +3204,199 @@ one extra summarization call.
 
 - `qiita_explore/backend/helpers/chat_history.py` (`_history_budget_chars`)
 - `qiita_explore/backend/helpers/context_usage.py`, `config.py` (`CHARS_PER_TOKEN`)
+
+---
+
+## TKT-100: QiitaExplore Reads Every bcrypt Hash in `qiita.qiita_user`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Since the classic-Qiita login (2026-10-12), `helpers/qiita_accounts.py :: fetch_account` reads
+`qiita.qiita_user.password` (the bcrypt hash) for every login and every 5-minute session
+re-check, and compares it in Python. To do that, QiitaExplore's read-only Postgres role
+(`d4sharma`, credentials in `QIITA_CONFIG_FP` on barnacle) can `SELECT` the whole table — every
+account's hash, admins included. Anyone who obtains those credentials, or code running as the
+backend, can copy all hashes and crack them offline. The role had that access before; now it is
+exercised routinely.
+
+### Plan
+
+- Ask the Qiita DB admins for a `SECURITY DEFINER` function, e.g.
+  `qiita.verify_login(email text, password text)`, owned by a role that can read `qiita_user`,
+  returning only what QiitaExplore needs: whether the password matches, the canonical email,
+  `user_level_id` / level name, and a fingerprint that changes when the password changes (for the
+  re-check in `helpers/auth_middleware.py :: _still_valid`, e.g. `sha256(password)`).
+  Then revoke QiitaExplore's `SELECT` on `qiita_user.password` (column-level) and grant
+  `EXECUTE` on the function.
+- Before relying on it, confirm `pgcrypto`'s `crypt()` matches classic Qiita's check for its
+  `$2b$` hashes, including the 72-byte truncation (`qiita_db/util.py :: hash_password`).
+- The password would then reach Postgres: make sure the server doesn't log statement
+  parameters (`log_statement`, `log_min_duration_statement` with parameters) for that call.
+- Keep QiitaExplore's own limits; the function moves the hash, not the guessing problem.
+
+### Files
+
+- `qiita_explore/backend/helpers/qiita_accounts.py` (`_ACCOUNT_SQL`, `fetch_account`, `check_password`, `password_fingerprint`)
+- `qiita_explore/backend/helpers/auth_middleware.py` (`_still_valid`)
+- `docs/02-authentication.md` § "Threat model, stated plainly"
+
+---
+
+## TKT-101: Upstream (Classic Qiita): Password Grant Tokens for Unverified Accounts; `/qiita_db/user/<id>/data/` Returns Password Hashes
+
+**Severity:** Upstream — informational for QiitaExplore (it uses neither); possibly serious for classic Qiita, see below
+**Status:** Open — to report to the Qiita maintainers
+
+### Description
+
+Found 2026-10-12 while designing the classic-Qiita login, and checked against a local checkout
+of classic Qiita (`~/Documents/GitHub/qiita`, `2ba8180b`, 2026-02-11). Not verified against the
+deployed qiita.ucsd.edu.
+
+1. **OAuth2 password grant.** `qiita_db/handlers/oauth2.py :: validate_resource_owner`
+   (`:281-321`) calls `qdb.user.User.login` and treats only the exceptions it catches as
+   failure. But `User.login` (`qiita_db/user.py:108`) **returns `False`** for `user_level_id`
+   5 (unverified) — and does so *before* checking the password (`:150-152`). So for an
+   unverified account, the grant issues a token for any well-formed password, provided the
+   `client_id` is one registered for the password grant (`client_secret IS NULL`). The web
+   login handler checks the return value; the grant doesn't.
+2. **Password hashes over the API.** `qiita_db/handlers/user.py :: UserInfoDBHandler.get`
+   (route `/qiita_db/user/(.*)/data/`, `qiita_pet/webserver.py:238`) returns
+   `"password": user.password` — the bcrypt hash — to any caller with a valid OAuth token
+   (`authenticate_oauth` checks only that the token exists).
+
+Together, if both endpoints are reachable, an unverified account could obtain a token and read
+any user's hash. QiitaExplore uses neither endpoint (it reads `qiita.qiita_user` directly, and
+refuses unverified accounts after the password check).
+
+### Plan
+
+- Report both to the classic-Qiita maintainers: `validate_resource_owner` should treat a falsy
+  `User.login` result as failure; `UserInfoDBHandler` should not return the hash (or should be
+  restricted to admin clients).
+- Nothing to change in QiitaExplore.
+
+### Files
+
+- Upstream: `qiita_db/handlers/oauth2.py`, `qiita_db/user.py`, `qiita_db/handlers/user.py`, `qiita_pet/webserver.py`
+- `docs/02-authentication.md` § "Threat model, stated plainly"
+
+---
+
+## TKT-102: Per-User Anthropic API Keys (Follow-up to TKT-042)
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+TKT-042 was closed by removing `POST /api/settings`: the Claude models now run on one key set on
+the server (`ANTHROPIC_API_KEY`, or a key already in `meta.anthropic_api_key`), billed for every
+user, and users can't bring their own. Dhruv (2026-10-12): "remove anthropic key for now from
+the frontend — will deal with it later."
+
+### Plan
+
+- A `user_settings(user_id, key, value)` table (PK `(user_id, key)`), as TKT-042 originally
+  planned; `get_setting` / a new setter take a required `user_id`.
+- Encrypt the stored key at rest, or at minimum never return it; only report `key_set`.
+- Thread `g.user_id` into `config.py :: get_client` for Anthropic models; decide whether the
+  server key stays as a fallback (and who pays for it).
+- Restore a key prompt in `ModelPickerCard`, scoped to the user.
+- Tests: user A's key is invisible to B; B setting one doesn't disturb A's; a stale shared
+  `meta.anthropic_api_key` no longer wins.
+
+### Files
+
+- `qiita_explore/backend/routes/study_routes.py` (`api_get_settings`)
+- `qiita_explore/backend/store/crud.py` (`get_setting`), `store/db.py`
+- `qiita_explore/backend/config.py` (`get_client`)
+- `qiita_explore/frontend/js/components.js` (`ModelPickerCard`), `app_state.js`
+
+---
+
+## TKT-103: Main Qiita Pool Has No `statement_timeout`
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+`helpers/pg_pool.py :: get_pool` got `connect_timeout=5` and TCP keepalives on 2026-10-12, so a
+silent Postgres can no longer pin request threads on connect. It still has no
+`statement_timeout`: a slow query holds its request thread (one of 8 per deployment) for as long
+as Postgres takes. Login's own account pool has a 5 s timeout and a circuit breaker, but login
+shares request threads with everything else.
+
+### Plan
+
+- Measure the slowest legitimate queries on the shared pool first (study detail, full sample
+  metadata for large studies like AGP, browse search with filters) — `[timing]` / `[sql]` log
+  lines, or `pg_stat_statements` if the DB admins can share it.
+- Then set a value comfortably above them via `options="-c statement_timeout=…"` on the pool,
+  and make sure callers turn the resulting `QueryCanceled` into an error rather than empty data
+  (`qiita_fetch :: _qiita_fetch` swallows exceptions today).
+
+### Files
+
+- `qiita_explore/backend/helpers/pg_pool.py` (`get_pool`)
+- `qiita_explore/backend/helpers/qiita_fetch.py` (`_qiita_fetch`)
+
+---
+
+## TKT-104: No Per-User Quotas on the Shared LLMs and the Merge Executor
+
+**Severity:** Medium
+**Status:** Open
+
+### Description
+
+Since 2026-10-12 every verified classic-Qiita account can log in, and anyone can create and
+verify one. Every signed-in user can drive the shared LLMs (NRP-Nautilus, and the Anthropic key
+when configured) through the chat stream endpoints, and submit merge jobs that run in-process on
+barnacle (`helpers/merge_executor.py`, `_bg_executor`). Nothing limits how much one user does:
+no per-user request or token budget, no cap on concurrent streams or queued merge jobs. One user
+can run up the Anthropic bill or occupy the 8 request threads.
+
+### Plan
+
+- Per-user limits on chat turns (per hour/day) and concurrent streams, checked in the two
+  stream routes before the agent loop starts; a clear 429 message in the chat.
+- Per-user cap on pending/running merge jobs.
+- Optionally an allowlist of user levels for the Anthropic models.
+- Log per-user usage so limits can be set from data.
+
+### Files
+
+- `qiita_explore/backend/routes/chat_routes.py`, `routes/global_chat_routes.py`
+- `qiita_explore/backend/routes/merge_routes.py` (`submit_merge_job`), `helpers/merge_executor.py`
+
+---
+
+## TKT-105: Private Preps' Metadata and Sample Membership Still Visible
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+TKT-043 limited artifact files, sample lists from BIOMs, and FASTQ/aggregation paths to public
+artifacts. Prep-level data is not filtered the same way: for a public study,
+`GET /api/studies/<id>/sample-preps`, `GET /api/studies/<id>/preps/<prep_id>/samples` and the
+`preps` list in `GET /api/studies/<id>/detail` still show the metadata and sample membership of
+preps whose artifacts are all non-public. No files or paths are exposed.
+
+### Plan
+
+- Decide what "private prep" means for QiitaExplore (e.g. a prep with no public artifact) and
+  filter those preps out of the three responses, reading visibility live as
+  `qiita_fetch.py :: public_artifact_ids` does.
+- Tests alongside `tests/test_artifact_access.py`.
+
+### Files
+
+- `qiita_explore/backend/routes/study_routes.py` (`/sample-preps`, `/preps/<prep_id>/samples`)
+- `qiita_explore/backend/helpers/study_samples.py`, `helpers/study_detail.py`

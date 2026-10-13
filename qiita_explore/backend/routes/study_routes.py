@@ -6,7 +6,7 @@ from flask import jsonify, request
 
 from run import app
 from config import (
-    ALLOWED_MODELS, GLOBAL_SEARCH_SQL_LIMIT_BROAD, MODEL_METADATA,
+    ALLOWED_MODELS, ANTHROPIC_API_KEY, GLOBAL_SEARCH_SQL_LIMIT_BROAD, MODEL_METADATA,
     SAMPLE_SEARCH_DEEP_CANDIDATES, get_client,
 )
 from services.llm import browse_query_to_sql
@@ -17,7 +17,7 @@ from services.browse_filters import (
 from services.study_service import search_studies_with_sql, expand_keyword_variants
 from services.relevance import build_pi_required_filter, finalize_search_results
 from helpers.sample_search import search_studies_by_sample_meta
-from store.crud import get_setting, set_setting
+from store.crud import get_setting
 from helpers import study_detail
 from helpers.study_samples import fetch_prep_samples, fetch_sample_fields, prep_groups
 from helpers.qiita_fetch import first_studies, is_study_public
@@ -239,19 +239,12 @@ def api_systems():
     return jsonify([{"name": k, **v} for k, v in ordered])
 
 
+# Read-only: the shared Anthropic key is set in the server's .env (or an older
+# key already stored), never from the browser — any user could replace it (TKT-042).
 @app.route('/api/settings', methods=['GET'])
 def api_get_settings():
-    key = get_setting('anthropic_api_key') or ''
+    key = get_setting('anthropic_api_key') or ANTHROPIC_API_KEY
     return jsonify({"anthropic_key_set": bool(key)})
-
-
-@app.route('/api/settings', methods=['POST'])
-def api_post_settings():
-    data = request.get_json(force=True) or {}
-    raw = (data.get('anthropic_api_key') or '').strip()
-    if raw:
-        set_setting('anthropic_api_key', raw)
-    return jsonify({"ok": True})
 
 
 @app.route('/api/studies/first', methods=['GET'])

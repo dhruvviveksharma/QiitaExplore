@@ -15,14 +15,14 @@
 #   bash qiita_explore/run_full_suite.sh --model NAME  # run LLM-touching turns against a specific model
 #
 # Required env:
-#   QIITA_TEST_PAT     — a valid Qiita personal access token; the suite logs
-#                        in as this account (POST /api/auth/connect) and runs
-#                        every journey as it.
+#   QIITA_TEST_EMAIL / QIITA_TEST_PASSWORD — a verified classic-Qiita account;
+#                        the suite logs in as it (POST /api/auth/login) and runs
+#                        every journey as it. Use a test account, not your own.
 # Optional env:
 #   BARNACLE_URL       — backend base URL (default: http://localhost:5001)
-#   QIITA_TEST_ORIGIN  — Origin header sent to /api/auth/connect, must match
-#                        the backend's QIITA_EXPLORE_ALLOWED_ORIGINS if set
-#                        (default: http://localhost:5503)
+#   QIITA_TEST_ORIGIN  — Origin header sent to /api/auth/login; must equal the
+#                        backend's QIITA_EXPLORE_PUBLIC_ORIGIN or one of its
+#                        QIITA_EXPLORE_ALLOWED_ORIGINS (default: http://localhost:5503)
 #   OPENAI_API_KEY / API_KEY — needed for the llm_judge helper; without one,
 #                        judge assertions silently pass (see parity_helpers.py)
 
@@ -84,11 +84,11 @@ echo "════════════════════════�
 echo ""
 echo "── Preflight ──"
 
-[[ -n "${QIITA_TEST_PAT:-}" ]] || die "QIITA_TEST_PAT is not set — export a Qiita personal access token for the account this suite should run as."
+[[ -n "${QIITA_TEST_EMAIL:-}" && -n "${QIITA_TEST_PASSWORD:-}" ]] || die "QIITA_TEST_EMAIL / QIITA_TEST_PASSWORD are not set — export the classic-Qiita account this suite should run as."
 
-# /api/auth/login-url is one of only 3 endpoints exempt from the session
-# requirement (helpers/auth_middleware.py:32-36) — a cheap up/down probe.
-if ! curl -sf "$BARNACLE_URL/api/auth/login-url" -o /dev/null --max-time 5; then
+# /api/auth/me is one of only 2 endpoints exempt from the session
+# requirement (helpers/auth_middleware.py PUBLIC_ENDPOINTS) — a cheap up/down probe.
+if ! curl -sf "$BARNACLE_URL/api/auth/me" -o /dev/null --max-time 5; then
     die "Backend not reachable at $BARNACLE_URL. Start it with: bash qiita_explore/start_barnacle.sh"
 fi
 pass "Backend is up"
@@ -105,8 +105,8 @@ except AuthError as exc:
     print(f"AUTH FAILED: {exc}", file=sys.stderr)
     sys.exit(1)
 PYEOF
-[[ "$AUTH_CHECK_RC" -eq 0 ]] || die "Could not authenticate with QIITA_TEST_PAT — check the token is valid and QIITA_TEST_ORIGIN matches the backend's allowlist."
-pass "Authenticated with QIITA_TEST_PAT"
+[[ "$AUTH_CHECK_RC" -eq 0 ]] || die "Could not log in as QIITA_TEST_EMAIL — check the account and password, and that QIITA_TEST_ORIGIN is one of the backend's allowed origins."
+pass "Logged in as QIITA_TEST_EMAIL"
 
 if [[ -z "${OPENAI_API_KEY:-}" && -z "${API_KEY:-}" ]]; then
     warn "No OPENAI_API_KEY/API_KEY set — llm_judge() silently PASSES every judge assertion (parity_helpers.py)."

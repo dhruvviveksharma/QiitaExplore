@@ -24,7 +24,11 @@ python -m pytest tests/ -m "not e2e" -v
 | `test_studies.py` | Add/remove studies, deduplication |
 | `test_chats.py` | Chat CRUD, message persistence |
 | `test_api.py` | Schema integrity, foreign keys, cascade delete |
-| `test_auth.py` | PAT crypto, session lifecycle, CSRF, route auth |
+| `test_auth.py` | Classic-Qiita login (every check in order), `resolve_user` (one account per email, matched by email only; 409 for an email that moved between qiita-miint principals), sessions, the Qiita re-check, CSRF, cross-user isolation, TKT-042 |
+| `test_login_limiter.py` | Login delay / known device / per-client block; email and password rules; bcrypt check; circuit breaker |
+| `test_miint_connect.py` | qiita-miint login beside classic: the `whoami` client (httpx faked; circuit breaker, per-worker busy slot), `POST /api/auth/connect` (token shape, front checks, 401/503/502, email rule and padded emails, 409 for an email that moved to another principal, busy 503, failed connect keeps the session, token never stored), `GET /api/auth/login-url` (with and without LoginRocket), one account per email across both logins, `QIITA_EXPLORE_LOGIN_METHODS` switches (routes 404, sessions signed out, bad values and a missing / plain-HTTP `QIITA_CONTROL_PLANE_URL` failing at import), and which sessions are re-checked (classic) or not (`qiita-miint`, legacy `paste`) — a failed classic re-check ends the account's qiita-miint sessions too |
+| `test_users_migration.py` | The `users` migration to one account per email (`_migrate_users_to_email_v1`) from both earlier shapes, qiita-miint (production) and classic_v1: emails kept and normalized, a shared email kept by the classic-bound / latest-login row and the rest (and unusable emails) logged, sessions not revoked, both logins reaching migrated accounts; plus crash before `COMMIT`, two workers migrating once, a second boot changing nothing, and the pre-auth table still moved aside |
+| `test_artifact_access.py` | TKT-043: artifact files and samples only for public artifacts of public studies |
 | `test_pinned_context.py` | Pinned-study context builder (inline vs. manifest, budget) |
 | `test_agent_tool_call.py` | Agent tool-call dispatch |
 | `test_merge.py` | Merge workspace logic |
@@ -36,14 +40,20 @@ fixture) and stub `qiita_db`/`qiita_core` — no external dependencies. Fast
 ## E2E tests — overnight full suite
 
 Every non-auth endpoint requires a real session (`helpers/auth_middleware.py`
-is default-deny), so the e2e suite authenticates once via
-`POST /api/auth/connect` with a real Qiita personal access token and runs
-every journey as that user.
+is default-deny), so the e2e suite logs in once via `POST /api/auth/login` as a
+real classic-Qiita account and runs every journey as that user (it doesn't
+use the qiita-miint login). Use a test account: the password sits in your
+shell environment for the run. Route tests that need a session sign in
+through the real routes instead — `POST /api/auth/login` with the account
+table faked (`login()`), or `POST /api/auth/connect` with `whoami` faked
+(`connect()`, `fake_whoami()`, `token_for()`, `human()`, `post_connect()`) —
+all in `tests/auth_helpers.py`. `tests/conftest.py` sets a dummy `https://` `QIITA_CONTROL_PLANE_URL` so `config` imports with the qiita-miint login on; `whoami` itself is always faked.
 
 **Run it with the single overnight entrypoint, not pytest directly:**
 
 ```bash
-export QIITA_TEST_PAT=<a valid Qiita personal access token>
+export QIITA_TEST_EMAIL=<a verified classic-Qiita test account>
+read -rs QIITA_TEST_PASSWORD && export QIITA_TEST_PASSWORD   # not in shell history
 export OPENAI_API_KEY=<key>   # needed for llm_judge — see warning below
 bash qiita_explore/start_barnacle.sh &   # or confirm the systemd unit is up
 
@@ -58,9 +68,10 @@ Required/optional env vars:
 
 | Var | Required | Purpose |
 |-----|----------|---------|
-| `QIITA_TEST_PAT` | yes | Qiita PAT for the account the suite logs in and runs as |
+| `QIITA_TEST_EMAIL` / `QIITA_TEST_PASSWORD` | yes | classic-Qiita account the suite logs in and runs as |
 | `BARNACLE_URL` | no (default `http://localhost:5001`) | backend base URL |
-| `QIITA_TEST_ORIGIN` | no (default `http://localhost:5503`) | `Origin` header for `/api/auth/connect`; must match `QIITA_EXPLORE_ALLOWED_ORIGINS` if the backend sets it |
+| `QIITA_TEST_ORIGIN` | no (default `http://localhost:5503`) | `Origin` header for `/api/auth/login`; must equal the backend's `QIITA_EXPLORE_PUBLIC_ORIGIN` or one of `QIITA_EXPLORE_ALLOWED_ORIGINS` |
+| `QIITA_TEST_ALLOW_FAILED_LOGIN` | no | `1` runs the wrong-password e2e test — dev backend only, since failed attempts count toward the account's login delay |
 | `OPENAI_API_KEY` / `API_KEY` | no, but see below | used by the `llm_judge()` helper |
 
 **⚠ Without `OPENAI_API_KEY`/`API_KEY` set, `llm_judge()` silently returns
