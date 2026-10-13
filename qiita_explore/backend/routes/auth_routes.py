@@ -221,13 +221,13 @@ def api_auth_connect():
         return err
     token = data.get("token")
     if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token.strip()):
-        return jsonify({"error": "That isn't a qiita-miint access token (qk_…)."}), 401
+        return jsonify({"error": "That isn't a Qiita-Miint access token (qk_…)."}), 401
     try:
         result = whoami(token.strip())
     except qiita_client.Busy:
         return _busy()
     if result.transient_error:
-        return jsonify({"error": "qiita-miint is unreachable — try again shortly."}), 503
+        return jsonify({"error": "Qiita-Miint is unreachable — try again shortly."}), 503
     if not result.ok:
         return jsonify({"error": "invalid or unrecognized Qiita token"}), 401
     identity = result.identity
@@ -240,12 +240,12 @@ def api_auth_connect():
     raw_email = identity.get("email")
     email = accounts.normalize_email(raw_email)
     if email is None or raw_email != raw_email.strip():
-        return jsonify({"error": "This qiita-miint account's email can't be used to sign in here."}), 401
+        return jsonify({"error": "This Qiita-Miint account's email can't be used to sign in here."}), 401
     try:
         user_id = resolve_user(email, principal_idx=principal_idx)
     except PrincipalMismatch as exc:
         logger.warning("qiita-miint principal %s refused: account %s belongs to another principal", principal_idx, exc)
-        return jsonify({"error": "This email's QiitaExplore account belongs to a different qiita-miint account. "
+        return jsonify({"error": "This email's QiitaExplore account belongs to a different Qiita-Miint account. "
                                  "Sign in with classic Qiita instead."}), 409
     return _start_session(user_id, "qiita-miint")
 
