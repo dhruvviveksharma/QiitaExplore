@@ -113,10 +113,12 @@ function QiitaLogin({ qiitaUrl, onLoggedIn }) {
         placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
       <input type="password" name="password" autoComplete="current-password" className="auth-input"
         placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-      {error && <div className="auth-error" role="alert">{error}</div>}
-      <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !email.trim() || !password}>
-        {busy ? 'Signing in…' : 'Sign in'}
-      </button>
+      <div className="auth-submit-row">
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !email.trim() || !password}>
+          {busy ? 'Signing in…' : 'Sign in'}
+        </button>
+      </div>
       <div className="auth-links">
         <a href={`${qiita}/auth/forgot/`} target="_blank" rel="noopener noreferrer">Forgot password?</a>
         <a href={`${qiita}/auth/create/`} target="_blank" rel="noopener noreferrer">Create a Qiita account</a>
@@ -162,24 +164,26 @@ function MiintLogin({ onLoggedIn }) {
 
   return (
     <form className="auth-card" method="post" onSubmit={submit}>
-      <h2 className="auth-card-title">Log in with qiita-miint</h2>
+      <h2 className="auth-card-title">Log in with Qiita-Miint</h2>
       <ol className="auth-steps">
-        <li>Log in on qiita-miint (opens in a new tab).</li>
+        <li>Log in on Qiita-Miint (opens in a new tab).</li>
         <li>Copy the access token it shows you.</li>
         <li>Paste it here.</li>
       </ol>
       <a className={`auth-miint-link${loginUrl ? '' : ' disabled'}`} href={loginUrl || undefined}
         target="_blank" rel="noopener noreferrer" onClick={e => { if (!loginUrl) e.preventDefault(); }}>
-        Open qiita-miint login ↗
+        Open Qiita-Miint login ↗
       </a>
       {/* text, not password: a password manager would offer to save the token
           as this site's password, or fill the classic password in here */}
       <input type="text" name="qiita-token" autoComplete="off" spellCheck={false} className="auth-input"
         placeholder="Access token (qk_…)" value={token} onChange={e => setToken(e.target.value)} required />
-      {error && <div className="auth-error" role="alert">{error}</div>}
-      <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !token.trim()}>
-        {busy ? 'Signing in…' : 'Sign in'}
-      </button>
+      <div className="auth-submit-row">
+        {error && <div className="auth-error" role="alert">{error}</div>}
+        <button type="submit" className="merge-btn-primary auth-submit-btn" disabled={busy || !token.trim()}>
+          {busy ? 'Signing in…' : 'Sign in'}
+        </button>
+      </div>
     </form>
   );
 }
