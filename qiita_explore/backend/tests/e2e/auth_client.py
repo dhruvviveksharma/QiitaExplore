@@ -5,20 +5,40 @@ GET requires the `qe_sid` session cookie; POST/PUT/PATCH/DELETE additionally
 require a matching `X-CSRF-Token` header. This client logs in once via
 POST /api/auth/login with a real classic-Qiita account (QIITA_TEST_EMAIL /
 QIITA_TEST_PASSWORD) and carries the resulting cookie + CSRF token on every
-subsequent request. The password is only ever sent in that one request body.
+subsequent request. The password is only ever sent in that one request body,
+sealed to the backend's key the way the browser does it (helpers/login_crypto.py).
 """
+import base64
+import json
 import os
 
 import requests
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 class AuthError(RuntimeError):
     """Login or an authenticated call failed outright."""
 
 
+def seal(session, base_url, payload, timeout=30):
+    """The envelope the browser sends (frontend/js/auth.js sealForServer)."""
+    info = session.get(f"{base_url.rstrip('/')}/api/auth/login-key", timeout=timeout).json()
+    public = serialization.load_der_public_key(base64.b64decode(info["public_key"]))
+    aes_key, iv = AESGCM.generate_key(256), os.urandom(12)
+    plaintext = json.dumps(payload).ljust(1536).encode()          # padded, as the browser does
+    ciphertext = AESGCM(aes_key).encrypt(iv, plaintext, info["challenge"].encode())
+    wrapped = public.encrypt(aes_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(),
+                                                   label=None))
+    b64 = lambda raw: base64.b64encode(raw).decode()   # noqa: E731
+    return {"key_id": info["key_id"], "challenge": info["challenge"],
+            "wrapped_key": b64(wrapped), "iv": b64(iv), "ciphertext": b64(ciphertext)}
+
+
 def login_request(session, base_url, email, password, origin, timeout=30):
-    return session.post(f"{base_url.rstrip('/')}/api/auth/login",
-                        json={"email": email, "password": password},
+    envelope = seal(session, base_url, {"email": email, "password": password}, timeout)
+    return session.post(f"{base_url.rstrip('/')}/api/auth/login", json={"envelope": envelope},
                         headers={"Origin": origin}, timeout=timeout)
 
 

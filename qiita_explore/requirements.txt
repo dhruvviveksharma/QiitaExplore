@@ -25,5 +25,8 @@ bcrypt>=4.0,<5
 # qiita-miint login: whoami against the control plane (helpers/qiita_client.py)
 httpx>=0.25,<1.0
 
+# Sign-in secrets sealed in the browser (helpers/login_crypto.py): RSA-OAEP + AES-GCM
+cryptography>=41,<47
+
 # Production WSGI server
 gunicorn>=21.0,<22.0

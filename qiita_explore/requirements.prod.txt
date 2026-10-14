@@ -29,5 +29,8 @@ bcrypt==4.3.0
 # ── qiita-miint login: whoami (helpers/qiita_client.py) ─────────────────────
 httpx>=0.25,<1.0
 
+# ── Sealed sign-in (helpers/login_crypto.py); already in the env via paramiko ─
+cryptography>=41,<47
+
 # ── Production WSGI server ──────────────────────────────────────────────────
 gunicorn>=21.0,<22.0

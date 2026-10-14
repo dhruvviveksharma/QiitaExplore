@@ -181,6 +181,13 @@ CLIENT_IP_HEADER = os.getenv("QIITA_EXPLORE_CLIENT_IP_HEADER", "").strip()
 LIMITER_DB_PATH = os.getenv("QIITA_EXPLORE_LIMITER_DB", "") or os.path.join(
     tempfile.gettempdir(), f"qiita_explore-{os.getuid()}", "login_limiter.db")
 
+# The private key sign-in secrets are sealed to in the browser
+# (helpers/login_crypto.py): created on first use, mode 0600, in a folder only
+# this user can write. Keep it on a persistent path in production (the /tmp
+# default can be cleaned out; a lost key is simply replaced on next use).
+LOGIN_KEY_PATH = os.getenv("QIITA_EXPLORE_LOGIN_KEY", "") or os.path.join(
+    tempfile.gettempdir(), f"qiita_explore-{os.getuid()}", "login_key.pem")
+
 # Shared by both chat prompts: the study detail tools (helpers/study_tools.py),
 # each of which the user sees as an interactive widget.
 STUDY_TOOLS_PROMPT = """## Study detail tools (each one is shown to the user as an interactive widget)

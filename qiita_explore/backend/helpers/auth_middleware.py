@@ -31,6 +31,7 @@ PUBLIC_ENDPOINTS = {
     "api_auth_login",
     "api_auth_connect",
     "api_auth_login_url",
+    "api_auth_login_key",
     "api_auth_me",
 }
 

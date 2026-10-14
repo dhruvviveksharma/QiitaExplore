@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS attempts (
     count         INTEGER NOT NULL,
     blocked_until REAL NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS used_challenges (
+    challenge_hash TEXT PRIMARY KEY,
+    expires        REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS devices (
     token_hash TEXT PRIMARY KEY,
     email_key  TEXT NOT NULL,
@@ -204,11 +208,44 @@ def succeeded(email: str, device_token, client_ip, via_device: bool):
         conn.close()
 
 
+# A used challenge is remembered this long past its expiry, so pruning can never
+# race a late replay of it (and small backward clock steps don't matter).
+_USED_CHALLENGE_MARGIN_SECONDS = 300
+
+
+def consume_challenge(challenge: str, expires: float) -> str:
+    """Mark a sign-in challenge used (helpers/login_crypto.py): "ok", "used" (a
+    replayed request) or "expired". Decided under the write lock with one clock
+    reading, so a replay sent just before expiry can't slip in after its row
+    was pruned. Raises LimiterUnavailable."""
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            now = time.time()
+            if expires < now:
+                conn.execute("COMMIT")
+                return "expired"
+            conn.execute("DELETE FROM used_challenges WHERE expires < ?", (now - _USED_CHALLENGE_MARGIN_SECONDS,))
+            cur = conn.execute("INSERT OR IGNORE INTO used_challenges(challenge_hash, expires) VALUES(?, ?)",
+                               (_h(challenge), expires))
+            conn.execute("COMMIT")
+            return "ok" if cur.rowcount == 1 else "used"
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    except sqlite3.Error as exc:
+        raise LimiterUnavailable(str(exc)) from exc
+    finally:
+        conn.close()
+
+
 def reset_for_tests():
-    """Empty both tables (tests share one limiter file per run)."""
+    """Empty its tables (tests share one limiter file per run)."""
     conn = _connect()
     try:
         conn.execute("DELETE FROM attempts")
         conn.execute("DELETE FROM devices")
+        conn.execute("DELETE FROM used_challenges")
     finally:
         conn.close()

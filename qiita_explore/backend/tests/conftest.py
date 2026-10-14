@@ -2,6 +2,7 @@
 import os
 import pytest
 import sys
+import tempfile
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
@@ -10,6 +11,10 @@ sys.path.insert(0, str(backend_dir))
 # qiita-miint login is on by default, and config refuses to start without an
 # explicit control-plane URL then; whoami itself is always faked in tests.
 os.environ.setdefault("QIITA_CONTROL_PLANE_URL", "https://control-plane.test")
+# One sign-in sealing key per test session (helpers/login_crypto.py): an RSA-3072
+# key per test would be slow. mkdtemp's folder is private (0700), as required.
+os.environ.setdefault("QIITA_EXPLORE_LOGIN_KEY",
+                      os.path.join(tempfile.mkdtemp(prefix="qe-test-login-key-"), "login_key.pem"))
 
 _FAKE_QIITA_DB_STUBBED = False
 

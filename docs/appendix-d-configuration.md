@@ -53,6 +53,7 @@ Both provider clients are constructed with a **300-second timeout**, hardcoded i
 <a id="env-QIITA_EXPLORE_PUBLIC_ORIGIN"></a>
 <a id="env-QIITA_EXPLORE_ALLOWED_ORIGINS"></a>
 <a id="env-QIITA_EXPLORE_CLIENT_IP_HEADER"></a>
+<a id="env-QIITA_EXPLORE_LOGIN_KEY"></a>
 <a id="env-QIITA_EXPLORE_LIMITER_DB"></a>
 <a id="env-QIITA_EXPLORE_LOGIN_METHODS"></a>
 
@@ -66,6 +67,7 @@ Both logins — classic-Qiita email + password, and a qiita-miint `qk_` token �
 | `QIITA_EXPLORE_PUBLIC_ORIGIN` | `""` | `backend/routes/auth_routes.py :: _origin_error` | The exact origin (`scheme://host[:port]`, trailing `/` stripped) browsers load QiitaExplore from in production, e.g. `https://qiita-explore.knight-lab-dev.org`. `POST /api/auth/login` and `POST /api/auth/connect` require their `Origin` header to equal this or an entry of `QIITA_EXPLORE_ALLOWED_ORIGINS`; with neither set, both answer **503** "Login is not configured on this server." | Yes |
 | `QIITA_EXPLORE_ALLOWED_ORIGINS` | `""` → empty list | `backend/run.py` (Flask-CORS), `backend/routes/auth_routes.py` | Comma-separated **exact** origins allowed to make credentialed cross-origin requests, and accepted as login and connect `Origin`s — for dev, where the page and the API are on different ports. Each entry must be a literal origin (`https?://host[:port]`); anything else raises `ValueError` at import, because Flask-CORS would treat regex characters as a pattern. Empty means no CORS, which is correct for a same-origin deployment. | Yes |
 | `QIITA_EXPLORE_CLIENT_IP_HEADER` | `""` → no per-client limit | `backend/routes/auth_routes.py :: _client_ip` | The request header carrying the real client IP — its **last** comma-separated entry, the one the trusted proxy wrote, parsed as an IP — used for the per-client login block (30 failed attempts / 15 min → 15-min block). Set it **only** once the proxy chain guarantees the header can't be forged — see traps. | Yes |
+| `QIITA_EXPLORE_LOGIN_KEY` | *computed* — `<tempfile.gettempdir()>/qiita_explore-<uid>/login_key.pem` | `backend/config.py` (`LOGIN_KEY_PATH`), `backend/helpers/login_crypto.py` | The RSA-3072 private key sign-in secrets are sealed to in the browser. Created on first use (by `start_barnacle.sh` before the workers start), mode `0600`, in a folder that must be owned by the backend's user and not group- or world-writable. Unusable → sign-in answers 503. Keep it on a persistent local path: a cleaned-out temp file is just replaced, but every open sign-in page then retries once. Rotate by deleting it and restarting. | Yes |
 | `QIITA_EXPLORE_LIMITER_DB` | *computed* — `<tempfile.gettempdir()>/qiita_explore-<uid>/login_limiter.db` | `backend/config.py`, `backend/helpers/login_limiter.py` | The login limiter's own SQLite file (attempt counters, known devices). Put it on local disk, not `/ddn_scratch`. The file and its folder must be owned by the backend's user and not group- or world-writable (the folder is created `0700`, the file set `0600`). If it can't be used, login answers 503. | Yes |
 
 The cookie names are not configurable; they are `SESSION_COOKIE_NAME` / `DEVICE_COOKIE_NAME` in `backend/config.py`, derived from `QIITA_EXPLORE_COOKIE_SECURE`.
@@ -178,6 +180,7 @@ The smallest file that produces a backend which boots, queries, authenticates, a
 API_KEY=<nrp-nautilus-key>
 QIITA_EXPLORE_PUBLIC_ORIGIN=https://<the origin browsers load QiitaExplore from>
 QIITA_EXPLORE_LIMITER_DB=/local/disk/path/qiita_explore_login_limiter.db
+QIITA_EXPLORE_LOGIN_KEY=/local/disk/path/qiita_explore_login_key.pem
 QIITA_CONTROL_PLANE_URL=https://<qiita-miint control plane, as the backend reaches it>
 QIITA_PUBLIC_LOGIN_URL=https://<qiita-miint, as the browser reaches it>
 QIITA_BASE_DATA_DIR=/path/to/qiita/data
@@ -215,6 +218,7 @@ The `.env` at `qiita_explore/.env` is gitignored (never committed); each deploym
 | [`QIITA_EXPLORE_ALLOWED_ORIGINS`](#env-QIITA_EXPLORE_ALLOWED_ORIGINS) | Auth | `""` |
 | [`QIITA_EXPLORE_CLIENT_IP_HEADER`](#env-QIITA_EXPLORE_CLIENT_IP_HEADER) | Auth | `""` |
 | [`QIITA_EXPLORE_COOKIE_SECURE`](#env-QIITA_EXPLORE_COOKIE_SECURE) | Auth | `true` |
+| [`QIITA_EXPLORE_LOGIN_KEY`](#env-QIITA_EXPLORE_LOGIN_KEY) | Auth | computed (temp dir) |
 | [`QIITA_EXPLORE_LIMITER_DB`](#env-QIITA_EXPLORE_LIMITER_DB) | Auth | computed (temp dir) |
 | [`QIITA_EXPLORE_LOGIN_METHODS`](#env-QIITA_EXPLORE_LOGIN_METHODS) | Auth | `classic,miint` |
 | [`QIITA_EXPLORE_PUBLIC_ORIGIN`](#env-QIITA_EXPLORE_PUBLIC_ORIGIN) | Auth | `""` |

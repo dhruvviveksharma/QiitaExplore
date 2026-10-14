@@ -23,11 +23,12 @@ Two `before_request` hooks are registered together by `backend/helpers/auth_midd
 1. `_load_session` — reads the session cookie (`__Host-qe_sid`, or `qe_sid` when `QIITA_EXPLORE_COOKIE_SECURE` is off), resolves it to a session row, and sets `g.user_id` / `g.session_row`. On a classic-Qiita session it re-reads the classic-Qiita account every 5 minutes and, if the password changed or the account is gone or unverified, revokes every session of that account (qiita-miint ones included); a qiita-miint session is not re-checked itself. A session whose login method is switched off is revoked (signed out for good) — see [Login-time failures and the Qiita re-check](#login-time-failures-and-the-qiita-re-check).
 2. `_require_auth` — default-deny. Any endpoint not in the public set gets **401** when `g.user_id` is `None`.
 
-**Exactly four endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
+**Exactly five endpoints are public**, matched by **exact Flask endpoint name** — never by path prefix. From `backend/helpers/auth_middleware.py :: PUBLIC_ENDPOINTS`:
 
 - `api_auth_login`
 - `api_auth_connect`
 - `api_auth_login_url`
+- `api_auth_login_key`
 - `api_auth_me`
 
 A login method switched off by `QIITA_EXPLORE_LOGIN_METHODS` keeps its endpoints in this set; their handlers answer **404** (`classic`: `api_auth_login`; `miint`: `api_auth_connect`, `api_auth_login_url`), and that method's existing sessions are revoked on their next request.
@@ -86,6 +87,7 @@ Validation failures (bad `report_study_id`, missing `message`, unknown chat) are
 | Method | Path | Flask endpoint | Auth | Purpose |
 |---|---|---|---|---|
 | POST | `/api/auth/login` | `api_auth_login` | public | Classic-Qiita email + password → session cookie |
+| GET | `/api/auth/login-key` | `api_auth_login_key` | public | Public key + one-time challenge the sign-in forms seal to |
 | GET | `/api/auth/login-url` | `api_auth_login_url` | public | The qiita-miint login page that issues a `qk_` token |
 | POST | `/api/auth/connect` | `api_auth_connect` | public | qiita-miint `qk_` token → session cookie |
 | GET | `/api/auth/me` | `api_auth_me` | public | Current identity, or `{anonymous: true}`; both carry `qiita_url` and `login_methods` |
@@ -201,6 +203,17 @@ Every artifact route serves **public artifacts of public studies only** (TKT-043
 
 ## Auth
 
+### api_auth_login_key
+
+`GET /api/auth/login-key` — public, `Cache-Control: no-store`.
+
+```json
+{ "key_id": "3f9c…", "public_key": "<base64 SPKI, RSA-3072>", "alg": "RSA-OAEP-256+A256GCM",
+  "challenge": "<expiry+random, signed>", "expires_in": 120 }
+```
+
+The key login and connect secrets are sealed to, with a fresh challenge (stateless: nothing is written). Each challenge works once, for 120 s. Key file unusable → **503** `{"error": "Sign-in is unavailable right now — try again shortly."}`. (`backend/routes/auth_routes.py :: api_auth_login_key`, `backend/helpers/login_crypto.py`)
+
 ### api_auth_login
 
 `POST /api/auth/login` — public.
@@ -210,8 +223,10 @@ Signs in with a classic-Qiita email and password, checked against `qiita.qiita_u
 Request (`Content-Type: application/json`, with an `Origin` header):
 
 ```json
-{ "email": "someone@ucsd.edu", "password": "<their classic-Qiita password>" }
+{ "envelope": { "key_id": "…", "challenge": "…", "wrapped_key": "<b64>", "iv": "<b64>", "ciphertext": "<b64>" } }
 ```
+
+The envelope seals `{"email": …, "password": …}`. The secret travels sealed: the browser encrypts the payload to the backend's key from [`api_auth_login_key`](#api_auth_login_key) and sends only the envelope ([`02-authentication.md`](02-authentication.md#secrets-sealed-in-the-browser)).
 
 Behavior, in order — the first failing check answers:
 
@@ -219,6 +234,7 @@ Behavior, in order — the first failing check answers:
 2. **JSON only.** Not `application/json` → **415** `{"error": "JSON body required"}`.
 3. **Origin.** `Origin` must equal `config.PUBLIC_ORIGIN` (`QIITA_EXPLORE_PUBLIC_ORIGIN`) or one entry of `config.ALLOWED_ORIGINS`, else **403** `{"error": "origin not allowed"}`. A `Sec-Fetch-Site` header, when sent, must be `same-origin` — or `same-site` for a dev origin from `ALLOWED_ORIGINS` only (else the same 403). With neither setting configured → **503** `{"error": "Login is not configured on this server."}`.
 4. **Bounded read.** The body is read with a hard limit of 8 KB + 1 bytes, so a chunked body (no `Content-Length` for step 1) that runs over → **413**. Not a JSON object → **415**.
+4b. **Sealed secret.** A plain `password` field → **400** `{"error": "This sign-in page is out of date — reload it."}`. Challenge expired, or sealed to an older key → **409** `{"error": "The sign-in form expired — try again.", "expired": true}`. Malformed, tampered with or replayed → **400**. This worker already decrypting for 0.5 s → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`. Key or single-use record unusable → **503**. Not counted toward any limit.
 5. **Format.** An email that can't be a Qiita email (over 254 characters, non-ASCII, not exactly one `@`, whitespace or control characters inside) or a password outside Qiita's rule (8–1024 characters, ASCII, no space or backslash) → **401** `{"error": "Incorrect email or password."}`. Not counted toward any limit.
 6. **Limits** (`helpers/login_limiter.py`): a blocked email or client → **429** `{"error": "Too many attempts — try again in N minutes.", "retry_after": <seconds>}` with a `Retry-After` header. A valid known-device cookie for this account skips both (up to 10 attempts in a row without a success). Limiter storage unusable → **503**.
 7. **Account and password.** Unknown email or wrong password → **401** with the same text as step 5 (an unknown email still costs one bcrypt check). Qiita's database unreachable or circuit open → **503** `{"error": "Qiita's user database is unreachable — try again shortly."}`. This worker already busy with a bcrypt check → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`.
@@ -250,12 +266,14 @@ Signs in with a qiita-miint access token, checked once with qiita-miint's `whoam
 Request (`Content-Type: application/json`, with an `Origin` header):
 
 ```json
-{ "token": "qk_…" }
+{ "envelope": { "key_id": "…", "challenge": "…", "wrapped_key": "<b64>", "iv": "<b64>", "ciphertext": "<b64>" } }
 ```
+
+The envelope seals `{"token": "qk_…"}`. The secret travels sealed: the browser encrypts the payload to the backend's key from [`api_auth_login_key`](#api_auth_login_key) and sends only the envelope ([`02-authentication.md`](02-authentication.md#secrets-sealed-in-the-browser)).
 
 Behavior, in order — the first failing check answers:
 
-1–4. **The same front checks as `api_auth_login`** (same code): body over 8 KB → **413**; not JSON → **415**; `Origin` / `Sec-Fetch-Site` not allowed → **403**, or **503** with no origin configured; bounded read, not a JSON object → **413** / **415**.
+1–4b. **The same front checks as `api_auth_login`** (same code): body over 8 KB → **413**; not JSON → **415**; `Origin` / `Sec-Fetch-Site` not allowed → **403**, or **503** with no origin configured; bounded read, not a JSON object → **413** / **415**; the sealed envelope (a plain `token` field → **400**; expired → **409**; invalid or replayed → **400**).
 5. **Token shape.** Not a string matching `qk_[A-Za-z0-9_-]{30,128}` once stripped → **401** `{"error": "That isn't a qiita-miint access token (qk_…)."}`. `whoami` is not called.
 6. **`whoami`** (`helpers/qiita_client.py`, `GET <QIITA_CONTROL_PLANE_URL>/api/v1/auth/whoami`, Bearer token, `QIITA_WHOAMI_TIMEOUT_SECONDS`, default 3 s): a `401`, or a `200` for a non-human (anonymous or service) principal → **401** `{"error": "invalid or unrecognized Qiita token"}`. A timeout, connection error, 5xx, other status or non-JSON body — or the per-worker circuit breaker open (3 transient failures → 30 s without calling) → **503** `{"error": "qiita-miint is unreachable — try again shortly."}`. One call per worker at a time: waiting over 0.5 s for it → **503** `{"error": "The server is busy — try again in a moment."}` with `Retry-After: 2`.
 7. **Principal.** `principal_idx` not an integer → **502** `{"error": "unexpected identity response from Qiita"}`.

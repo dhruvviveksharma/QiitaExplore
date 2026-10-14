@@ -232,8 +232,8 @@ class TestLogin:
     @pytest.mark.parametrize("headers", [{}, {"Origin": "https://evil.example"},
                                          {"Origin": ah.TEST_ORIGIN, "Sec-Fetch-Site": "cross-site"}])
     def test_origin_enforced(self, api_client, accts, headers):
-        resp = api_client.post("/api/auth/login", json={"email": "alice@test.edu", "password": ah.TEST_PASSWORD},
-                               headers=headers)
+        body = {"envelope": ah.seal(api_client, {"email": "alice@test.edu", "password": ah.TEST_PASSWORD})}
+        resp = api_client.post("/api/auth/login", json=body, headers=headers)
         assert resp.status_code == 403
         assert "qe_sid" not in " ".join(resp.headers.getlist("Set-Cookie"))
 
@@ -258,8 +258,8 @@ class TestLogin:
                                                 ("aliKe@test.edu", ah.TEST_PASSWORD)])
     def test_bad_format_is_generic_401_and_not_counted(self, api_client, accts, email, password):
         import config
-        resp = api_client.post("/api/auth/login", json={"email": email, "password": password},
-                               headers={"Origin": ah.TEST_ORIGIN})
+        body = {"envelope": ah.seal(api_client, {"email": email, "password": password})}
+        resp = api_client.post("/api/auth/login", json=body, headers={"Origin": ah.TEST_ORIGIN})
         assert resp.status_code == 401 and resp.get_json()["error"] == "Incorrect email or password."
         assert not os.path.exists(config.LIMITER_DB_PATH) or not sqlite3.connect(
             config.LIMITER_DB_PATH).execute("SELECT 1 FROM attempts").fetchone()

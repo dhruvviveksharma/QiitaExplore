@@ -8,7 +8,9 @@
   GET  /api/auth/me, POST /api/auth/logout
 
 Both resolve the verified email to the same account (store/auth_store.py
-resolve_user). Each method can be switched off (config.LOGIN_METHODS); its
+resolve_user). Neither secret travels readable: the browser seals it to this
+backend's key (GET /api/auth/login-key, helpers/login_crypto.py), and a plain
+password or token field is refused. Each method can be switched off (config.LOGIN_METHODS); its
 routes then answer 404. Every check fails closed. For login, in this order:
 body size, JSON only (stops HTML-form login CSRF), exact Origin, format,
 brute-force limits (helpers/login_limiter.py), then the account and the bcrypt
@@ -25,6 +27,7 @@ from flask import abort, g, jsonify, request
 
 import config
 from run import app
+from helpers import login_crypto
 from helpers import login_limiter as limiter
 from helpers import qiita_accounts as accounts
 from helpers import qiita_client
@@ -153,15 +156,56 @@ def _unreachable():
     return jsonify({"error": "Qiita's user database is unreachable — try again shortly."}), 503
 
 
+def _signin_unavailable():
+    return jsonify({"error": "Sign-in is unavailable right now — try again shortly."}), 503
+
+
+def _open_sealed(data: dict, secret_field: str):
+    """The payload the browser sealed (helpers/login_crypto.py), or an error
+    response. The secret sent in the clear is refused outright, so neither an
+    old page nor a script can put it on the wire readable. None of this is
+    counted toward a login limit: no password or token has been tried yet."""
+    if secret_field in data:
+        return None, (jsonify({"error": "This sign-in page is out of date — reload it."}), 400)
+    try:
+        payload = login_crypto.open_envelope(data.get("envelope"))
+    except login_crypto.EnvelopeExpired:
+        return None, (jsonify({"error": "The sign-in form expired — try again.", "expired": True}), 409)
+    except login_crypto.EnvelopeInvalid:
+        return None, (jsonify({"error": "The sign-in request couldn't be read — reload the page and try again."}),
+                      400)
+    except login_crypto.Busy:
+        return None, _busy()
+    except (login_crypto.KeyUnavailable, limiter.LimiterUnavailable):
+        logger.exception("sealed sign-in unavailable")
+        return None, _signin_unavailable()
+    return payload, None
+
+
+@app.route("/api/auth/login-key", methods=["GET"])
+def api_auth_login_key():
+    """The public key and a one-time challenge the sign-in forms seal to."""
+    try:
+        resp = jsonify(login_crypto.public_info())
+    except login_crypto.KeyUnavailable:
+        logger.exception("login key unavailable")
+        return _signin_unavailable()
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/api/auth/login", methods=["POST"])
 def api_auth_login():
     _require_method("classic")
     data, err = _read_json_body()
     if err:
         return err
+    sealed, err = _open_sealed(data, "password")
+    if err:
+        return err
 
-    email = accounts.normalize_email(data.get("email"))
-    password = data.get("password")
+    email = accounts.normalize_email(sealed.get("email"))
+    password = sealed.get("password")
     if email is None or not accounts.valid_password_format(password):
         return jsonify({"error": _GENERIC_401}), 401        # not counted: no bcrypt work was done
 
@@ -219,7 +263,10 @@ def api_auth_connect():
     data, err = _read_json_body()
     if err:
         return err
-    token = data.get("token")
+    sealed, err = _open_sealed(data, "token")
+    if err:
+        return err
+    token = sealed.get("token")
     if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token.strip()):
         return jsonify({"error": "That isn't a Qiita-Miint access token (qk_…)."}), 401
     try:
