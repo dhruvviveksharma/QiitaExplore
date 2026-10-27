@@ -11,13 +11,21 @@ from .conftest import stub_qiita_db_and_core
 SENT = "qiita_sample_column_names"
 
 
+class _Everything:
+    """A visibility set that holds every id: these tests are about the SQL."""
+    def __contains__(self, _item):
+        return True
+
+
 @pytest.fixture
-def ss():
+def ss(monkeypatch):
     stub_qiita_db_and_core()
     import helpers.study_samples as ss
     ss._columns_cache.clear()
     ss._prep_dt_cache.clear()
     ss._artifact_prep_cache.clear()
+    monkeypatch.setattr(ss, "public_prep_ids", lambda sid: _Everything())
+    monkeypatch.setattr(ss, "public_artifact_ids", lambda sid: _Everything())
     return ss
 
 
@@ -154,7 +162,37 @@ def test_fetch_prep_samples_no_prep(ss):
     assert (total, [x["sample_id"] for x in samples], samples[0]["prep_ids"]) == (1, ["s4"], [])
 
 
+def test_prep_membership_shows_only_public_preps_read_live(ss, monkeypatch):
+    # Prep 6 is sandboxed: its samples lose it (s2 drops out — it is in no public prep).
+    # Visibility is read on every call, after the memo, so a prep made public shows at once.
+    public = {5}
+    monkeypatch.setattr(ss, "public_prep_ids", lambda sid: set(public))
+    with patch.object(ss, "pooled_fetchall", return_value=ROWS) as m:
+        assert ss.prep_membership(232) == {"s1": [(5, "16S")], "s3": [(5, "16S")]}
+        public.add(6)
+        assert ss.prep_membership(232)["s2"] == [(6, "WGS")]
+    assert m.call_count == 1
+
+
+def test_private_prep_has_no_group_and_no_samples(ss, monkeypatch):
+    monkeypatch.setattr(ss, "public_prep_ids", lambda sid: {5})
+
+    def fake(sql, params=None):
+        if "anonymized_name" in sql:
+            return [(r, None, None, None) for r in params[0]]
+        return [(r,) for r in ("s1", "s2", "s3")] if "ORDER BY sample_id" in sql else ROWS
+    with patch.object(ss, "pooled_fetchall", side_effect=fake):
+        assert [g["prep_id"] for g in ss.prep_groups(232)] == [5, None]       # s2 counts as "in no prep"
+        assert ss.fetch_prep_samples(232, 6, 10) == ([], 0)                     # same as a prep that doesn't exist
+
+
 # ── artifact_preps ───────────────────────────────────────────────────────────
+
+def test_artifact_preps_keeps_only_public_artifacts(ss, monkeypatch):
+    monkeypatch.setattr(ss, "public_artifact_ids", lambda sid: {2947})
+    with patch.object(ss, "pooled_fetchall", return_value=[(2947, 1115), (2247, 1134)]):
+        assert ss.artifact_preps(10317) == {2947: 1115}
+
 
 def test_artifact_preps_maps_artifact_to_prep_and_binds_study(ss):
     with patch.object(ss, "pooled_fetchall", return_value=[(2947, 1115), (2247, 1134)]) as m:

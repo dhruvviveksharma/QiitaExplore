@@ -408,12 +408,10 @@ def _tool_files(sid, header, args):
         total += len(fps)
         if len(lines) >= _FILE_LINES:
             continue
-        public = n.get("visibility") == "public"
         lines.append(f'artifact {n.get("artifact_id")} "{n.get("name") or ""}" '
-                     f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {len(fps)} files'
-                     + ("" if public else " (private artifact: paths not shared)"))
-        for fp in fps[:_FILES_PER_ARTIFACT]:
-            path = fp.get("full_path") if public else None
+                     f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {len(fps)} files')
+        for fp in fps[:_FILES_PER_ARTIFACT]:   # public only: load_preps_and_graph drops the rest
+            path = fp.get("full_path")
             lines.append(f"  {fp.get('filename')} ({fp.get('filepath_type') or '?'}, file id "
                          f"{fp.get('filepath_id')})" + (f": {path}" if path else ""))
         if len(fps) > _FILES_PER_ARTIFACT:

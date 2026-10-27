@@ -86,6 +86,16 @@ def test_samples_unknown_columns_and_no_match_are_errors(et):
     assert call(et, source="samples", study_id=10317, data_type="ITS").ui_payload is None
 
 
+def test_samples_of_a_prep_that_is_not_public(et, monkeypatch):
+    """prep_membership leaves sandboxed preps out (TKT-105): asking for one exports
+    nothing, and an export made while the prep showed rebuilds empty at download."""
+    e = stored(call(et, source="samples", study_id=10317, prep_id=8).ui_payload["export_id"])
+    monkeypatch.setattr(et, "prep_membership", lambda sid: {"s1": [(7, "16S")], "s2": [(7, "16S")]})
+    r = call(et, source="samples", study_id=10317, prep_id=8)
+    assert r.ui_payload is None and "No samples match" in r.text
+    assert et.build_table(e)[1] == []
+
+
 # ── files ───────────────────────────────────────────────────────────────────
 
 def test_files_public_only_with_full_paths(et):

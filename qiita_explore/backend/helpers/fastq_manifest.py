@@ -61,10 +61,12 @@ _ARTIFACT_FILES_SQL = _FILES_FROM + _WHERE_FASTQ + "  AND sa.study_id = %s AND a
 _STUDIES_FILES_SQL = _FILES_FROM + _WHERE_SEQ + "  AND sa.study_id = ANY(%s)\n"
 _ARTIFACTS_CLAUSE = "  AND a.artifact_id = ANY(%s)\n"
 
+# Public only, like _FILES_FROM: the count shows on the aggregation card (TKT-105).
 _COUNT_SQL = """
 SELECT COUNT(*)
 FROM qiita.study_artifact sa
 JOIN qiita.artifact a       ON sa.artifact_id = a.artifact_id
+JOIN qiita.visibility v     ON a.visibility_id = v.visibility_id AND v.visibility = 'public'
 JOIN qiita.artifact_type at ON a.artifact_type_id = at.artifact_type_id
 WHERE sa.study_id = %s AND at.artifact_type IN ('per_sample_FASTQ', 'FASTA', 'FASTQ')
 """

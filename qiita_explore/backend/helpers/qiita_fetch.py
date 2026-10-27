@@ -49,20 +49,32 @@ def _build_samples_context_text(samples_with_values: list, total: int, max_chars
     return text
 
 
+def _public_prep_exists(alias: str) -> str:
+    """SQL: the prep `{alias}.prep_template_id` has a public artifact — what Qiita
+    lists for a user who doesn't own the study (Qiita sets visibility on a whole
+    processing network, so this is the prep's status). Counts, data-type chips,
+    facets and the data-type search use it, so a sandboxed prep shows nowhere (TKT-105)."""
+    return f"""EXISTS (
+            SELECT 1 FROM qiita.preparation_artifact ppa
+            JOIN qiita.artifact pa ON ppa.artifact_id = pa.artifact_id
+            JOIN qiita.visibility pv ON pa.visibility_id = pv.visibility_id
+            WHERE ppa.prep_template_id = {alias}.prep_template_id AND pv.visibility = 'public')"""
+
+
 # Shared by qiita_fetch._build_study_header_query and
 # services.study_service.search_studies_with_sql — both SELECT the same
 # per-study aggregate columns, just under different WHERE/visibility logic.
-_STUDY_COUNT_COLUMNS = """(SELECT COUNT(*)
+_STUDY_COUNT_COLUMNS = f"""(SELECT COUNT(*)
             FROM qiita.study_sample ss
             WHERE ss.study_id = s.study_id) AS num_samples,
            (SELECT STRING_AGG(DISTINCT dt2.data_type, ', ')
             FROM qiita.study_prep_template spt2
             JOIN qiita.prep_template pt2 ON spt2.prep_template_id = pt2.prep_template_id
             JOIN qiita.data_type dt2 ON pt2.data_type_id = dt2.data_type_id
-            WHERE spt2.study_id = s.study_id) AS data_types,
+            WHERE spt2.study_id = s.study_id AND {_public_prep_exists("spt2")}) AS data_types,
            (SELECT COUNT(DISTINCT spt3.prep_template_id)
             FROM qiita.study_prep_template spt3
-            WHERE spt3.study_id = s.study_id) AS num_preps,
+            WHERE spt3.study_id = s.study_id AND {_public_prep_exists("spt3")}) AS num_preps,
            EXTRACT(YEAR FROM s.first_contact)::int AS year"""
 # `year` is not a count, but it lives in this shared block so every header
 # shape (browse, search, pins, deep-search hydration) carries it. It is the
@@ -177,6 +189,33 @@ def public_artifact_ids(study_id: int) -> set:
         [int(study_id)],
     )
     return {r[0] for r in rows}
+
+
+def public_prep_ids(study_id: int) -> set:
+    """The study's preps that have a public artifact, read live like
+    public_artifact_ids — the only preps QiitaExplore shows (TKT-105). Empty on a
+    failed read (fails closed)."""
+    rows = _qiita_fetch(
+        """SELECT DISTINCT pa.prep_template_id FROM qiita.study_artifact sa
+           JOIN qiita.preparation_artifact pa ON pa.artifact_id = sa.artifact_id
+           JOIN qiita.artifact a ON sa.artifact_id = a.artifact_id
+           JOIN qiita.visibility v ON a.visibility_id = v.visibility_id
+           WHERE sa.study_id = %s AND v.visibility = 'public'""",
+        [int(study_id)],
+    )
+    return {r[0] for r in rows}
+
+
+# Qiita's RAW_DATA_ARTIFACT_TYPE: public ones download only when the study allows it.
+RAW_ARTIFACT_TYPES = {"SFF", "FASTQ", "FASTA", "FASTA_Sanger", "per_sample_FASTQ"}
+
+
+def raw_download_allowed(study_id: int) -> bool:
+    """qiita.study.public_raw_download, read live. Qiita lets only the study's
+    owners and shared users download its raw data otherwise, and QiitaExplore
+    doesn't resolve those, so False — also on a failed read — means no raw downloads."""
+    rows = _qiita_fetch("SELECT public_raw_download FROM qiita.study WHERE study_id = %s", [int(study_id)])
+    return bool(rows and rows[0][0])
 
 
 # Sample lists read qiita.sample_{study_id} on its own, in primary-key order:

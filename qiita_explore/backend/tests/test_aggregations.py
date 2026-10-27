@@ -365,6 +365,8 @@ def test_study_detail_refetches_when_cached_row_has_no_preps(client, logged_in, 
     monkeypatch.setattr(sd, "_fetch_study_samples", lambda sid, limit=200: ([], 0))
     monkeypatch.setattr(sd, "_fetch_sample_context_text", lambda sid: "")
     monkeypatch.setattr(sd, "prep_membership", lambda sid: {})
+    monkeypatch.setattr(sd, "public_artifact_ids", lambda sid: set())
+    monkeypatch.setattr(sd, "public_prep_ids", lambda sid: {7})
     r = client.get(f"/api/studies/{sid}/detail")
     assert r.status_code == 200, r.get_json()
     assert fetched == [sid]

@@ -10,7 +10,7 @@ DOI / PubMed IDs only), so the UI labels this "Year added".
 import time
 
 from helpers.pg_pool import pooled_fetchall
-from helpers.qiita_fetch import _PUBLIC_ARTIFACT_EXISTS
+from helpers.qiita_fetch import _PUBLIC_ARTIFACT_EXISTS, _public_prep_exists
 
 _MAX_PIS = 50
 _MAX_DATA_TYPES = 20
@@ -116,7 +116,7 @@ _DATA_TYPE_FACET_SQL = f"""
     JOIN qiita.study_prep_template spt ON spt.study_id = s.study_id
     JOIN qiita.prep_template pt ON spt.prep_template_id = pt.prep_template_id
     JOIN qiita.data_type dt ON pt.data_type_id = dt.data_type_id
-    WHERE {_PUBLIC_ARTIFACT_EXISTS}
+    WHERE {_PUBLIC_ARTIFACT_EXISTS} AND {_public_prep_exists("spt")}
     GROUP BY dt.data_type
     ORDER BY n DESC, dt.data_type
 """

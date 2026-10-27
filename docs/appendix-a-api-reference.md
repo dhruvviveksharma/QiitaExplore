@@ -334,7 +334,7 @@ A fifth step populates `samples_context` (the LLM context text) when absent. Res
 }
 ```
 
-**Non-public artifacts of a public study** (TKT-043) stay in `artifacts` and `artifact_graph`, so the chart is complete, but lose their file paths: `full_path` is `null` and graph nodes' `filepaths` is empty. Which artifacts are public is read live (`qiita_fetch.py :: public_artifact_ids`), not from the cache.
+**Only what Qiita shows a non-owner** (TKT-043, TKT-105): `preps` holds the preps with a public artifact, `artifacts` and `artifact_graph` the public artifacts, and the graph's job nodes only the steps that lead to one. A kept node whose parent was left out has `parent_node_id` `null`. Visibility is read live (`qiita_fetch.py :: public_artifact_ids`, `public_prep_ids`), not from the cache.
 
 `cached` reflects only whether the **preps/artifacts** stage hit — the other stages can still have missed and re-fetched. Samples are capped at 200 regardless of `total_samples`.
 
