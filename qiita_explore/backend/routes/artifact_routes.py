@@ -10,7 +10,7 @@ from run import app
 from store import get_merge_job
 from helpers.biom_samples import get_biom_sample_ids
 from helpers.fastq_manifest import fetch_manifest, to_tsv
-from helpers.qiita_fetch import _qiita_fetch, is_study_public
+from helpers.qiita_fetch import RAW_ARTIFACT_TYPES, _qiita_fetch, is_study_public, raw_download_allowed
 from helpers.merge_helpers import _get_artifacts, public_artifacts
 
 _FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
@@ -21,6 +21,8 @@ def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
     node = public_artifacts(study_id).get(artifact_id)
     if not node:
         raise ValueError(f"Artifact {artifact_id} not found or not public in study {study_id}")
+    if node.get("artifact_type") in RAW_ARTIFACT_TYPES and not raw_download_allowed(study_id):
+        raise ValueError("Raw data of this study can only be downloaded from Qiita")   # Qiita's own rule
     fp_entry = next((f for f in (node.get("filepaths") or []) if f.get("filepath_id") == filepath_id), None)
     if not fp_entry:
         raise ValueError(f"File {filepath_id} not in artifact {artifact_id}")

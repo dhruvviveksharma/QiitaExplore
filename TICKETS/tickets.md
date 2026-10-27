@@ -3378,8 +3378,8 @@ can run up the Anthropic bill or occupy the 8 request threads.
 
 ## TKT-105: Private Preps' Metadata and Sample Membership Still Visible
 
-**Severity:** Low
-**Status:** Open
+**Severity:** High (was rated Low: "no files are exposed" was wrong — file ids leaked, see below)
+**Status:** Resolved (2026-10-27)
 
 ### Description
 
@@ -3396,7 +3396,92 @@ preps whose artifacts are all non-public. No files or paths are exposed.
   `qiita_fetch.py :: public_artifact_ids` does.
 - Tests alongside `tests/test_artifact_access.py`.
 
+### Report (2026-10-27)
+
+A researcher with a plain Qiita `user` account (not owner of, nor shared on, study 10317 — checked
+read-only on barnacle) used chat e745963a to list AGP's metagenomic preps (sandboxed prep 19306
+among them), open its processing graph, export its 96 samples' metadata, and get the file ids of
+sandboxed artifact 229733 from `list_artifact_files` — which printed `filepath_id` for non-public
+artifacts (and `test_study_tools.py` asserted it). The chat tools read the cached, unfiltered graph through
+`study_detail.load_preps_and_graph`; TKT-043's stripping happened only in `get_study_detail`.
+
+### Resolution
+
+QiitaExplore shows what Qiita shows a user who doesn't own the study (Qiita's
+`study_prep_get_req` skips non-public preps for non-editors; `get_network_nodes_edges` drops
+non-public artifacts). A prep is shown when it has a public artifact — Qiita sets visibility on a
+whole processing network, and on all 9,180 Qiita preps "root artifact public" and "any artifact
+public" agree. Visibility is read live; the caches keep everything:
+
+- `qiita_fetch.py :: public_prep_ids` (live, fails closed), next to `public_artifact_ids`.
+- `study_detail.py :: _load` → `_public_only`: preps, artifacts, graph artifact nodes and the job
+  nodes that lead to a kept artifact. Feeds `/detail` and the chat's `get_study_preps`,
+  `get_prep_graph`, `list_artifact_files`, `export_table` (files). A non-public id answers like a
+  missing one. `get_study_detail` no longer writes its (now filtered) lists back to the cache.
+- `study_samples.py :: prep_membership`, `artifact_preps`: same live sets, after the 1 h memo —
+  `/sample-preps`, `/preps/<id>/samples`, `samples[].prep_ids`, `show_study_samples`,
+  `get_sample_metadata`, `export_table` (samples; stored exports rebuild empty), aggregations.
+- `qiita_fetch.py :: _public_prep_exists` in `_STUDY_COUNT_COLUMNS` (card `num_preps` /
+  `data_types`), `browse_filters._DATA_TYPE_FACET_SQL` and `study_service.build_data_type_filter`.
+  Measured on real Qiita: browse 10 → 28 ms, Metagenomic search 56 → 99 ms (114 → 96 studies),
+  facet 42 → 82 ms (6 h cache).
+- `workspace_studies.py :: enrich_study_in_project` stores only public preps. Rows enriched
+  before the fix held every prep in `preps_json` — served raw by `GET /api/projects/<id>` and
+  read into the workspace chat's context — so `store/db.py :: _clear_workspace_preps_v1` clears
+  it once at startup (meta key `workspace_public_preps_v1`). Those rows' `num_preps` /
+  `data_types` stay stale until the workspace's refresh (enrich-all) re-enriches them.
+- `fastq_manifest.py :: _COUNT_SQL` (the aggregation card's sequence-artifact count) joins
+  public artifacts only. Snapshots taken before the fix (aggregation / merge-workspace study
+  rows' counts) keep their old numbers.
+- Same change, related gap: `artifact_routes.py :: _resolve_artifact_file` refuses a public
+  **raw** artifact (Qiita's `RAW_DATA_ARTIFACT_TYPE`) unless `qiita.study.public_raw_download`
+  (`qiita_fetch.py :: raw_download_allowed`) — Qiita serves those only to owners and shared users
+  otherwise. 491 public studies / 1,325 public raw artifacts had the flag off (2026-10-27).
+
+Verified read-only against real Qiita on barnacle (study 10317: 263 preps, 3,241 artifact nodes all
+public, prep 19306 / artifact 229733 answer "no prep or artifact", prep-19306 export 0 rows, card
+263 preps; raw download refused for study 396). Tests: `test_artifact_access.py`,
+`test_study_samples.py`, `test_export_tools.py`, `test_study_tools.py`.
+
+Not undone, and Dhruv's call: chat e745963a's stored messages (replayed into that chat's model
+history) still hold the prep and file ids, and any `export_table` export with source `rows`
+made before the fix is stored verbatim (`samples` / `files` exports rebuild at download and are
+clean). Raw *paths*: TKT-106.
+
 ### Files
 
-- `qiita_explore/backend/routes/study_routes.py` (`/sample-preps`, `/preps/<prep_id>/samples`)
-- `qiita_explore/backend/helpers/study_samples.py`, `helpers/study_detail.py`
+- `qiita_explore/backend/helpers/qiita_fetch.py`, `helpers/study_detail.py`, `helpers/study_samples.py`,
+  `helpers/study_tools.py`, `helpers/workspace_studies.py`, `helpers/fastq_manifest.py`,
+  `routes/artifact_routes.py`, `services/study_service.py`, `services/browse_filters.py`, `store/db.py`
+
+---
+
+## TKT-106: FASTQ Manifest and Aggregation Export List Raw Paths Regardless of `public_raw_download`
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+TKT-105 made the file download route honor Qiita's `public_raw_download` for raw artifacts. Every
+other place still lists barnacle paths of public raw files in studies with the flag off (491
+studies, 1,325 artifacts on 2026-10-27): the `/detail` graph's `filepaths[].full_path` (study
+modal), the chat's `list_artifact_files` and `export_table` (source `files`), the FASTQ manifest
+(`GET /api/artifacts/<id>/fastq-manifest`), and the Sample Aggregation export, file map and
+`page_files`. They give paths, not file contents — reading one needs access to barnacle's
+filesystem — but they disagree with Qiita's rule. The study modal also still offers a download
+link for those files, which now answers 403.
+
+### Plan
+
+- Decide whether a path counts as access (is qmounts readable to the people who use the
+  manifest?). If it does, apply `qiita_fetch.raw_download_allowed` / `RAW_ARTIFACT_TYPES` in
+  `study_detail._public_only` (strip raw `filepaths`) and join `qiita.study.public_raw_download`
+  into `fastq_manifest._FILES_FROM` for raw types. Either way, hide the download link for files
+  the route refuses.
+
+### Files
+
+- `qiita_explore/backend/helpers/fastq_manifest.py` (`_FILES_FROM`), `helpers/study_detail.py`,
+  `helpers/study_tools.py`, `helpers/export_tools.py`, `routes/artifact_routes.py`
+  (`fastq-manifest`), `routes/aggregation_routes.py` (export), `frontend/js/merge_artifacts.js` (`FileLink`)

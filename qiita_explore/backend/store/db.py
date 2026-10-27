@@ -543,6 +543,19 @@ _USERS_PRINCIPAL_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_principal
                           "WHERE principal_idx IS NOT NULL")
 
 
+def _clear_workspace_preps_v1(conn):
+    """TKT-105, once: workspace rows enriched before 2026-10-27 hold every prep of
+    the study in preps_json, sandboxed ones included, and GET /api/projects/<id>
+    and the workspace chat's context serve it. Clear it; enrichment (adding the
+    study, or the workspace's refresh) writes back only preps with a public
+    artifact. The meta insert takes the write lock first, so one worker does it."""
+    done = conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('workspace_public_preps_v1', ?)",
+                        (_now(),)).rowcount == 0
+    if not done:
+        conn.execute("UPDATE project_studies SET preps_json = NULL")
+    conn.commit()
+
+
 def _bootstrap():
     with _conn() as conn:
         _create_schema(conn)
@@ -552,6 +565,7 @@ def _bootstrap():
         if _users_is_current(conn):
             conn.execute(_USERS_PRINCIPAL_INDEX)
             conn.commit()
+        _clear_workspace_preps_v1(conn)
 
 
 _bootstrap()

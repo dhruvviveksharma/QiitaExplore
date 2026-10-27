@@ -16,6 +16,7 @@ trusted-int pattern as routes/artifact_routes.py; every value is bound.
 import time
 
 from helpers.pg_pool import pooled_fetchall
+from helpers.qiita_fetch import public_artifact_ids, public_prep_ids
 
 SENTINEL = "qiita_sample_column_names"
 
@@ -110,7 +111,9 @@ def prep_membership(study_id):
     prep_template_sample) — the same membership the study card's data-type
     chips come from. Unlike helpers.sample_files, this knows about a sample
     regardless of whether it resolves to a per-sample sequence file. Memoized
-    per worker for an hour (a study's prep set effectively never changes)."""
+    per worker for an hour (a study's prep set effectively never changes); only
+    preps with a public artifact are returned, checked live on every call
+    (public_prep_ids), so a sandboxed prep's samples never show (TKT-105)."""
     sid = int(study_id)
 
     def compute():
@@ -119,12 +122,19 @@ def prep_membership(study_id):
             out.setdefault(sample_id, set()).add((prep_id, data_type))
         return {k: sorted(v) for k, v in out.items()}
 
-    return _memoized(_prep_dt_cache, _PREP_DT_TTL_SECONDS, sid, compute)
+    public = public_prep_ids(sid)
+    out = {}
+    for sample_id, preps in _memoized(_prep_dt_cache, _PREP_DT_TTL_SECONDS, sid, compute).items():
+        kept = [entry for entry in preps if entry[0] in public]
+        if kept:
+            out[sample_id] = kept
+    return out
 
 
 def artifact_preps(study_id):
-    """{artifact_id: prep_id} for every artifact of the study — what ties a file
-    row to its prep. Memoized per worker for an hour, like prep_membership."""
+    """{artifact_id: prep_id} for the study's public artifacts — what ties a file
+    row to its prep. Memoized per worker for an hour, like prep_membership, and
+    likewise filtered live (public_artifact_ids)."""
     sid = int(study_id)
 
     def compute():
@@ -133,7 +143,9 @@ def artifact_preps(study_id):
             out.setdefault(artifact_id, prep_id)   # ORDER BY prep id: the lowest wins, deterministically
         return out
 
-    return _memoized(_artifact_prep_cache, _PREP_DT_TTL_SECONDS, sid, compute)
+    public = public_artifact_ids(sid)
+    return {a: p for a, p in _memoized(_artifact_prep_cache, _PREP_DT_TTL_SECONDS, sid, compute).items()
+            if a in public}
 
 
 def prep_data_types(study_id):

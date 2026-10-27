@@ -3,7 +3,7 @@ import logging
 
 from helpers.pg_pool import pooled_fetchall
 from helpers.qiita_fetch import (
-    _PUBLIC_ARTIFACT_EXISTS, _STUDY_COUNT_COLUMNS, _row_to_study_header,
+    _PUBLIC_ARTIFACT_EXISTS, _STUDY_COUNT_COLUMNS, _public_prep_exists, _row_to_study_header,
 )
 from services.relevance import RELEVANCE_WEIGHTS
 
@@ -143,7 +143,8 @@ def build_data_type_filter(data_types, investigation_types=None):
         f" JOIN qiita.prep_template pt ON spt.prep_template_id = pt.prep_template_id"
         f" JOIN qiita.data_type dt ON pt.data_type_id = dt.data_type_id"
         f" WHERE spt.study_id = s.study_id"
-        f" AND dt.data_type IN ({placeholders}){inv_clause})"
+        f" AND dt.data_type IN ({placeholders}){inv_clause}"
+        f" AND {_public_prep_exists('spt')})"   # a sandboxed prep's data type doesn't count (TKT-105)
     )
     return sql, params
 

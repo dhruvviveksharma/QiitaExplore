@@ -3,7 +3,9 @@
 import json
 
 from store import get_study_detail_cache, update_project_study_data, upsert_study_detail_cache
-from helpers.qiita_fetch import _fetch_sample_context_text, _fetch_study_detail_from_qiita, _qiita_fetch
+from helpers.qiita_fetch import (
+    _fetch_sample_context_text, _fetch_study_detail_from_qiita, _qiita_fetch, public_prep_ids,
+)
 
 
 def enrich_study_in_project(project_id: str, study_id: int):
@@ -27,6 +29,9 @@ def enrich_study_in_project(project_id: str, study_id: int):
             upsert_study_detail_cache(study_id, json.dumps(preps), json.dumps(artifacts))
     except Exception:
         pass
+    if preps:   # the card and the chat context list only what Qiita shows non-owners (TKT-105)
+        public = public_prep_ids(study_id)
+        preps = [p for p in preps if p.get("prep_template_id") in public]
 
     data_types = None
     num_preps  = None

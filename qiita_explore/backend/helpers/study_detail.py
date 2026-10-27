@@ -15,12 +15,29 @@ from helpers.qiita_fetch import (
     _fetch_study_detail_from_qiita,
     _fetch_sample_context_text,
     public_artifact_ids,
+    public_prep_ids,
 )
 
 
+def _public_only(study_id, preps, artifacts, artifact_graph):
+    """What Qiita shows a user who doesn't own the study: preps with a public
+    artifact, public artifacts, and the processing steps that lead to one —
+    every signed-in Qiita user reaches this (TKT-043, TKT-105). Visibility is
+    read live; the cache keeps everything, since it can be hours stale."""
+    arts, kept_preps = public_artifact_ids(study_id), public_prep_ids(study_id)
+    nodes = [n for n in artifact_graph if n.get("kind") == "artifact" and n.get("artifact_id") in arts]
+    parents = {n.get("parent_node_id") for n in nodes}
+    nodes += [n for n in artifact_graph if n.get("kind") == "job" and n.get("node_id") in parents]
+    ids = {n.get("node_id") for n in nodes}
+    graph = [n if n.get("parent_node_id") in ids or n.get("parent_node_id") is None
+             else {**n, "parent_node_id": None} for n in nodes]
+    return ([p for p in preps if p.get("prep_template_id") in kept_preps],
+            [a for a in artifacts if a.get("artifact_id") in arts], graph)
+
+
 def _load(study_id):
-    """(preps, artifacts, artifact_graph, cached_row, cache_hit). Raises when the
-    preps can't be read from Qiita."""
+    """(preps, artifacts, artifact_graph, cached_row, cache_hit), public only
+    (_public_only). Raises when the preps can't be read from Qiita."""
     cached = get_study_detail_cache(study_id)
     # Key on the column, not the row: other writers create rows without preps,
     # and an earlier bug persisted "[]" into some (TKT-086) — a public study
@@ -74,6 +91,7 @@ def _load(study_id):
                 study_id, None, None,
                 prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
             )
+    preps, artifacts, artifact_graph = _public_only(study_id, preps, artifacts, artifact_graph)
     return preps, artifacts, artifact_graph, cached, cache_hit
 
 
@@ -104,24 +122,13 @@ def get_study_detail(study_id):
     if not (cached and cached.get("samples_context")):
         samples_ctx = _fetch_sample_context_text(study_id)
         if samples_ctx:
-            upsert_study_detail_cache(
-                study_id,
-                json.dumps(preps),
-                json.dumps(artifacts),
-                samples_context=samples_ctx,
-            )
+            # None keeps the cached preps/artifacts: these are the public-only copies.
+            upsert_study_detail_cache(study_id, None, None, samples_context=samples_ctx)
 
     # Not part of samples_json: prep ids are read fresh, so the cache needs no migration.
     membership = prep_membership(study_id)
     for sample in samples:
         sample["prep_ids"] = [pid for pid, _dt in membership.get(sample["sample_id"], [])]
-
-    # Non-public artifacts of a public study keep their place in the chart but
-    # lose their file paths: every signed-in Qiita user can open this (TKT-043).
-    public = public_artifact_ids(study_id)
-    artifacts = [a if a.get("artifact_id") in public else {**a, "full_path": None} for a in artifacts]
-    artifact_graph = [n if n.get("kind") != "artifact" or n.get("artifact_id") in public
-                      else {**n, "full_path": None, "filepaths": []} for n in artifact_graph]
 
     return {
         "study_id":       study_id,

@@ -174,13 +174,21 @@ def test_files_of_a_prep_skip_archived(st):
     no_payload_paths(r)
 
 
-def test_private_artifact_paths_are_not_shared(st, monkeypatch):
-    graph = [_art(1, prep=7, name="raw"), _art(2, parent="a1", vis="private", name="hidden")]
-    monkeypatch.setattr(st, "load_preps_and_graph", lambda sid: ([dict(p) for p in PREPS], graph))
-    r = run(st, "list_artifact_files", study_id=SID, prep_id=7)
-    assert f"{PATH}1/f1_0.gz" in r.text
-    assert "(private artifact: paths not shared)" in r.text and f"{PATH}2/" not in r.text
-    assert "f2_0.gz (raw_forward_seqs, file id 20)\n" in r.text + "\n"
+def test_non_public_artifact_reads_like_a_missing_one(st, monkeypatch):
+    """TKT-105: the tools see the study through study_detail._public_only, so a
+    sandboxed artifact (9, in prep 8) and its file ids never reach the model, and
+    its id gets the same answer as one that doesn't exist."""
+    import helpers.study_detail as sd
+    graph = GRAPH + [_art(9, parent="a5", typ="BIOM", vis="sandbox", name="hidden")]
+    monkeypatch.setattr(sd, "public_artifact_ids", lambda sid: {1, 2, 3, 5})
+    monkeypatch.setattr(sd, "public_prep_ids", lambda sid: {7, 8})
+    monkeypatch.setattr(st, "load_preps_and_graph",
+                        lambda sid: sd._public_only(sid, [dict(p) for p in PREPS], [], graph)[::2])
+    hidden = run(st, "list_artifact_files", study_id=SID, artifact_id=9)
+    missing = run(st, "list_artifact_files", study_id=SID, artifact_id=229733)
+    assert hidden.text.replace(" 9.", " N.") == missing.text.replace(" 229733.", " N.")
+    r = run(st, "list_artifact_files", study_id=SID, prep_id=8)
+    assert r.ui_payload["artifact_ids"] == [5] and "file id 90" not in r.text and "hidden" not in r.text
 
 
 def test_files_artifact_id_that_is_a_prep_id(st):
