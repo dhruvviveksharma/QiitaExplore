@@ -126,6 +126,33 @@ class TestExecuteToolCall:
 
         assert retval == ("T", False, False)
 
+    @pytest.mark.parametrize("name,args", [
+        ("search_studies", {"organism": {"name": "human"}}),        # an object where a list belongs
+        ("search_studies", {"keywords": [{"term": "cancer"}]}),     # a list of objects
+        ("search_by_sample", {"field_filters": ["disease=IBD"]}),   # strings where objects belong
+        ("pin_study", {"study_ids": 11043}),                        # a number where a list belongs
+    ])
+    def test_malformed_args_never_end_the_turn(self, name, args):
+        """Regression (prod, 2026-10-27): the step label was built from the model's
+        arguments outside any error handling, so one malformed field raised
+        `unhashable type: 'slice'` and discarded an 8-minute turn. The label
+        falls back; the tool still runs and answers the model."""
+        import helpers.agent as agent_mod
+        mock_result = _make_result(text="ran", label="Done", detail="")
+
+        with patch.object(agent_mod, "execute_tool", return_value=mock_result) as run:
+            events, retval = _collect(
+                agent_mod._execute_tool_call(
+                    name, args, "bad000args111",
+                    scope="global", chat_id="chat1", deep_search=False,
+                    search_calls_used=0,
+                )
+            )
+
+        assert events[0]["type"] == "segment_tool_call"
+        assert events[0]["label"] == f"Running {name}…"
+        assert run.called and retval[0] == "ran"
+
     def test_search_studies_returns_true_flag(self):
         """consumed_search_slot is True for an executed search_studies call."""
         import helpers.agent as agent_mod

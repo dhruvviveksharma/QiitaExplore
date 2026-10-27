@@ -116,7 +116,7 @@ def _execute_tool_call(name, args, call_id, *, scope, chat_id, deep_search, sear
     consumed_search_slot, failed) — `failed` is the structured fact of a raise."""
     step_name = f"tool_{name}_{call_id}"
     yield {"type": "segment_tool_call", "name": step_name,
-           "label": _tool_label(name, args), "args": args}
+           "label": _safe_tool_label(name, args), "args": args}
     if _is_budgeted_search_tool(name) and search_calls_used >= SEARCH_CALLS_PER_MESSAGE:
         msg = (f"{name} has already run {search_calls_used} times this message "
                f"(max {SEARCH_CALLS_PER_MESSAGE}) — synthesize from the results you already "
@@ -572,6 +572,19 @@ def _json_args(raw):
     except json.JSONDecodeError:
         return {}
     return args if isinstance(args, dict) else {}
+
+
+def _safe_tool_label(name: str, args: dict) -> str:
+    """The running label, which must never end a turn. It's built before the
+    tool's own error handling, from arguments the model wrote — and a model can
+    send a field as an object where a list belongs (minimax-m2 did, on
+    search_studies: `{...}[:3]` raised mid-turn, discarding the whole turn).
+    The tool itself still runs and reports bad arguments back to the model."""
+    try:
+        return _tool_label(name, args)
+    except Exception:
+        logger.warning("[agent] malformed %s arguments; using a generic step label", name)
+        return f"Running {name}…"
 
 
 def _tool_label(name: str, args: dict) -> str:
