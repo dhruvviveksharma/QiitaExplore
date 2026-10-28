@@ -123,6 +123,9 @@
 .agg-menu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .cr-menu-item.agg-in { color: var(--text-3); cursor: default; }
 .cr-menu-item.agg-in:hover { background: none; color: var(--text-3); }
+/* In a saved aggregation: "✓ Aggregate", same look as "✓ Pinned" (.btn-card-ctx.on) */
+.btn-card-add.on { color: var(--accent-h); background: var(--accent-soft); }
+.agg-new-input { display: block; width: calc(100% - 20px); margin: 4px 10px; box-sizing: border-box; }
 /* Absolutely positioned so an error never reflows the card's action row. */
 .agg-card-err { position: absolute; right: 0; top: calc(100% + 4px); white-space: nowrap; z-index: 5; font-size: 11px; }
 

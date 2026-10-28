@@ -88,18 +88,21 @@ const _aggStudyBody = (study) => ({
 // card's right edge. Lives inside .study-card-actions, whose onClick already
 // stops propagation so the card's modal doesn't open.
 function AggregateCardButton({ study, agg }) {
-  const dd = useDropdown(r => ({ top: r.bottom + 4, left: Math.max(8, r.right - 200) }));
+  const [naming,  setNaming]  = useState(false);   // "+ New aggregation…" swapped for a name box
+  const [newName, setNewName] = useState('');
+  // While the name box is up, drifting off the menu mustn't close it (as FacetMultiSelect).
+  const dd = useDropdown(r => ({ top: r.bottom + 4, left: Math.max(8, r.right - 200) }), { hoverClose: !naming });
   const [err, setErr] = useState('');
   const list = (agg.aggregations || []).filter(a => !a.chat_id);   // saved ones only
+  const added = list.some(a => (a.studies || []).some(s => s.study_id === study.study_id));
 
   const add = async (a) => {
     setErr('');
     try { await agg.addStudy(a.aggregation_id, _aggStudyBody(study)); }
     catch (e) { setErr(e.message); }
   };
-  const createAndAdd = async () => {
-    const name = prompt('Aggregation name:', 'Untitled');
-    if (name === null) return;
+  const createAndAdd = async (name) => {
+    dd.setOpen(false); setNaming(false); setNewName('');
     let a;
     try { a = await agg.create(name.trim() || 'Untitled'); }
     catch (e) { setErr(e.message); return; }
@@ -108,8 +111,10 @@ function AggregateCardButton({ study, agg }) {
 
   return (
     <div className="dd-root" ref={dd.rootRef}>
-      <button type="button" ref={dd.btnRef} className="btn-card-add"
-        onClick={e => { setErr(''); dd.toggle(e); }}>+ Aggregate</button>
+      <button type="button" ref={dd.btnRef} className={`btn-card-add${added ? ' on' : ''}`}
+        onClick={e => { setErr(''); setNaming(false); setNewName(''); dd.toggle(e); }}>
+        {added ? '✓ Aggregate' : '+ Aggregate'}
+      </button>
       {dd.open && dd.pos && (
         <div className={dd.menuClass} style={{ top: dd.pos.top, left: dd.pos.left }} onClick={e => e.stopPropagation()}>
           <div className="cr-menu-label">Add to aggregation</div>
@@ -125,9 +130,11 @@ function AggregateCardButton({ study, agg }) {
             );
           })}
           <div className="cr-menu-sep" />
-          <button className="cr-menu-item" onClick={() => { dd.setOpen(false); createAndAdd(); }}>
-            + New aggregation…
-          </button>
+          {naming
+            ? <input className="merge-name-filter agg-new-input" autoFocus placeholder="Aggregation name"
+                value={newName} onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') createAndAdd(newName); }} />
+            : <button className="cr-menu-item" onClick={() => setNaming(true)}>+ New aggregation…</button>}
         </div>
       )}
       {err && <div className="browse-error agg-card-err">{err}</div>}

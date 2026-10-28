@@ -61,7 +61,7 @@ function useDropdown(computePos, { hoverClose = true } = {}) {
       el?.removeEventListener('mouseenter', onEnter);
       clearTimers();
     };
-  }, [open]);
+  }, [open, hoverClose]);
 
   // Default: left-aligned, directly below the trigger (matches a <select>),
   // shifted left when that would run past the window's right edge (a trigger
