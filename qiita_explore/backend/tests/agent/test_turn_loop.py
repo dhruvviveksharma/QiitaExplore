@@ -244,3 +244,79 @@ class TestNoSilentStop:
         text = tokens_of(events)
         assert "stopped after its tool calls" in text
         assert "ran out of tool rounds" not in text
+
+
+# What minimax-m2 streamed in chat 0f25e637 after the round limit: its next tool
+# calls written out as text, which then rendered as "]<]minimax[>[…" in the reply.
+_LEAK = ('Let me find which study owns it.]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name="search_studies">'
+         ']<]minimax[>[<keywords>]<]minimax[>[<item>large-scale microbiome cohort]<]minimax[>[</item>')
+
+
+def _content_chunks(*pieces):
+    return [FakeChunk([FakeChoice(FakeDelta(content=p))]) for p in pieces]
+
+
+def _chunked_round(*pieces):
+    return _content_chunks(*pieces) + [FakeChunk([FakeChoice(FakeDelta(), finish_reason="stop")])]
+
+
+class TestLeakedToolMarkup:
+    """A tool call written as text never reaches the reply, the stored message
+    or the replayed transcript (helpers/tool_markup.py)."""
+
+    def test_synthesis_leak_is_hidden_and_explained(self, run_turn):
+        script = [openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+                  openai_text_round(_LEAK)]   # char by char: every marker arrives split
+        events, client, _ = run_turn(script, make_fake_execute_tool(tool_result()), max_iters=1)
+
+        text = tokens_of(events)
+        assert text.startswith("Let me find which study owns it.")
+        assert "ran out of tool rounds (1)" in text
+        for junk in ("]<]", "minimax[", "<tool_call>", "large-scale"):
+            assert junk not in text
+        last = client.calls[1]["messages"][-1]   # the synthesis request says tools are gone
+        assert last["role"] == "user" and "no longer available" in last["content"]
+
+    def test_synthesis_without_a_leak_is_unchanged(self, run_turn):
+        script = [openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+                  openai_text_round("synthesized")]
+        events, _, _ = run_turn(script, make_fake_execute_tool(tool_result()), max_iters=1)
+
+        assert tokens_of(events) == "synthesized"
+
+    def test_round_leak_with_text_is_hidden_and_explained(self, run_turn):
+        script = [_chunked_round("Checking now. <tool", '_call>{"name": "search_studies"}</tool_call>')]
+        events, client, _ = run_turn(script, make_fake_execute_tool())
+
+        text = tokens_of(events)
+        assert text.startswith("Checking now. ")
+        assert "wrote a tool call as text" in text
+        assert "<tool" not in text and "search_studies" not in text
+        assert len(client.calls) == 1   # nothing to synthesize from
+
+    def test_round_leak_after_tools_is_recovered_by_synthesis(self, run_turn):
+        script = [openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+                  _chunked_round("]<]minimax[>[<tool_call>"),
+                  openai_text_round("Here is the answer.")]
+        events, client, _ = run_turn(script, make_fake_execute_tool(tool_result()))
+
+        assert len(client.calls) == 3   # tool round, leaked round, synthesis
+        assert tokens_of(events) == "Here is the answer."
+
+    def test_markup_stays_out_of_the_replayed_transcript(self, run_turn):
+        # Markup alongside a real tool call: the call runs, the text kept is clean.
+        script = [_content_chunks("On it.<tool_", "call>{}</tool_call>")
+                  + openai_tool_call_round("call_1", "get_study_report", '{"study_id": 1}'),
+                  openai_text_round("done")]
+        events, _, _ = run_turn(script, make_fake_execute_tool(tool_result()))
+
+        said = [e["entry"]["text"] for e in events_of_type(events, "transcript_append")
+                if e["entry"]["role"] == "assistant"]
+        assert said == ["On it."]
+        assert tokens_of(events) == "On it.done"
+
+    def test_marker_lookalikes_pass_through(self, run_turn):
+        script = [_chunked_round("a ]<", "] b <tool", "s> c ]<]mini")]
+        events, _, _ = run_turn(script, make_fake_execute_tool())
+
+        assert tokens_of(events) == "a ]<] b <tools> c ]<]mini"

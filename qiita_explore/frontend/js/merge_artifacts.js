@@ -54,7 +54,7 @@ function FileLink({ fp, artifactId, studyId }) {
   return (
     <a className="ao-file-btn"
       href={`${API}/artifacts/${artifactId}/files/${fp.filepath_id}/download?study_id=${studyId}`}
-      target="_blank" rel="noreferrer">
+      target="_blank" rel="noreferrer" title={fp.filename || fp.filepath_type}>
       ↓ {fp.filename || fp.filepath_type}
     </a>
   );
