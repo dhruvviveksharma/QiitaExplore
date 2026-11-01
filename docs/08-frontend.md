@@ -117,7 +117,8 @@ Arrows read *"defines globals consumed by"*. The chain is close to linear becaus
 | `frontend/js/hooks/useInputHistory.js`   | 84    | `useInputHistory(name, {transcript, resetKey})` — ↑ / ↓ recall like a shell. In a chat the composer walks that chat's own saved messages (raw text, as typed: optimistic messages keep `sent`), restarting on a chat switch; the Browse bar and the composer before a chat exists walk the last 50 entries kept in `localStorage` (`qe-history:<name>`) |
 | `frontend/js/context_bar.js`             | 82    | `ContextBar` — before the model chip: how full the chat's last request was, one colored segment per part, click for the breakdown (`useDropdown` panel). From the `context_usage` SSE event / the chat GET's `context_usage` (`chatCache[chatId].contextUsage`); after a model switch, rescaled to the new window until the next reply |
 | `frontend/js/hooks/useOutsideClose.js`   | 25    | `useOutsideClose(onClose, ignoreSelector)` — closes an always-open panel (the model picker) on a mousedown outside it |
-| `frontend/js/components.js`              | 875   | Shared components — samples browser, `SampleFieldsCard`, prep/artifact tables, agent bubbles, model picker, slash menu |
+| `frontend/js/components.js`              | 813   | Shared components — samples browser, `SampleFieldsCard`, prep/artifact tables, `ToolCallCard`, model picker, slash menu |
+| `frontend/js/agent_timeline.js`          | 85    | `AgentMessageBubble`: an agent reply's timeline ("Working · Ns" / "Worked for Ns" header, a node per step and tool call joined by a rail, folds when done), then its answer. Styles in `agent_timeline.css` |
 | `frontend/js/hooks/useModelSelection.js` | 30    | Model choice with per-chat and global `localStorage` persistence                                                     |
 | `frontend/js/hooks/useScrollCollapse.js` | 27    | Collapses the chat topbar on scroll-down, expands on scroll-up or at the top                                         |
 | `frontend/js/browse_filters.js`          | 173   | Browse facet filters — `useBrowseFilters`, `FacetMultiSelect` (multi-select `useDropdown`), `YearRangeSlider`, `BrowseFilterBar` |
@@ -460,7 +461,7 @@ Full server-side treatment is in [`02-authentication.md`](02-authentication.md).
 
 Four tiers, distinguished by what they know about.
 
-`components.js` **— knows nothing about the application.** Everything here takes props and returns markup: `SamplesBrowser`, `PrepsTable`, `ArtifactsTable`, `CollapsibleSection`, `InlineStudyCard`, `SamplesReportBubble`, `SystemsStatusBubble`, `AgentMessageBubble`, `ToolCallCard`, `ToolResultWidget`, `ModelPickerCard`, `PlusMenu`, `SlashCommandMenu`, `PinnedBar`. Several hold their own local state — a filter string, an expanded flag, a split-pane percentage — but none reach into `useAppState`. This is also where two registries live that other files consume by name: `SLASH_COMMANDS` and the `_NRP_MODELS` / `_CLAUDE_MODELS` lists. At 684 lines it is the largest JS file and over the repo cap (TKT-038).
+`components.js` **— knows nothing about the application.** Everything here takes props and returns markup: `SamplesBrowser`, `PrepsTable`, `ArtifactsTable`, `CollapsibleSection`, `InlineStudyCard`, `SamplesReportBubble`, `SystemsStatusBubble`, `ToolCallCard`, `ToolResultWidget`, `ModelPickerCard`, `PlusMenu`, `SlashCommandMenu`, `PinnedBar`. Several hold their own local state — a filter string, an expanded flag, a split-pane percentage — but none reach into `useAppState`. This is also where two registries live that other files consume by name: `SLASH_COMMANDS` and the `_NRP_MODELS` / `_CLAUDE_MODELS` lists. At 684 lines it is the largest JS file and over the repo cap (TKT-038).
 
 `app_render.js` **— knows everything, owns nothing.** One function, `renderApp(s)`, that destructures the state object and lays out the shell: sidebar (workspaces, chats, studies), topbar (nav, merge toggle, theme toggle), the browse grid, the chat transcript, the composer, and the two overlays. It holds no state of its own — every value it reads and every handler it calls came in through `s`. It is where the `view` dispatch happens, and where the per-message branch decides between `AgentMessageBubble`, `SamplesReportBubble`, `SystemsStatusBubble`, and the plain markdown bubble. 601 lines, over cap (TKT-037).
 
@@ -504,7 +505,7 @@ The Per-sample FASTQ section is not rendered for now. `ArtifactNetwork` draws ev
 
 ### Markdown and XSS
 
-Model output is untrusted input, and it is rendered as HTML in exactly two places — `app_render.js` for legacy plain-token messages, and `components.js :: AgentMessageBubble` for agent text segments. Both go through the same pipeline:
+Model output is untrusted input, and it is rendered as HTML in exactly two places — `app_render.js` for legacy plain-token messages, and `agent_timeline.js :: AgentMessageBubble` for agent text segments. Both go through the same pipeline:
 
 ```js
 dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content)) }}

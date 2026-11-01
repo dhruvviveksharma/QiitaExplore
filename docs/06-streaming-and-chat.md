@@ -105,6 +105,8 @@ An assistant message is not a string. It is an ordered list of **segments**, eac
 
 This is what produces the interleaved rendering: prose, then a tool card, then more prose. A flat string could not express it.
 
+`AgentMessageBubble` (`agent_timeline.js`) splits the array at the last tool segment. Everything up to and including it goes on a timeline: a "Working · Ns" header, then one node per step and tool call, joined by a rail. The text after it is the answer. When the turn finishes, the timeline folds behind "Worked for Ns" unless one of its widgets is waiting on the user (`study_choice`, `aggregation_proposal`).
+
 `name` is not the tool's name. It is a synthetic identifier, `f"tool_{name}_{call_id[:6]}"` — the tool name plus a slice of the provider's call id. **The call-id suffix makes it unique per invocation**, and a later section explains why that uniqueness is load-bearing.
 
 ### The tri-state
@@ -186,7 +188,7 @@ flowchart TB
         S1["segments_list = []"]
         S2["on segment_tool_call:<br/>close trailing text, append tool segment"]
         S3["on segment_tool_result:<br/>find FIRST not-done match by name → break"]
-        S4["ui_payload = {kind:'agent_segments', segments}"]
+        S4["ui_payload = {kind:'agent_segments', segments, elapsed_s}"]
         S5[("persisted to<br/>ui_payload column")]
         S1 --> S2 --> S3 --> S4 --> S5
     end
@@ -266,7 +268,7 @@ A checklist, because the compiler cannot help here:
 2. `frontend/js/app_state.js :: onSegmentToolCall`, `onSegmentToolResult`, `onTokenAgent`.
 3. `frontend/js/app_state.js :: applyStreamDone` — the freeze into `m.ui`.
 4. `frontend/js/app_state.js :: hydrateChatCache` — the `ui_payload` → `ui` rename.
-5. `frontend/js/components.js :: AgentMessageBubble` / `ToolCallCard` — the consumers.
+5. `frontend/js/agent_timeline.js :: AgentMessageBubble` and `frontend/js/components.js :: ToolCallCard` — the consumers. `elapsed_s` (the turn's "Worked for Ns") is the one non-segment field. The backend measures it in `helpers/chat_turn.py`, and the live freeze in `_finalizeStreamedMessage` computes its own from `m.startedAt`.
 
 Then verify by having a real agentic conversation **and reloading the page**, comparing before and after. Nothing else catches this.
 

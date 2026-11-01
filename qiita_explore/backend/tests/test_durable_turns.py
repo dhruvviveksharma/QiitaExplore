@@ -91,6 +91,7 @@ class TestDurablePersistence:
         ui = msgs[1]["ui_payload"]
         assert ui["kind"] == "agent_segments"
         assert ui["segments"][-1]["content"] == "partial answer"
+        assert isinstance(ui["elapsed_s"], int) and ui["elapsed_s"] >= 0
 
     def test_error_mid_stream_keeps_user_row_and_partial(self, chat_turn_mod, global_chat_crud,
                                                          sample_user_id, global_chat):
