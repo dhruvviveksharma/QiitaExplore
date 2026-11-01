@@ -217,7 +217,7 @@ This should be read as a list, not a footnote, because it bounds what any incide
 - **`/api/systems` is not a health check.** `backend/routes/study_routes.py :: api_systems` fans out across a thread pool and sends a real one-token `"Hi"` completion to **every model in `ALLOWED_MODELS`** with a 15-second per-model timeout, reporting `ok`/`down` and a latency figure for each. It probes the *LLM providers*, not this application — it will report every model `ok` on a backend whose PostgreSQL is unreachable. It also requires an authenticated session (it is not in `PUBLIC_ENDPOINTS`), so it cannot serve as an unauthenticated liveness probe, and each call costs one upstream request per model.
 - **Background work is unobserved.** Project enrichment, preload, and merges are submitted to `_bg_executor` with their futures dropped. Exceptions surface only as log lines.
 - **Queue depth is invisible.** When all 8 request slots are busy, the ninth request waits in the kernel's listen backlog. Nothing counts or reports that wait, so saturation presents to users as unexplained slowness with no corresponding signal on the server.
-- **The data layer degrades silently by design.** `qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default; `artifact_graph :: fetch_artifact_graph` logs and returns `[]`. A persistent upstream problem presents in the UI as *missing data*, not as an error. See [`03-data-access-and-caching.md`](03-data-access-and-caching.md).
+- **The data layer degrades silently by design.** `qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default; `artifact_graph :: fetch_artifact_graph` logs and returns `None` (shown as an empty graph, never cached). A persistent upstream problem presents in the UI as *missing data*, not as an error. See [`03-data-access-and-caching.md`](03-data-access-and-caching.md).
 - **`AGENT_DEBUG` does not affect the backend.** It is read only by `backend/agent_harness.py`, the offline CLI driver, where it raises that process's log level to `DEBUG`. Setting it in the backend's `.env` changes nothing. To get agent-loop detail out of a running gunicorn you must raise the root level in `run.py` and restart.
 
 ### Verifying a deployment by hand
@@ -288,7 +288,7 @@ spiky    = (concurrent sample searches) × probe_pool_size,  probe_pool_size ≤
 worst    = W × (PG_POOL_MAX_CONN + T × 16) = 4 × (8 + 32) = 160
 ```
 
-The steady term is the shared `ThreadedConnectionPool(2, 8)` that each worker builds lazily on first use. **`PG_POOL_MAX_CONN=8` is a per-worker setting** — the deployment's real ceiling is 32, not 8.
+The steady term is the shared `ThreadedConnectionPool(1, 8)` that each worker builds lazily on first use. **`PG_POOL_MAX_CONN=8` is a per-worker setting** — the deployment's real ceiling is 32, not 8.
 
 The spiky term is `sample_search`, which opens a **fresh pool per call** (it needs its own `statement_timeout`, which cannot be attached to a borrowed shared connection) sized `min(len(candidate_ids), 16)`. Every concurrent sample search adds up to 16 more connections for its duration. The worst case above assumes every request thread is running one simultaneously — unlikely, but it is the number PostgreSQL's `max_connections` has to survive.
 

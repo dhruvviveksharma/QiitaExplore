@@ -123,7 +123,7 @@ On success, in this order: the limiter clears the **per-email** counter, takes t
 
 | Setting | Value |
 |---|---|
-| Pool | `ThreadedConnectionPool(2, 4)` per worker: two connections (one per gunicorn thread) stay open for reuse; psycopg2 closes any returned beyond that. |
+| Pool | `ThreadedConnectionPool(1, 4)` per worker: one connection stays open for reuse; psycopg2 closes any returned beyond that. Qiita's database has few connection slots. |
 | Timeouts | `connect_timeout=5`, `statement_timeout=5000` ms, TCP keepalives |
 | Transactions | `default_transaction_read_only=on`; each lookup rolls back its read |
 | Circuit breaker | 3 consecutive failures open it; it fails fast (`AccountsUnavailable`) for 30 s |
@@ -410,7 +410,7 @@ Counts follow the same rule: `qiita_fetch.py :: _public_prep_exists` limits the 
 
 ### Files that may hold human reads: the one per-user check
 
-Qiita keeps the files of some **public** artifacts from everyone but the study's owner, the users it is shared with and Qiita admins: `check_artifact_access` answers anyone else "Access denied to artifact N" when `Artifact.has_human` is true. That is a `per_sample_FASTQ` artifact with a prep that isn't target gene (16S/18S/ITS) and isn't marked `current_human_filtering`, at least one of whose samples has an `env_package` starting with `human-` (863 public artifacts in 56 studies on 2026-10-28). QiitaExplore applies the same rule per viewer, in one module, `helpers/artifact_access.py`:
+Qiita keeps the files of some **public** artifacts from everyone but the study's owner, the users it is shared with and Qiita admins: `check_artifact_access` answers anyone else "Access denied to artifact N" when `Artifact.has_human` is true. That is a `per_sample_FASTQ` artifact with a prep that isn't target gene (16S/18S/ITS) and isn't marked `current_human_filtering`, at least one of whose samples has an `env_package` starting with `human-`. QiitaExplore applies the same rule per viewer, in one module, `helpers/artifact_access.py`:
 
 - **The viewer** is `viewer_email()`: the session's `users.email`, only while `g.user_id` is set. It is never anything from the request. Outside a signed-in request (background jobs, worker threads, the CLI harness) there is no viewer, and so no rights.
 - **The rule.** `human_read_artifact_ids(study_id)` mirrors `has_human`. `has_study_rights(email, study_id)` is true for a Qiita level of `admin`, `superuser` or `wet-lab admin`, the study's owner (`qiita.study.email`), or a user it is shared with (`qiita.study_users`). `locked_artifact_ids(study_id)` combines them: empty when the study has no such artifact (then no rights query is made) or the viewer has rights, otherwise the human-read artifacts.
@@ -423,7 +423,7 @@ Qiita keeps the files of some **public** artifacts from everyone but the study's
   - Sample Aggregation: `sample_files.get_sample_files` (after its memo and table) and `page_files`, and `fastq_manifest._export_groups` for the export.
 - **Owners keep everything**, through the LLM too, and may download a study's raw data even when `public_raw_download` is off, as in Qiita.
 - **Caching.** `/detail` is sent with `Cache-Control: private, no-store`. The browser's study-detail cache (`utils.js`) is cleared on sign-out and when a session is lost, so the next person on the same tab never sees the previous viewer's copy.
-- **Limit: the data is only as current as the database QiitaExplore reads.** That database is `qiita-db-rc`, a snapshot of Qiita from about 2026-03-13 (TKT-107). Owners, shares and the human flags are as of that snapshot.
+- **Limit:** every one of these reads is only as current as the Qiita database QiitaExplore is pointed at (TKT-107).
 
 The download's path safety is separate and unchanged: `_resolve_artifact_file` resolves paths from the artifact graph rather than from user input, calls `os.path.realpath`, and rejects a **blocklist** of roots (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`).
 

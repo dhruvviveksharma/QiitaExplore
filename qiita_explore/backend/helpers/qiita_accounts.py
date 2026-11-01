@@ -82,10 +82,10 @@ def _get_pool():
     with _pool_lock:
         if _pool is None:
             from qiita_core.qiita_settings import qiita_config
-            # min 2 (a worker's threads) stay open for reuse; psycopg2 closes
-            # any connection returned beyond minconn.
+            # min 1 stays open for reuse (Qiita's database has few connection
+            # slots); psycopg2 closes any connection returned beyond minconn.
             _pool = ThreadedConnectionPool(
-                2, 4,
+                1, 4,
                 user=qiita_config.user, password=qiita_config.password,
                 database=qiita_config.database, host=qiita_config.host, port=qiita_config.port,
                 connect_timeout=5, keepalives=1, keepalives_idle=30, keepalives_interval=10,

@@ -60,23 +60,26 @@ def _load(study_id):
         artifact_graph = None
         cache_hit = False
 
-    # Re-fetch if cached graph predates the filepaths, command_params, visibility
-    # or subdirectory-aware path (paths_v) feature
+    # Re-fetch if cached graph is empty (a failed read an earlier bug cached — a
+    # public study always has an artifact) or predates the filepaths,
+    # command_params, visibility or subdirectory-aware path (paths_v) feature
     if artifact_graph is not None:
         art_nodes = [n for n in artifact_graph if n.get("kind") == "artifact"]
         job_nodes = [n for n in artifact_graph if n.get("kind") == "job"]
-        stale = (art_nodes and ("filepaths" not in art_nodes[0] or "visibility" not in art_nodes[0]
-                                or "paths_v" not in art_nodes[0])) or \
+        stale = not art_nodes or \
+                ("filepaths" not in art_nodes[0] or "visibility" not in art_nodes[0]
+                 or "paths_v" not in art_nodes[0]) or \
                 (job_nodes and "command_params" not in job_nodes[0])
         if stale:
             artifact_graph = None
 
     if artifact_graph is None:
-        artifact_graph = fetch_artifact_graph(study_id)
-        upsert_study_detail_cache(
-            study_id, json.dumps(preps), json.dumps(artifacts),
-            artifact_graph_json=json.dumps(artifact_graph),
-        )
+        artifact_graph = fetch_artifact_graph(study_id) or []
+        if artifact_graph:      # a failed or empty read isn't cached; the next request retries
+            upsert_study_detail_cache(
+                study_id, json.dumps(preps), json.dumps(artifacts),
+                artifact_graph_json=json.dumps(artifact_graph),
+            )
 
     prep_ids = [p.get("prep_template_id") for p in preps if p.get("prep_template_id") is not None]
     if prep_ids:
@@ -94,10 +97,11 @@ def _load(study_id):
                 pid = prep.get("prep_template_id")
                 if pid is not None and pid in id_to_meta:
                     prep.update(id_to_meta[pid])
-            upsert_study_detail_cache(
-                study_id, None, None,
-                prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
-            )
+            if all(meta_results):   # {} is a failed read (or no row); retry next request
+                upsert_study_detail_cache(
+                    study_id, None, None,
+                    prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
+                )
     preps, artifacts, artifact_graph = _public_only(study_id, preps, artifacts, artifact_graph)
     return preps, artifacts, artifact_graph, cached, cache_hit
 

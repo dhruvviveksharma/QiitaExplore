@@ -1,15 +1,15 @@
 """Build a flat artifact+job processing graph for a study from the Qiita DB.
 
-Uses a dedicated psycopg2 connection per call — safe under gunicorn gthread
-(the shared TRN singleton is not thread-safe).
+Uses a connection from the shared pool (helpers/pg_pool.py) — safe under
+gunicorn gthread (the shared TRN singleton is not thread-safe).
 """
 
 import logging
 import os
 
-import psycopg2
 import psycopg2.extras
-from qiita_core.qiita_settings import qiita_config
+
+from helpers.pg_pool import get_pool
 
 logger = logging.getLogger(__name__)
 _BASE = os.environ.get("QIITA_BASE_DATA_DIR", "").rstrip("/")
@@ -21,24 +21,21 @@ def _abs(path):
     return path
 
 
-def fetch_artifact_graph(study_id: int) -> list:
-    """Flat list of artifact+job nodes for a study's processing graph."""
+def fetch_artifact_graph(study_id: int):
+    """Flat list of artifact+job nodes for a study's processing graph; None when
+    Qiita can't be read, so a failure is never cached as an empty graph."""
     try:
         return _build(study_id)
     except Exception:
         logger.exception("artifact_graph failed for study %s", study_id)
-        return []
+        return None
 
 
 def _build(study_id: int) -> list:
-    conn = psycopg2.connect(
-        user=qiita_config.user,
-        password=qiita_config.password,
-        database=qiita_config.database,
-        host=qiita_config.host,
-        port=qiita_config.port,
-    )
+    pool = get_pool()
+    conn = pool.getconn()
     try:
+        conn.autocommit = True
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             # All artifact IDs for the study
             cur.execute(
@@ -141,7 +138,7 @@ def _build(study_id: int) -> list:
                         "full_path": fp or "",
                     })
     finally:
-        conn.close()
+        pool.putconn(conn)
 
     # Build job nodes and artifact→parent_node mappings
     job_nodes: dict = {}

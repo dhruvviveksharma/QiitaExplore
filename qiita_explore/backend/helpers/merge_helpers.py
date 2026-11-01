@@ -30,7 +30,7 @@ def public_artifacts(study_id: int) -> dict:
             graph = None
     nodes = [n for n in graph or [] if n.get("kind") == "artifact"]
     if not nodes or "filepaths" not in nodes[0] or "paths_v" not in nodes[0]:   # study_detail's staleness rule
-        nodes = [n for n in fetch_artifact_graph(study_id) if n.get("kind") == "artifact"]
+        nodes = [n for n in fetch_artifact_graph(study_id) or [] if n.get("kind") == "artifact"]
     return {n.get("artifact_id"): lock_files(n) if n.get("artifact_id") in locked else n
             for n in nodes if n.get("artifact_id") in public}
 

@@ -70,6 +70,7 @@ def test_detail_samples_carry_prep_ids(client, sr, monkeypatch):
     sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
                                  samples_context="ctx", artifact_graph_json="[]", prep_metadata_json="{}",
                                  samples_json='[{"sample_id": "s1"}, {"sample_id": "s2"}]', total_samples=2)
+    monkeypatch.setattr(sr.study_detail, "fetch_artifact_graph", lambda s: None)   # cached [] is a miss
     monkeypatch.setattr(sr.study_detail, "prep_membership", lambda s: {"s1": [(7, "16S"), (8, "WGS")]})
     d = client.get(f"/api/studies/{sid}/detail").get_json()
     assert [(x["sample_id"], x["prep_ids"]) for x in d["samples"]] == [("s1", [7, 8]), ("s2", [])]
@@ -96,6 +97,75 @@ def test_detail_refetches_graph_cached_before_visibility(client, sr, monkeypatch
     graph = client.get(f"/api/studies/{sid}/detail").get_json()["artifact_graph"]
     assert calls == ([sid] if refetched else [])
     assert graph == (fresh if refetched else [node])
+
+
+_NODE = {"kind": "artifact", "node_id": "a1", "artifact_id": 1, "filepaths": [],
+         "visibility": "public", "paths_v": 2}
+
+
+def _seed(sr, sid, **cols):
+    sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7, "data_type": "16S"}]', "[]",
+                                              samples_context="ctx", samples_json="[]", total_samples=0, **cols)
+
+
+def test_detail_retries_a_failed_graph_instead_of_caching_it(client, sr, monkeypatch):
+    """A graph read that failed (Qiita out of connection slots) shows as an empty
+    graph for that request only; a cached [] from before this fix is a miss too."""
+    import json
+    sid = 71010
+    _seed(sr, sid, artifact_graph_json="[]", prep_metadata_json='{"7": {"platform": "Illumina"}}')
+    monkeypatch.setattr(sr.study_detail, "prep_membership", lambda s: {})
+    results, calls = [None, [_NODE]], []
+    monkeypatch.setattr(sr.study_detail, "fetch_artifact_graph", lambda s: calls.append(s) or results.pop(0))
+
+    assert client.get(f"/api/studies/{sid}/detail").get_json()["artifact_graph"] == []
+    assert sr.study_detail.get_study_detail_cache(sid)["artifact_graph_json"] == "[]"   # not overwritten
+    assert client.get(f"/api/studies/{sid}/detail").get_json()["artifact_graph"] == [_NODE]
+    assert json.loads(sr.study_detail.get_study_detail_cache(sid)["artifact_graph_json"]) == [_NODE]
+    client.get(f"/api/studies/{sid}/detail")
+    assert calls == [sid, sid]                                                       # third call hits the cache
+
+
+def test_detail_caches_prep_metadata_only_when_complete(client, sr, monkeypatch):
+    import json
+    sid = 71011
+    sr.study_detail.upsert_study_detail_cache(sid, '[{"prep_template_id": 7}, {"prep_template_id": 8}]', "[]",
+                                              samples_context="ctx", samples_json="[]", total_samples=0,
+                                              artifact_graph_json=json.dumps([_NODE]))
+    monkeypatch.setattr(sr.study_detail, "prep_membership", lambda s: {})
+    monkeypatch.setattr(sr.study_detail, "public_prep_ids", lambda s: {7, 8})
+    summaries = {7: {"platform": "Illumina"}, 8: {}}                                  # 8's read failed
+    monkeypatch.setattr(sr.study_detail, "_fetch_prep_metadata_summary", lambda pid: summaries[pid])
+
+    preps = client.get(f"/api/studies/{sid}/detail").get_json()["preps"]
+    assert preps[0]["platform"] == "Illumina"
+    assert sr.study_detail.get_study_detail_cache(sid)["prep_metadata_json"] is None
+    summaries[8] = {"platform": "PacBio"}
+    client.get(f"/api/studies/{sid}/detail")
+    assert json.loads(sr.study_detail.get_study_detail_cache(sid)["prep_metadata_json"])["8"] == {"platform": "PacBio"}
+
+
+def test_build_returns_its_pooled_connection(client, monkeypatch):
+    """The graph borrows a shared-pool connection and gives it back even when a
+    query raises; the failure comes back as None, not []."""
+    import helpers.artifact_graph as ag
+
+    class Pool:
+        out = 0
+        def getconn(self):
+            Pool.out += 1
+            return Conn()
+        def putconn(self, conn):
+            Pool.out -= 1
+
+    class Conn:
+        autocommit = False
+        def cursor(self, **kw):
+            raise RuntimeError("remaining connection slots are reserved")
+
+    monkeypatch.setattr(ag, "get_pool", lambda: Pool())
+    assert ag.fetch_artifact_graph(1189) is None
+    assert Pool.out == 0
 
 
 def test_sample_detail_uses_pooled_lookup(client, sr, monkeypatch):

@@ -16,7 +16,7 @@ The bypasses that exist today are deliberate and few: `sample_search` and `artif
 
 ### The failure posture
 
-`qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default. `artifact_graph :: fetch_artifact_graph` logs and returns `[]` rather than raising. his is consistent across the data layer, and it is a deliberate choice: **a Qiita read failure degrades the response rather than failing the request.** A study card renders without its data types; a chat answers without prep detail.
+`qiita_fetch :: _qiita_fetch` swallows exceptions and returns a caller-supplied default. `artifact_graph :: fetch_artifact_graph` logs and returns `None` rather than raising, and `study_detail._load` shows that as an empty graph without caching it. his is consistent across the data layer, and it is a deliberate choice: **a Qiita read failure degrades the response rather than failing the request.** A study card renders without its data types; a chat answers without prep detail.
 
 The cost is that a persistent upstream problem is invisible from the UI — it looks like missing data, not like an error. Diagnosis goes through the logs. This tension is tracked as TKT-002.
 
@@ -30,7 +30,7 @@ The cost is that a persistent upstream problem is invisible from the UI — it l
 
 ### The shared pool
 
-`backend/helpers/pg_pool.py :: get_pool` builds a `ThreadedConnectionPool(PG_POOL_MIN_CONN, PG_POOL_MAX_CONN)` — default 2 to 8 — behind double-checked locking, on first use.
+`backend/helpers/pg_pool.py :: get_pool` builds a `ThreadedConnectionPool(PG_POOL_MIN_CONN, PG_POOL_MAX_CONN)` — default 1 to 8 — behind double-checked locking, on first use.
 
 **The laziness is the point.** Gunicorn imports the application and *then* forks its workers. A pool built at import time would exist in the parent, and every child would inherit duplicate file descriptors pointing at the same PostgreSQL sockets — two processes reading one connection's response stream. Deferring construction to first use guarantees each worker opens its own.
 
@@ -51,9 +51,9 @@ Every other mention of `TRN` in the backend is a docstring explaining why that m
 
 ### Per-call pools
 
-`sample_search` constructs a **fresh pool per call**, with `options="-c statement_timeout=8000"` in the connection string, and closes it in a `finally`. Two things make this necessary rather than wasteful: a per-statement timeout cannot be attached to a borrowed shared connection, and borrowing 16 connections at once from a pool sized 2–8 would deadlock. Full detail in [`04-search.md`](04-search.md).
+`sample_search` constructs a **fresh pool per call**, with `options="-c statement_timeout=8000"` in the connection string, and closes it in a `finally`. Two things make this necessary rather than wasteful: a per-statement timeout cannot be attached to a borrowed shared connection, and borrowing 16 connections at once from a pool sized 1–8 would deadlock. Full detail in [`04-search.md`](04-search.md).
 
-`artifact_graph` opens one dedicated connection for its five dependent queries.
+`artifact_graph` borrows one shared-pool connection for its five queries.
 
 ---
 
