@@ -555,9 +555,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ seg, msgKey, onPin, onMe
   const hasArgs = (seg.args?.keywords?.length > 0) || (seg.args?.field_filters?.length > 0)
                || (seg.args?.study_id != null) || (seg.args?.study_ids?.length > 0);
   return (
-    <div className="tool-call-card">
+    <div className="tool-call-card tl-item">
+      {/* Its node on the turn's timeline rail (agent_timeline.js). */}
+      <span className="tl-icon">{done ? <CheckIcon size={12} /> : <WreathLoader size={16} />}</span>
       <div className="tool-call-banner">
-        {done ? <span className="step-dot" /> : <WreathLoader size={28} />}
         <span className="tool-call-banner-label">{label}</span>
         {detail && <span className="tool-call-banner-meta">{detail}</span>}
         {hasStudies && (
@@ -618,47 +619,6 @@ function CopyResponseButton({ text, title = 'Copy response' }) {
       {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
       <span>{copied ? 'Copied' : 'Copy'}</span>
     </button>
-  );
-}
-
-// ─── AgentMessageBubble ───────────────────────────────────────────────────────
-function AgentMessageBubble({ segments, isStreaming, msgKey, onPinStudy, onMergeStudy, onOpenStudy, pinnedStudyIds, onViewAllStudies, steps, pendingStep, widgetCtx }) {
-  const textContent = (segments || []).filter(s => s.type === 'text' && s.content).map(s => s.content).join('\n\n');
-  return (
-    <div className="agent-msg">
-      {(steps?.length > 0 || pendingStep) && (
-        <div className="msg-steps">
-          {(steps || []).map((step, si) => (
-            <div key={si} className="msg-step-done">
-              <span className="step-dot" />
-              <span className="step-label">{step.label}</span>
-              {step.detail && <span className="step-detail"> · {step.detail}</span>}
-            </div>
-          ))}
-          {pendingStep && (
-            <div className="msg-step-pending">
-              <div className="step-spinner" />
-              <span className="step-label">{pendingStep.label}</span>
-            </div>
-          )}
-        </div>
-      )}
-      {(segments || []).map((seg, i) =>
-        seg.type === 'text' && seg.content ? (
-          <MarkdownText key={i} content={seg.content}
-            className={`msg-bubble agent-bubble${(!seg.done && isStreaming) ? ' streaming' : ''}`} />
-        ) : seg.type === 'tool' ? (
-          <ToolCallCard key={i} seg={seg} msgKey={`${msgKey}-${i}`}
-            onPin={onPinStudy} onMerge={onMergeStudy} onOpen={onOpenStudy}
-            onViewAllStudies={onViewAllStudies}
-            pinnedStudyIds={pinnedStudyIds} widgetCtx={widgetCtx} />
-        ) : null
-      )}
-      {isStreaming && !(segments || []).length && !steps?.length && !pendingStep && (
-        <InfinityLoader w={80} h={50} />
-      )}
-      {!isStreaming && textContent && <CopyResponseButton text={textContent} />}
-    </div>
   );
 }
 

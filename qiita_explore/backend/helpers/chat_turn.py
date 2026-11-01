@@ -15,6 +15,7 @@ The genuinely scope-specific parts arrive as callables:
                     None/omitted means allowed.
 """
 import logging
+import time
 
 from helpers.agent import stream_agent
 from helpers.chat_transcript import truncate_for_persist
@@ -43,12 +44,18 @@ def _done_payload(chat_id, scope, title_job, *, pinned):
     return done
 
 
-def _partial_ui_payload(segments_list, current_text):
+def _segments_payload(segs, turn_started):
+    """The persisted agent turn; elapsed_s is the chat's "Worked for Ns"."""
+    return {"kind": "agent_segments", "segments": segs,
+            "elapsed_s": round(time.monotonic() - turn_started)}
+
+
+def _partial_ui_payload(segments_list, current_text, turn_started):
     """Freeze whatever segments accumulated when a turn ends early."""
     segs = list(segments_list)
     if current_text:
         segs.append({"type": "text", "content": "".join(current_text), "done": True})
-    return {"kind": "agent_segments", "segments": segs} if segs else None
+    return _segments_payload(segs, turn_started) if segs else None
 
 
 def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_study_id,
@@ -56,6 +63,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
                      build_context, report_guard=None, deep_search=False,
                      project_id=None, force_tool=None):
     yield ': keepalive\n\n'
+    turn_started    = time.monotonic()
     assistant_parts = []
     segments_list   = []
     current_text    = []
@@ -180,7 +188,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         if current_text:
             segments_list.append({"type": "text", "content": "".join(current_text), "done": True})
             current_text = []
-        ui_payload = {"kind": "agent_segments", "segments": segments_list} if segments_list else None
+        ui_payload = _segments_payload(segments_list, turn_started) if segments_list else None
 
         append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(), ui_payload,
                                  model_transcript=truncate_for_persist(transcript) or None)
@@ -200,7 +208,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         if user_row_saved and not assistant_persisted and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
-                                         _partial_ui_payload(segments_list, current_text),
+                                         _partial_ui_payload(segments_list, current_text, turn_started),
                                          model_transcript=truncate_for_persist(transcript) or None)
             except Exception:
                 logger.exception("failed to persist partial turn on abort for %s chat %s",
@@ -217,7 +225,7 @@ def stream_chat_turn(*, scope, chat_id, user_id, model, user_content, report_stu
         if user_row_saved and not assistant_persisted and (assistant_parts or segments_list):
             try:
                 append_assistant_message(scope, chat_id, "".join(assistant_parts).strip(),
-                                         _partial_ui_payload(segments_list, current_text),
+                                         _partial_ui_payload(segments_list, current_text, turn_started),
                                          model_transcript=truncate_for_persist(transcript) or None)
             except Exception:
                 logger.exception("failed to persist partial turn on error for %s chat %s",

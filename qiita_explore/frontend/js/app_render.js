@@ -661,6 +661,8 @@ function renderApp(s, account) {
                         <AgentMessageBubble
                           segments={m.segments ?? m.ui?.segments ?? []}
                           isStreaming={!!m.isStreaming}
+                          startedAt={m.startedAt}
+                          elapsedS={m.ui?.elapsed_s}
                           msgKey={`${view.chatId}-${i}`}
                           onPinStudy={study => pinStudy(view.chatId, study)}
                           onMergeStudy={study => { setPendingMergeStudy(study); openMergePanel(true); }}

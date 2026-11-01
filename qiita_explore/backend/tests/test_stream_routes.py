@@ -179,6 +179,7 @@ class TestGlobalStream:
 
         ui = msgs[1]["ui_payload"]
         assert ui["kind"] == "agent_segments"
+        assert isinstance(ui["elapsed_s"], int) and ui["elapsed_s"] >= 0   # "Worked for Ns"
         tool_segs = [s for s in ui["segments"] if s["type"] == "tool"]
         assert len(tool_segs) == 1
         seg = tool_segs[0]

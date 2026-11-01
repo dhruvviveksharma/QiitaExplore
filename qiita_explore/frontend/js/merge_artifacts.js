@@ -50,12 +50,22 @@ function filterGraphByPrep(graph, prepId) {
   return graph.filter(n => included.has(n.node_id));
 }
 
+// Label only: a long filename keeps its start (sample id) and end (R1/R2,
+// extension); the link and the hover title keep the full name.
+const _FILE_LABEL_MAX = 50;
+function shortFileLabel(name) {
+  if (name.length <= _FILE_LABEL_MAX) return name;
+  const head = 24, tail = _FILE_LABEL_MAX - 1 - head;   // 24 + '…' + 25
+  return `${name.slice(0, head)}…${name.slice(-tail)}`;
+}
+
 function FileLink({ fp, artifactId, studyId }) {
+  const name = fp.filename || fp.filepath_type;
   return (
     <a className="ao-file-btn"
       href={`${API}/artifacts/${artifactId}/files/${fp.filepath_id}/download?study_id=${studyId}`}
-      target="_blank" rel="noreferrer" title={fp.filename || fp.filepath_type}>
-      ↓ {fp.filename || fp.filepath_type}
+      target="_blank" rel="noreferrer" title={name}>
+      ↓ {shortFileLabel(name)}
     </a>
   );
 }

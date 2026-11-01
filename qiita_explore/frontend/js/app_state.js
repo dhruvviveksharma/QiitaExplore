@@ -500,7 +500,8 @@ function useAppState() {
           messages: [
             ...c.messages,
             { role: 'user',      content: userMsg, sent },
-            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null },
+            { role: 'assistant', content: '', isStreaming: true, steps: [], pendingStep: null, segments: null,
+              startedAt: Date.now() },
           ],
         },
       };
@@ -514,7 +515,9 @@ function useAppState() {
     if (m.segments !== null) {
       const frozen = (m.segments || []).map(s => s.type === 'text' ? { ...s, done: true } : s);
       next.segments = frozen;
-      next.ui = { kind: 'agent_segments', segments: frozen };
+      // elapsed_s: the timeline's "Worked for Ns" (the backend persists its own).
+      next.ui = { kind: 'agent_segments', segments: frozen,
+                  elapsed_s: Math.round((Date.now() - m.startedAt) / 1000) };
     }
     return next;
   };
