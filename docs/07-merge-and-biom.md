@@ -81,7 +81,7 @@ A Qiita study does not have "a BIOM file". It has a **processing tree**: raw seq
 
 The tree matters for a second, less obvious reason. A prep template — the record describing how a set of samples was prepared and sequenced — carries the `data_type` (`16S`, `ITS`, `Metagenomic`, …). But the prep is linked to the *root* of the processing lineage. A BIOM sitting four levels down is not itself linked to a prep in the `preparation_artifact` sense that would give it a data type. **Its data type is only knowable by walking up to an ancestor that has one.**
 
-`backend/helpers/artifact_graph.py :: fetch_artifact_graph` solves this by walking *down* instead. It issues five queries on a dedicated psycopg2 connection, builds the node set, then breadth-first-propagates `data_type` from every prep-linked root to all of its descendants:
+`backend/helpers/artifact_graph.py :: fetch_artifact_graph` solves this by walking *down* instead. It issues five queries on one connection from the shared pool, builds the node set, then breadth-first-propagates `data_type` from every prep-linked root to all of its descendants:
 
 ```python
 node_dt = {f"a{aid}": dt for aid, dt in art_to_dt.items()}   # prep-linked seeds
@@ -122,9 +122,9 @@ Without propagation, `a1203` and `a1207` carry no data type, and every downstrea
 
 Two further properties of the graph builder:
 
-**It never raises.** `fetch_artifact_graph` wraps `_build` in a bare `try/except`, logs with `logger.exception`, and returns `[]`. A study whose graph fails to build renders an empty tree rather than a 500. The frontend has a matching fallback: `ArtifactOutputsView` in `merge_artifacts.js` falls back to a flat 20-row artifact table when `artifact_graph` is empty or absent.
+**It never raises.** `fetch_artifact_graph` wraps `_build` in a bare `try/except`, logs with `logger.exception`, and returns `None`. A study whose graph fails to build renders an empty tree rather than a 500, and the failure is not cached: `study_detail._load` writes only a non-empty graph and treats a cached `[]` as a miss, so the next request retries. The frontend has a matching fallback: `ArtifactOutputsView` in `merge_artifacts.js` falls back to a flat 20-row artifact table when `artifact_graph` is empty or absent.
 
-**It uses a dedicated connection, not the shared pool and not `TRN`.** Its module docstring says why: the five queries are dependent and want a consistent view, and it is called from background threads where the `TRN` singleton would interleave with other requests. This is the third of the three PostgreSQL access mechanisms described in [`01-architecture.md`](01-architecture.md).
+**It uses the shared pool, not `TRN`.** It is called from background threads, where the `TRN` singleton would interleave with other requests. Until 2026-11 it opened its own connection per call; see [`01-architecture.md`](01-architecture.md).
 
 ### Two artifact lists, not one
 

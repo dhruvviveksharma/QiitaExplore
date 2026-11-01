@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from store import get_study_detail_cache, upsert_study_detail_cache
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.study_samples import prep_membership
+from helpers.artifact_access import lock_files, locked_artifact_ids
 from helpers.qiita_fetch import (
     _fetch_prep_metadata_summary,
     _fetch_study_samples,
@@ -23,16 +24,22 @@ def _public_only(study_id, preps, artifacts, artifact_graph):
     """What Qiita shows a user who doesn't own the study: preps with a public
     artifact, public artifacts, and the processing steps that lead to one —
     every signed-in Qiita user reaches this (TKT-043, TKT-105). Visibility is
-    read live; the cache keeps everything, since it can be hours stale."""
+    read live; the cache keeps everything, since it can be hours stale. Files
+    that may hold human reads are locked unless this viewer has rights on the
+    study (helpers/artifact_access.py)."""
     arts, kept_preps = public_artifact_ids(study_id), public_prep_ids(study_id)
+    locked = locked_artifact_ids(study_id)
     nodes = [n for n in artifact_graph if n.get("kind") == "artifact" and n.get("artifact_id") in arts]
     parents = {n.get("parent_node_id") for n in nodes}
     nodes += [n for n in artifact_graph if n.get("kind") == "job" and n.get("node_id") in parents]
     ids = {n.get("node_id") for n in nodes}
     graph = [n if n.get("parent_node_id") in ids or n.get("parent_node_id") is None
              else {**n, "parent_node_id": None} for n in nodes]
+    graph = [lock_files(n) if n.get("kind") == "artifact" and n.get("artifact_id") in locked else n
+             for n in graph]
     return ([p for p in preps if p.get("prep_template_id") in kept_preps],
-            [a for a in artifacts if a.get("artifact_id") in arts], graph)
+            [lock_files(a) if a.get("artifact_id") in locked else a
+             for a in artifacts if a.get("artifact_id") in arts], graph)
 
 
 def _load(study_id):
@@ -53,23 +60,26 @@ def _load(study_id):
         artifact_graph = None
         cache_hit = False
 
-    # Re-fetch if cached graph predates the filepaths, command_params, visibility
-    # or subdirectory-aware path (paths_v) feature
+    # Re-fetch if cached graph is empty (a failed read an earlier bug cached — a
+    # public study always has an artifact) or predates the filepaths,
+    # command_params, visibility or subdirectory-aware path (paths_v) feature
     if artifact_graph is not None:
         art_nodes = [n for n in artifact_graph if n.get("kind") == "artifact"]
         job_nodes = [n for n in artifact_graph if n.get("kind") == "job"]
-        stale = (art_nodes and ("filepaths" not in art_nodes[0] or "visibility" not in art_nodes[0]
-                                or "paths_v" not in art_nodes[0])) or \
+        stale = not art_nodes or \
+                ("filepaths" not in art_nodes[0] or "visibility" not in art_nodes[0]
+                 or "paths_v" not in art_nodes[0]) or \
                 (job_nodes and "command_params" not in job_nodes[0])
         if stale:
             artifact_graph = None
 
     if artifact_graph is None:
-        artifact_graph = fetch_artifact_graph(study_id)
-        upsert_study_detail_cache(
-            study_id, json.dumps(preps), json.dumps(artifacts),
-            artifact_graph_json=json.dumps(artifact_graph),
-        )
+        artifact_graph = fetch_artifact_graph(study_id) or []
+        if artifact_graph:      # a failed or empty read isn't cached; the next request retries
+            upsert_study_detail_cache(
+                study_id, json.dumps(preps), json.dumps(artifacts),
+                artifact_graph_json=json.dumps(artifact_graph),
+            )
 
     prep_ids = [p.get("prep_template_id") for p in preps if p.get("prep_template_id") is not None]
     if prep_ids:
@@ -87,10 +97,11 @@ def _load(study_id):
                 pid = prep.get("prep_template_id")
                 if pid is not None and pid in id_to_meta:
                     prep.update(id_to_meta[pid])
-            upsert_study_detail_cache(
-                study_id, None, None,
-                prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
-            )
+            if all(meta_results):   # {} is a failed read (or no row); retry next request
+                upsert_study_detail_cache(
+                    study_id, None, None,
+                    prep_metadata_json=json.dumps({str(k): v for k, v in id_to_meta.items()}),
+                )
     preps, artifacts, artifact_graph = _public_only(study_id, preps, artifacts, artifact_graph)
     return preps, artifacts, artifact_graph, cached, cache_hit
 

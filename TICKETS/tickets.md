@@ -3485,3 +3485,21 @@ link for those files, which now answers 403.
 - `qiita_explore/backend/helpers/fastq_manifest.py` (`_FILES_FROM`), `helpers/study_detail.py`,
   `helpers/study_tools.py`, `helpers/export_tools.py`, `routes/artifact_routes.py`
   (`fastq-manifest`), `routes/aggregation_routes.py` (export), `frontend/js/merge_artifacts.js` (`FileLink`)
+
+---
+
+## TKT-107: QiitaExplore Reads a March 2026 Copy of Qiita's Database
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+The Qiita database QiitaExplore reads is a copy taken around 2026-03-13, not live Qiita: studies,
+preps and artifacts created since then are missing (e.g. study 16583 opens on Qiita but not here),
+and everything QiitaExplore reads from Qiita reflects that copy. Details were shared privately.
+
+### Plan
+
+- Ask Antonio for read-only access to live Qiita's database, or a replica kept current, and point
+  `qiita_config` at it. Nothing in QiitaExplore needs to change for its reads to become live.

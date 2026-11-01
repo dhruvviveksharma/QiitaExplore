@@ -57,6 +57,7 @@ function useAuth() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       clearCsrfToken();
+      clearStudyDetailCache();   // per-viewer data (utils.js)
       setIdentity(null);
       setStatus('anonymous');
     });
@@ -68,6 +69,7 @@ function useAuth() {
       await apiPost('/auth/logout', {});
     } catch (_) {}
     clearCsrfToken();
+    clearStudyDetailCache();
     setIdentity(null);
     setStatus('anonymous');
   }, []);

@@ -40,7 +40,9 @@ def api_study_detail(study_id):
     if not is_study_public(study_id):
         return jsonify({'error': 'Study not found or not public'}), 404
     try:
-        return jsonify(study_detail.get_study_detail(study_id))
+        resp = jsonify(study_detail.get_study_detail(study_id))
+        resp.headers["Cache-Control"] = "private, no-store"   # files differ per viewer (artifact_access)
+        return resp
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

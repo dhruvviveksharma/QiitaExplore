@@ -136,19 +136,30 @@ async function prefetchStudyDetails(ids, isCurrent) {
 // so we don't slam the (slow, single-transaction) Qiita DB with parallel duplicates.
 const _studyDetailCache   = new Map();
 const _studyDetailInflight = new Map();
+let _studyDetailGen = 0;   // bumped on sign-out: a reply still in flight then is dropped
 async function fetchStudyDetail(studyId, { signal } = {}) {
   if (_studyDetailCache.has(studyId)) return _studyDetailCache.get(studyId);
   if (_studyDetailInflight.has(studyId)) return _studyDetailInflight.get(studyId);
+  const gen = _studyDetailGen;
   const p = (async () => {
     const res = await apiFetch(`/studies/${studyId}/detail`, signal ? { signal } : {});
     if (res.status === 404) return { isPrivate: true };
     if (!res.ok) throw new Error(`detail ${res.status}`);
     const d = await res.json();
-    _studyDetailCache.set(studyId, d);
+    if (gen === _studyDetailGen) _studyDetailCache.set(studyId, d);
     return d;
-  })().finally(() => { _studyDetailInflight.delete(studyId); });
+  })().finally(() => { if (_studyDetailInflight.get(studyId) === p) _studyDetailInflight.delete(studyId); });
   _studyDetailInflight.set(studyId, p);
   return p;
+}
+
+// /detail differs per viewer — files Qiita keeps from non-owners come locked
+// (backend helpers/artifact_access.py) — so one viewer's copies must not
+// outlive their session (auth.js calls this on sign-out and on a lost session).
+function clearStudyDetailCache() {
+  _studyDetailGen += 1;
+  _studyDetailCache.clear();
+  _studyDetailInflight.clear();
 }
 
 // The same coalescing for a study's header (GET /studies/<id> — what a Browse card

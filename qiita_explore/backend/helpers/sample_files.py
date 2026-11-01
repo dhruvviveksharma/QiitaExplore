@@ -24,6 +24,7 @@ import time
 from collections import Counter
 
 from helpers import fastq_manifest as _fm
+from helpers.artifact_access import locked_artifact_ids
 from helpers.fastq_manifest import _resolve, _study_groups, group_matches
 
 _MEMO_TTL_SECONDS = 600
@@ -80,7 +81,7 @@ def get_sample_files(study_id):
     now = time.time()
     hit = _memo.get(sid)
     if hit and now - hit[0] < _MEMO_TTL_SECONDS:
-        return hit[1]
+        return _unlocked(sid, hit[1])
 
     stored = get_study_sample_files_cache(sid)
     data = decode(stored) if stored else None
@@ -88,7 +89,18 @@ def get_sample_files(study_id):
         data = summarize_sample_files(_study_groups([sid], {}))
         upsert_study_sample_files_cache(sid, encode(data))
     _memo[sid] = (now, data)
-    return data
+    return _unlocked(sid, data)
+
+
+def _unlocked(sid, data):
+    """The map without artifacts whose files this viewer may not see
+    (helpers/artifact_access.py) — the memo and table keep everything, so a
+    new map is built rather than the cached one trimmed."""
+    locked = locked_artifact_ids(sid)
+    if not locked:
+        return data
+    kept = {s: [e for e in es if e[2] not in locked] for s, es in data.items()}
+    return {s: es for s, es in kept.items() if es}
 
 
 def effective(files, file_filter):
@@ -175,8 +187,9 @@ def page_files(study_id, sample_ids, all_files, file_filter):
     map; it names the page's artifacts, so only those are queried. Resolved
     against each artifact's full prep, same as the export."""
     out = {sid: [] for sid in sample_ids}
+    locked = locked_artifact_ids(study_id)   # all_files is normally get_sample_files', already without them
     aids = sorted({e[2] for sid in sample_ids for e in all_files.get(sid, [])
-                   if group_matches(file_filter, e[0], e[1], e[2])})
+                   if group_matches(file_filter, e[0], e[1], e[2]) and e[2] not in locked})
     if not aids:
         return out
     for _study, dt, atype, proc, aid, samples, files, _allow in _study_groups([int(study_id)], {}, aids):

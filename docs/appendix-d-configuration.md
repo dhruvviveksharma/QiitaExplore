@@ -105,7 +105,7 @@ The cookie names are not configurable; they are `SESSION_COOKIE_NAME` / `DEVICE_
 | Name | Default | Consumed by | Effect | Restart? |
 |---|---|---|---|---|
 | `QIITA_EXPERIMENT_DB_PATH` | *computed* — `backend/data/projects.db` | `backend/store/db.py` | Path to the local SQLite store (projects, chats, messages, sessions, caches). `start_barnacle.sh` sources `detect_env.sh`, which resolves the current git branch to `deployment` (master) or `dev` (anything else) and overrides the default to `/ddn_scratch/d4sharma/QiitaExploreDB/{deployment\|dev}/projects.db`, `mkdir -p`ing the parent. | Yes |
-| `PG_POOL_MIN_CONN` | `2` | `backend/helpers/pg_pool.py` | Minimum connections in the read-only PostgreSQL pool. | Yes |
+| `PG_POOL_MIN_CONN` | `1` | `backend/helpers/pg_pool.py` | Minimum connections in the read-only PostgreSQL pool: the ones kept open while idle. | Yes |
 | `PG_POOL_MAX_CONN` | `8` | `backend/helpers/pg_pool.py` | Maximum connections in that pool. This is a per-gunicorn-worker pool; multiply by the worker count for real database load. | Yes |
 
 The `backend/data/` default directory is created at import time by `backend/store/db.py`, so the fallback path always exists even when the variable points elsewhere.
@@ -207,7 +207,7 @@ The `.env` at `qiita_explore/.env` is gitignored (never committed); each deploym
 | [`MERGE_RESULTS_DIR`](#env-MERGE_RESULTS_DIR) | Merge | computed |
 | [`OPENAI_API_KEY`](#env-OPENAI_API_KEY) | LLM | *(none)* |
 | [`PG_POOL_MAX_CONN`](#env-PG_POOL_MAX_CONN) | Storage | `8` |
-| [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `2` |
+| [`PG_POOL_MIN_CONN`](#env-PG_POOL_MIN_CONN) | Storage | `1` |
 | [`PROJECT_SUMMARY_GEN_LIMIT`](#env-PROJECT_SUMMARY_GEN_LIMIT) | Context (dead) | `5` |
 | [`QIITA_BASE_DATA_DIR`](#env-QIITA_BASE_DATA_DIR) | Qiita | `""` |
 | [`QIITA_CLASSIC_URL`](#env-QIITA_CLASSIC_URL) | Qiita | `https://qiita.ucsd.edu` |
@@ -317,7 +317,7 @@ These are literals in source. They cannot be changed without an edit and a resta
 | known-device lifetime | 30 days (`DEVICE_TTL_SECONDS`) | `backend/helpers/login_limiter.py` | How long a browser stays exempt from both login limits after its last login. |
 | known-device failure cap | 10 (`DEVICE_MAX_FAILURES`) | `backend/helpers/login_limiter.py` | Attempts through one device without a success before the normal limits apply to it. |
 | bcrypt slot wait | 0.5 s, 1 check per worker | `backend/helpers/qiita_accounts.py` (`_BCRYPT_WAIT_SECONDS`, `_bcrypt_slot`) | Past it, login answers 503 with `Retry-After: 2`. |
-| account-read timeouts | connect 5 s, statement 5 s | `backend/helpers/qiita_accounts.py :: _get_pool` | The login / re-check pool (`ThreadedConnectionPool(2, 4)` per worker, read-only transactions). |
+| account-read timeouts | connect 5 s, statement 5 s | `backend/helpers/qiita_accounts.py :: _get_pool` | The login / re-check pool (`ThreadedConnectionPool(1, 4)` per worker, read-only transactions). |
 | account-read circuit breaker | 3 failures → 30 s open | `backend/helpers/qiita_accounts.py` (`_BREAKER_FAILS`, `_BREAKER_OPEN_SECONDS`) | Per worker. While open, login and re-checks fail fast as "unreachable". |
 | Qiita re-check interval | 300 s (`RECHECK_SECONDS`) | `backend/helpers/auth_middleware.py` | How stale a classic session's `last_verified_at` may get before a request re-reads the account. qiita-miint sessions are never re-checked. |
 | Qiita outage grace | 3600 s (`RECHECK_GRACE_SECONDS`) | `backend/helpers/auth_middleware.py` | How long a classic session is served after its last good check while Qiita's database is unreachable; then 503. |

@@ -298,6 +298,16 @@ def _create_schema(conn):
             cached_at         TEXT
         );
 
+        -- Which of a study's per_sample_FASTQ artifacts Qiita's has_human flags
+        -- (helpers/artifact_access.py): reading env_package for every sample takes
+        -- seconds on a study like AGP. Per-viewer rights are never cached.
+        CREATE TABLE IF NOT EXISTS study_human_reads_cache (
+            study_id        INTEGER PRIMARY KEY,
+            candidates_json TEXT,
+            human_json      TEXT,
+            cached_at       TEXT
+        );
+
         -- One row per person (store/auth_store.py). user_id is opaque and owns all
         -- their data; email (normalized) is the link both logins resolve through,
         -- so classic Qiita and qiita-miint reach the same account for the same

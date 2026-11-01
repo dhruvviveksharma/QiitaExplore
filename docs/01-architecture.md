@@ -105,7 +105,7 @@ Gunicorn forks 4 worker processes. **Nothing in Python memory is shared between 
 |---|---|
 | The Flask `app` object | The SQLite file (WAL mode) |
 | `_bg_executor` — its own `ThreadPoolExecutor(4)` | The classic Qiita PostgreSQL database |
-| `pg_pool` — its own `ThreadedConnectionPool(2, 8)` | Anything persisted into SQLite cache tables |
+| `pg_pool` — its own `ThreadedConnectionPool(1, 8)` | Anything persisted into SQLite cache tables |
 | `_study_header_cache` — the in-process 1-hour TTL memo | |
 | Any module-level state in `config`, `helpers`, `store` | |
 
@@ -185,10 +185,10 @@ QiitaExplore reads classic Qiita's database through three distinct mechanisms. T
 | Mechanism | Where | Why |
 |---|---|---|
 | **Vendored `qiita_db.sql_connection.TRN`** | 2 call sites only | Legacy. A single shared psycopg2 connection wrapped in a transaction singleton. **Not thread-safe.** |
-| **Shared pool — `pooled_fetchall`** | The majority of reads | `ThreadedConnectionPool(2, 8)`, lazily constructed. The default path. Since 2026-10-12: `connect_timeout=5` and TCP keepalives, so a silent Postgres can't pin request threads on connect; no `statement_timeout` yet (TKT-103). |
-| **Per-call pools / dedicated connections** | `sample_search`, `artifact_graph` | Needs its own `statement_timeout`, or fans out across many threads at once. |
+| **Shared pool — `pooled_fetchall`** | The majority of reads, and `artifact_graph` | `ThreadedConnectionPool(1, 8)`, lazily constructed. The default path. Since 2026-10-12: `connect_timeout=5` and TCP keepalives, so a silent Postgres can't pin request threads on connect; no `statement_timeout` yet (TKT-103). |
+| **Per-call pools** | `sample_search` | Needs its own `statement_timeout`, and fans out across many threads at once. |
 
-**Account reads for login** (`helpers/qiita_accounts.py`) have their own `ThreadedConnectionPool(2, 4)` per worker (two kept open for reuse): read-only transactions, 5-second connect and statement timeouts, and a circuit breaker (3 failures → 30 s fail-fast), so a silent Postgres can't pin the login path or the per-request session re-check.
+**Account reads for login** (`helpers/qiita_accounts.py`) have their own `ThreadedConnectionPool(1, 4)` per worker (one kept open for reuse): read-only transactions, 5-second connect and statement timeouts, and a circuit breaker (3 failures → 30 s fail-fast), so a silent Postgres can't pin the login path or the per-request session re-check.
 
 ### Why `TRN` is a problem
 
@@ -209,9 +209,9 @@ Every other mention of `TRN` in the backend is a docstring in `pg_pool.py`, `art
 
 ### Per-call pools
 
-`sample_search` opens a **fresh `ThreadedConnectionPool` per call**, with `options="-c statement_timeout=8000"` baked into the connection string, and closes it in a `finally`. That looks wasteful until you consider what it does: fan out up to 16 concurrent per-study probes, each of which must be individually killable at 8 seconds without affecting anything else in the worker. A shared pool cannot carry a per-call statement timeout, and borrowing 16 connections from a pool sized 2–8 would deadlock.
+`sample_search` opens a **fresh `ThreadedConnectionPool` per call**, with `options="-c statement_timeout=8000"` baked into the connection string, and closes it in a `finally`. That looks wasteful until you consider what it does: fan out up to 16 concurrent per-study probes, each of which must be individually killable at 8 seconds without affecting anything else in the worker. A shared pool cannot carry a per-call statement timeout, and borrowing 16 connections from a pool sized 1–8 would deadlock.
 
-`artifact_graph` opens a single dedicated connection because it issues five dependent queries that want a consistent view, and it is called from background threads.
+`artifact_graph` borrows one shared-pool connection for its five queries. It used to open its own connection per call, which added to the connections QiitaExplore held on Qiita's database (100 slots, shared with Qiita itself); running out of slots is what left study graphs empty on 2026-11-01.
 
 ---
 
