@@ -115,7 +115,9 @@ if not final_had_synthesis and api_msgs and api_msgs[-1].get("role") == "tool":
     # re-call the model with NO tools and stream the result
 ```
 
-If the loop ended on a tool message with no prose, the model is called once more **with no tools at all**, and that response streams as tokens. With no tools available, the only thing it can do is answer. The user never sees an empty turn.
+If the loop ended on a tool message with no prose, the model is called once more **with no tools at all**, and that response streams as tokens. The user never sees an empty turn.
+
+"No tools" doesn't stop every model from trying: minimax-m2, still wanting to call tools, writes the calls out as text in its own format (`]<]minimax[>[<tool_call>…`), and a server that fails to parse a call in a normal round passes it through the same way. So the synthesis request ends with a note that tools are no longer available, and every streamed reply on the OpenAI path goes through `helpers/tool_markup.py :: MarkupGate`. From the first marker on, the text is dropped: it never reaches the screen, the stored message or the transcript replayed next turn. A turn cut short this way ends with the round-limit note, or "wrote a tool call as text" when it happened in a normal round, and logs `tool_markup_leaked` in `agent_turns.log`.
 
 Note the interaction with `max_iters`: hitting the ceiling while still requesting tools logs a warning *and* falls into forced synthesis, so exhaustion also degrades into an answer rather than silence.
 

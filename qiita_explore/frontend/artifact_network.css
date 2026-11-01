@@ -55,7 +55,9 @@
 /* FilePathRow: download link, file type, full server path + copy (the
    chat's graph and files widgets). */
 .an-file-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; }
-.an-file-row .ao-file-btn { flex-shrink: 0; }
+/* A long filename truncates (full name in its title) instead of pushing the
+   type, path and copy button past the card's edge. */
+.an-file-row .ao-file-btn { flex: 0 1 auto; min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
 .an-file-type { font-size: 0.74rem; color: var(--text-3); white-space: nowrap; }
 .an-file-path {
   flex: 1; min-width: 0; font-size: 0.74rem; color: var(--text-2); overflow: hidden;

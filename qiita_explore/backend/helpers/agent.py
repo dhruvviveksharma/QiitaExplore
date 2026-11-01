@@ -17,6 +17,7 @@ from helpers.chat_transcript import rows_to_provider_messages
 from helpers.context_fit import Layout, OverflowGuard, system_message
 from helpers.context_usage import measure
 from helpers.llm_retry import run_with_retry
+from helpers.tool_markup import MarkupGate
 from helpers.turn_log import log_turn_event
 
 logger = logging.getLogger(__name__)
@@ -38,10 +39,14 @@ def _openai_tools_to_anthropic(tools):
 def _no_final_answer_text(max_iters, last_tool_failure, reason):
     """Guaranteed non-empty text so a silent turn never reads as the model dying.
     reason: "rounds" = max_iters exhausted; "synthesis" = stopped after tool calls
-    short of the limit, synthesis empty; "empty" = no text and no tool calls."""
+    short of the limit, synthesis empty; "empty" = no text and no tool calls;
+    "markup" = a tool call written out as text (helpers/tool_markup.py)."""
     if reason == "empty":
         msg = ("\n\n_(The model returned an empty response — no text and no "
                "tool calls. Try again or rephrase.)_")
+    elif reason == "markup":
+        msg = ("\n\n_(The model wrote a tool call as text instead of running it, so "
+               "this turn stopped here. Try again or switch model.)_")
     else:
         why = (f"I ran out of tool rounds ({max_iters})" if reason == "rounds"
                else "The model stopped after its tool calls")
@@ -67,6 +72,18 @@ def _emit_silent_end(chat_id, model, event, reason, max_iters, last_tool_failure
     log_turn_event(chat_id, event, model=model, **log_fields)
     yield {"type": "token",
            "token": _no_final_answer_text(max_iters, last_tool_failure, reason)}
+
+
+_SYNTH_NUDGE = ("Tool calls are no longer available this turn. Answer now from the tool "
+                "results above, in plain prose.")
+
+
+def _shown(text, parts, stream=True):
+    """Keep text that came through a MarkupGate; stream it unless hidden."""
+    if text:
+        parts.append(text)
+        if stream:
+            yield {"type": "token", "token": text}
 
 
 def _is_budgeted_search_tool(name: str) -> bool:
@@ -412,11 +429,12 @@ def stream_agent(
         finish_reason   = None
         ttft            = None
         reported        = None
+        leaked          = False   # this round wrote a tool call as text
 
         def _attempt():
             # Fresh slate per attempt — a retry only ever runs when nothing
             # reached the client, so clearing internal fragments is safe.
-            nonlocal finish_reason, ttft, t_llm, reported
+            nonlocal finish_reason, ttft, t_llm, reported, leaked
             content_parts.clear()
             reasoning_parts.clear()
             tool_call_map.clear()
@@ -424,6 +442,7 @@ def stream_agent(
             ttft = None
             reported = None
             t_llm = time.perf_counter()
+            gate = MarkupGate()
             kw = dict(round_kw, **usage_kw, **({"tool_choice": forced_choice} if forced_choice else {}))
             for chunk in _open_stream(llm_client, resolved, api_msgs, kw):
                 usage = getattr(chunk, "usage", None)   # the include_usage chunk has no choices
@@ -442,10 +461,8 @@ def stream_agent(
                     reasoning_parts.append(reasoning)
                     yield {"type": "reasoning", "token": reasoning}
 
-                if delta.content:
-                    content_parts.append(delta.content)
-                    if not forcing:      # a forced round answers with its widget
-                        yield {"type": "token", "token": delta.content}
+                if delta.content:        # a forced round answers with its widget
+                    yield from _shown(gate.feed(delta.content), content_parts, not forcing)
 
                 for tc in (delta.tool_calls or []):
                     idx = tc.index
@@ -459,6 +476,8 @@ def stream_agent(
                             tool_call_map[idx]["name"] += fn.name
                         if fn.arguments:
                             tool_call_map[idx]["arguments"] += fn.arguments
+            yield from _shown(gate.flush(), content_parts, not forcing)
+            leaked = gate.tripped
 
         yield from guard.run(lambda: run_with_retry(
             _attempt, model=resolved,
@@ -489,6 +508,13 @@ def stream_agent(
             tool_call_map[0] = {"id": cid, "name": name, "arguments": json.dumps(args)}
         elif finish_reason != "tool_calls" or not tool_call_map:
             final_had_synthesis = bool(content_parts)
+            if leaked and (content_parts or api_msgs[-1].get("role") != "tool"):
+                # No synthesis follows to recover the turn: say why it stopped.
+                yield from _emit_silent_end(chat_id, resolved, "tool_markup_leaked", "markup",
+                                            max_iters, last_tool_failure, phase="round")
+                turn_had_text = True
+            elif leaked:
+                log_turn_event(chat_id, "tool_markup_leaked", model=resolved, phase="round")
             break
 
         ordered_calls = [tool_call_map[i] for i in sorted(tool_call_map)]
@@ -535,10 +561,14 @@ def stream_agent(
         synth_parts = []
 
         synth_reported = None
+        synth_leaked = False
+        # With no tools offered, minimax would otherwise write its next calls out as text.
+        api_msgs.append({"role": "user", "content": _SYNTH_NUDGE})
 
         def _synth_attempt():
-            nonlocal synth_reported
+            nonlocal synth_reported, synth_leaked
             synth_parts.clear()
+            gate = MarkupGate()
             for chunk in _open_stream(llm_client, resolved, api_msgs, dict(usage_kw)):
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
@@ -547,16 +577,18 @@ def stream_agent(
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content:
-                    synth_parts.append(delta.content)
-                    yield {"type": "token", "token": delta.content}
+                    yield from _shown(gate.feed(delta.content), synth_parts)
+            yield from _shown(gate.flush(), synth_parts)
+            synth_leaked = gate.tripped
 
         yield from guard.run(lambda: run_with_retry(
             _synth_attempt, model=resolved,
             has_partial_output=lambda: bool(synth_parts)))
         yield {"type": "context_usage", "usage": measure(api_msgs, layout, None, resolved, synth_reported)}
         turn_had_text = turn_had_text or bool(synth_parts)
-        if not synth_parts:
-            yield from _emit_silent_end(chat_id, resolved, "synthesis_empty",
+        if not synth_parts or synth_leaked:   # a leak cut the answer short ("Let me find…")
+            yield from _emit_silent_end(chat_id, resolved,
+                                        "tool_markup_leaked" if synth_leaked else "synthesis_empty",
                                         "rounds" if exhausted else "synthesis",
                                         max_iters, last_tool_failure)
             turn_had_text = True
