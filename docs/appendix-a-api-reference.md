@@ -324,7 +324,7 @@ Cache assembly proceeds in four independent stages, each of which can hit or mis
 3. **Prep metadata** — from `prep_metadata_json`, else fanned out over a `ThreadPoolExecutor` (max 8 workers) calling `_fetch_prep_metadata_summary` per prep id, and merged into each prep dict in place.
 4. **Samples** — from `samples_json` / `total_samples`, else `_fetch_study_samples(study_id, limit=200)`. A malformed cached blob falls back to a live fetch. Since 2026-10 the live fetch reads `qiita.sample_{id}` directly by its primary key (`WHERE sample_id <> 'qiita_sample_column_names' ORDER BY sample_id LIMIT %s`) instead of joining `study_sample`, which made it extract JSON for every sample before keeping 200 (AGP: 12.4 s → 0.1 s). `total_samples` still counts `qiita.study_sample`. `_fetch_full_sample_metadata` reads the same way.
 
-A fifth step populates `samples_context` (the LLM context text) when absent. Response:
+A fifth step populates `samples_context` (the LLM context text) when absent. The response is then filtered to what this viewer may see: public preps and artifacts only (TKT-105). An artifact whose files may hold human reads comes with `files_locked: "human_reads"`, empty `filepaths` and a null `full_path`, unless the viewer is the study's owner, a shared user or a Qiita admin (`helpers/artifact_access.py`). Because the body differs per viewer, it is sent with `Cache-Control: private, no-store`. Response:
 
 ```json
 {
@@ -769,7 +769,7 @@ Body `{"study_id": 10317, "artifact_ids": [1, 2]}`; either missing or empty → 
 
 `GET /api/artifacts/<int:artifact_id>/files/<int:filepath_id>/download?study_id=<id>` — session.
 
-Streams one file from an artifact as an attachment. Missing `study_id` → **400**. `_resolve_artifact_file` looks the artifact up in `public_artifacts(study_id)` — so a private study, or a private artifact in a public study, fails with `Artifact <id> not found or not public in study <id>` — then finds the matching `filepath_id`, resolves the real path, and checks it is a file not under `_FORBIDDEN_ROOTS` (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`).
+Streams one file from an artifact as an attachment. Missing `study_id` → **400**. `_resolve_artifact_file` looks the artifact up in `public_artifacts(study_id)` — so a private study, or a private artifact in a public study, fails with `Artifact <id> not found or not public in study <id>`. A public artifact that may hold human reads fails with `This artifact may contain human reads; …` unless the viewer is the study's owner, a shared user or a Qiita admin. A raw artifact of a study with `public_raw_download` off fails with `Raw data of this study can only be downloaded from Qiita` for anyone else, too (`helpers/artifact_access.py`; docs/02-authentication.md). It then finds the matching `filepath_id`, resolves the real path, and checks it is a file not under `_FORBIDDEN_ROOTS` (`/etc/`, `/proc/`, `/sys/`, `/dev/`, `/root/`).
 
 Every failure mode raises `ValueError` and is returned as **403** — including "File not found on disk", which is a 404 condition reported as a permissions error. See the closing findings. (`backend/routes/artifact_routes.py :: download_artifact_file`)
 
@@ -777,7 +777,7 @@ Every failure mode raises `ValueError` and is returned as **403** — including 
 
 `GET /api/artifacts/<int:artifact_id>/fastq-manifest?study_id=<id>` — session.
 
-Returns a QIIME 2 V2 manifest (TSV attachment, `manifest_prep<prep>_artifact<id>.tsv`) mapping each sample to its FASTQ path(s) under `QIITA_BASE_DATA_DIR`. Missing `study_id` → **400**; a study that isn't public → **404** `{"error": "Study not found or not public"}`; an artifact that isn't a public `per_sample_FASTQ` artifact of the study → **404**. The file query (`helpers/fastq_manifest.py`) only joins **public** artifacts, so a non-public artifact gets the same 404. (`backend/routes/artifact_routes.py :: download_fastq_manifest`)
+Returns a QIIME 2 V2 manifest (TSV attachment, `manifest_prep<prep>_artifact<id>.tsv`) mapping each sample to its FASTQ path(s) under `QIITA_BASE_DATA_DIR`. Missing `study_id` → **400**; a study that isn't public → **404** `{"error": "Study not found or not public"}`; an artifact that isn't a public `per_sample_FASTQ` artifact of the study → **404**. The file query (`helpers/fastq_manifest.py`) only joins **public** artifacts, so a non-public artifact gets the same 404. An artifact that may hold human reads → **403** for anyone but the study's owner, shared users and Qiita admins. (`backend/routes/artifact_routes.py :: download_fastq_manifest`)
 
 ### download_merge_result
 

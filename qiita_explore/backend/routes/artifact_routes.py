@@ -12,6 +12,7 @@ from helpers.biom_samples import get_biom_sample_ids
 from helpers.fastq_manifest import fetch_manifest, to_tsv
 from helpers.qiita_fetch import RAW_ARTIFACT_TYPES, _qiita_fetch, is_study_public, raw_download_allowed
 from helpers.merge_helpers import _get_artifacts, public_artifacts
+from helpers.artifact_access import LOCKED_MESSAGE, locked_artifact_ids, viewer_has_rights
 
 _FORBIDDEN_ROOTS = ('/etc/', '/proc/', '/sys/', '/dev/', '/root/')
 
@@ -21,8 +22,13 @@ def _resolve_artifact_file(study_id: int, artifact_id: int, filepath_id: int):
     node = public_artifacts(study_id).get(artifact_id)
     if not node:
         raise ValueError(f"Artifact {artifact_id} not found or not public in study {study_id}")
-    if node.get("artifact_type") in RAW_ARTIFACT_TYPES and not raw_download_allowed(study_id):
-        raise ValueError("Raw data of this study can only be downloaded from Qiita")   # Qiita's own rule
+    if node.get("files_locked"):
+        raise ValueError(LOCKED_MESSAGE)
+    # Qiita's own rule: a study's raw data is for its owner and shared users
+    # unless the study allows public raw downloads.
+    if (node.get("artifact_type") in RAW_ARTIFACT_TYPES and not raw_download_allowed(study_id)
+            and not viewer_has_rights(study_id)):
+        raise ValueError("Raw data of this study can only be downloaded from Qiita")
     fp_entry = next((f for f in (node.get("filepaths") or []) if f.get("filepath_id") == filepath_id), None)
     if not fp_entry:
         raise ValueError(f"File {filepath_id} not in artifact {artifact_id}")
@@ -117,6 +123,8 @@ def download_fastq_manifest(artifact_id):
         return jsonify({"error": "study_id required"}), 400
     if not is_study_public(study_id):
         return jsonify({"error": "Study not found or not public"}), 404
+    if artifact_id in locked_artifact_ids(study_id):
+        return jsonify({"error": LOCKED_MESSAGE}), 403
     try:
         prep_id, rows, paired = fetch_manifest(study_id, artifact_id)
     except ValueError as e:

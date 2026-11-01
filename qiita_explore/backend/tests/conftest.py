@@ -3,6 +3,7 @@ import os
 import pytest
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
@@ -90,7 +91,31 @@ def fresh_db(tmp_path, monkeypatch):
     with sql_store_db._conn() as conn:
         conn.execute("SELECT 1 FROM projects LIMIT 1")
 
+    # The human-reads rule reads Qiita's Postgres; with none here it would fail
+    # closed and lock every file. Default to "no such artifacts, no rights".
+    patch_access(monkeypatch, human_read_artifact_ids=lambda study_id: set(),
+                 has_study_rights=lambda email, study_id: False)
+
     return db_path
+
+
+def patch_access(monkeypatch, **fns):
+    """Replace names inside helpers/artifact_access.py (human_read_artifact_ids,
+    has_study_rights, viewer_email) for every copy of it in use. The purges in
+    this suite leave callers bound to older copies — an app's routes keep the
+    helpers modules they were imported with — so patch the globals that each
+    reachable locked_artifact_ids reads: on the app's modules and on the
+    modules they hold."""
+    import helpers.artifact_access  # noqa: F401 — at least the current copy
+    ours = [m for n, m in list(sys.modules.items()) if m and n.split(".")[0] in ("helpers", "routes", "run")]
+    held = [v for m in ours for v in vars(m).values() if isinstance(v, types.ModuleType)]
+    seen = set()
+    for mod in ours + held:
+        g = getattr(getattr(mod, "locked_artifact_ids", None), "__globals__", None)
+        if g is not None and "human_read_artifact_ids" in g and id(g) not in seen:
+            seen.add(id(g))
+            for name, fn in fns.items():
+                monkeypatch.setitem(g, name, fn)
 
 
 @pytest.fixture

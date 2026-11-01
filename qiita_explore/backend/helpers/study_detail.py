@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from store import get_study_detail_cache, upsert_study_detail_cache
 from helpers.artifact_graph import fetch_artifact_graph
 from helpers.study_samples import prep_membership
+from helpers.artifact_access import lock_files, locked_artifact_ids
 from helpers.qiita_fetch import (
     _fetch_prep_metadata_summary,
     _fetch_study_samples,
@@ -23,16 +24,22 @@ def _public_only(study_id, preps, artifacts, artifact_graph):
     """What Qiita shows a user who doesn't own the study: preps with a public
     artifact, public artifacts, and the processing steps that lead to one —
     every signed-in Qiita user reaches this (TKT-043, TKT-105). Visibility is
-    read live; the cache keeps everything, since it can be hours stale."""
+    read live; the cache keeps everything, since it can be hours stale. Files
+    that may hold human reads are locked unless this viewer has rights on the
+    study (helpers/artifact_access.py)."""
     arts, kept_preps = public_artifact_ids(study_id), public_prep_ids(study_id)
+    locked = locked_artifact_ids(study_id)
     nodes = [n for n in artifact_graph if n.get("kind") == "artifact" and n.get("artifact_id") in arts]
     parents = {n.get("parent_node_id") for n in nodes}
     nodes += [n for n in artifact_graph if n.get("kind") == "job" and n.get("node_id") in parents]
     ids = {n.get("node_id") for n in nodes}
     graph = [n if n.get("parent_node_id") in ids or n.get("parent_node_id") is None
              else {**n, "parent_node_id": None} for n in nodes]
+    graph = [lock_files(n) if n.get("kind") == "artifact" and n.get("artifact_id") in locked else n
+             for n in graph]
     return ([p for p in preps if p.get("prep_template_id") in kept_preps],
-            [a for a in artifacts if a.get("artifact_id") in arts], graph)
+            [lock_files(a) if a.get("artifact_id") in locked else a
+             for a in artifacts if a.get("artifact_id") in arts], graph)
 
 
 def _load(study_id):

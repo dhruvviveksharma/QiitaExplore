@@ -23,6 +23,7 @@ table).
 import csv
 import io
 
+from helpers.artifact_access import LOCKED_MESSAGE, locked_artifact_ids
 from helpers.artifact_graph import _BASE
 from helpers.pg_pool import pooled_fetchall
 
@@ -313,8 +314,12 @@ def _export_groups(selected, file_filters):
         raise RuntimeError("QIITA_BASE_DATA_DIR is not set; export paths would be relative")
     study_ids = sorted(int(s) for s, ids in selected.items() if ids)
     filters = {int(k): v for k, v in (file_filters or {}).items()}
-    groups = [g for g in _study_groups(study_ids, selected)
-              if group_matches(filters.get(int(g[0])), g[1], g[3], g[4])]
+    matched = [g for g in _study_groups(study_ids, selected)
+               if group_matches(filters.get(int(g[0])), g[1], g[3], g[4])]
+    locked = {sid: locked_artifact_ids(sid) for sid in study_ids}   # helpers/artifact_access.py
+    groups = [g for g in matched if g[4] not in locked[int(g[0])]]
+    if matched and not groups:
+        raise ValueError(LOCKED_MESSAGE)
     if not groups:
         raise ValueError("No sequence artifacts of the chosen data type / processing "
                          "in the selected studies")

@@ -99,6 +99,8 @@ from .cache import (  # noqa: F401
     upsert_biom_sample_cache,
     get_study_sample_files_cache,
     upsert_study_sample_files_cache,
+    get_study_human_reads_cache,
+    upsert_study_human_reads_cache,
     pin_study_to_chat,
     unpin_study_from_chat,
     list_pinned_studies,

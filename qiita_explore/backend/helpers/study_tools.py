@@ -49,6 +49,9 @@ _GRAPH_NODES = 80
 _FILES_PER_ARTIFACT = 15
 _FILE_LINES = 120
 _VALUE_MAX = 200
+# A node helpers/artifact_access.py locked for this viewer (Qiita's has_human rule).
+_LOCKED_FILES = ("files restricted — may contain human reads; only the study's owner, "
+                 "shared users and Qiita admins can see them")
 _CANDIDATES = 6
 
 
@@ -326,9 +329,9 @@ def _node_line(n):
     if n.get("kind") == "job":
         params = _job_params(n)
         return f"job {n.get('command_name') or '?'}" + (f" ({', '.join(params)})" if params else "")
-    files = len(n.get("filepaths") or [])
+    files = _LOCKED_FILES if n.get("files_locked") else f'{len(n.get("filepaths") or [])} files'
     return (f'artifact {n.get("artifact_id")} "{n.get("name") or ""}" '
-            f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}) · {files} files')
+            f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}) · {files}')
 
 
 def _tree_lines(nodes, limit):
@@ -407,6 +410,10 @@ def _tool_files(sid, header, args):
         fps = n.get("filepaths") or []
         total += len(fps)
         if len(lines) >= _FILE_LINES:
+            continue
+        if n.get("files_locked"):   # helpers/artifact_access.py: no names, ids or paths for this viewer
+            lines.append(f'artifact {n.get("artifact_id")} "{n.get("name") or ""}" '
+                         f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {_LOCKED_FILES}')
             continue
         lines.append(f'artifact {n.get("artifact_id")} "{n.get("name") or ""}" '
                      f'({n.get("artifact_type") or "?"}, {n.get("visibility") or "?"}): {len(fps)} files')

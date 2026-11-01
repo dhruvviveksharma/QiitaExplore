@@ -8,7 +8,7 @@
 //   StudyCard (study_card.js),
 //   PrepTemplatesSection, StudySamplesSection, sampleFieldsFetcher (study_detail.js),
 //   SamplesBrowser, SampleFieldsCard (components.js), PrepGroupedSamples (prep_samples.js),
-//   ArtifactNetwork, FilePathRow (artifact_network.js), filterGraphByPrep (merge_artifacts.js),
+//   ArtifactNetwork, FilePathRow, FILES_LOCKED_NOTE (artifact_network.js), filterGraphByPrep (merge_artifacts.js),
 //   AggregationProposalCard, ChatAggregationUpdate, AggregationSavedWidget, AggregationListWidget
 //   (chat_aggregate_widget.js), WorkspaceUpdateCard (chat_workspace_widget.js),
 //   TableExportCard (chat_export_widget.js), STUDY_SLASH_COMMANDS (chat_slash.js),
@@ -229,13 +229,15 @@ function FilesWidget({ p, ctx }) {
           {nodes.map(n => {
             const fps = (n.filepaths || []).slice(0, Math.max(0, budget));
             budget -= fps.length;
-            return fps.length > 0 && (
+            return (fps.length > 0 || n.files_locked) && (
               <div key={n.artifact_id} className="cw-files-artifact">
                 <div className="cw-files-name">
                   {n.name || n.artifact_type} <span className="cw-files-meta">
                     artifact {n.artifact_id} · {n.artifact_type} · {n.visibility}</span>
                 </div>
-                {fps.map(fp => <FilePathRow key={fp.filepath_id} fp={fp} artifactId={n.artifact_id} studyId={p.study_id} />)}
+                {n.files_locked
+                  ? <p className="cw-note">{FILES_LOCKED_NOTE}</p>
+                  : fps.map(fp => <FilePathRow key={fp.filepath_id} fp={fp} artifactId={n.artifact_id} studyId={p.study_id} />)}
               </div>
             );
           })}

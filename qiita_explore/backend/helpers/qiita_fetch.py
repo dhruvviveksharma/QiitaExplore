@@ -212,8 +212,9 @@ RAW_ARTIFACT_TYPES = {"SFF", "FASTQ", "FASTA", "FASTA_Sanger", "per_sample_FASTQ
 
 def raw_download_allowed(study_id: int) -> bool:
     """qiita.study.public_raw_download, read live. Qiita lets only the study's
-    owners and shared users download its raw data otherwise, and QiitaExplore
-    doesn't resolve those, so False — also on a failed read — means no raw downloads."""
+    owners and shared users download its raw data otherwise — the download
+    route checks those (helpers/artifact_access.has_study_rights). False on a
+    failed read."""
     rows = _qiita_fetch("SELECT public_raw_download FROM qiita.study WHERE study_id = %s", [int(study_id)])
     return bool(rows and rows[0][0])
 

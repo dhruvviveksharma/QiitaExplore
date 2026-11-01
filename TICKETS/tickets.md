@@ -3485,3 +3485,39 @@ link for those files, which now answers 403.
 - `qiita_explore/backend/helpers/fastq_manifest.py` (`_FILES_FROM`), `helpers/study_detail.py`,
   `helpers/study_tools.py`, `helpers/export_tools.py`, `routes/artifact_routes.py`
   (`fastq-manifest`), `routes/aggregation_routes.py` (export), `frontend/js/merge_artifacts.js` (`FileLink`)
+
+---
+
+## TKT-107: QiitaExplore Reads a March 2026 Snapshot of Qiita (`qiita-db-rc`)
+
+**Severity:** High
+**Status:** Open
+
+### Description
+
+The Qiita database QiitaExplore reads (`qiita_config` host `qiita-db-rc`, database `qiita`) is not
+live Qiita: its newest study is 16460 (created 2026-03-10), its newest artifact and processing job
+are from 2026-03-12/13, and it holds 5,349 studies (checked 2026-10-28). Everything "live" in
+QiitaExplore is live against that copy only:
+
+- Studies, preps and artifacts created since mid-March are missing (study 16583 opens on Qiita,
+  not in QiitaExplore).
+- Visibility (TKT-043/TKT-105): an artifact made private or sandboxed on Qiita since March still
+  shows as public here, and one made public since stays hidden.
+- Per-user rights (`helpers/artifact_access.py`): owners, shares and the human-reads flags are as of
+  March — a share added since doesn't count, one removed since still does.
+- The classic sign-in (`helpers/qiita_accounts.py`) reads `qiita.qiita_user` from the same copy:
+  accounts created since March can't sign in with their password, and a password changed on Qiita
+  since March isn't seen — the **old password still works**, and the 5-minute re-check
+  (`auth_middleware._still_valid`) can't end those sessions. Same for accounts deleted or
+  unverified since.
+
+### Plan
+
+- Ask Antonio for read-only access to live Qiita's database, or a replica kept current; point
+  `qiita_config` at it. Nothing in QiitaExplore needs to change for the reads to become live.
+- Until then, say on the site how old the data is (e.g. "Qiita data as of 2026-03-13").
+
+### Files
+
+- `qiita_config.cfg` (barnacle, not in the repo), `helpers/pg_pool.py`, `helpers/qiita_accounts.py`

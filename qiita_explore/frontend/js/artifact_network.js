@@ -261,6 +261,11 @@ function ArtifactNetwork({ graph, studyId, zoomNeedsModifier, showPaths }) {
 
 // The clicked node: an artifact's id, type, visibility and files (a BIOM also
 // its sample count and sample list), or a job's command and parameters.
+// A node whose files this viewer may not see: Qiita's "may contain human reads"
+// rule (backend helpers/artifact_access.py) sends it with files_locked and no files.
+const FILES_LOCKED_NOTE = 'May contain human reads — files are available to the study’s owner, '
+  + 'shared users and Qiita admins only.';
+
 function ArtifactNetworkDetail({ node, label, samples, studyId, showPaths }) {
   const [peek, setPeek] = useState(false);
   if (node.kind === 'job') {
@@ -288,7 +293,7 @@ function ArtifactNetworkDetail({ node, label, samples, studyId, showPaths }) {
       ))}
       <div className="ao-files-row">
         {!showPaths && files.map(fp => <FileLink key={fp.filepath_id} fp={fp} artifactId={node.artifact_id} studyId={studyId} />)}
-        {files.length === 0 && <span className="an-detail-sub">No files.</span>}
+        {files.length === 0 && <span className="an-detail-sub">{node.files_locked ? FILES_LOCKED_NOTE : 'No files.'}</span>}
         {isBiom && (
           <button className="ao-samples-btn" onClick={() => setPeek(p => !p)}>
             {peek ? 'Hide samples' : 'View samples'}

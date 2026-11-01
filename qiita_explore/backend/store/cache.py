@@ -1,5 +1,6 @@
 """Study caching, project summaries, and pinned-study management."""
 
+import json
 from datetime import datetime
 
 from .db import _conn, _as_dict, _now
@@ -130,6 +131,36 @@ def upsert_study_sample_files_cache(study_id: int, sample_files_json: str):
                 cached_at         = excluded.cached_at
             """,
             (int(study_id), sample_files_json, _now()),
+        )
+        conn.commit()
+    return True
+
+
+def get_study_human_reads_cache(study_id: int):
+    """(candidate artifact ids, human-read artifact ids) of one study
+    (helpers/artifact_access.py), or None when absent or older than the TTL."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT candidates_json, human_json, cached_at FROM study_human_reads_cache WHERE study_id = ?",
+            (int(study_id),),
+        ).fetchone()
+    if row is None or not _fresh(row["cached_at"]):
+        return None
+    return json.loads(row["candidates_json"]), json.loads(row["human_json"])
+
+
+def upsert_study_human_reads_cache(study_id: int, candidates, human):
+    with _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO study_human_reads_cache(study_id, candidates_json, human_json, cached_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(study_id) DO UPDATE SET
+                candidates_json = excluded.candidates_json,
+                human_json      = excluded.human_json,
+                cached_at       = excluded.cached_at
+            """,
+            (int(study_id), json.dumps(sorted(candidates)), json.dumps(sorted(human)), _now()),
         )
         conn.commit()
     return True
