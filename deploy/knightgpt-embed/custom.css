@@ -1,0 +1,39 @@
+/* QiitaExplore embed (see README.md here). Served on kl-remote as the shared
+   Open WebUI's /static/custom.css. Every rule is scoped to html.qe-embed, which
+   loader.js sets only inside QiitaExplore's KnightGPT tab, so chat.knight-lab-dev.org
+   opened on its own keeps its usual look.
+
+   Open WebUI draws nearly everything from one gray scale (light mode uses the
+   low steps for surfaces and the high ones for text; dark mode the reverse), so
+   swapping that scale for QiitaExplore's warm neutrals recolours both modes.
+   Values come from qiita_explore/frontend/style.css (:root and .app.dark). */
+
+html.qe-embed {
+  --color-gray-50:  #FAF9F7;   /* --bg */
+  --color-gray-100: #F2F0EC;   /* --sidebar-bg */
+  --color-gray-200: #E8E5E0;   /* --border-soft */
+  --color-gray-300: #D8D4CC;   /* --border */
+  --color-gray-400: #A5A49B;   /* dark --text-2 */
+  --color-gray-500: #8A897F;   /* --text-3 */
+  --color-gray-600: #57564E;   /* --text-2 */
+  --color-gray-700: #34322C;   /* dark --border */
+  --color-gray-800: #2A2823;   /* dark --border-soft */
+  --color-gray-850: #1F1E1B;   /* dark --surface */
+  --color-gray-900: #171614;   /* dark --bg */
+  --color-gray-950: #100F0D;   /* a step below dark --bg (Open WebUI's dark sidebar) */
+}
+
+html.qe-embed body,
+html.qe-embed .font-primary { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+
+/* The accent: send button, links, text selection */
+html.qe-embed #send-message-button:not(:disabled)      { background-color: #C2522D; color: #FFFFFF; }
+html.qe-embed #send-message-button:not(:disabled):hover { background-color: #A0401F; }
+html.qe-embed.dark #send-message-button:not(:disabled)      { background-color: #E0714A; color: #171614; }
+html.qe-embed.dark #send-message-button:not(:disabled):hover { background-color: #EC8C69; }
+
+html.qe-embed .prose a      { color: #C2522D; }
+html.qe-embed.dark .prose a { color: #E0714A; }
+
+html.qe-embed ::selection      { background: #F6E9E2; }
+html.qe-embed.dark ::selection { background: #3A241A; }

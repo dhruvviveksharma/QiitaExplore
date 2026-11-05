@@ -3503,3 +3503,35 @@ and everything QiitaExplore reads from Qiita reflects that copy. Details were sh
 
 - Ask Antonio for read-only access to live Qiita's database, or a replica kept current, and point
   `qiita_config` at it. Nothing in QiitaExplore needs to change for its reads to become live.
+
+---
+
+## TKT-108: KnightGPT Tab Follow-ups — Theme Sync and Tool Status
+
+**Severity:** Low
+**Status:** Open
+
+### Description
+
+The KnightGPT tab (`qiita_explore/frontend/js/knightgpt.js`) frames kl-remote's shared Open
+WebUI. Two gaps were left on purpose when it shipped (2026-11):
+
+- **Light/dark is chosen inside the frame.** QiitaExplore's theme toggle doesn't reach it: Open
+  WebUI's own theme setting decides. `deploy/knightgpt-embed/custom.css` recolours both of its
+  modes, so either one matches the palette, but they can disagree.
+- **No tool names while KnightGPT works.** KnightGPT's `src/api/sse_adapter.py` drops its
+  `tool_call` / `tool_result` events, because emitting real `tool_calls` deltas made Open WebUI try
+  to run the tools itself. So the frame shows only the model's own text while a tool runs.
+
+### Plan
+
+- **Theme:** have `knightgpt.js` post the current theme to the frame (`postMessage`, target origin
+  `https://chat.knight-lab-dev.org`). `loader.js` checks `event.origin` and toggles Open WebUI's
+  `dark` class to match.
+- **Tool status:** needs a KnightGPT change in Leo's repo, e.g. surfacing tool activity as
+  Open WebUI status events behind an opt-in flag. Raise it with Leo before building anything here.
+
+### Files
+
+- `qiita_explore/frontend/js/knightgpt.js`, `deploy/knightgpt-embed/loader.js`, knightGPT
+  `src/api/sse_adapter.py`

@@ -1,0 +1,24 @@
+/* KnightGPT tab (js/knightgpt.js): a bar over the embedded Open WebUI frame.
+   Every color is a token, so .app.dark needs no overrides. The colours *inside*
+   the frame come from deploy/knightgpt-embed/custom.css, served on kl-remote. */
+
+.kg-tab { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; padding: 8px 12px 10px; }
+.kg-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 6px 10px; background: var(--surface);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-m);
+  font-size: 12.5px; color: var(--text-3);
+}
+.kg-title { font-weight: 600; color: var(--text); }
+.kg-btn {
+  padding: 3px 10px; font: inherit; font-weight: 500; color: var(--text-2);
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-s);
+  cursor: pointer; text-decoration: none; transition: var(--t);
+}
+.kg-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.kg-frame {
+  flex: 1; width: 100%; min-height: 0;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-l);
+  background: var(--surface);
+}
+.kg-notice { font-size: 11.5px; color: var(--text-3); text-align: center; }

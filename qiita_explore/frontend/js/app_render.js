@@ -431,17 +431,19 @@ function renderApp(s, account) {
       <div className={`main${(showMergePanel || resultsDrawerOpen) ? ' merge-open' : ''}`}>
 
         <div className={`topbar${hasSourcesBar ? ' has-sources-bar' : ''}${isChat ? scrollCollapse.barClass : ''}`}>
-          {(view.type === 'browse' || view.type === 'merges' || view.type === 'aggregations') ? (
+          {(view.type === 'browse' || view.type === 'merges' || view.type === 'aggregations' || view.type === 'knightgpt') ? (
             <>
               <button className={`topbar-nav${view.type === 'browse' ? ' active' : ''}`}
                 onClick={() => { setView({ type: 'browse' }); setSidebarCollapsed(false); }}>Browse Studies</button>
               <button className={`topbar-nav${view.type === 'aggregations' ? ' active' : ''}`}
                 onClick={() => { setView({ type: 'aggregations' }); setSidebarCollapsed(true); }}>Sample Aggregation</button>
+              <button className={`topbar-nav${view.type === 'knightgpt' ? ' active' : ''}`}
+                onClick={() => { setView({ type: 'knightgpt' }); setSidebarCollapsed(true); }}>KnightGPT</button>
               {SHOW_MERGES && (
                 <button className={`topbar-nav${view.type === 'merges' ? ' active' : ''}`}
                   onClick={() => { setView({ type: 'merges' }); setSidebarCollapsed(true); }}>Merges</button>
               )}
-              {(view.type === 'merges' || view.type === 'aggregations') && (
+              {(view.type === 'merges' || view.type === 'aggregations' || view.type === 'knightgpt') && (
                 <button
                   className="sidebar-toggle-btn"
                   title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
@@ -540,6 +542,9 @@ function renderApp(s, account) {
 
           {/* ── SAMPLE AGGREGATION ── */}
           {view.type === 'aggregations' && <AggregationsTab agg={agg} />}
+
+          {/* ── KNIGHTGPT (js/knightgpt.js): always rendered, so the frame survives tab switches ── */}
+          <KnightGptTab visible={view.type === 'knightgpt'} />
 
           {/* ── STUDY PAGE (js/study_detail.js) ── */}
           {/* Back returns to the modal it was opened from, else to Browse. */}
@@ -728,7 +733,7 @@ function renderApp(s, account) {
         </div>
 
         {/* Composer */}
-        {view.type !== 'merges' && view.type !== 'aggregations' && view.type !== 'study' && <div className="composer-wrap">
+        {view.type !== 'merges' && view.type !== 'aggregations' && view.type !== 'study' && view.type !== 'knightgpt' && <div className="composer-wrap">
           {showModelPicker && (
             <ModelPickerCard
               current={selectedModel}

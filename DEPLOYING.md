@@ -391,6 +391,33 @@ what can be closed; they don't change that.
 
 ---
 
+## KnightGPT tab (2026-11)
+
+The KnightGPT tab is frontend only. It frames kl-remote's shared Open WebUI,
+`https://chat.knight-lab-dev.org/?models=knightgpt-rag`, so it needs no
+backend restart: pulling the frontend on kl-remote is enough.
+
+- **The CSP must keep the frame allowed.** `index.html`'s CSP has
+  `frame-src https://chat.knight-lab-dev.org`. Any future CSP header for
+  QiitaExplore, for example from Caddy hardening, must keep that entry, or
+  the tab goes blank. (Forbidding *QiitaExplore* from being framed, as
+  prerequisite 3 above plans, is a different setting and doesn't affect it.)
+- **Sign-in happens outside the frame.** It's Google, through kl-remote's
+  oauth2-proxy, and Google refuses to load in a frame. A first-time user signs
+  in once in a normal tab ("Open in new tab" in the tab's bar), then presses
+  Reload. Both hosts are under `knight-lab-dev.org`, so the browser treats the
+  frame as same-site and sends its login cookies.
+- **The colours inside the frame** come from `deploy/knightgpt-embed/`
+  (`custom.css` + `loader.js`). Caddy serves them for `chat.knight-lab-dev.org`;
+  setup, checks and rollback are in that folder's `README.md`. They apply only
+  inside QiitaExplore's frame.
+- **Transcripts live in the shared Open WebUI's database on kl-remote,** not in
+  QiitaExplore's store. Each user's history is in Open WebUI's sidebar, and a
+  chat downloads from its menu (JSON / TXT / PDF). Open WebUI admins can read
+  every user's chats (Admin Panel → Users). Deleting a chat there is permanent.
+
+---
+
 ## Known bugs hit during the 2026-08-17 incident
 
 **1. `python3 -m http.server` cannot reverse-proxy — architecturally, not
